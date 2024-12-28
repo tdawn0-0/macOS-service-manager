@@ -76,3 +76,26 @@ pub fn manage_brew_service(service_name: &str, command: BrewServiceCommand) -> R
         Err(e) => Err(format!("Failed to execute command: {}", e)),
     }
 }
+
+#[tauri::command]
+#[specta::specta]
+pub fn get_brew_service_info(formula: &str) -> Result<String, String> {
+    if !check_brew_exists() {
+        return Err("Homebrew is not installed".into());
+    }
+
+    match Command::new("brew")
+        .args(["services", "info", formula, "--json"])
+        .output()
+    {
+        Ok(Output { stdout, stderr, status }) => {
+            if !status.success() {
+                return Err(String::from_utf8_lossy(&stderr).into_owned());
+            }
+
+            String::from_utf8(stdout)
+                .map_err(|e| format!("Invalid UTF-8 in stdout: {}", e))
+        }
+        Err(e) => Err(format!("Failed to execute command: {}", e)),
+    }
+}

@@ -29,7 +29,7 @@ export function BrewServiceListView() {
 		return <div>Error: {query.error.message}</div>;
 	}
 
-	if (query.isFetching) {
+	if (query.isLoading) {
 		return <div>Loading...</div>;
 	}
 
@@ -53,8 +53,7 @@ function BrewServiceListItem({
 	brewServiceListItem,
 }: { brewServiceListItem: BrewService }) {
 	const queryClient = useQueryClient();
-
-	const { mutate, isPending } = useMutation({
+	const { mutateAsync, isPending } = useMutation({
 		mutationKey: ["manageBrewService", brewServiceListItem.name],
 		mutationFn: async (command: BrewServiceCommand) => {
 			const res = await commands.manageBrewService(
@@ -63,35 +62,6 @@ function BrewServiceListItem({
 			);
 			if (res.status === "error") {
 				throw new Error(res.error);
-			}
-		},
-		onMutate: async (command) => {
-			// Cancel any outgoing refetches
-			await queryClient.cancelQueries({ queryKey: [BREW_LIST_QUERY_KEY] });
-
-			// Snapshot the previous value
-			const previousData = queryClient.getQueryData([BREW_LIST_QUERY_KEY]);
-
-			// Optimistically update the cache
-			queryClient.setQueryData([BREW_LIST_QUERY_KEY], (old: BrewService[]) => {
-				return old.map((service) => {
-					if (service.name === brewServiceListItem.name) {
-						return {
-							...service,
-							status: command === "Run" ? "started" : "stopped",
-						};
-					}
-					return service;
-				});
-			});
-
-			// Return context with the previous data
-			return { previousData };
-		},
-		onError: (_err, _variables, context) => {
-			// If the mutation fails, roll back to the previous value
-			if (context?.previousData) {
-				queryClient.setQueryData([BREW_LIST_QUERY_KEY], context.previousData);
 			}
 		},
 		onSettled: () => {
@@ -147,7 +117,7 @@ function BrewServiceListItem({
 						size="sm"
 						variant="faded"
 						onPress={() => {
-							mutate(isServiceRunning ? "Stop" : "Run");
+							void mutateAsync(isServiceRunning ? "Stop" : "Run");
 						}}
 					>
 						{isServiceRunning ? "Stop" : "Run"}

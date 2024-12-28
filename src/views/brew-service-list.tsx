@@ -2,6 +2,7 @@ import { Button, Card, CardBody, Chip } from "@nextui-org/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { match } from "ts-pattern";
+import { CircleChevronRightIcon } from "../components/icons/circle-chevron-right.tsx";
 import { type BrewServiceCommand, commands } from "../ipc/bindings.ts";
 import {
 	type BrewService,
@@ -111,7 +112,7 @@ function BrewServiceListItem({
 						</Chip>
 					)}
 				</div>
-				<div>
+				<div className="flex flex-nowrap items-center gap-2">
 					<Button
 						isLoading={isPending}
 						size="sm"
@@ -121,6 +122,9 @@ function BrewServiceListItem({
 						}}
 					>
 						{isServiceRunning ? "Stop" : "Run"}
+					</Button>
+					<Button isIconOnly aria-label="Detail" variant="light" size="sm">
+						<CircleChevronRightIcon size={25} color="#ccc" />
 					</Button>
 				</div>
 			</CardBody>

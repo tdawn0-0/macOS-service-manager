@@ -1,7 +1,7 @@
 import { Card, CardBody, Switch } from "@nextui-org/react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { match } from "ts-pattern";
-import { commands } from "../ipc/bindings.ts";
+import { type BrewServiceCommand, commands } from "../ipc/bindings.ts";
 import {
 	type BrewService,
 	brewServiceListSchema,
@@ -49,6 +49,66 @@ export function BrewServiceListView() {
 function BrewServiceListItem({
 	brewServiceListItem,
 }: { brewServiceListItem: BrewService }) {
+	const queryClient = useQueryClient();
+
+	const { mutate, isPending } = useMutation({
+		mutationKey: [
+			"manageBrewService",
+			brewServiceListItem.name,
+			brewServiceListItem.status,
+		],
+		mutationFn: async (command: BrewServiceCommand) => {
+			const res = await commands.manageBrewService(
+				brewServiceListItem.name,
+				command,
+			);
+			if (res.status === "error") {
+				throw new Error(res.error);
+			}
+		},
+		onMutate: async (command) => {
+			// Cancel any outgoing refetches
+			await queryClient.cancelQueries({ queryKey: ["brewServiceList"] });
+
+			// Snapshot the previous value
+			const previousData = queryClient.getQueryData(["brewServiceList"]);
+
+			// Optimistically update the cache
+			queryClient.setQueryData(["brewServiceList"], (old: BrewService[]) => {
+				return old.map((service) => {
+					if (service.name === brewServiceListItem.name) {
+						return {
+							...service,
+							status: command === "Run" ? "started" : "stopped",
+						};
+					}
+					return service;
+				});
+			});
+
+			// Return context with the previous data
+			return { previousData };
+		},
+		onError: (_err, _variables, context) => {
+			// If the mutation fails, roll back to the previous value
+			if (context?.previousData) {
+				queryClient.setQueryData(["brewServiceList"], context.previousData);
+			}
+		},
+		onSettled: () => {
+			// Always refetch after error or success to ensure data consistency
+			void queryClient.invalidateQueries({
+				queryKey: ["brewServiceList"],
+			});
+		},
+	});
+
+	const isSwitchOn = match(brewServiceListItem.status)
+		.with("started", () => true)
+		.with("scheduled", () => true)
+		.with("error", () => true)
+		.otherwise(() => false);
+
 	return (
 		<Card>
 			<CardBody className="flex flex-row flex-nowrap items-center justify-between">
@@ -56,11 +116,8 @@ function BrewServiceListItem({
 				<div>
 					<Switch
 						size="sm"
-						isSelected={match(brewServiceListItem.status)
-							.with("started", () => true)
-							.with("scheduled", () => true)
-							.with("error", () => true)
-							.otherwise(() => false)}
+						isDisabled={isPending}
+						isSelected={isSwitchOn}
 						aria-label={`Turn on/off ${brewServiceListItem.name}`}
 						color={match(brewServiceListItem.status)
 							.returnType<
@@ -76,6 +133,9 @@ function BrewServiceListItem({
 							.with("scheduled", () => "warning")
 							.with("error", () => "danger")
 							.otherwise(() => "default")}
+						onValueChange={() => {
+							mutate(isSwitchOn ? "Stop" : "Run");
+						}}
 					/>
 				</div>
 			</CardBody>

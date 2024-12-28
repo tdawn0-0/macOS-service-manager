@@ -1,5 +1,6 @@
 import { Card, CardBody, Switch } from "@nextui-org/react";
 import { useQuery } from "@tanstack/react-query";
+import { match } from "ts-pattern";
 import { commands } from "../ipc/bindings.ts";
 import {
 	type BrewService,
@@ -55,8 +56,26 @@ function BrewServiceListItem({
 				<div>
 					<Switch
 						size="sm"
-						isSelected={brewServiceListItem.status === "started"}
+						isSelected={match(brewServiceListItem.status)
+							.with("started", () => true)
+							.with("scheduled", () => true)
+							.with("error", () => true)
+							.otherwise(() => false)}
 						aria-label={`Turn on/off ${brewServiceListItem.name}`}
+						color={match(brewServiceListItem.status)
+							.returnType<
+								| "default"
+								| "success"
+								| "warning"
+								| "primary"
+								| "secondary"
+								| "danger"
+								| undefined
+							>()
+							.with("started", () => "success")
+							.with("scheduled", () => "warning")
+							.with("error", () => "danger")
+							.otherwise(() => "default")}
 					/>
 				</div>
 			</CardBody>

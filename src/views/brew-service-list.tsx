@@ -1,5 +1,6 @@
 import { Card, CardBody, Switch } from "@nextui-org/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { match } from "ts-pattern";
 import { type BrewServiceCommand, commands } from "../ipc/bindings.ts";
 import {
@@ -7,9 +8,11 @@ import {
 	brewServiceListSchema,
 } from "../ipc/brew/brew-type.ts";
 
+export const BREW_LIST_QUERY_KEY = "brewServiceList" as const;
+
 export function BrewServiceListView() {
 	const query = useQuery({
-		queryKey: ["brewServiceList"],
+		queryKey: [BREW_LIST_QUERY_KEY],
 		queryFn: async () => {
 			const res = await commands.getBrewServices();
 			if (res.status === "error") {
@@ -52,11 +55,7 @@ function BrewServiceListItem({
 	const queryClient = useQueryClient();
 
 	const { mutate, isPending } = useMutation({
-		mutationKey: [
-			"manageBrewService",
-			brewServiceListItem.name,
-			brewServiceListItem.status,
-		],
+		mutationKey: ["manageBrewService", brewServiceListItem.name],
 		mutationFn: async (command: BrewServiceCommand) => {
 			const res = await commands.manageBrewService(
 				brewServiceListItem.name,
@@ -68,13 +67,13 @@ function BrewServiceListItem({
 		},
 		onMutate: async (command) => {
 			// Cancel any outgoing refetches
-			await queryClient.cancelQueries({ queryKey: ["brewServiceList"] });
+			await queryClient.cancelQueries({ queryKey: [BREW_LIST_QUERY_KEY] });
 
 			// Snapshot the previous value
-			const previousData = queryClient.getQueryData(["brewServiceList"]);
+			const previousData = queryClient.getQueryData([BREW_LIST_QUERY_KEY]);
 
 			// Optimistically update the cache
-			queryClient.setQueryData(["brewServiceList"], (old: BrewService[]) => {
+			queryClient.setQueryData([BREW_LIST_QUERY_KEY], (old: BrewService[]) => {
 				return old.map((service) => {
 					if (service.name === brewServiceListItem.name) {
 						return {
@@ -92,22 +91,41 @@ function BrewServiceListItem({
 		onError: (_err, _variables, context) => {
 			// If the mutation fails, roll back to the previous value
 			if (context?.previousData) {
-				queryClient.setQueryData(["brewServiceList"], context.previousData);
+				queryClient.setQueryData([BREW_LIST_QUERY_KEY], context.previousData);
 			}
 		},
 		onSettled: () => {
 			// Always refetch after error or success to ensure data consistency
 			void queryClient.invalidateQueries({
-				queryKey: ["brewServiceList"],
+				queryKey: [BREW_LIST_QUERY_KEY],
 			});
 		},
 	});
 
-	const isSwitchOn = match(brewServiceListItem.status)
-		.with("started", () => true)
-		.with("scheduled", () => true)
-		.with("error", () => true)
-		.otherwise(() => false);
+	const getSwitchStatus = useMemo(() => {
+		return match(brewServiceListItem.status)
+			.with("started", () => true)
+			.with("scheduled", () => true)
+			.with("error", () => true)
+			.otherwise(() => false);
+	}, [brewServiceListItem.status]);
+
+	const getSwitchColor = useMemo(() => {
+		return match(brewServiceListItem.status)
+			.returnType<
+				| "default"
+				| "success"
+				| "warning"
+				| "primary"
+				| "secondary"
+				| "danger"
+				| undefined
+			>()
+			.with("started", () => "success")
+			.with("scheduled", () => "warning")
+			.with("error", () => "danger")
+			.otherwise(() => "default");
+	}, [brewServiceListItem.status]);
 
 	return (
 		<Card>
@@ -117,24 +135,11 @@ function BrewServiceListItem({
 					<Switch
 						size="sm"
 						isDisabled={isPending}
-						isSelected={isSwitchOn}
+						isSelected={getSwitchStatus}
 						aria-label={`Turn on/off ${brewServiceListItem.name}`}
-						color={match(brewServiceListItem.status)
-							.returnType<
-								| "default"
-								| "success"
-								| "warning"
-								| "primary"
-								| "secondary"
-								| "danger"
-								| undefined
-							>()
-							.with("started", () => "success")
-							.with("scheduled", () => "warning")
-							.with("error", () => "danger")
-							.otherwise(() => "default")}
+						color={getSwitchColor}
 						onValueChange={() => {
-							mutate(isSwitchOn ? "Stop" : "Run");
+							mutate(getSwitchStatus ? "Stop" : "Run");
 						}}
 					/>
 				</div>

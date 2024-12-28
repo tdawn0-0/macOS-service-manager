@@ -1,13 +1,14 @@
 import { Button } from "@nextui-org/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { RotateCw } from "lucide-react";
+import { BREW_LIST_QUERY_KEY } from "./brew-service-list.tsx";
 
 export function BrewServiceHeader() {
 	const queryClient = useQueryClient();
 
 	const handleRefetch = () => {
 		void queryClient.invalidateQueries({
-			queryKey: ["brewServiceList"],
+			queryKey: [BREW_LIST_QUERY_KEY],
 		});
 	};
 

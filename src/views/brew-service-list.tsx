@@ -1,4 +1,4 @@
-import { Card, CardBody, Switch } from "@nextui-org/react";
+import { Button, Card, CardBody, Chip } from "@nextui-org/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { match } from "ts-pattern";
@@ -102,7 +102,7 @@ function BrewServiceListItem({
 		},
 	});
 
-	const getSwitchStatus = useMemo(() => {
+	const isServiceRunning = useMemo(() => {
 		return match(brewServiceListItem.status)
 			.with("started", () => true)
 			.with("scheduled", () => true)
@@ -130,18 +130,28 @@ function BrewServiceListItem({
 	return (
 		<Card>
 			<CardBody className="flex flex-row flex-nowrap items-center justify-between">
-				<div>{brewServiceListItem.name}</div>
+				<div className="flex flex-nowrap items-center gap-2">
+					<span>{brewServiceListItem.name}</span>
+					<Chip size="sm" color={getSwitchColor} variant="dot">
+						{brewServiceListItem.status}
+					</Chip>
+					{Boolean(brewServiceListItem.user) && (
+						<Chip size="sm" variant="bordered">
+							{brewServiceListItem.user}
+						</Chip>
+					)}
+				</div>
 				<div>
-					<Switch
+					<Button
+						isLoading={isPending}
 						size="sm"
-						isDisabled={isPending}
-						isSelected={getSwitchStatus}
-						aria-label={`Turn on/off ${brewServiceListItem.name}`}
-						color={getSwitchColor}
-						onValueChange={() => {
-							mutate(getSwitchStatus ? "Stop" : "Run");
+						variant="faded"
+						onPress={() => {
+							mutate(isServiceRunning ? "Stop" : "Run");
 						}}
-					/>
+					>
+						{isServiceRunning ? "Stop" : "Run"}
+					</Button>
 				</div>
 			</CardBody>
 		</Card>

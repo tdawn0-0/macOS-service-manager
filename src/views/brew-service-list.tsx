@@ -1,4 +1,4 @@
-import { Card, CardBody } from "@nextui-org/react";
+import { Card, CardBody, Switch } from "@nextui-org/react";
 import { useQuery } from "@tanstack/react-query";
 import { commands } from "../ipc/bindings.ts";
 import {
@@ -52,7 +52,13 @@ function BrewServiceListItem({
 		<Card>
 			<CardBody className="flex flex-row flex-nowrap items-center justify-between">
 				<div>{brewServiceListItem.name}</div>
-				<div>Button</div>
+				<div>
+					<Switch
+						size="sm"
+						isSelected={brewServiceListItem.status === "started"}
+						aria-label={`Turn on/off ${brewServiceListItem.name}`}
+					/>
+				</div>
 			</CardBody>
 		</Card>
 	);

@@ -3,13 +3,13 @@ mod brew_command;
 // use serde::{Deserialize, Serialize};
 use specta_typescript::Typescript;
 use tauri_specta::{collect_commands, Builder};
-use brew_command::get_brew_services;
+use brew_command::{get_brew_services, manage_brew_service};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = Builder::<tauri::Wry>::new()
         // Then register them (separated by a comma)
-        .commands(collect_commands![get_brew_services,]);
+        .commands(collect_commands![get_brew_services,manage_brew_service,]);
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
     builder

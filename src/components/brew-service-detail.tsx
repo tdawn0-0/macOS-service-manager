@@ -8,18 +8,19 @@ import {
 	type useDisclosure,
 } from "@nextui-org/react";
 import { useQuery } from "@tanstack/react-query";
-import { match } from "ts-pattern";
+import { P, match } from "ts-pattern";
 import { commands } from "../ipc/bindings.ts";
 import {
 	type BrewServiceInfo,
 	brewServiceInfoListSchema,
 } from "../ipc/brew/brew-type.ts";
+import { CopyIcon } from "./icons/copy.tsx";
 
 export function BrewServiceDetail({
 	serviceName,
 	disclosure,
 }: { serviceName: string; disclosure: ReturnType<typeof useDisclosure> }) {
-	const query = useQuery({
+	const { data, status, error } = useQuery({
 		queryKey: ["getBrewServiceInfo", serviceName],
 		queryFn: async (context) => {
 			const res = await commands.getBrewServiceInfo(context.queryKey[1]);
@@ -37,6 +38,7 @@ export function BrewServiceDetail({
 			return data;
 		},
 	});
+
 	return (
 		<Drawer
 			isOpen={disclosure.isOpen}
@@ -49,17 +51,16 @@ export function BrewServiceDetail({
 						<DrawerHeader className="flex flex-col gap-1">
 							{serviceName}
 						</DrawerHeader>
-						{match(query.status)
-							.with("pending", () => <DrawerBody>Loading...</DrawerBody>)
-							.with("error", () => (
-								<DrawerBody>Error: {query.error?.message}</DrawerBody>
+						{match([status, data])
+							.with(["pending", P._], () => <DrawerBody>Loading...</DrawerBody>)
+							.with(["error", P._], () => (
+								<DrawerBody>Error: {error?.message}</DrawerBody>
 							))
-							.with("success", () => (
+							.with(["success", P.not(P.nullish)], () => (
 								<>
 									<DrawerBody>
-										{Boolean(query.data) && (
-											<DetailRow detailInfo={query.data!} />
-										)}
+										{/* biome-ignore lint/style/noNonNullAssertion: <explanation> */}
+										<DetailRow detailInfo={data!} />
 									</DrawerBody>
 									<DrawerFooter>
 										<Button color="primary" onPress={onClose}>
@@ -88,7 +89,20 @@ function DetailRow({ detailInfo }: { detailInfo: BrewServiceInfo }) {
 						className="flex items-center justify-between gap-3 py-2"
 					>
 						<div className="text-default-500 text-small">{key}</div>
-						<div className="truncate font-medium text-small">{`${value}`}</div>
+						<div className="flex min-w-0 items-center gap-1">
+							<div className="truncate font-medium text-small">{`${value}`}</div>
+							<Button
+								isIconOnly
+								aria-label="refresh"
+								size="sm"
+								variant="light"
+								onPress={() => {
+									void navigator.clipboard.writeText(`${value}`);
+								}}
+							>
+								<CopyIcon color="#ccc" />
+							</Button>
+						</div>
 					</div>
 				);
 			})}

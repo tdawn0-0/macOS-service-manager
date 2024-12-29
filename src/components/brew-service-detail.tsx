@@ -10,7 +10,10 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { match } from "ts-pattern";
 import { commands } from "../ipc/bindings.ts";
-import { brewServiceInfoListSchema } from "../ipc/brew/brew-type.ts";
+import {
+	type BrewServiceInfo,
+	brewServiceInfoListSchema,
+} from "../ipc/brew/brew-type.ts";
 
 export function BrewServiceDetail({
 	serviceName,
@@ -53,7 +56,11 @@ export function BrewServiceDetail({
 							))
 							.with("success", () => (
 								<>
-									<DrawerBody>{JSON.stringify(query.data)}</DrawerBody>
+									<DrawerBody>
+										{Boolean(query.data) && (
+											<DetailRow detailInfo={query.data!} />
+										)}
+									</DrawerBody>
 									<DrawerFooter>
 										<Button color="primary" onPress={onClose}>
 											Action
@@ -68,5 +75,23 @@ export function BrewServiceDetail({
 				)}
 			</DrawerContent>
 		</Drawer>
+	);
+}
+
+function DetailRow({ detailInfo }: { detailInfo: BrewServiceInfo }) {
+	return (
+		<>
+			{Object.entries(detailInfo).map(([key, value]) => {
+				return (
+					<div
+						key={key}
+						className="flex items-center justify-between gap-3 py-2"
+					>
+						<div className="text-default-500 text-small">{key}</div>
+						<div className="truncate font-medium text-small">{`${value}`}</div>
+					</div>
+				);
+			})}
+		</>
 	);
 }

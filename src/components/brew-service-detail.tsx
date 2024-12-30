@@ -15,6 +15,7 @@ import {
 	type BrewServiceInfo,
 	brewServiceInfoListSchema,
 } from "../ipc/brew/brew-type.ts";
+import { ActivityIcon } from "./icons/activity.tsx";
 import { CopyIcon } from "./icons/copy.tsx";
 
 export function BrewServiceDetail({
@@ -90,6 +91,19 @@ function DetailRow({ detailInfo }: { detailInfo: BrewServiceInfo }) {
 						<div className="text-default-500 text-small">{key}</div>
 						<div className="flex min-w-0 items-center gap-1">
 							<div className="truncate font-medium text-small">{`${value}`}</div>
+							{key.includes("log_path") && typeof value === "string" ? (
+								<Button
+									isIconOnly
+									aria-label="open the log"
+									size="sm"
+									variant="light"
+									onPress={() => {
+										void commands.openLogInConsole(value);
+									}}
+								>
+									<ActivityIcon color="#ccc" />
+								</Button>
+							) : null}
 							<Button
 								isIconOnly
 								aria-label="refresh"

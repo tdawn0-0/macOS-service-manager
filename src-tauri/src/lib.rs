@@ -1,7 +1,6 @@
 mod brew_command;
 mod open_file_command;
 
-// use serde::{Deserialize, Serialize};
 use brew_command::{get_brew_service_info, get_brew_services, manage_brew_service};
 use open_file_command::open_log_in_console;
 use specta_typescript::Typescript;

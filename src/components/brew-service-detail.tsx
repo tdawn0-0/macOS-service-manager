@@ -86,7 +86,7 @@ function DetailRow({ detailInfo }: { detailInfo: BrewServiceInfo }) {
 				return (
 					<div
 						key={key}
-						className="flex items-center justify-between gap-3 py-2"
+						className="flex items-center justify-between gap-3"
 					>
 						<div className="text-default-500 text-small">{key}</div>
 						<div className="flex min-w-0 items-center gap-1">
@@ -101,7 +101,7 @@ function DetailRow({ detailInfo }: { detailInfo: BrewServiceInfo }) {
 										void commands.openLogInConsole(value);
 									}}
 								>
-									<ActivityIcon color="#ccc" />
+									<ActivityIcon color="#ccc" size={20} />
 								</Button>
 							) : null}
 							<Button
@@ -113,7 +113,7 @@ function DetailRow({ detailInfo }: { detailInfo: BrewServiceInfo }) {
 									void navigator.clipboard.writeText(`${value}`);
 								}}
 							>
-								<CopyIcon color="#ccc" />
+								<CopyIcon color="#ccc" size={20} />
 							</Button>
 						</div>
 					</div>

@@ -20,7 +20,7 @@ pub fn run() {
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
     builder
-        .export(Typescript::default(), "../src/ipc/bindings.ts")
+        .export(Typescript::default(), "../src/ipc/tauri/bindings.ts")
         .expect("Failed to export typescript bindings");
 
     tauri::Builder::default()

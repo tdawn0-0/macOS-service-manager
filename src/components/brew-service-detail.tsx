@@ -10,7 +10,7 @@ import {
 } from "@nextui-org/react";
 import { useQuery } from "@tanstack/react-query";
 import { P, match } from "ts-pattern";
-import { commands } from "../ipc/bindings.ts";
+import { commands } from "../ipc/tauri/bindings.ts";
 import {
 	type BrewServiceInfo,
 	brewServiceInfoListSchema,

@@ -1,5 +1,5 @@
 import {useQuery} from "@tanstack/react-query";
-import {commands} from "../ipc/bindings.ts";
+import {commands} from "../ipc/tauri/bindings.ts";
 import {brewServiceListSchema,} from "../ipc/brew/brew-type.ts";
 import {BrewServiceListItem} from "../components/brew-service-list-item.tsx";
 

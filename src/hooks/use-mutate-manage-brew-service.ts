@@ -1,5 +1,5 @@
 import {useMutation, useQueryClient} from "@tanstack/react-query";
-import {BrewServiceCommand, commands} from "../ipc/bindings.ts";
+import {BrewServiceCommand, commands} from "../ipc/tauri/bindings.ts";
 import {BREW_LIST_QUERY_KEY} from "../views/brew-service-list.tsx";
 import type {BrewService} from "../ipc/brew/brew-type.ts";
 

@@ -1,6 +1,9 @@
+use std::path::Path;
 use std::process::{Command, Output};
 use specta::Type;
 use serde::{Serialize, Deserialize};
+use std::sync::Once;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[tauri::command]
 #[specta::specta]
@@ -29,12 +32,19 @@ pub async  fn get_brew_services() -> Result<String, String> {
     }
 }
 
+static BREW_CHECK: Once = Once::new();
+static BREW_EXISTS: AtomicBool = AtomicBool::new(false);
+
 fn check_brew_exists() -> bool {
-    Command::new("which")
-        .arg("brew")
-        .output()
-        .map_or(false, |output| output.status.success())
+    BREW_CHECK.call_once(|| {
+        let exists = Path::new("/opt/homebrew/bin/brew").exists()
+            || Path::new("/usr/local/bin/brew").exists();
+        BREW_EXISTS.store(exists, Ordering::Relaxed);
+    });
+
+    BREW_EXISTS.load(Ordering::Relaxed)
 }
+
 
 #[derive(Serialize, Deserialize, Type)]
 pub enum BrewServiceCommand {

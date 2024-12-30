@@ -1,5 +1,5 @@
 import {
-	Button,
+	Button, Divider,
 	Drawer,
 	DrawerBody,
 	DrawerContent,
@@ -50,7 +50,7 @@ export function BrewServiceDetail({
 			<DrawerContent>
 				{(onClose) => (
 					<>
-						<DrawerHeader className="flex flex-col gap-1">
+						<DrawerHeader className="flex flex-col">
 							{serviceName}
 						</DrawerHeader>
 						{match([status, data])
@@ -60,7 +60,7 @@ export function BrewServiceDetail({
 							))
 							.with(["success", P.not(P.nullish)], () => (
 								<>
-									<DrawerBody>
+									<DrawerBody className="gap-2">
 										{/* biome-ignore lint/style/noNonNullAssertion: <explanation> */}
 										<DetailRow detailInfo={data!} />
 									</DrawerBody>
@@ -84,14 +84,15 @@ function DetailRow({ detailInfo }: { detailInfo: BrewServiceInfo }) {
 		<>
 			{Object.entries(detailInfo).map(([key, value]) => {
 				return (
-					<div
-						key={key}
-						className="flex items-center justify-between gap-3"
-					>
-						<div className="text-default-500 text-small">{key}</div>
-						<div className="flex min-w-0 items-center gap-1">
-							<div className="truncate font-medium text-small">{`${value}`}</div>
-							{key.includes("log_path") && typeof value === "string" ? (
+					<div>
+						<div
+							key={key}
+							className="flex items-center justify-between gap-3"
+						>
+							<div className="text-default-500 text-small">{key}</div>
+							<div className="flex min-w-0 items-center gap-1">
+								<div className="truncate font-medium text-small">{`${value}`}</div>
+								{key.includes("log_path") && typeof value === "string" ? (
 									<Tooltip size="sm" content="Open log file">
 										<Button
 											isIconOnly
@@ -102,24 +103,26 @@ function DetailRow({ detailInfo }: { detailInfo: BrewServiceInfo }) {
 												void commands.openLogInConsole(value);
 											}}
 										>
-											<ActivityIcon color="#ccc" size={20} />
+											<ActivityIcon color="#ccc" size={20}/>
 										</Button>
 									</Tooltip>
-							) : null}
-							<Tooltip size="sm" content="Copy">
-								<Button
-									isIconOnly
-									aria-label="copy"
-									size="sm"
-									variant="light"
-									onPress={() => {
-										void navigator.clipboard.writeText(`${value}`);
-									}}
-								>
-									<CopyIcon color="#ccc" size={20} />
-								</Button>
-							</Tooltip>
+								) : null}
+								<Tooltip size="sm" content="Copy">
+									<Button
+										isIconOnly
+										aria-label="copy"
+										size="sm"
+										variant="light"
+										onPress={() => {
+											void navigator.clipboard.writeText(`${value}`);
+										}}
+									>
+										<CopyIcon color="#ccc" size={20}/>
+									</Button>
+								</Tooltip>
+							</div>
 						</div>
+						<Divider className="bg-default-100 mt-2" />
 					</div>
 				);
 			})}
@@ -127,7 +130,7 @@ function DetailRow({ detailInfo }: { detailInfo: BrewServiceInfo }) {
 	);
 }
 
-function BrewServiceActions({ serviceName }: { serviceName: string }) {
+function BrewServiceActions({serviceName}: { serviceName: string }) {
 	return (
 		<>
 			<Tooltip content="Run without registering to launch at login">

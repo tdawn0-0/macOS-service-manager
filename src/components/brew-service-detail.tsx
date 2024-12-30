@@ -5,6 +5,7 @@ import {
 	DrawerContent,
 	DrawerFooter,
 	DrawerHeader,
+	Tooltip,
 	type useDisclosure,
 } from "@nextui-org/react";
 import { useQuery } from "@tanstack/react-query";
@@ -62,10 +63,8 @@ export function BrewServiceDetail({
 										{/* biome-ignore lint/style/noNonNullAssertion: <explanation> */}
 										<DetailRow detailInfo={data!} />
 									</DrawerBody>
-									<DrawerFooter>
-										<Button color="primary" onPress={onClose}>
-											Action
-										</Button>
+									<DrawerFooter className="justify-between">
+										<BrewServiceActions serviceName={serviceName} />
 									</DrawerFooter>
 								</>
 							))
@@ -106,6 +105,66 @@ function DetailRow({ detailInfo }: { detailInfo: BrewServiceInfo }) {
 					</div>
 				);
 			})}
+		</>
+	);
+}
+
+function BrewServiceActions({ serviceName }: { serviceName: string }) {
+	return (
+		<>
+			<Tooltip content="Run without registering to launch at login">
+				<Button
+					size="sm"
+					onPress={() => {
+						void commands.manageBrewService(serviceName, "Run");
+					}}
+				>
+					Run
+				</Button>
+			</Tooltip>
+			<Tooltip content="Start and register it to launch at login.">
+				<Button
+					size="sm"
+					onPress={() => {
+						void commands.manageBrewService(serviceName, "Start");
+					}}
+				>
+					Start
+				</Button>
+			</Tooltip>
+			<Tooltip content="Stop and start immediately and register it to launch at login.">
+				<Button
+					size="sm"
+					onPress={() => {
+						void commands.manageBrewService(serviceName, "Restart");
+					}}
+				>
+					Restart
+				</Button>
+			</Tooltip>
+			<Tooltip
+				content="Stop immediately and unregister it from launching at
+login."
+			>
+				<Button
+					size="sm"
+					onPress={() => {
+						void commands.manageBrewService(serviceName, "Stop");
+					}}
+				>
+					Stop
+				</Button>
+			</Tooltip>
+			<Tooltip content="Stop immediately but keep it registered to launch at login.">
+				<Button
+					size="sm"
+					onPress={() => {
+						void commands.manageBrewService(serviceName, "Kill");
+					}}
+				>
+					Kill
+				</Button>
+			</Tooltip>
 		</>
 	);
 }

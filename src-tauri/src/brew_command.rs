@@ -4,7 +4,7 @@ use serde::{Serialize, Deserialize};
 
 #[tauri::command]
 #[specta::specta]
-pub fn get_brew_services() -> Result<String, String> {
+pub async  fn get_brew_services() -> Result<String, String> {
     if !check_brew_exists() {
         return Err("Homebrew is not installed".into());
     }
@@ -47,7 +47,7 @@ pub enum BrewServiceCommand {
 
 #[tauri::command]
 #[specta::specta]
-pub fn manage_brew_service(service_name: &str, command: BrewServiceCommand) -> Result<String, String> {
+pub async fn manage_brew_service(service_name: &str, command: BrewServiceCommand) -> Result<String, String> {
     if !check_brew_exists() {
         return Err("Homebrew is not installed".into());
     }
@@ -79,7 +79,7 @@ pub fn manage_brew_service(service_name: &str, command: BrewServiceCommand) -> R
 
 #[tauri::command]
 #[specta::specta]
-pub fn get_brew_service_info(formula: &str) -> Result<String, String> {
+pub async fn get_brew_service_info(formula: &str) -> Result<String, String> {
     if !check_brew_exists() {
         return Err("Homebrew is not installed".into());
     }

@@ -17,6 +17,7 @@ import {
 } from "../ipc/brew/brew-type.ts";
 import { ActivityIcon } from "./icons/activity.tsx";
 import { CopyIcon } from "./icons/copy.tsx";
+import {useMutateManageBrewService} from "../hooks/use-mutate-manage-brew-service.ts";
 
 export function BrewServiceDetail({
 	serviceName,
@@ -131,13 +132,15 @@ function DetailRow({ detailInfo }: { detailInfo: BrewServiceInfo }) {
 }
 
 function BrewServiceActions({serviceName}: { serviceName: string }) {
+	const { mutateAsync } = useMutateManageBrewService(serviceName)
+
 	return (
 		<>
 			<Tooltip content="Run without registering to launch at login">
 				<Button
 					size="sm"
 					onPress={() => {
-						void commands.manageBrewService(serviceName, "Run");
+						void mutateAsync("Run");
 					}}
 				>
 					Run
@@ -147,7 +150,7 @@ function BrewServiceActions({serviceName}: { serviceName: string }) {
 				<Button
 					size="sm"
 					onPress={() => {
-						void commands.manageBrewService(serviceName, "Start");
+						void mutateAsync("Start");
 					}}
 				>
 					Start
@@ -157,7 +160,7 @@ function BrewServiceActions({serviceName}: { serviceName: string }) {
 				<Button
 					size="sm"
 					onPress={() => {
-						void commands.manageBrewService(serviceName, "Restart");
+						void mutateAsync("Restart");
 					}}
 				>
 					Restart
@@ -170,7 +173,7 @@ login."
 				<Button
 					size="sm"
 					onPress={() => {
-						void commands.manageBrewService(serviceName, "Stop");
+						void mutateAsync("Stop");
 					}}
 				>
 					Stop
@@ -180,7 +183,7 @@ login."
 				<Button
 					size="sm"
 					onPress={() => {
-						void commands.manageBrewService(serviceName, "Kill");
+						void mutateAsync("Kill");
 					}}
 				>
 					Kill

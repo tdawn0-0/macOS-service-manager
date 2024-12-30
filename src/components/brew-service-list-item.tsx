@@ -46,7 +46,7 @@ export function BrewServiceListItem({
 			// Return context with the previous data
 			return { previousData };
 		},
-		onError: (err, variables, context) => {
+		onError: (_err, _variables, context) => {
 			// If the mutation fails, roll back to the previous value
 			if (context?.previousData) {
 				queryClient.setQueryData([BREW_LIST_QUERY_KEY], context.previousData);

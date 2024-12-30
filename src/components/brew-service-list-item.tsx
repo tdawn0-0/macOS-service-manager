@@ -23,6 +23,35 @@ export function BrewServiceListItem({
 				throw new Error(res.error);
 			}
 		},
+		onMutate: async (command) => {
+			// Cancel any outgoing refetches
+			await queryClient.cancelQueries({ queryKey: [BREW_LIST_QUERY_KEY] });
+
+			// Snapshot the previous value
+			const previousData = queryClient.getQueryData([BREW_LIST_QUERY_KEY]);
+
+			// Optimistically update the cache
+			queryClient.setQueryData([BREW_LIST_QUERY_KEY], (old: BrewService[]) => {
+				return old.map((service) => {
+					if (service.name === brewServiceListItem.name) {
+						return {
+							...service,
+							status: command === "Run" ? "started" : "stopped",
+						};
+					}
+					return service;
+				});
+			});
+
+			// Return context with the previous data
+			return { previousData };
+		},
+		onError: (err, variables, context) => {
+			// If the mutation fails, roll back to the previous value
+			if (context?.previousData) {
+				queryClient.setQueryData([BREW_LIST_QUERY_KEY], context.previousData);
+			}
+		},
 		onSettled: () => {
 			// Always refetch after error or success to ensure data consistency
 			void queryClient.invalidateQueries({

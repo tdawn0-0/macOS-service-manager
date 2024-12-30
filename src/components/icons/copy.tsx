@@ -29,7 +29,6 @@ const CopyIcon = ({ size = 28, color }: { size?: number; color: string }) => {
 				strokeLinecap="round"
 				strokeLinejoin="round"
 			>
-				<title id="copyIconTitle">Copy</title>
 				<motion.rect
 					width="14"
 					height="14"

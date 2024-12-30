@@ -51,7 +51,6 @@ const ActivityIcon = ({
 				strokeLinecap="round"
 				strokeLinejoin="round"
 			>
-				<title id="activity">Activity</title>
 				<motion.path
 					variants={variants}
 					animate={controls}

@@ -30,7 +30,6 @@ export const CircleChevronRightIcon = ({
 				strokeLinecap="round"
 				strokeLinejoin="round"
 			>
-				<title id="circleChevronTitle">Circle Chevron Right</title>
 				<circle cx="12" cy="12" r="10" />
 				<motion.path
 					variants={{

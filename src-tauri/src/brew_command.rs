@@ -8,10 +8,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[tauri::command]
 #[specta::specta]
 pub async  fn get_brew_services() -> Result<String, String> {
-    if !check_brew_exists() {
-        return Err("Homebrew is not installed".into());
-    }
-
     match Command::new("brew")
         .args(["services", "list", "--json"])
         .output()
@@ -32,20 +28,6 @@ pub async  fn get_brew_services() -> Result<String, String> {
     }
 }
 
-static BREW_CHECK: Once = Once::new();
-static BREW_EXISTS: AtomicBool = AtomicBool::new(false);
-
-fn check_brew_exists() -> bool {
-    BREW_CHECK.call_once(|| {
-        let exists = Path::new("/opt/homebrew/bin/brew").exists()
-            || Path::new("/usr/local/bin/brew").exists();
-        BREW_EXISTS.store(exists, Ordering::Relaxed);
-    });
-
-    BREW_EXISTS.load(Ordering::Relaxed)
-}
-
-
 #[derive(Serialize, Deserialize, Type)]
 pub enum BrewServiceCommand {
     Start,
@@ -58,10 +40,6 @@ pub enum BrewServiceCommand {
 #[tauri::command]
 #[specta::specta]
 pub async fn manage_brew_service(service_name: &str, command: BrewServiceCommand) -> Result<String, String> {
-    if !check_brew_exists() {
-        return Err("Homebrew is not installed".into());
-    }
-
     let command_str = match command {
         BrewServiceCommand::Start => "start",
         BrewServiceCommand::Stop => "stop",
@@ -90,10 +68,6 @@ pub async fn manage_brew_service(service_name: &str, command: BrewServiceCommand
 #[tauri::command]
 #[specta::specta]
 pub async fn get_brew_service_info(formula: &str) -> Result<String, String> {
-    if !check_brew_exists() {
-        return Err("Homebrew is not installed".into());
-    }
-
     match Command::new("brew")
         .args(["services", "info", formula, "--json"])
         .output()

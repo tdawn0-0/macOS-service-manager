@@ -13,7 +13,7 @@ export function BrewServiceHeader() {
 	};
 
 	return (
-		<div className="mt-1 mb-4 flex flex-nowrap items-center justify-between">
+		<div className="mt-1 mb-4 flex flex-nowrap items-center justify-between flex-none">
 			<p className="relative bg-gradient-to-b from-neutral-200 to-neutral-500 bg-clip-text font-bold text-2xl text-transparent">
 				Homebrew Services
 			</p>

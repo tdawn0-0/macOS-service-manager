@@ -88,7 +88,7 @@ export function BrewServiceListItem({
 	}, [brewServiceListItem.status]);
 
 	return (
-		<Card>
+		<Card className="flex-none">
 			<CardBody className="flex flex-row flex-nowrap items-center justify-between">
 				<div className="flex flex-nowrap items-center gap-2">
 					<span>{brewServiceListItem.name}</span>

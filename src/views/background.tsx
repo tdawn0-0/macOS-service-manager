@@ -3,7 +3,7 @@ import type React from "react";
 export function Background({ children }: { children: React.ReactElement }) {
 	return (
 		<div className="relative isolate">
-			<div className="absolute z-10 h-full w-full overflow-auto p-2">
+			<div className="absolute z-10 h-full w-full overflow-clip p-2 flex flex-col">
 				{children}
 			</div>
 

@@ -33,7 +33,7 @@ export function BrewServiceListView() {
 	}
 
 	return (
-		<div className="flex flex-col flex-nowrap gap-2">
+		<div className="flex flex-col flex-nowrap gap-2 flex-grow min-h-0">
 			{query.data.map((brewServiceListItem) => (
 				<BrewServiceListItem
 					key={brewServiceListItem.name}

@@ -49,7 +49,7 @@ export function BrewServiceDetail({
 			onOpenChange={disclosure.onOpenChange}
 		>
 			<DrawerContent>
-				{(onClose) => (
+				{() => (
 					<>
 						<DrawerHeader className="flex flex-col">
 							{serviceName}

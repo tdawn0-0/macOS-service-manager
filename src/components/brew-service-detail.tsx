@@ -92,29 +92,33 @@ function DetailRow({ detailInfo }: { detailInfo: BrewServiceInfo }) {
 						<div className="flex min-w-0 items-center gap-1">
 							<div className="truncate font-medium text-small">{`${value}`}</div>
 							{key.includes("log_path") && typeof value === "string" ? (
+									<Tooltip size="sm" content="Open log file">
+										<Button
+											isIconOnly
+											aria-label="Open log"
+											size="sm"
+											variant="light"
+											onPress={() => {
+												void commands.openLogInConsole(value);
+											}}
+										>
+											<ActivityIcon color="#ccc" size={20} />
+										</Button>
+									</Tooltip>
+							) : null}
+							<Tooltip size="sm" content="Copy">
 								<Button
 									isIconOnly
-									aria-label="open the log"
+									aria-label="copy"
 									size="sm"
 									variant="light"
 									onPress={() => {
-										void commands.openLogInConsole(value);
+										void navigator.clipboard.writeText(`${value}`);
 									}}
 								>
-									<ActivityIcon color="#ccc" size={20} />
+									<CopyIcon color="#ccc" size={20} />
 								</Button>
-							) : null}
-							<Button
-								isIconOnly
-								aria-label="refresh"
-								size="sm"
-								variant="light"
-								onPress={() => {
-									void navigator.clipboard.writeText(`${value}`);
-								}}
-							>
-								<CopyIcon color="#ccc" size={20} />
-							</Button>
+							</Tooltip>
 						</div>
 					</div>
 				);

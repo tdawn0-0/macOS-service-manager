@@ -1,36 +1,41 @@
 {
-	"$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-	"vcs": {
-		"enabled": false,
-		"clientKind": "git",
-		"useIgnoreFile": false
-	},
-	"files": {
-		"ignoreUnknown": false,
-		"ignore": ["./tsconfig.json", "./tsconfig.node.json", "./package-lock.json"]
-	},
-	"formatter": {
-		"enabled": true,
-		"indentStyle": "tab"
-	},
-	"organizeImports": {
-		"enabled": true
-	},
-	"linter": {
-		"enabled": true,
-		"rules": {
-			"recommended": true,
-			"a11y": {
-				"noSvgWithoutTitle": "none"
-			},
-			"nursery": {
-				"useSortedClasses": "warn"
-			}
-		}
-	},
-	"javascript": {
-		"formatter": {
-			"quoteStyle": "double"
-		}
-	}
+    "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+    "vcs": {
+        "enabled": false,
+        "clientKind": "git",
+        "useIgnoreFile": false
+    },
+    "files": {
+        "ignoreUnknown": false,
+        "ignore": [
+            "./tsconfig.json",
+            "./tsconfig.node.json",
+            "./package-lock.json",
+            "./src/ipc/tauri/bindings.ts"
+        ]
+    },
+    "formatter": {
+        "enabled": true,
+        "indentStyle": "tab"
+    },
+    "organizeImports": {
+        "enabled": true
+    },
+    "linter": {
+        "enabled": true,
+        "rules": {
+            "recommended": true,
+            "a11y": {
+                "noSvgWithoutTitle": "none"
+            },
+            "nursery": {
+                "useSortedClasses": "warn"
+            }
+        }
+    },
+    "javascript": {
+        "formatter": {
+            "quoteStyle": "double"
+        }
+    }
 }

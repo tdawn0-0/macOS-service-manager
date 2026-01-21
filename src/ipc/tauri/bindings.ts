@@ -36,6 +36,39 @@ async openLogInConsole(logPath: string) : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Get all launchd services from LaunchAgent directories
+ */
+async getLaunchdServices() : Promise<Result<LaunchdService[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_launchd_services") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Get detailed information about a specific launchd service
+ */
+async getLaunchdServiceInfo(path: string) : Promise<Result<LaunchdServiceInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_launchd_service_info", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Manage a launchd service (load/unload/start/stop)
+ */
+async manageLaunchdService(label: string, path: string, command: LaunchdServiceCommand) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("manage_launchd_service", { label, path, command }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -50,6 +83,15 @@ async openLogInConsole(logPath: string) : Promise<Result<null, string>> {
 /** user-defined types **/
 
 export type BrewServiceCommand = "Start" | "Stop" | "Restart" | "Run" | "Kill"
+/**
+ * Represents a launchd service in the list view
+ */
+export type LaunchdService = { label: string; path: string; domain: string; loaded: boolean; running: boolean; pid: number | null }
+export type LaunchdServiceCommand = "Load" | "Unload" | "Start" | "Stop"
+/**
+ * Represents detailed launchd service info
+ */
+export type LaunchdServiceInfo = { label: string; path: string; domain: string; loaded: boolean; running: boolean; pid: number | null; program: string | null; program_arguments: string[] | null; run_at_load: boolean | null; keep_alive: boolean | null; working_directory: string | null; standard_out_path: string | null; standard_error_path: string | null }
 
 /** tauri-specta globals **/
 

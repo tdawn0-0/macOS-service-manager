@@ -11,12 +11,12 @@ A modern, user-friendly desktop application for managing services on macOS. This
     - Auto-refresh service states
     - Toggle service auto-start at login
 
-- 🚀 LaunchCtl Services Management [TODO]
-    - View system and user launch agents/daemons
+- 🚀 LaunchCtl Services Management
+    - View user launch agents from ~/Library/LaunchAgents and /Library/LaunchAgents
     - Load/Unload services
     - Start/Stop running services
-    - Monitor service status
-    - View service configuration details
+    - Monitor service status (loaded, running, PID)
+    - View service configuration details (program, arguments, paths, etc.)
 
 ## Installation
 

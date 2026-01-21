@@ -1,7 +1,9 @@
 mod brew_command;
+mod launchd_command;
 mod open_file_command;
 
 use brew_command::{get_brew_service_info, get_brew_services, manage_brew_service};
+use launchd_command::{get_launchd_service_info, get_launchd_services, manage_launchd_service};
 use open_file_command::open_log_in_console;
 use specta_typescript::Typescript;
 use tauri_specta::{collect_commands, Builder};
@@ -15,6 +17,9 @@ pub fn run() {
             manage_brew_service,
             get_brew_service_info,
             open_log_in_console,
+            get_launchd_services,
+            get_launchd_service_info,
+            manage_launchd_service,
         ]);
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds

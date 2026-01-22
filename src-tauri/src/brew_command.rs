@@ -1,9 +1,6 @@
-use std::path::Path;
 use std::process::{Command, Output};
 use specta::Type;
 use serde::{Serialize, Deserialize};
-use std::sync::Once;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[tauri::command]
 #[specta::specta]

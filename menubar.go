@@ -14,8 +14,9 @@ import (
 )
 
 // menubar is the app's icon in the menu bar, and the panel it opens: the
-// Homebrew services with a switch each, for starting and stopping them
-// without opening the window.
+// services the user runs by hand, with a switch each, for starting and
+// stopping them without opening the window. System agents and daemons are
+// left out: their changes affect the machine, and daemons ask for a password.
 type menubar struct {
 	a     *app
 	win   *mygo.Window // the main window
@@ -23,98 +24,143 @@ type menubar struct {
 	panel *mygo.Window // the open panel, or nil
 }
 
-// brewItems returns the Homebrew services, as the panel lists them.
-func (a *app) brewItems() []service.Item {
-	if st := a.sources[service.Brew]; st != nil {
-		return st.items
+// panelSources lists the sources the panel shows.
+var panelSources = []service.Source{service.Brew, service.UserAgent}
+
+// panelItems returns the items of a source in the panel.
+func (a *app) panelItems(src service.Source) []service.Item {
+	st := a.sources[src]
+	if st == nil {
+		return nil
 	}
-	return nil
+	var items []service.Item
+	for _, it := range st.items {
+		if a.shown(it) {
+			items = append(items, it)
+		}
+	}
+	return items
+}
+
+// panelRunning counts what runs among the items the panel shows.
+func (a *app) panelRunning() int {
+	running := 0
+	for _, src := range panelSources {
+		for _, it := range a.panelItems(src) {
+			if it.Up() {
+				running++
+			}
+		}
+	}
+	return running
 }
 
 // menubarView builds the panel.
 func (a *app) menubarView(c *ui.Context, openWindow func()) {
+	style(c)
+	if a.panelOpen {
+		a.showToasts(c)
+	}
 	t := c.Theme()
 	c.Root().Background(ui.Transparent)
 	box := ui.Column(c).Fill()
 	if !c.Vibrancy() {
-		box.Background(t.Surface).Radius(10).Border(1, t.Border)
+		box.Background(t.Background).Radius(12).Border(1, t.Border)
 	}
-	items := a.brewItems()
-	running := 0
-	for _, it := range items {
-		if it.Active() {
-			running++
-		}
-	}
-	box.Padding(14).Gap(10).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, "Homebrew Services").FontSize(15).Bold().Grow(1)
-			ui.Text(c, fmt.Sprintf("%d running", running)).TextColor(t.TextMuted).FontSize(12)
+	box.Children(func() {
+		ui.Row(c).Shrink(0).Padding(12, 10, 8, 16).AlignItems(ui.Center).Gap(6).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
+				ui.Text(c, "Service Manager").FontSize(14).FontWeight(650).SingleLine()
+				ui.Text(c, fmt.Sprintf("%d running", a.panelRunning())).TextColor(t.TextMuted).FontSize(textCaption)
+			})
+			if a.loading() {
+				ui.Spinner(c).Label("Loading").Size(14, 14)
+			}
+			iconButton(c, iconRestart, "Refresh", t.TextMuted).Disabled(a.loading()).OnClick(func() {
+				for _, src := range panelSources {
+					a.refresh(src)
+				}
+			})
 		})
-		switch st := a.sources[service.Brew]; {
-		case st != nil && st.err != "":
-			ui.Text(c, st.err).TextColor(t.Danger).FontSize(12)
-		case len(items) == 0:
-			ui.Text(c, map[bool]string{true: "Loading…", false: "No Homebrew services"}[a.loading()]).TextColor(t.TextMuted)
-		default:
-			ui.Scroll(c).Grow(1).Gap(2).Children(func() {
+		ui.Scroll(c).Grow(1).MinHeight(0).Padding(0, 8, 8).Gap(2).Children(func() {
+			empty := true
+			for _, src := range panelSources {
+				items := a.panelItems(src)
+				if st := a.sources[src]; st != nil && st.err != "" {
+					ui.Text(c, src.Title()+": "+st.err).TextColor(t.Danger).FontSize(textCaption).Padding(4, 8)
+				}
+				if len(items) == 0 {
+					continue
+				}
+				empty = false
+				ui.Text(c, src.Title()).FontSize(textCaption).FontWeight(650).TextColor(t.TextMuted).Padding(8, 8, 4)
 				for _, it := range items {
 					a.menubarRow(c, it)
 				}
-			})
-		}
-		ui.Divider(c)
-		ui.Row(c).Gap(8).Children(func() {
-			ui.PrimaryButton(c, "Open Service Manager").OnClick(openWindow)
-			ui.Spacer(c)
-			ui.Button(c, "Refresh").Disabled(a.loading()).OnClick(func() { a.refresh(service.Brew) })
-			ui.Button(c, "Quit").OnClick(mygo.App.Quit)
+			}
+			if empty {
+				ui.Text(c, map[bool]string{true: "Loading…", false: "No services"}[a.loading()]).TextColor(t.TextMuted).Padding(8)
+			}
+		})
+		ui.Column(c).Height(1).Shrink(0).Background(hairline(t))
+		ui.Row(c).Shrink(0).Padding(8, 10).Gap(6).AlignItems(ui.Center).Children(func() {
+			labeledButton(c, iconWindow, "Open Service Manager", false).Grow(1).OnClick(openWindow)
+			iconButton(c, iconQuit, "Quit", t.TextMuted).OnClick(mygo.App.Quit)
 		})
 	})
 }
 
+// switchAction returns the action a panel's switch runs, turned on or off.
+func switchAction(actions []service.Action, on bool) service.Action {
+	order := []service.Action{service.Stop, service.Unload}
+	if on {
+		order = []service.Action{service.Start, service.Load, service.Restart}
+	}
+	for _, act := range order {
+		if service.Has(actions, act) {
+			return act
+		}
+	}
+	return ""
+}
+
 func (a *app) menubarRow(c *ui.Context, it service.Item) {
-	t := c.Theme()
-	on := it.Active()
+	on := it.Up()
 	busy := a.busy[it.ID]
-	ui.Row(c.Key(it.ID)).AlignItems(ui.Center).Gap(8).Padding(4, 2).Children(func() {
-		ui.Text(c, "●").TextColor(stateColor(t, it.State)).FontSize(9)
-		ui.Text(c, it.Name).SingleLine().Grow(1).MinWidth(0)
+	row := ui.Row(c.Key(it.ID)).Height(32).Shrink(0).AlignItems(ui.Center).Gap(10).Padding(0, 8).Radius(7)
+	if row.Hovered() {
+		row.Background(c.Theme().Text.Alpha(0.06))
+	}
+	row.Children(func() {
+		statusDot(c, it.State, false)
+		ui.Text(c, it.Name).SingleLine().Grow(1).MinWidth(0).Tooltip(it.Name)
 		if busy {
-			ui.Spinner(c).Label("Working")
+			ui.Spinner(c).Label("Working").Size(13, 13)
 		}
 		if ui.Switch(c, &on).Label(it.Name).Disabled(busy).Changed() {
-			if on {
-				a.request(it, service.Run)
-			} else {
-				a.request(it, service.Stop)
+			if act := switchAction(a.providers[it.Source].Actions(it), on); act != "" {
+				a.request(it, act)
 			}
 		}
 	})
 }
 
-// update shows how many Homebrew services run, beside the icon.
+// update shows how many services run, beside the icon, and redraws the panel:
+// a window of its own, which a change to the main window's state does not.
 func (m *menubar) update() {
-	// The panel is a window of its own, which a change to the main window's
-	// state does not redraw.
 	if m.panel != nil {
 		m.panel.Invalidate()
 	}
 	if m.tray == nil {
 		return
 	}
-	running := 0
-	for _, it := range m.a.brewItems() {
-		if it.Active() {
-			running++
-		}
-	}
+	running := m.a.panelRunning()
 	title := ""
 	if running > 0 {
 		title = fmt.Sprint(running)
 	}
 	m.tray.SetTitle(title)
-	m.tray.SetToolTip(fmt.Sprintf("Service Manager: %d Homebrew services running", running))
+	m.tray.SetToolTip(fmt.Sprintf("Service Manager: %d running", running))
 }
 
 func (m *menubar) showWindow() {
@@ -125,27 +171,44 @@ func (m *menubar) showWindow() {
 	m.win.Focus()
 }
 
+// panelHeight fits the panel to its rows, up to where it scrolls.
+func (a *app) panelHeight() int {
+	const header, footer, row, heading = 54, 50, 34, 30
+	height := header + footer + 16
+	for _, src := range panelSources {
+		if n := len(a.panelItems(src)); n > 0 {
+			height += heading + n*row
+		}
+	}
+	return min(max(height, 200), 540)
+}
+
 // toggle opens the panel below the icon, or closes it.
 func (m *menubar) toggle() {
 	if m.panel != nil {
 		m.panel.Close()
 		return
 	}
-	height := min(max(120+34*len(m.a.brewItems()), 170), 460)
+	m.a.panelOpen = true
 	m.panel = mygo.NewFlyout(mygo.FlyoutOptions{
 		Tray:      m.tray,
 		Placement: mygo.PlacementBottom,
 		Gap:       4,
 		Width:     320,
-		Height:    height,
+		Height:    m.a.panelHeight(),
 		Focusable: true,
 		Shadow:    true,
 		Popover:   true,
 		Content:   ui.View(func(c *ui.Context) { m.a.menubarView(c, m.showWindow) }),
 	})
-	m.panel.OnClosed(func() { m.panel = nil })
+	m.panel.OnClosed(func() {
+		m.panel = nil
+		m.a.panelOpen = false
+	})
 	// What the list shows may be old.
-	m.a.refresh(service.Brew)
+	for _, src := range panelSources {
+		m.a.refresh(src)
+	}
 }
 
 // install puts the icon in the menu bar.

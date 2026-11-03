@@ -9,59 +9,107 @@ import (
 	"macos-service-manager/internal/service"
 )
 
-// view builds the window: the sidebar of sources, the list of items, the
-// details of the item chosen, and the dialogs and toasts over them.
+// barHeight is the height of the title bar's row in each pane, whose top the
+// window controls and dragging the window share.
+const barHeight = 52
+
+// view builds the window: a sidebar of sources over the desktop's material,
+// the list of items, and the details of the items chosen once there are any.
 func (a *app) view(c *ui.Context) {
-	for _, message := range a.toasts {
-		c.Toast(message)
+	style(c)
+	if !a.panelOpen {
+		a.showToasts(c)
 	}
-	a.toasts = a.toasts[:0]
 	if c.Shortcut(ui.Cmd, ui.KeyR) {
 		a.refreshAll()
 	}
 	a.build()
+	a.pruneChosen()
 	a.syncDetail()
-	if a.detail.tab == 1 {
+	if a.detail.tab == 1 && len(a.detail.logs) > 0 {
 		a.pollLog()
 		c.After(logEvery)
 	}
 
 	t := c.Theme()
+	if c.Vibrancy() {
+		c.Root().Background(ui.Transparent)
+	}
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
 		a.sidebar(c)
-		ui.Column(c).Width(1).Background(t.Border)
-		a.listPane(c)
-		ui.Column(c).Width(1).Background(t.Border)
-		a.detailPane(c)
+		ui.Column(c).Grow(1).MinWidth(0).Background(t.Background).Children(func() { a.listPane(c) })
+		if a.chosen.Len() > 0 {
+			ui.Column(c).Width(1).Background(hairline(t))
+			ui.Column(c).Width(336).Shrink(0).Background(t.Background).Children(func() { a.inspector(c) })
+		}
 	})
 	a.askDialog(c)
 	a.editorDialog(c)
 }
 
+func (a *app) showToasts(c *ui.Context) {
+	for _, message := range a.toasts {
+		c.Toast(message)
+	}
+	a.toasts = a.toasts[:0]
+}
+
+// sourceIcon is the icon of a source.
+func sourceIcon(src service.Source) *ui.SVG {
+	switch src {
+	case service.Brew:
+		return iconBrew
+	case service.LoginItem:
+		return iconLogin
+	case service.UserAgent:
+		return iconUser
+	case service.SystemAgent:
+		return iconUsers
+	case service.Daemon:
+		return iconServer
+	}
+	return iconAll
+}
+
+// sidebar has no background over the window's material, where there is one.
 func (a *app) sidebar(c *ui.Context) {
-	navItem := func(id, label string) {
+	t := c.Theme()
+	navItem := func(id string, icon *ui.SVG, label string) {
 		total, running := a.counts(id)
-		ui.SidebarItem(c, id, nil, label).Children(func() {
+		ui.SidebarItem(c, id, icon, label).Children(func() {
+			count := fmt.Sprint(total)
 			if running > 0 {
-				ui.Badge(c, fmt.Sprintf("%d/%d", running, total)).Background(c.Theme().Success).TextColor(c.Theme().AccentText)
-			} else if total > 0 {
-				ui.Badge(c, fmt.Sprint(total))
+				count = fmt.Sprintf("%d/%d", running, total)
+			}
+			if total > 0 {
+				ui.Text(c, count).FontSize(textCaption).Opacity(0.6).SingleLine()
 			}
 		})
 	}
-	if ui.Sidebar(c, &a.nav, func() {
-		navItem(navAll, "All Items")
-		ui.SidebarSection(c, "Services", nil, func() {
-			navItem(string(service.Brew), service.Brew.Title())
-		})
-		ui.SidebarSection(c, "Startup Items", nil, func() {
-			for _, src := range []service.Source{service.UserAgent, service.SystemAgent, service.Daemon, service.LoginItem} {
-				navItem(string(src), src.Title())
-			}
-		})
-	}).Width(210).Changed() {
-		a.chosen.Clear()
+	column := ui.Column(c).Width(216).Shrink(0)
+	if !c.Vibrancy() {
+		column.Background(t.Surface)
 	}
+	column.Children(func() {
+		ui.Row(c).Height(barHeight).Shrink(0).DragWindow()
+		if ui.Sidebar(c, &a.nav, func() {
+			navItem(navAll, iconAll, "All Items")
+			ui.SidebarSection(c, "Apps & Services", nil, func() {
+				for _, src := range []service.Source{service.Brew, service.LoginItem} {
+					navItem(string(src), sourceIcon(src), src.Title())
+				}
+			})
+			ui.SidebarSection(c, "launchd", nil, func() {
+				for _, src := range []service.Source{service.UserAgent, service.SystemAgent, service.Daemon} {
+					navItem(string(src), sourceIcon(src), src.Title())
+				}
+			})
+		}).Grow(1).MinHeight(0).Background(ui.Transparent).Changed() {
+			a.chosen.Clear()
+			a.list.ScrollTo(0, ui.Start)
+		}
+	})
+	ui.Column(c).Width(1).Background(hairline(t))
 }
 
 // navTitle is the title of the list for the sidebar's choice.
@@ -72,59 +120,102 @@ func (a *app) navTitle() string {
 	return service.Source(a.nav).Title()
 }
 
+func plural(n int, one string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %ss", n, one)
+}
+
 func (a *app) listPane(c *ui.Context) {
 	t := c.Theme()
 	total, running := a.counts(a.nav)
-	ui.Column(c).Grow(1).MinWidth(0).Padding(14, 16).Gap(10).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
-				ui.Text(c, a.navTitle()).FontSize(20).Bold().SingleLine()
-				ui.Text(c, fmt.Sprintf("%d items, %d running", total, running)).TextColor(t.TextMuted).FontSize(12).SingleLine()
-			})
-			if a.loading() {
-				ui.Spinner(c).Label("Loading")
-			}
-			if a.nav == navAll || a.nav == string(service.UserAgent) {
-				ui.Button(c, "New Agent…").Tooltip("Create a launch agent").OnClick(a.newAgent)
-			}
-			if a.nav == navAll || a.nav == string(service.LoginItem) {
-				ui.Button(c, "Add Login Item…").Tooltip("Open an app at login").OnClick(a.addLoginItem)
-			}
-			ui.Button(c, "Refresh").Tooltip("Refresh (⌘R)").Disabled(a.loading()).OnClick(a.refreshAll)
+	ui.Row(c).Height(barHeight).Shrink(0).Padding(0, 10, 0, 18).AlignItems(ui.Center).Gap(6).DragWindow().Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
+			ui.Text(c, a.navTitle()).FontSize(15).FontWeight(650).SingleLine()
+			ui.Text(c, fmt.Sprintf("%s · %d running", plural(total, "item"), running)).TextColor(t.TextMuted).FontSize(textCaption).SingleLine()
 		})
-		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.SearchField(c, &a.query).Placeholder("Search name, owner or path").Label("Search").Grow(1)
-			ui.Segmented(c, &a.filter, "All", "Running", "Stopped").Label("Filter")
-		})
-		for _, e := range a.errors() {
-			ui.Text(c, e).TextColor(t.Danger).FontSize(12)
+		if a.loading() {
+			ui.Spinner(c).Label("Loading").Size(14, 14)
 		}
-		if len(a.visible) == 0 {
-			a.emptyList(c)
+		a.addButton(c)
+		b := iconButton(c, iconRestart, "Refresh (⌘R)", t.TextMuted).Disabled(a.loading())
+		b.OnClick(a.refreshAll)
+	})
+	ui.Row(c).Shrink(0).Padding(0, 16, 10).AlignItems(ui.Center).Gap(8).Children(func() {
+		field := ui.SearchField(c, &a.query).Placeholder("Search").Label("Search").Grow(1).MinWidth(0)
+		if c.Shortcut(ui.Cmd, ui.KeyF) {
+			field.Focus()
+		}
+		ui.Segmented(c, &a.filter, "All", "Running", "Stopped").Label("Filter").Shrink(0)
+	})
+	ui.Column(c).Height(1).Shrink(0).Background(hairline(t))
+	for _, e := range a.errors() {
+		ui.Row(c).Shrink(0).Margin(8, 12, 0).Padding(7, 10).Gap(8).Radius(8).Background(t.Danger.Alpha(0.1)).TextColor(t.Danger).Children(func() {
+			ui.Icon(c, iconWarn).FontSize(13).AlignSelf(ui.Start).Margin(1, 0, 0)
+			ui.Text(c, e).FontSize(textSmall).Grow(1).MinWidth(0)
+		})
+	}
+	if len(a.visible) == 0 {
+		a.emptyList(c)
+		return
+	}
+	bulk := a.chosen.Len() > 1
+	ui.List(c, &a.list, len(a.rows)).Grow(1).MinHeight(0).Padding(4, 8, 10).Rows(func(r ui.ListRow) {
+		e := a.rows[r.Index]
+		if e.header {
+			a.sectionHeader(r.Context, e)
 			return
 		}
-		bulk := a.chosen.Len() > 1
-		ui.List(c, &a.list, len(a.visible)).Grow(1).Gap(2).Rows(func(r ui.ListRow) {
-			a.row(r.Context, a.visible[r.Index], bulk, r.Selected() && r.ListFocused())
+		a.row(r, e.item, bulk)
+	})
+}
+
+// addButton offers what can be added to the list shown.
+func (a *app) addButton(c *ui.Context) {
+	t := c.Theme()
+	switch a.nav {
+	case navAll:
+		iconButton(c, iconPlus, "Add", t.TextMuted).Menu(func(m *ui.Menu) {
+			if m.Item("New Launch Agent…").Chosen() {
+				a.newAgent()
+			}
+			if m.Item("Add Login Item…").Chosen() {
+				a.addLoginItem()
+			}
 		})
+	case string(service.UserAgent):
+		iconButton(c, iconPlus, "New Launch Agent…", t.TextMuted).OnClick(a.newAgent)
+	case string(service.LoginItem):
+		iconButton(c, iconPlus, "Add Login Item…", t.TextMuted).OnClick(a.addLoginItem)
+	}
+}
+
+// sectionHeader heads the items of a source, in the list of all of them.
+func (a *app) sectionHeader(c *ui.Context, e listRow) {
+	t := c.Theme()
+	ui.Row(c).Height(30).Padding(0, 10).Gap(7).AlignItems(ui.Center).Background(t.Background).Children(func() {
+		ui.Icon(c, sourceIcon(e.src)).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, e.src.Title()).FontSize(textCaption).FontWeight(650).TextColor(t.TextMuted).Grow(1)
+		ui.Text(c, fmt.Sprint(e.count)).FontSize(textCaption).TextColor(t.TextMuted).Opacity(0.8)
 	})
 }
 
 func (a *app) emptyList(c *ui.Context) {
 	t := c.Theme()
-	ui.Column(c).Grow(1).Center().Gap(4).Children(func() {
+	ui.Column(c).Grow(1).Center().Gap(10).Children(func() {
 		switch {
 		case a.loading() && a.visibleSources() == 0:
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Spinner(c).Label("Loading")
-				ui.Text(c, "Loading…").TextColor(t.TextMuted)
-			})
+			ui.Spinner(c).Label("Loading").Size(20, 20)
+			ui.Text(c, "Loading…").TextColor(t.TextMuted)
 		case a.query != "" || a.filter != 0:
+			ui.Icon(c, iconSearch).FontSize(26).TextColor(t.TextMuted).Opacity(0.5)
 			ui.Text(c, "Nothing matches").TextColor(t.TextMuted)
 			if ui.Button(c, "Clear search and filter").Clicked() {
 				a.query, a.filter = "", 0
 			}
 		default:
+			ui.Icon(c, sourceIcon(service.Source(a.nav))).FontSize(26).TextColor(t.TextMuted).Opacity(0.5)
 			ui.Text(c, "No items").TextColor(t.TextMuted)
 		}
 	})
@@ -141,65 +232,77 @@ func (a *app) visibleSources() int {
 	return n
 }
 
-// stateColor is the color of an item's status dot.
-func stateColor(t *ui.Theme, s service.State) ui.Color {
-	switch s {
-	case service.StateRunning:
-		return t.Success
-	case service.StateScheduled, service.StateLoaded:
-		return t.Warning
-	case service.StateFailed:
-		return t.Danger
-	}
-	return t.TextMuted
-}
-
 // autostartNote is a word about an item's autostart, when it is worth one:
 // an item that is set up as the user would not expect.
 func autostartNote(it service.Item) string {
 	switch {
+	case it.Source == service.Brew && it.Admin:
+		return "at boot"
 	case it.Source == service.Brew && it.Autostart == service.AutostartOn:
 		return "at login"
+	case it.Source == service.Brew:
 	case it.Source == service.LoginItem && it.Autostart == service.AutostartOff:
 		return "off"
-	case it.Source != service.Brew && it.Source != service.LoginItem && it.Autostart == service.AutostartOff:
+	case it.Source != service.LoginItem && it.Autostart == service.AutostartOff:
 		return "disabled"
 	}
 	return ""
 }
 
-// row builds an item of the list. A row chosen while the list has the
-// focus is on the accent color, where muted text would not show.
-func (a *app) row(c *ui.Context, it service.Item, bulk, onAccent bool) {
+// actionIcon is the icon of the main action of an item in its row.
+func actionIcon(act service.Action) *ui.SVG {
+	switch act {
+	case service.Start, service.Load:
+		return iconPlay
+	case service.Stop:
+		return iconStop
+	}
+	return iconRestart
+}
+
+// row builds an item of the list: a state, a name and at most one button,
+// which shows only while the pointer is over the row or the row is chosen. A
+// row chosen is on the accent color, where muted text would not show.
+func (a *app) row(r ui.ListRow, it service.Item, bulk bool) {
+	c := r.Context
 	t := c.Theme()
+	onAccent := r.Selected()
 	muted := t.TextMuted
 	if onAccent {
-		muted = t.AccentText
+		muted = t.AccentText.Alpha(0.8)
 	}
 	busy := a.busy[it.ID]
-	actions := a.providers[it.Source].Actions(it)
-	ui.Row(c).AlignItems(ui.Center).Gap(10).Padding(7, 10).Children(func() {
-		dot := stateColor(t, it.State)
-		if it.State == service.StateNone {
-			dot = ui.Transparent
+	row := ui.Row(c).Height(32).AlignItems(ui.Center).Gap(10).Padding(0, 4, 0, 10)
+	hovered := row.Hovered()
+	row.ContextMenu(func(m *ui.Menu) { a.itemMenu(m, it, true) })
+	row.Children(func() {
+		statusDot(c, it.State, onAccent)
+		ui.Text(c, it.Name).SingleLine().Grow(1).MinWidth(0).Tooltip(it.Name)
+		if it.Source == service.LoginItem && it.Owner != "" {
+			ui.Text(c, it.Owner).TextColor(muted).FontSize(textCaption).SingleLine().MaxWidth(150)
 		}
-		ui.Text(c, "●").TextColor(dot).FontSize(10)
-		ui.Text(c, it.Name).SingleLine().Grow(1).MinWidth(0)
-		if a.nav == navAll {
-			ui.Text(c, it.Source.Short()).TextColor(muted).FontSize(11)
+		if it.Admin {
+			ui.Icon(c, iconLock).FontSize(11).TextColor(muted).Shrink(0).Tooltip("Changing it asks for your password")
 		}
 		if note := autostartNote(it); note != "" {
-			ui.Badge(c, note)
+			ui.Text(c, note).TextColor(muted).FontSize(textCaption).SingleLine().Shrink(0)
 		}
-		if it.State != service.StateNone {
-			ui.Text(c, it.State.String()).TextColor(muted).FontSize(12).Width(60)
+		if a.nav != string(service.LoginItem) || it.State != service.StateNone {
+			ui.Text(c, it.State.String()).TextColor(muted).FontSize(textSmall).Width(60).TextAlign(ui.End).SingleLine().Shrink(0)
 		}
-		if busy {
-			ui.Spinner(c).Label("Working")
-		}
-		if act := service.Primary(actions); act != "" && !bulk {
-			ui.Button(c, act.Label()).Disabled(busy).OnClick(func() { a.request(it, act) })
-		}
+		ui.Box(c).Size(26, 26).Center().Shrink(0).Children(func() {
+			act := service.Primary(a.providers[it.Source].Actions(it))
+			switch {
+			case busy:
+				ui.Spinner(c).Label("Working").Size(13, 13)
+			case act != "" && !bulk && (hovered || r.Selected()):
+				tint := t.Text
+				if onAccent {
+					tint = t.AccentText
+				}
+				iconButton(c, actionIcon(act), act.Label(), tint).OnClick(func() { a.request(it, act) })
+			}
+		})
 	})
 }
 

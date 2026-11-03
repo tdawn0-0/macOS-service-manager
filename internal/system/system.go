@@ -3,6 +3,7 @@ package system
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,16 +24,36 @@ func init() {
 	_ = os.Setenv("PATH", strings.TrimPrefix(path, ":"))
 }
 
+const (
+	// commandTimeout bounds a command, so that one that hangs fails rather
+	// than leaving the interface loading for ever.
+	commandTimeout = 2 * time.Minute
+	// adminTimeout bounds a command as root, which waits for the user to
+	// authenticate.
+	adminTimeout = 5 * time.Minute
+)
+
 // Run runs a command and returns its standard output. It is a variable so
 // that tests can replace it. A command that fails returns an error holding
 // its standard error.
 var Run = run
 
 func run(name string, args ...string) (string, error) {
+	return runFor(commandTimeout, name, args...)
+}
+
+func runFor(timeout time.Duration, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	var stdout, stderr bytes.Buffer
-	cmd := exec.Command(name, args...)
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	// A child that keeps the pipes open must not hold up the answer.
+	cmd.WaitDelay = time.Second
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("%s did not answer in %s", name, timeout)
+		}
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return "", fmt.Errorf("%s", msg)
 		}
@@ -48,8 +69,14 @@ func run(name string, args ...string) (string, error) {
 // authenticate. It is a variable so that tests can replace it.
 var RunAdmin = runAdmin
 
+// runOsascript runs osascript for runAdmin. It is a variable so that tests
+// can replace it.
+var runOsascript = func(script string) (string, error) {
+	return runFor(adminTimeout, "osascript", "-e", script)
+}
+
 func runAdmin(name string, args ...string) (string, error) {
-	out, err := Run("osascript", "-e", AdminScript(name, args...))
+	out, err := runOsascript(AdminScript(name, args...))
 	if err != nil && strings.Contains(err.Error(), "User canceled") {
 		return "", fmt.Errorf("authorization canceled")
 	}
@@ -100,8 +127,11 @@ func OpenLoginItemsSettings() error {
 	return err
 }
 
-// Trash moves a file to the user's Trash.
-func Trash(path string) error {
+// Trash moves a file to the user's Trash. The app sets it to the system's
+// own, which can put the file back; this one only moves it there.
+var Trash = moveToTrash
+
+func moveToTrash(path string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err

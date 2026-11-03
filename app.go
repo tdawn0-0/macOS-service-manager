@@ -85,6 +85,14 @@ type editorState struct {
 // Navigation ids of the sidebar besides the sources'.
 const navAll = "all"
 
+// listRow is a row of the list: an item, or the header of a source's items.
+type listRow struct {
+	header bool
+	src    service.Source
+	count  int
+	item   service.Item
+}
+
 // app is the state of the window. Everything in it is read and written on
 // the main thread: background work hands its results over through post.
 type app struct {
@@ -104,12 +112,14 @@ type app struct {
 	// settle is how long after a command the lists are read once more:
 	// stopping a process takes a moment.
 	settle time.Duration
-	// changed is called when a list has changed.
-	changed func()
 
 	sources map[service.Source]*sourceState
-	busy    map[string]bool // ids of the items a command runs on
-	toasts  []string        // messages the next frame shows
+	// brewNames holds the names of the Homebrew services: launchd lists their
+	// jobs too, which are the same services.
+	brewNames map[string]bool
+	busy      map[string]bool // ids of the items a command runs on
+	toasts    []string        // messages the next frame shows
+	panelOpen bool            // the menu bar's panel shows, and the toasts with it
 
 	nav     string
 	query   string
@@ -117,6 +127,7 @@ type app struct {
 	list    ui.ListState
 	chosen  ui.Selection[string]
 	visible []service.Item // the items listed, built for each frame
+	rows    []listRow      // the rows of the list: the items, under headers
 
 	detail detailState
 	log    logState
@@ -149,9 +160,23 @@ func newAppWith(providers map[service.Source]service.Provider, adder interface{ 
 	for src := range providers {
 		a.sources[src] = &sourceState{}
 	}
-	a.list.Key = func(i int) any { return a.visible[i].ID }
-	a.list.Label = func(i int) string { return a.visible[i].Name }
+	a.list.Key = func(i int) any {
+		if e := a.rows[i]; e.header {
+			return "header:" + string(e.src)
+		}
+		return a.rows[i].item.ID
+	}
+	a.list.Label = func(i int) string {
+		if e := a.rows[i]; e.header {
+			return e.src.Title()
+		}
+		return a.rows[i].item.Name
+	}
+	a.list.Header = func(i int) bool { return a.rows[i].header }
 	a.list.Selection = &a.chosen
+	// The sources load one after the other: the top of the list stays the top
+	// as those above what shows arrive.
+	a.list.KeepOffset = true
 	a.log.list.FollowEnd = true
 	return a
 }
@@ -178,20 +203,27 @@ func (a *app) refresh(src service.Source) {
 		items, err := p.List()
 		a.post(func() {
 			st.loading, st.loaded = false, true
+			st.err = ""
 			if err != nil {
-				st.items, st.err = nil, err.Error()
-			} else {
+				st.err = err.Error()
+			}
+			// A failure leaves what was read last time, unless it came with
+			// items of its own.
+			if err == nil || items != nil {
 				slices.SortStableFunc(items, func(x, y service.Item) int {
 					return strings.Compare(strings.ToLower(x.Name), strings.ToLower(y.Name))
 				})
-				st.items, st.err = items, ""
+				st.items = items
+				if src == service.Brew {
+					a.brewNames = make(map[string]bool, len(items))
+					for _, it := range items {
+						a.brewNames[it.Name] = true
+					}
+				}
 			}
 			if st.again {
 				st.again = false
 				a.refresh(src)
-			}
-			if a.changed != nil {
-				a.changed()
 			}
 		})
 	})
@@ -224,10 +256,27 @@ func (a *app) find(id string) (service.Item, bool) {
 	return service.Item{}, false
 }
 
+// shown reports whether an item is listed: launchd's job of a Homebrew service
+// is the service, listed under Homebrew. A job of a formula Homebrew no longer
+// has is listed, as nothing else shows it.
+func (a *app) shown(it service.Item) bool {
+	if it.Source == service.Brew || it.Source == service.LoginItem {
+		return true
+	}
+	for _, prefix := range []string{"sh.brew.", "homebrew.mxcl."} {
+		if name, ok := strings.CutPrefix(it.Name, prefix); ok {
+			return !a.brewNames[name]
+		}
+	}
+	return true
+}
+
 // build lists the items to show: those of the source chosen in the
-// sidebar that the search and the filter let through.
+// sidebar that the search and the filter let through, under the headers of
+// their sources if there are several.
 func (a *app) build() {
 	a.visible = a.visible[:0]
+	a.rows = a.rows[:0]
 	for _, src := range service.Sources {
 		if a.nav != navAll && a.nav != string(src) {
 			continue
@@ -236,22 +285,22 @@ func (a *app) build() {
 		if st == nil {
 			continue
 		}
+		first := len(a.visible)
 		for _, it := range st.items {
-			if !it.Matches(a.query) {
+			if !a.shown(it) || !it.Matches(a.query) {
 				continue
 			}
-			switch a.filter {
-			case 1:
-				if !it.Active() {
-					continue
-				}
-			case 2:
-				// Login items have no process, so they are never "not running".
-				if it.Active() || it.State == service.StateNone {
-					continue
-				}
+			if (a.filter == 1 && !it.Up()) || (a.filter == 2 && it.Up()) {
+				continue
 			}
 			a.visible = append(a.visible, it)
+		}
+		section := a.visible[first:]
+		if a.nav == navAll && len(section) > 0 {
+			a.rows = append(a.rows, listRow{header: true, src: src, count: len(section)})
+		}
+		for _, it := range section {
+			a.rows = append(a.rows, listRow{src: src, item: it})
 		}
 	}
 }
@@ -263,8 +312,11 @@ func (a *app) counts(nav string) (total, running int) {
 			continue
 		}
 		for _, it := range st.items {
+			if !a.shown(it) {
+				continue
+			}
 			total++
-			if it.Active() {
+			if it.State == service.StateRunning {
 				running++
 			}
 		}
@@ -299,7 +351,24 @@ func (a *app) target() (service.Item, bool) {
 	return service.Item{}, false
 }
 
-// syncDetail loads the details of the item chosen when it changes.
+// pruneChosen forgets the items chosen that are gone, once the lists are read.
+func (a *app) pruneChosen() {
+	if a.loading() || a.chosen.Len() == 0 {
+		return
+	}
+	var gone []string
+	for id := range a.chosen.All() {
+		if _, ok := a.find(id); !ok {
+			gone = append(gone, id)
+		}
+	}
+	for _, id := range gone {
+		a.chosen.Remove(id)
+	}
+}
+
+// syncDetail loads the details of the item chosen when it changes. The tab
+// stays as it is, to read the logs of one item after the other.
 func (a *app) syncDetail() {
 	id := ""
 	if it, ok := a.target(); ok {
@@ -308,7 +377,7 @@ func (a *app) syncDetail() {
 	if id == a.detail.id {
 		return
 	}
-	a.detail = detailState{id: id, seq: a.detail.seq}
+	a.detail = detailState{id: id, seq: a.detail.seq, tab: a.detail.tab}
 	a.log = logState{list: a.log.list}
 	if id != "" {
 		a.loadDetail()
@@ -402,23 +471,73 @@ func (a *app) do(it service.Item, act service.Action) {
 	})
 }
 
-// bulk starts or stops the items chosen that can be.
+// bulkAction returns what a bulk start or stop does to an item, if anything:
+// its main action, when that is starting or stopping it.
+func (a *app) bulkAction(it service.Item, start bool) service.Action {
+	switch act := service.Primary(a.providers[it.Source].Actions(it)); {
+	case start && (act == service.Start || act == service.Load):
+		return act
+	case !start && act == service.Stop:
+		return act
+	}
+	return ""
+}
+
+// bulk starts or stops the items chosen that can be. Those that take an
+// administrator go together, so that macOS asks once rather than for each.
 func (a *app) bulk(start bool) {
+	type group struct {
+		src service.Source
+		act service.Action
+	}
+	batches := map[group][]service.Item{}
 	for id := range a.chosen.All() {
 		it, ok := a.find(id)
 		if !ok {
 			continue
 		}
-		actions := a.providers[it.Source].Actions(it)
-		switch {
-		case start && !it.Active() && it.State != service.StateNone:
-			if act := service.Primary(actions); act != "" {
-				a.request(it, act)
-			}
-		case !start && it.Active() && service.Has(actions, service.Stop):
-			a.request(it, service.Stop)
+		act := a.bulkAction(it, start)
+		switch _, batches_ := a.providers[it.Source].(service.Batcher); {
+		case act == "":
+		case it.Admin && batches_:
+			batches[group{it.Source, act}] = append(batches[group{it.Source, act}], it)
+		default:
+			a.do(it, act)
 		}
 	}
+	for g, items := range batches {
+		if len(items) == 1 {
+			a.do(items[0], g.act)
+		} else {
+			a.doAll(g.src, items, g.act)
+		}
+	}
+}
+
+// doAll runs an action on several items of a source at once.
+func (a *app) doAll(src service.Source, items []service.Item, act service.Action) {
+	for _, it := range items {
+		a.busy[it.ID] = true
+	}
+	batcher := a.providers[src].(service.Batcher)
+	a.spawn(func() {
+		err := batcher.DoAll(items, act)
+		a.post(func() {
+			for _, it := range items {
+				delete(a.busy, it.ID)
+			}
+			if err != nil {
+				a.toast("%s", err)
+			} else {
+				a.toast("%d items %s", len(items), act.Past())
+			}
+			a.refresh(src)
+		})
+		if a.settle > 0 {
+			time.Sleep(a.settle)
+			a.post(func() { a.refresh(src) })
+		}
+	})
 }
 
 // bulkCounts returns how many of the items chosen a bulk start and a bulk
@@ -429,11 +548,10 @@ func (a *app) bulkCounts() (start, stop int) {
 		if !ok {
 			continue
 		}
-		actions := a.providers[it.Source].Actions(it)
-		if !it.Active() && it.State != service.StateNone && service.Primary(actions) != "" {
+		if a.bulkAction(it, true) != "" {
 			start++
 		}
-		if it.Active() && service.Has(actions, service.Stop) {
+		if a.bulkAction(it, false) != "" {
 			stop++
 		}
 	}

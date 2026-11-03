@@ -16,7 +16,7 @@ const (
 )
 
 // Sources lists the sources in the order the interface shows them.
-var Sources = []Source{Brew, UserAgent, SystemAgent, Daemon, LoginItem}
+var Sources = []Source{Brew, LoginItem, UserAgent, SystemAgent, Daemon}
 
 // Title is what the interface calls a source.
 func (s Source) Title() string {
@@ -35,28 +35,11 @@ func (s Source) Title() string {
 	return string(s)
 }
 
-// Short is a word for an item's source in a list of several.
-func (s Source) Short() string {
-	switch s {
-	case Brew:
-		return "brew"
-	case UserAgent:
-		return "user agent"
-	case SystemAgent:
-		return "system agent"
-	case Daemon:
-		return "daemon"
-	case LoginItem:
-		return "login item"
-	}
-	return string(s)
-}
-
 // State is what an item is doing.
 type State int
 
 const (
-	StateNone      State = iota // the source says nothing of a process: login items
+	StateNone      State = iota // the source knows of no process: a login item that is not open
 	StateStopped                // not running, and not loaded where that applies
 	StateLoaded                 // registered with launchd, with no process now
 	StateRunning                // a process runs
@@ -67,15 +50,15 @@ const (
 func (s State) String() string {
 	switch s {
 	case StateStopped:
-		return "stopped"
+		return "Stopped"
 	case StateLoaded:
-		return "loaded"
+		return "Idle"
 	case StateRunning:
-		return "running"
+		return "Running"
 	case StateScheduled:
-		return "scheduled"
+		return "Scheduled"
 	case StateFailed:
-		return "error"
+		return "Error"
 	}
 	return ""
 }
@@ -103,6 +86,12 @@ type Item struct {
 	Owner string
 	// Path is the file that defines the item: a property list or an app.
 	Path string
+	// Kind says what the item is, as "Background helper", if the source
+	// holds more than one kind.
+	Kind string
+	// Admin says that changing the item takes an administrator: macOS asks
+	// the user to authenticate.
+	Admin bool
 }
 
 // Active reports whether the item runs, is scheduled to, or failed while
@@ -114,6 +103,10 @@ func (i Item) Active() bool {
 	}
 	return false
 }
+
+// Up reports whether the item runs, or is set to run at its times, as the
+// Running filter shows.
+func (i Item) Up() bool { return i.State == StateRunning || i.State == StateScheduled }
 
 // Matches reports whether the item's name, owner or path holds the query,
 // ignoring case.
@@ -134,11 +127,9 @@ func (i Item) Matches(query string) bool {
 type Action string
 
 const (
-	Run     Action = "run"     // start now, and leave the autostart as it is
-	Start   Action = "start"   // start now, and register it to start by itself
-	Stop    Action = "stop"    // stop now
+	Start   Action = "start"   // start now, leaving the autostart as it is
+	Stop    Action = "stop"    // stop now, leaving the autostart as it is
 	Restart Action = "restart" // stop and start again
-	Kill    Action = "kill"    // stop now but keep it registered
 	Load    Action = "load"    // register with launchd
 	Unload  Action = "unload"  // unregister from launchd
 	Enable  Action = "enable"  // let it start by itself
@@ -149,16 +140,12 @@ const (
 // Label is the word on the button of an action.
 func (a Action) Label() string {
 	switch a {
-	case Run:
-		return "Run"
 	case Start:
 		return "Start"
 	case Stop:
 		return "Stop"
 	case Restart:
 		return "Restart"
-	case Kill:
-		return "Kill"
 	case Load:
 		return "Load"
 	case Unload:
@@ -176,16 +163,12 @@ func (a Action) Label() string {
 // Past is what an action did, for a message.
 func (a Action) Past() string {
 	switch a {
-	case Run:
-		return "ran"
 	case Start:
 		return "started"
 	case Stop:
 		return "stopped"
 	case Restart:
 		return "restarted"
-	case Kill:
-		return "killed"
 	case Load:
 		return "loaded"
 	case Unload:
@@ -200,8 +183,9 @@ func (a Action) Past() string {
 	return string(a)
 }
 
-// Row is one labeled value of an item's details.
-type Row struct{ Key, Value string }
+// Row is one labeled value of an item's details, under the heading of its
+// group.
+type Row struct{ Group, Key, Value string }
 
 // LogFile is a file an item writes its output to.
 type LogFile struct{ Label, Path string }
@@ -215,7 +199,8 @@ type Detail struct {
 // Provider is a source of items.
 type Provider interface {
 	Source() Source
-	// List returns the items of the source.
+	// List returns the items of the source. It may return items and an error
+	// together: what it could read, and why that is not everything.
 	List() ([]Item, error)
 	// Detail reads an item's values and log files.
 	Detail(Item) (Detail, error)
@@ -228,6 +213,12 @@ type Provider interface {
 	Confirm(Item, Action) string
 	// Do runs an action.
 	Do(Item, Action) error
+}
+
+// Batcher is a provider that runs an action on several items at once, so
+// that macOS asks the user to authenticate only once.
+type Batcher interface {
+	DoAll([]Item, Action) error
 }
 
 // Has reports whether actions holds a.

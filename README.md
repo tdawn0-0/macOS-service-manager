@@ -1,51 +1,51 @@
 # macOS Service Manager
 
-A modern, user-friendly desktop application for managing services on macOS. This tool provides a unified interface to control both Homebrew services and macOS system services (launchd/launchctl).
+A native desktop application for managing services on macOS. It gives one
+interface to Homebrew services and to launchd agents (launchctl).
 
 ## Features
 
-- 🍺 Homebrew Services Management
-    - List all available Homebrew services
-    - Start/Stop/Restart services
-    - View service logs
-    - Auto-refresh service states
-    - Toggle service auto-start at login
-
-- 🚀 LaunchCtl Services Management
-    - View user launch agents from ~/Library/LaunchAgents and /Library/LaunchAgents
-    - Load/Unload services
-    - Start/Stop running services
-    - Monitor service status (loaded, running, PID)
-    - View service configuration details (program, arguments, paths, etc.)
-
-## Installation
-
-[Installation instructions will be added when releases are available]
+- 🍺 Homebrew services
+    - List all Homebrew services with their status and user
+    - Run / Stop from the list; Run, Start, Restart, Stop and Kill from the details
+    - Show a service's details, copy any value, open its logs in Console
+- 🚀 LaunchAgents
+    - List the agents in `~/Library/LaunchAgents` and `/Library/LaunchAgents`
+    - Load / Unload from the list; Start and Stop from the details
+    - Show status (loaded, running, PID) and the agent's configuration
+      (program, arguments, paths, …)
+- `⌘R` refreshes the page being shown.
 
 ## Development
 
-This application is built using [Tauri](https://tauri.app), combining Rust's performance with a modern web frontend.
+The app is written in Go with [MyGo](https://github.com/egoist/mygo). Its
+interface is native UI that MyGo draws on the GPU: there is no webview, no
+frontend and no JavaScript.
 
 ### Prerequisites
 
-- Rust
-- Node.js
-- Bun
-- Xcode Command Line Tools
-- Homebrew (for Homebrew services support)
+- Go 1.27.3 or later
+- Homebrew (for the Homebrew services page)
 
-### Building from Source
+### Commands
 
 ```bash
-# Clone the repository
-git clone [repository-url]
-cd macos-service-manager
+go tool mygo dev      # run with live reload
+go test ./...         # test the views (without a window) and the backends
+go tool mygo build    # package the app: build/darwin-arm64/*.app and *.dmg
+```
 
-# Install dependencies
-bun install
+### Layout
 
-# Run in development mode
-bun run tauri dev
+```
+main.go             the window
+app.go              the state, and the background work that changes it
+view*.go            the interface: tabs, lists and the detail dialog
+internal/brew       `brew services` (list, info, start/stop/…)
+internal/launchd    launch agents: scans property lists, `launchctl list` and commands
+internal/system     runs commands; opens logs in Console
+internal/detail     the rows of a detail dialog
+```
 
-# Build for production
-bun run tauri build
+State is read and written on the main thread only; commands run in a
+goroutine and hand their result back with `Window.Update`.

@@ -1,51 +1,65 @@
 # macOS Service Manager
 
-A native desktop application for managing services on macOS. It gives one
-interface to Homebrew services and to launchd agents (launchctl).
+One native app for everything that starts by itself on a Mac: Homebrew
+services, launch agents and daemons, and login items. Written in Go with
+[MyGo](https://github.com/egoist/mygo); its interface is drawn by MyGo on the
+GPU, with no webview and no JavaScript.
 
-## Features
+## What it manages
 
-- 🍺 Homebrew services
-    - List all Homebrew services with their status and user
-    - Run / Stop from the list; Run, Start, Restart, Stop and Kill from the details
-    - Show a service's details, copy any value, open its logs in Console
-- 🚀 LaunchAgents
-    - List the agents in `~/Library/LaunchAgents` and `/Library/LaunchAgents`
-    - Load / Unload from the list; Start and Stop from the details
-    - Show status (loaded, running, PID) and the agent's configuration
-      (program, arguments, paths, …)
-- `⌘R` refreshes the page being shown.
+| Source | Read | Change |
+|---|---|---|
+| **Homebrew** services | `brew services` | run, start, stop, restart, kill; start at login |
+| **User agents** `~/Library/LaunchAgents` | property lists + launchd | load, unload, start, stop, restart; enable/disable; **create, edit, remove** |
+| **System agents** `/Library/LaunchAgents` | same | load, unload, start, stop, restart; enable/disable |
+| **Daemons** `/Library/LaunchDaemons` | same, without root | the same, after macOS asks you to authenticate |
+| **Login items** | System Settings' database (`sfltool dumpbtm`) | add and remove the apps that open at login; helpers that apps registered are read-only (System Settings has their switch) |
+
+- A sidebar of sources, a searchable list with a Running / Stopped filter, and
+  a panel for the item chosen: its values, a switch for whether it starts by
+  itself, its actions, and its **live logs** (the end of its log files,
+  followed as they grow).
+- Choose several items (⌘-click, Shift-click) to start or stop them together.
+- **Menu bar:** the app stays in the menu bar when its window is closed. Its
+  icon shows how many Homebrew services run, and opens a panel with a switch
+  for each.
+- `⌘R` refreshes.
+- Changes that have consequences ask first: Homebrew cannot change whether a
+  *running* service starts at login, so the app stops it and starts it again,
+  and tells you so before it does; removing an item, and unloading or
+  disabling a daemon, ask too.
 
 ## Development
 
-The app is written in Go with [MyGo](https://github.com/egoist/mygo). Its
-interface is native UI that MyGo draws on the GPU: there is no webview, no
-frontend and no JavaScript.
-
-### Prerequisites
-
-- Go 1.27.3 or later
-- Homebrew (for the Homebrew services page)
-
-### Commands
+Needs Go 1.27.3 or later, and Homebrew for the Homebrew source.
 
 ```bash
 go tool mygo dev      # run with live reload
-go test ./...         # test the views (without a window) and the backends
+go test ./...         # views run without a window; backends run on stubbed commands
 go tool mygo build    # package the app: build/darwin-arm64/*.app and *.dmg
 ```
 
-### Layout
-
 ```
-main.go             the window
-app.go              the state, and the background work that changes it
-view*.go            the interface: tabs, lists and the detail dialog
-internal/brew       `brew services` (list, info, start/stop/…)
-internal/launchd    launch agents: scans property lists, `launchctl list` and commands
-internal/system     runs commands; opens logs in Console
-internal/detail     the rows of a detail dialog
+main.go, menubar.go     the window, and the menu bar icon with its panel
+app.go                  the state, and the background work that changes it
+view*.go                sidebar, list, details, logs, the launch agent editor
+internal/service        the model every source shares: Item, Action, Provider
+internal/brew           Homebrew services
+internal/launchd        launch agents and daemons; the plist editor (edit.go)
+internal/loginitem      login items
+internal/logs           the end of a log file
+internal/system         running commands, and as root through macOS' own prompt
 ```
 
-State is read and written on the main thread only; commands run in a
-goroutine and hand their result back with `Window.Update`.
+Each source is a `service.Provider`; the interface knows nothing of Homebrew
+or launchd. State is read and written on the main thread only; commands run in
+a goroutine and hand their result back with `Window.Update`.
+
+### Notes
+
+- The first time the app adds or removes a login item, macOS asks whether it may
+  control System Events.
+- Daemons are changed with `osascript … with administrator privileges`, which shows
+  macOS' authentication dialog.
+- `brew services` run as root (`sudo brew services`) belong to the system
+  domain: they show up under Daemons.

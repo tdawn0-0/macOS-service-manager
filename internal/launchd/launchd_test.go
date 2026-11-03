@@ -19,6 +19,8 @@ const printOut = `gui/501 = {
 		   409      - 	com.example.running
 		     0      - 	com.example.idle
 		     0   (pe) 	com.example.pending
+		     0      1 	com.example.failed
+		     0    -15 	com.example.signaled
 	}
 
 	unmanaged processes = {
@@ -47,6 +49,38 @@ func TestParsePrint(t *testing.T) {
 	}
 	if !st.Disabled["com.example.off"] || st.Disabled["com.example.idle"] {
 		t.Errorf("disabled = %v", st.Disabled)
+	}
+	for label, want := range map[string]service.State{
+		"com.example.running":  service.StateRunning,
+		"com.example.idle":     service.StateLoaded,
+		"com.example.pending":  service.StateLoaded,
+		"com.example.failed":   service.StateFailed,
+		"com.example.signaled": service.StateLoaded, // how a job is stopped
+		"com.example.missing":  service.StateStopped,
+	} {
+		if got, _ := st.Of(label); got != want {
+			t.Errorf("Of(%s) = %v, want %v", label, got, want)
+		}
+	}
+}
+
+func TestDisabledAndScheduled(t *testing.T) {
+	p := &Provider{Config{service.UserAgent, "/x", "gui/501", false}}
+	on, off := true, false
+	st := ParsePrint(printOut)
+	// The file's key counts only where launchd holds no override.
+	if it := p.item("/x/a", &file{Label: "com.example.new", Disabled: &on}, st); it.Autostart != service.AutostartOff {
+		t.Errorf("Disabled in the file: %+v", it)
+	}
+	if it := p.item("/x/a", &file{Label: "com.example.idle", Disabled: &on}, st); it.Autostart != service.AutostartOn {
+		t.Errorf("an override beats the file: %+v", it)
+	}
+	if it := p.item("/x/a", &file{Label: "com.example.off", Disabled: &off}, st); it.Autostart != service.AutostartOff {
+		t.Errorf("an override beats the file: %+v", it)
+	}
+	interval := 60
+	if it := p.item("/x/a", &file{Label: "com.example.idle", StartInterval: &interval}, st); it.State != service.StateScheduled {
+		t.Errorf("a loaded job with an interval is scheduled: %+v", it)
 	}
 }
 
@@ -134,8 +168,8 @@ func TestDetail(t *testing.T) {
 		rows[r.Key] = r.Value
 	}
 	for k, v := range map[string]string{
-		"program arguments": "/bin/echo hi", "run at load": "true", "keep alive": "on conditions",
-		"start interval": "60 s", "env A": "1", "env B": "2", "pid": "409",
+		"Command": "/bin/echo hi", "Runs": "When loaded, kept alive on conditions, every 60 s",
+		"A": "1", "B": "2", "Process ID": "409",
 	} {
 		if rows[k] != v {
 			t.Errorf("row %q = %q, want %q", k, rows[k], v)
@@ -160,6 +194,8 @@ func TestActions(t *testing.T) {
 		{user, service.Item{State: service.StateRunning, Autostart: service.AutostartOn},
 			[]service.Action{service.Stop, service.Restart, service.Unload, service.Disable, service.Remove}},
 		{user, service.Item{State: service.StateLoaded, Autostart: service.AutostartOn},
+			[]service.Action{service.Start, service.Unload, service.Disable, service.Remove}},
+		{user, service.Item{State: service.StateFailed, Autostart: service.AutostartOn},
 			[]service.Action{service.Start, service.Unload, service.Disable, service.Remove}},
 		{sys, service.Item{State: service.StateStopped, Autostart: service.AutostartOff},
 			[]service.Action{service.Load, service.Enable}},
@@ -204,6 +240,19 @@ func TestDo(t *testing.T) {
 	}
 	if err := daemon.Do(it, service.Remove); err == nil {
 		t.Error("a daemon cannot be removed")
+	}
+}
+
+func TestDoAllAsksOnce(t *testing.T) {
+	calls := stubRun(t, "")
+	daemon := &Provider{Config{service.Daemon, "/x", "system", true}}
+	items := []service.Item{{Name: "a"}, {Name: "b"}}
+	if err := daemon.DoAll(items, service.Start); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"ADMIN", "/bin/sh", "-c", "'launchctl' 'kickstart' 'system/a' && 'launchctl' 'kickstart' 'system/b'"}}
+	if !slices.EqualFunc(*calls, want, slices.Equal) {
+		t.Errorf("calls %q, want %q", *calls, want)
 	}
 }
 

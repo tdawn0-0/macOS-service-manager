@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
+	"macos-service-manager/internal/launchd"
 	"macos-service-manager/internal/service"
 	"macos-service-manager/internal/system"
 )
@@ -42,7 +44,7 @@ type info struct {
 	Cron         *string `json:"cron"`
 }
 
-// ParseList reads the output of `brew services list --json`.
+// parseList reads the output of `brew services list --json`.
 func parseList(data []byte) ([]listed, error) {
 	var services []listed
 	if err := json.Unmarshal(data, &services); err != nil {
@@ -62,6 +64,8 @@ func parseInfo(data []byte) (*info, error) {
 	return &infos[0], nil
 }
 
+// stateOf reads a status of `brew services`: "none" is not loaded, while
+// "stopped", "unknown" and "other" are loaded with no process.
 func stateOf(status string) service.State {
 	switch status {
 	case "started":
@@ -70,62 +74,55 @@ func stateOf(status string) service.State {
 		return service.StateScheduled
 	case "error":
 		return service.StateFailed
+	case "none", "":
+		return service.StateStopped
 	}
-	return service.StateStopped
+	return service.StateLoaded
 }
 
 // Provider is the Homebrew services of the machine.
 type Provider struct {
-	// Registered lists the directories where `brew services start`
-	// installs the property list of a service it registers to start by
-	// itself: a service is registered if one is there. `brew services
-	// list` says only that a service is started, not whether it will be at
-	// login, and its file field is the same either way.
-	Registered []string
+	// AgentDir is where a service registered to start at login has its
+	// property list, and DaemonDir where one registered as root to start at
+	// boot has: a service is registered if one is there. `brew services
+	// list` says only that a service is started, not whether it will be.
+	AgentDir, DaemonDir string
 }
 
 // New returns the provider of the machine's Homebrew services.
 func New() *Provider {
-	p := &Provider{}
-	if home, err := os.UserHomeDir(); err == nil {
-		p.Registered = append(p.Registered, filepath.Join(home, "Library/LaunchAgents"))
+	home, _ := os.UserHomeDir()
+	return &Provider{
+		AgentDir:  filepath.Join(home, "Library/LaunchAgents"),
+		DaemonDir: "/Library/LaunchDaemons",
 	}
-	p.Registered = append(p.Registered, "/Library/LaunchDaemons")
-	return p
 }
 
 func (*Provider) Source() service.Source { return service.Brew }
 
-// registeredPlist returns the property list that registers the service, if
+// registered returns the property list in dir that registers the service, if
 // there is one. Homebrew names it sh.brew.<name>.plist, or
 // homebrew.mxcl.<name>.plist in older versions.
-func (p *Provider) registeredPlist(name string, dirEntries map[string][]string) string {
-	for _, dir := range p.Registered {
-		for _, file := range dirEntries[dir] {
-			if file == "sh.brew."+name+".plist" || file == "homebrew.mxcl."+name+".plist" {
-				return filepath.Join(dir, file)
-			}
+func registered(dir, name string) string {
+	for _, file := range []string{"sh.brew." + name + ".plist", "homebrew.mxcl." + name + ".plist"} {
+		path := filepath.Join(dir, file)
+		if _, err := os.Stat(path); err == nil {
+			return path
 		}
 	}
 	return ""
 }
 
-func (p *Provider) readDirs() map[string][]string {
-	entries := map[string][]string{}
-	for _, dir := range p.Registered {
-		files, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, f := range files {
-			entries[dir] = append(entries[dir], f.Name())
-		}
-	}
-	return entries
+// labelOf is the launchd label of the job a service's property list defines.
+func labelOf(path string) string {
+	return strings.TrimSuffix(filepath.Base(path), ".plist")
 }
 
+// items reads the services. Those registered as root are jobs of the system
+// domain, of which `brew services` run as the user reports nothing: their
+// state comes from launchd.
 func (p *Provider) items(services []listed) []service.Item {
-	dirs := p.readDirs()
+	var system_ *launchd.State
 	items := make([]service.Item, 0, len(services))
 	for _, s := range services {
 		it := service.Item{
@@ -139,8 +136,17 @@ func (p *Provider) items(services []listed) []service.Item {
 		if s.User != nil {
 			it.Owner = *s.User
 		}
-		if plist := p.registeredPlist(s.Name, dirs); plist != "" {
-			it.Autostart = service.AutostartOn
+		if plist := registered(p.AgentDir, s.Name); plist != "" {
+			it.Autostart, it.Path = service.AutostartOn, plist
+		} else if plist := registered(p.DaemonDir, s.Name); plist != "" {
+			it.Autostart, it.Path, it.Admin, it.Owner = service.AutostartOn, plist, true, "root"
+			if system_ == nil {
+				system_ = &launchd.State{}
+				if out, err := system.Run("launchctl", "print", "system"); err == nil {
+					*system_ = launchd.ParsePrint(out)
+				}
+			}
+			it.State, it.PID = system_.Of(labelOf(plist))
 		}
 		items = append(items, it)
 	}
@@ -173,36 +179,47 @@ func (p *Provider) Detail(it service.Item) (service.Detail, error) {
 
 func detailOf(i *info, it service.Item) service.Detail {
 	var d service.Detail
-	add := func(k, v string) { d.Rows = append(d.Rows, service.Row{Key: k, Value: v}) }
-	str := func(k string, v *string) {
-		if v != nil && *v != "" {
-			add(k, *v)
+	add := func(group, k, v string) {
+		if v != "" {
+			d.Rows = append(d.Rows, service.Row{Group: group, Key: k, Value: v})
 		}
 	}
-	num := func(k string, v *int) {
-		if v != nil {
-			add(k, strconv.Itoa(*v))
+	str := func(v *string) string {
+		if v == nil {
+			return ""
 		}
+		return *v
 	}
-	add("name", i.Name)
-	add("service name", i.ServiceName)
-	add("status", i.Status)
-	add("running", strconv.FormatBool(i.Running))
-	add("loaded", strconv.FormatBool(i.Loaded))
-	add("starts at login", map[service.Autostart]string{
-		service.AutostartOn: "yes", service.AutostartOff: "no", service.AutostartUnknown: "unknown",
-	}[it.Autostart])
-	num("pid", i.PID)
-	num("exit code", i.ExitCode)
-	str("user", i.User)
-	str("file", i.File)
-	str("command", i.Command)
-	str("working dir", i.WorkingDir)
-	str("root dir", i.RootDir)
-	str("log", i.LogPath)
-	str("error log", i.ErrorLogPath)
-	num("interval", i.Interval)
-	str("cron", i.Cron)
+	num := func(v *int) string {
+		if v == nil {
+			return ""
+		}
+		return strconv.Itoa(*v)
+	}
+	const status, program, files = "Status", "Program", "Files"
+	switch {
+	case it.PID > 0:
+		add(status, "Process ID", strconv.Itoa(it.PID))
+	default:
+		add(status, "Process ID", num(i.PID))
+	}
+	add(status, "Last exit code", num(i.ExitCode))
+	if it.Admin {
+		add(status, "Runs as", "root")
+	} else {
+		add(status, "Runs as", str(i.User))
+	}
+	add(status, "Service name", i.ServiceName)
+	add(program, "Command", str(i.Command))
+	add(program, "Working directory", str(i.WorkingDir))
+	add(program, "Root directory", str(i.RootDir))
+	if i.Interval != nil {
+		add(program, "Runs every", fmt.Sprintf("%d s", *i.Interval))
+	}
+	add(program, "Schedule", str(i.Cron))
+	add(files, "Property list", it.Path)
+	add(files, "Output log", str(i.LogPath))
+	add(files, "Error log", str(i.ErrorLogPath))
 	if i.LogPath != nil && *i.LogPath != "" {
 		d.Logs = append(d.Logs, service.LogFile{Label: "Output", Path: *i.LogPath})
 	}
@@ -215,49 +232,111 @@ func detailOf(i *info, it service.Item) service.Detail {
 func (*Provider) Actions(it service.Item) []service.Action {
 	var actions []service.Action
 	if it.Active() {
-		actions = []service.Action{service.Stop, service.Restart, service.Kill}
+		actions = []service.Action{service.Stop, service.Restart}
 	} else {
-		actions = []service.Action{service.Run, service.Start}
+		actions = []service.Action{service.Start}
 	}
-	if it.Autostart == service.AutostartOn {
+	switch {
+	case it.Autostart == service.AutostartOn:
 		return append(actions, service.Disable)
+	case it.Admin:
+		return actions
 	}
 	return append(actions, service.Enable)
 }
 
 func (*Provider) Confirm(it service.Item, a service.Action) string {
-	if (a == service.Enable || a == service.Disable) && it.Active() {
-		return fmt.Sprintf("Homebrew cannot change whether a service starts at login while it runs, "+
-			"so %s will be stopped and started again. It is interrupted for a few seconds.", it.Name)
+	if it.Admin && a == service.Disable {
+		return fmt.Sprintf("%s runs as root, at boot. This stops it and deletes %s.", it.Name, filepath.Base(it.Path))
 	}
 	return ""
 }
 
-func (*Provider) Do(it service.Item, a service.Action) error {
-	services := func(command, name string) error {
-		_, err := system.Run("brew", "services", command, name)
+// Do runs an action. Starting and stopping leave whether the service starts
+// at login as it is, and turning that on or off leaves the service running or
+// stopped: brew's own words mix the two, `start` and `stop` also registering
+// and unregistering.
+func (p *Provider) Do(it service.Item, a service.Action) error {
+	if it.Admin {
+		return doAsRoot(it, a)
+	}
+	services := func(args ...string) error {
+		_, err := system.Run("brew", append(append([]string{"services"}, args...), it.Name)...)
+		return err
+	}
+	registeredNow := it.Autostart == service.AutostartOn
+	switch a {
+	case service.Start:
+		switch {
+		case it.State == service.StateLoaded:
+			// Both refuse a service that is loaded.
+			return services("restart")
+		case registeredNow:
+			return services("start")
+		}
+		return services("run")
+	case service.Stop:
+		if registeredNow {
+			return services("stop", "--keep")
+		}
+		return services("stop")
+	case service.Restart:
+		return services("restart")
+	case service.Enable:
+		return p.register(it)
+	case service.Disable:
+		return p.unregister(it)
+	}
+	return fmt.Errorf("brew: unknown action %q", a)
+}
+
+// register makes the service start at login, as `brew services start` does
+// but for starting it now: it puts the service's property list where launchd
+// looks at login.
+func (p *Provider) register(it service.Item) error {
+	data, err := os.ReadFile(it.Path)
+	if err != nil {
+		return fmt.Errorf("read the service file: %w", err)
+	}
+	if err := os.MkdirAll(p.AgentDir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(p.AgentDir, filepath.Base(it.Path)), data, 0o644)
+}
+
+// unregister keeps the service from starting at login, as `brew services
+// stop` does but for stopping it now.
+func (p *Provider) unregister(it service.Item) error {
+	path := registered(p.AgentDir, it.Name)
+	if path == "" {
+		return nil
+	}
+	return os.Remove(path)
+}
+
+// doAsRoot changes a service registered as root. Homebrew's commands, run as
+// the user, cannot reach it, and launchctl is all they would run.
+func doAsRoot(it service.Item, a service.Action) error {
+	target := "system/" + labelOf(it.Path)
+	admin := func(args ...string) error {
+		_, err := system.RunAdmin("launchctl", args...)
 		return err
 	}
 	switch a {
-	case service.Run, service.Start, service.Stop, service.Restart, service.Kill:
-		return services(string(a), it.Name)
-	case service.Enable:
-		// start refuses a service that runs, so stop it first.
-		if it.Active() {
-			if err := services("stop", it.Name); err != nil {
-				return err
-			}
+	case service.Start:
+		if it.State == service.StateStopped {
+			return admin("bootstrap", "system", it.Path)
 		}
-		return services("start", it.Name)
+		return admin("kickstart", target)
+	case service.Stop:
+		return admin("bootout", target)
+	case service.Restart:
+		return admin("kickstart", "-k", target)
 	case service.Disable:
-		// stop unregisters the service as it stops it: run it again if it ran.
-		if err := services("stop", it.Name); err != nil {
-			return err
-		}
-		if it.Active() {
-			return services("run", it.Name)
-		}
-		return nil
+		// Not loaded is fine too.
+		script := "launchctl bootout " + system.ShellQuote(target) + "; rm -f " + system.ShellQuote(it.Path)
+		_, err := system.RunAdmin("/bin/sh", "-c", script)
+		return err
 	}
-	return fmt.Errorf("brew: unknown action %q", a)
+	return fmt.Errorf("brew: %s does not apply to a service of root", a)
 }

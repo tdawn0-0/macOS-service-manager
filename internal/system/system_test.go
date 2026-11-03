@@ -1,6 +1,10 @@
 package system
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestAdminScriptQuotes(t *testing.T) {
 	got := AdminScript("launchctl", "bootstrap", "system", `/Library/LaunchDaemons/it's "a".plist`)
@@ -11,12 +15,19 @@ func TestAdminScriptQuotes(t *testing.T) {
 }
 
 func TestRunAdminCanceled(t *testing.T) {
-	old := Run
-	defer func() { Run = old }()
-	Run = func(string, ...string) (string, error) {
+	old := runOsascript
+	defer func() { runOsascript = old }()
+	runOsascript = func(string) (string, error) {
 		return "", errString("execution error: User canceled. (-128)")
 	}
 	if _, err := runAdmin("true"); err == nil || err.Error() != "authorization canceled" {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestACommandThatHangsFails(t *testing.T) {
+	_, err := runFor(50*time.Millisecond, "sleep", "30")
+	if err == nil || !strings.Contains(err.Error(), "did not answer") {
 		t.Errorf("err = %v", err)
 	}
 }

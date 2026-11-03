@@ -15,16 +15,34 @@ import (
 	"macos-service-manager/internal/system"
 )
 
-// job is what launchd says of a loaded job.
-type job struct {
+// Job is what launchd says of a loaded job.
+type Job struct {
 	PID int // 0 if no process runs
+	// Exit is its last exit status: negative for the signal that ended it,
+	// 0 if it never ran or launchd prints no number.
+	Exit int
 }
 
 // State is what launchd says of a domain: its loaded jobs, and the
 // overrides that disable jobs.
 type State struct {
-	Jobs     map[string]job
+	Jobs     map[string]Job
 	Disabled map[string]bool
+}
+
+// Of returns the state of the job with the label, and its process ID. A job
+// ended by a signal did not fail: that is how a job is stopped.
+func (st State) Of(label string) (service.State, int) {
+	j, ok := st.Jobs[label]
+	switch {
+	case !ok:
+		return service.StateStopped, 0
+	case j.PID > 0:
+		return service.StateRunning, j.PID
+	case j.Exit > 0:
+		return service.StateFailed, 0
+	}
+	return service.StateLoaded, 0
 }
 
 // ParsePrint reads the output of `launchctl print <domain>` (the
@@ -32,7 +50,7 @@ type State struct {
 // can run for the system domain as well as their own. A service line is a
 // process ID (0 for none), a last exit status and the label.
 func ParsePrint(out string) State {
-	st := State{Jobs: map[string]job{}, Disabled: map[string]bool{}}
+	st := State{Jobs: map[string]Job{}, Disabled: map[string]bool{}}
 	block := ""
 	for _, line := range strings.Split(out, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -54,7 +72,8 @@ func ParsePrint(out string) State {
 				continue
 			}
 			pid, _ := strconv.Atoi(fields[0])
-			st.Jobs[fields[len(fields)-1]] = job{PID: pid}
+			exit, _ := strconv.Atoi(fields[1])
+			st.Jobs[fields[len(fields)-1]] = Job{PID: pid, Exit: exit}
 		case "disabled":
 			label, state, ok := strings.Cut(trimmed, " => ")
 			if ok {
@@ -67,16 +86,58 @@ func ParsePrint(out string) State {
 
 // file is the part of a property list the app reads.
 type file struct {
-	Label             string            `plist:"Label"`
-	Program           *string           `plist:"Program"`
-	ProgramArguments  []string          `plist:"ProgramArguments"`
-	RunAtLoad         *bool             `plist:"RunAtLoad"`
-	KeepAlive         any               `plist:"KeepAlive"`
-	StartInterval     *int              `plist:"StartInterval"`
-	WorkingDirectory  *string           `plist:"WorkingDirectory"`
-	StandardOutPath   *string           `plist:"StandardOutPath"`
-	StandardErrorPath *string           `plist:"StandardErrorPath"`
-	Environment       map[string]string `plist:"EnvironmentVariables"`
+	Label                 string            `plist:"Label"`
+	Disabled              *bool             `plist:"Disabled"`
+	Program               *string           `plist:"Program"`
+	ProgramArguments      []string          `plist:"ProgramArguments"`
+	RunAtLoad             *bool             `plist:"RunAtLoad"`
+	KeepAlive             any               `plist:"KeepAlive"`
+	StartInterval         *int              `plist:"StartInterval"`
+	StartCalendarInterval any               `plist:"StartCalendarInterval"`
+	WorkingDirectory      *string           `plist:"WorkingDirectory"`
+	StandardOutPath       *string           `plist:"StandardOutPath"`
+	StandardErrorPath     *string           `plist:"StandardErrorPath"`
+	Environment           map[string]string `plist:"EnvironmentVariables"`
+}
+
+// scheduled reports whether the job runs at times of its own.
+func (f *file) scheduled() bool { return f.StartInterval != nil || f.StartCalendarInterval != nil }
+
+// disabledIn reports whether launchd keeps the job from loading: as the
+// domain's overrides say, or else as its file does.
+func (f *file) disabledIn(st State) bool {
+	if off, ok := st.Disabled[f.Label]; ok {
+		return off
+	}
+	return f.Disabled != nil && *f.Disabled
+}
+
+// runs says in words when the job runs, once loaded.
+func (f *file) runs() string {
+	var when []string
+	if f.RunAtLoad != nil && *f.RunAtLoad {
+		when = append(when, "when loaded")
+	}
+	switch k := f.KeepAlive.(type) {
+	case bool:
+		if k {
+			when = append(when, "kept alive")
+		}
+	case nil:
+	default:
+		when = append(when, "kept alive on conditions")
+	}
+	if f.StartInterval != nil {
+		when = append(when, fmt.Sprintf("every %d s", *f.StartInterval))
+	}
+	if f.StartCalendarInterval != nil {
+		when = append(when, "on a schedule")
+	}
+	if len(when) == 0 {
+		return "On demand"
+	}
+	s := strings.Join(when, ", ")
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func readFile(path string) (*file, error) {
@@ -143,18 +204,16 @@ func (p *Provider) item(path string, f *file, st State) service.Item {
 		ID:     string(p.Config.Source) + ":" + path,
 		Source: p.Config.Source,
 		Name:   f.Label,
-		State:  service.StateStopped,
 		Path:   path,
 		Owner:  p.Domain,
+		Admin:  p.Elevated,
 	}
-	if j, ok := st.Jobs[f.Label]; ok {
-		it.State = service.StateLoaded
-		if j.PID > 0 {
-			it.State, it.PID = service.StateRunning, j.PID
-		}
+	it.State, it.PID = st.Of(f.Label)
+	if it.State == service.StateLoaded && f.scheduled() {
+		it.State = service.StateScheduled
 	}
 	it.Autostart = service.AutostartOn
-	if st.Disabled[f.Label] {
+	if f.disabledIn(st) {
 		it.Autostart = service.AutostartOff
 	}
 	return it
@@ -199,54 +258,49 @@ func (p *Provider) Detail(it service.Item) (service.Detail, error) {
 	if err != nil {
 		return service.Detail{}, err
 	}
-	return detailOf(p.item(it.Path, f, st), f), nil
+	return detailOf(p.item(it.Path, f, st), f, st), nil
 }
 
-func detailOf(it service.Item, f *file) service.Detail {
+func detailOf(it service.Item, f *file, st State) service.Detail {
 	var d service.Detail
-	add := func(k, v string) { d.Rows = append(d.Rows, service.Row{Key: k, Value: v}) }
-	str := func(k string, v *string) {
-		if v != nil && *v != "" {
-			add(k, *v)
+	add := func(group, k, v string) {
+		if v != "" {
+			d.Rows = append(d.Rows, service.Row{Group: group, Key: k, Value: v})
 		}
 	}
-	add("label", it.Name)
-	add("path", it.Path)
-	add("domain", it.Owner)
-	add("state", map[bool]string{true: it.State.String(), false: "stopped"}[it.State != service.StateNone])
+	str := func(v *string) string {
+		if v == nil {
+			return ""
+		}
+		return *v
+	}
+	const status, program, environment, files = "Status", "Program", "Environment", "Files"
 	if it.PID > 0 {
-		add("pid", strconv.Itoa(it.PID))
+		add(status, "Process ID", strconv.Itoa(it.PID))
 	}
-	add("starts by itself", map[service.Autostart]string{
-		service.AutostartOn: "yes", service.AutostartOff: "no (disabled)",
-	}[it.Autostart])
-	str("program", f.Program)
+	if j := st.Jobs[it.Name]; j.Exit != 0 {
+		add(status, "Last exit code", strconv.Itoa(j.Exit))
+	}
+	add(status, "Runs", f.runs())
+	add(status, "Label", it.Name)
+	add(status, "Domain", it.Owner)
+	command := str(f.Program)
 	if f.ProgramArguments != nil {
-		add("program arguments", strings.Join(f.ProgramArguments, " "))
+		command = strings.Join(f.ProgramArguments, " ")
 	}
-	if f.RunAtLoad != nil {
-		add("run at load", strconv.FormatBool(*f.RunAtLoad))
-	}
-	switch k := f.KeepAlive.(type) {
-	case bool:
-		add("keep alive", strconv.FormatBool(k))
-	case map[string]any:
-		add("keep alive", "on conditions")
-	}
-	if f.StartInterval != nil {
-		add("start interval", fmt.Sprintf("%d s", *f.StartInterval))
-	}
-	str("working directory", f.WorkingDirectory)
+	add(program, "Command", command)
+	add(program, "Working directory", str(f.WorkingDirectory))
 	keys := make([]string, 0, len(f.Environment))
 	for k := range f.Environment {
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
 	for _, k := range keys {
-		add("env "+k, f.Environment[k])
+		add(environment, k, f.Environment[k])
 	}
-	str("standard out", f.StandardOutPath)
-	str("standard error", f.StandardErrorPath)
+	add(files, "Property list", it.Path)
+	add(files, "Output log", str(f.StandardOutPath))
+	add(files, "Error log", str(f.StandardErrorPath))
 	if f.StandardOutPath != nil && *f.StandardOutPath != "" {
 		d.Logs = append(d.Logs, service.LogFile{Label: "Output", Path: *f.StandardOutPath})
 	}
@@ -262,7 +316,7 @@ func (p *Provider) Actions(it service.Item) []service.Action {
 	switch it.State {
 	case service.StateRunning:
 		actions = []service.Action{service.Stop, service.Restart, service.Unload}
-	case service.StateLoaded:
+	case service.StateLoaded, service.StateScheduled, service.StateFailed:
 		actions = []service.Action{service.Start, service.Unload}
 	default:
 		actions = []service.Action{service.Load}
@@ -320,36 +374,59 @@ func (p *Provider) launchctls(commands ...[]string) error {
 	return err
 }
 
-func (p *Provider) Do(it service.Item, a service.Action) error {
+// commands returns what launchctl runs for an action on an item.
+func (p *Provider) commands(it service.Item, a service.Action) ([][]string, error) {
 	target := p.Domain + "/" + it.Name
 	switch a {
 	case service.Load:
 		if it.Autostart == service.AutostartOff {
 			// A disabled job cannot be loaded.
-			return p.launchctls([]string{"enable", target}, []string{"bootstrap", p.Domain, it.Path})
+			return [][]string{{"enable", target}, {"bootstrap", p.Domain, it.Path}}, nil
 		}
-		return p.launchctl("bootstrap", p.Domain, it.Path)
+		return [][]string{{"bootstrap", p.Domain, it.Path}}, nil
 	case service.Unload:
-		return p.launchctl("bootout", target)
+		return [][]string{{"bootout", target}}, nil
 	case service.Start:
-		return p.launchctl("kickstart", target)
+		return [][]string{{"kickstart", target}}, nil
 	case service.Restart:
-		return p.launchctl("kickstart", "-k", target)
+		return [][]string{{"kickstart", "-k", target}}, nil
 	case service.Stop:
-		return p.launchctl("kill", "SIGTERM", target)
+		return [][]string{{"kill", "SIGTERM", target}}, nil
 	case service.Enable:
-		return p.launchctl("enable", target)
+		return [][]string{{"enable", target}}, nil
 	case service.Disable:
-		return p.launchctl("disable", target)
-	case service.Remove:
+		return [][]string{{"disable", target}}, nil
+	}
+	return nil, fmt.Errorf("launchd: unknown action %q", a)
+}
+
+func (p *Provider) Do(it service.Item, a service.Action) error {
+	if a == service.Remove {
 		if p.Config.Source != service.UserAgent {
 			return fmt.Errorf("only user agents can be removed")
 		}
 		if it.State != service.StateStopped {
 			// Not loaded is fine too.
-			_ = p.launchctl("bootout", target)
+			_ = p.launchctl("bootout", p.Domain+"/"+it.Name)
 		}
 		return system.Trash(it.Path)
 	}
-	return fmt.Errorf("launchd: unknown action %q", a)
+	commands, err := p.commands(it, a)
+	if err != nil {
+		return err
+	}
+	return p.launchctls(commands...)
+}
+
+// DoAll runs an action on several items, under one authentication.
+func (p *Provider) DoAll(items []service.Item, a service.Action) error {
+	var all [][]string
+	for _, it := range items {
+		commands, err := p.commands(it, a)
+		if err != nil {
+			return err
+		}
+		all = append(all, commands...)
+	}
+	return p.launchctls(all...)
 }

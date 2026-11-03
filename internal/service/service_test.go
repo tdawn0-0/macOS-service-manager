@@ -2,13 +2,18 @@ package service
 
 import "testing"
 
-func TestItemActiveAndMatches(t *testing.T) {
-	for state, want := range map[State]bool{
-		StateNone: false, StateStopped: false, StateLoaded: false,
-		StateRunning: true, StateScheduled: true, StateFailed: true,
+func TestItemStatesAndMatches(t *testing.T) {
+	for state, want := range map[State][2]bool{
+		StateNone:      {false, false},
+		StateStopped:   {false, false},
+		StateLoaded:    {false, false},
+		StateRunning:   {true, true},
+		StateScheduled: {true, true},
+		StateFailed:    {true, false},
 	} {
-		if got := (Item{State: state}).Active(); got != want {
-			t.Errorf("Active(%v) = %v, want %v", state, got, want)
+		it := Item{State: state}
+		if it.Active() != want[0] || it.Up() != want[1] {
+			t.Errorf("%v: Active %v, Up %v, want %v", state, it.Active(), it.Up(), want)
 		}
 	}
 	it := Item{Name: "Redis", Owner: "jyeu", Path: "/opt/homebrew/opt/redis/sh.brew.redis.plist"}
@@ -20,14 +25,14 @@ func TestItemActiveAndMatches(t *testing.T) {
 }
 
 func TestPrimaryAndToggle(t *testing.T) {
-	actions := []Action{Enable, Run, Start}
-	if got := Primary(actions); got != Run {
-		t.Errorf("Primary = %q, want run", got)
+	actions := []Action{Enable, Start, Restart}
+	if got := Primary(actions); got != Start {
+		t.Errorf("Primary = %q, want start", got)
 	}
 	if got := Toggle(actions); got != Enable {
 		t.Errorf("Toggle = %q, want enable", got)
 	}
-	if Primary([]Action{Disable, Remove}) != "" || Toggle([]Action{Run}) != "" {
+	if Primary([]Action{Disable, Remove}) != "" || Toggle([]Action{Start}) != "" {
 		t.Error("an item with only the toggle has no primary action, one without it no toggle")
 	}
 	if !Has(actions, Start) || Has(actions, Stop) {
@@ -37,7 +42,7 @@ func TestPrimaryAndToggle(t *testing.T) {
 
 func TestPastReadsAsEnglish(t *testing.T) {
 	for a, want := range map[Action]string{
-		Run: "ran", Start: "started", Stop: "stopped", Restart: "restarted", Kill: "killed",
+		Start: "started", Stop: "stopped", Restart: "restarted",
 		Load: "loaded", Unload: "unloaded", Enable: "enabled", Disable: "disabled", Remove: "removed",
 	} {
 		if got := a.Past(); got != want {

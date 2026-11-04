@@ -92,13 +92,12 @@ echo "==> Making the environment \"release\", for release tags only"
 gh api -X PUT 'repos/{owner}/{repo}/environments/release' --silent --input - <<'EOF'
 {"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
 EOF
-# GitHub matches a policy against GITHUB_REF. For a tag that is refs/tags/<name>,
-# and * does not match a slash, so the prefix has to be in the pattern.
-# Without it the job never starts, because no tag is allowed.
+# GitHub matches these against the tag name, as v1.0.0. A character class and a
+# refs/tags/ prefix both fail that match, and the job never starts.
 custom=$(gh api 'repos/{owner}/{repo}/environments/release' --jq '.deployment_branch_policy.custom_branch_policies')
 [ "$custom" = true ] || die "the release environment does not limit which tags can use it"
 policies=$(gh api 'repos/{owner}/{repo}/environments/release/deployment-branch-policies' --jq '.branch_policies // [] | .[].name')
-for pattern in 'refs/tags/v[0-9]*' 'refs/tags/msm-v[0-9]*'; do
+for pattern in 'v*' 'msm-v*' 'refs/tags/v*' 'refs/tags/msm-v*'; do
 	printf '%s\n' "$policies" | grep -qxF "$pattern" ||
 		gh api -X POST 'repos/{owner}/{repo}/environments/release/deployment-branch-policies' --silent -f name="$pattern" -f type=tag
 	echo "    $pattern"

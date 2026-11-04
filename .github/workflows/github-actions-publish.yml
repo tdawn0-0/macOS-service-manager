@@ -108,7 +108,9 @@ jobs:
           security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
             -P "$MACOS_CERTIFICATE_PASSWORD" -f pkcs12 \
             -T /usr/bin/codesign -T /usr/bin/security
-          security import "$RUNNER_TEMP/authority.cer" -k "$keychain"
+          # The runner usually has this intermediate already. Importing it again
+          # stops the job, and the certificate is still trusted without a second copy.
+          security import "$RUNNER_TEMP/authority.cer" -k "$keychain" || true
           security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
           security list-keychains -d user -s "$keychain"
           security default-keychain -s "$keychain"

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -162,8 +163,8 @@ func (a *app) itemMenu(m *ui.Menu, it service.Item, inRow bool) {
 			}
 		}
 	}
-	if it.Source == service.UserAgent && m.Item("Edit…").Chosen() {
-		a.editAgent(it)
+	if slices.Contains(jobKinds, it.Source) && m.Item("Edit…").Chosen() {
+		a.editJob(it)
 	}
 	if filepath.IsAbs(it.Path) {
 		if m.Item("Reveal in Finder").Chosen() {

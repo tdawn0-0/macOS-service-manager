@@ -90,7 +90,7 @@ const xmlPlist = `<?xml version="1.0" encoding="UTF-8"?>
   <key>Label</key><string>com.example.running</string>
   <key>ProgramArguments</key><array><string>/bin/echo</string><string>hi</string></array>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>KeepAlive</key><dict><key>Crashed</key><true/></dict>
   <key>StartInterval</key><integer>60</integer>
   <key>EnvironmentVariables</key><dict><key>B</key><string>2</string><key>A</key><string>1</string></dict>
   <key>StandardOutPath</key><string>/tmp/x.log</string>
@@ -198,7 +198,7 @@ func TestActions(t *testing.T) {
 		{user, service.Item{State: service.StateFailed, Autostart: service.AutostartOn},
 			[]service.Action{service.Start, service.Unload, service.Disable, service.Remove}},
 		{sys, service.Item{State: service.StateStopped, Autostart: service.AutostartOff},
-			[]service.Action{service.Load, service.Enable}},
+			[]service.Action{service.Load, service.Enable, service.Remove}},
 	} {
 		if got := c.p.Actions(c.it); !slices.Equal(got, c.want) {
 			t.Errorf("Actions(%v) = %v, want %v", c.it.State, got, c.want)
@@ -237,9 +237,6 @@ func TestDo(t *testing.T) {
 		if !slices.EqualFunc(*calls, c.want, slices.Equal) {
 			t.Errorf("%s: calls %q, want %q", c.a, *calls, c.want)
 		}
-	}
-	if err := daemon.Do(it, service.Remove); err == nil {
-		t.Error("a daemon cannot be removed")
 	}
 }
 
@@ -283,6 +280,17 @@ func TestConfirm(t *testing.T) {
 	it := service.Item{Name: "x", Path: "/a/x.plist"}
 	if user.Confirm(it, service.Remove) == "" || daemon.Confirm(it, service.Unload) == "" || daemon.Confirm(it, service.Disable) == "" {
 		t.Error("removing, and unloading or disabling a daemon, ask first")
+	}
+	for _, p := range []*Provider{daemon, {Config{Source: service.SystemAgent}}} {
+		msg := p.Confirm(it, service.Remove)
+		for _, want := range []string{"password", "may stop working", "not an undo", "Put Back cannot return it to the a folder", "reinstall"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("%s lacks %q: %q", p.Config.Source, want, msg)
+			}
+		}
+	}
+	if strings.Contains(user.Confirm(it, service.Remove), "password") {
+		t.Error("a user agent needs no password")
 	}
 	if user.Confirm(it, service.Stop) != "" || user.Confirm(it, service.Unload) != "" || daemon.Confirm(it, service.Start) != "" {
 		t.Error("ordinary actions do not ask")

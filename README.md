@@ -12,8 +12,8 @@ GPU, with no webview and no JavaScript.
 | **Homebrew** services | `brew services`, and launchd for those registered as root | start, stop, restart; start at login |
 | **Login items** | System Settings' database, with Full Disk Access; otherwise System Events, for the apps only | add and remove the apps that open at login; helpers that apps registered are read-only (System Settings has their switch) |
 | **User agents** `~/Library/LaunchAgents` | property lists + launchd | load, unload, start, stop, restart; enable/disable; **create, edit, remove** |
-| **System agents** `/Library/LaunchAgents` | same | load, unload, start, stop, restart; enable/disable |
-| **Daemons** `/Library/LaunchDaemons` | same, without root | the same, after macOS asks you to authenticate |
+| **System agents** `/Library/LaunchAgents` | same | load, unload, start, stop, restart; enable/disable; **create, edit, remove**, after macOS asks you to authenticate |
+| **Daemons** `/Library/LaunchDaemons` | same, without root | the same, all after macOS asks you to authenticate |
 
 - A sidebar of sources, a searchable list grouped by source with a Running /
   Stopped filter, and details that open with the item chosen: its values, a
@@ -31,6 +31,13 @@ GPU, with no webview and no JavaScript.
   Items offers it again. Allowing it opens System Settings: a small page follows
   its window with an icon to drag, the icon shows the way into the list, and
   during the drag all but that window darkens.
+- **New jobs** run a shell command or a program, as a service (restarting never,
+  after a crash or always; when a disk mounts; while a queue directory has files),
+  at an interval, or on a calendar in the fields of cron. A daemon can also set its
+  user, group and root directory, which launchd ignores outside the system domain.
+- **Editing or removing a system agent or daemon** asks first, and macOS then asks
+  for your password once. An edit says which keys of the file change, and asks
+  nothing if none do. A removal says that the Trash is no undo for it (see Notes).
 - `⌘R` refreshes, `⌘F` goes to the search. A right click on a row lists
   everything that can be done to it.
 - Reading never asks for a password. Changing something does only where macOS
@@ -82,11 +89,11 @@ icon, and what follows the pointer as it is dragged.
 main.go, menubar.go     the window, and the menu bar icon with its panel
 guide.go                the welcome guide, its window, and the overlay that shows where to drag
 app.go                  the state, and the background work that changes it
-view*.go                sidebar, list, details, logs, the launch agent editor
+view*.go                sidebar, list, details, logs, the editor of launchd's jobs
 theme.go, icons.go      the look: colors, status dots, buttons, icons
 internal/service        the model every source shares: Item, Action, Provider
 internal/brew           Homebrew services
-internal/launchd        launch agents and daemons; the plist editor (edit.go)
+internal/launchd        launch agents and daemons; the plist editor (edit.go), calendars (calendar.go)
 internal/loginitem      login items, from System Settings' database (database.go)
 internal/logs           the end of a log file
 internal/system         running commands, as root through macOS' own prompt; where System Settings' window is
@@ -120,6 +127,19 @@ a goroutine and hand their result back with `Window.Update`.
 - The first time the app uses System Events, to list the login items without
   Full Disk Access, or to add or remove one, macOS asks whether it may control it.
 - Daemons are changed with `osascript … with administrator privileges`, which shows
-  macOS' authentication dialog.
+  macOS' authentication dialog. A new daemon or system agent is written to a
+  temporary file, checked, and installed by root as `root:wheel`, without which
+  launchd refuses it; a daemon loads in the same step, so that macOS asks once.
+- An edit of one replaces the file all at once, and only then unloads and loads the
+  job, so a failure leaves the job running as it was. A job that launchd will not
+  unload is not removed either, since it would run on without a file.
+- **Removing a daemon or system agent is not undone by the Trash.** The Trash keeps a
+  copy, which root hands over to the user by way of a temporary directory, so Put
+  Back cannot return it. To restore it, reinstall the software it came from, or
+  install the file as root; for a daemon, `sudo install -m 644 -o root -g wheel
+  <file> /Library/LaunchDaemons/` and `sudo launchctl bootstrap system <that path>`.
+- Editing a job keeps what the form cannot say: other keys of its property list,
+  `KeepAlive` conditions, and calendars that are not all the combinations of their
+  values.
 - UI tests write screenshots of every pane, light, dark and at the smallest
   window size, with `MSM_SHOTS=<dir> go test -run TestShots .`

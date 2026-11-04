@@ -98,6 +98,11 @@ type file struct {
 	StandardOutPath       *string           `plist:"StandardOutPath"`
 	StandardErrorPath     *string           `plist:"StandardErrorPath"`
 	Environment           map[string]string `plist:"EnvironmentVariables"`
+	StartOnMount          *bool             `plist:"StartOnMount"`
+	QueueDirectories      []string          `plist:"QueueDirectories"`
+	UserName              *string           `plist:"UserName"`
+	GroupName             *string           `plist:"GroupName"`
+	RootDirectory         *string           `plist:"RootDirectory"`
 }
 
 // scheduled reports whether the job runs at times of its own.
@@ -124,6 +129,12 @@ func (f *file) runs() string {
 			when = append(when, "kept alive")
 		}
 	case nil:
+	case map[string]any:
+		if success, ok := k["SuccessfulExit"].(bool); ok && !success && len(k) == 1 {
+			when = append(when, "restarted after a crash")
+		} else {
+			when = append(when, "kept alive on conditions")
+		}
 	default:
 		when = append(when, "kept alive on conditions")
 	}
@@ -132,6 +143,12 @@ func (f *file) runs() string {
 	}
 	if f.StartCalendarInterval != nil {
 		when = append(when, "on a schedule")
+	}
+	if f.StartOnMount != nil && *f.StartOnMount {
+		when = append(when, "when a disk mounts")
+	}
+	if len(f.QueueDirectories) > 0 {
+		when = append(when, "while a queue has files")
 	}
 	if len(when) == 0 {
 		return "On demand"
@@ -326,16 +343,15 @@ func (p *Provider) Actions(it service.Item) []service.Action {
 	} else {
 		actions = append(actions, service.Disable)
 	}
-	if p.Config.Source == service.UserAgent {
-		actions = append(actions, service.Remove)
-	}
-	return actions
+	return append(actions, service.Remove)
 }
 
 func (p *Provider) Confirm(it service.Item, a service.Action) string {
 	switch {
-	case a == service.Remove:
+	case a == service.Remove && p.Config.Source == service.UserAgent:
 		return fmt.Sprintf("Unload %s and move %s to the Trash?", it.Name, filepath.Base(it.Path))
+	case a == service.Remove:
+		return fmt.Sprintf("This unloads the job and moves its file to the Trash, which is not an undo: Put Back cannot return it to the %s folder. To get it back, reinstall the software it came from, or install the file again as root. Until then that software may stop working. macOS will ask for your password.", filepath.Base(filepath.Dir(it.Path)))
 	case p.Elevated && (a == service.Unload || a == service.Disable):
 		return fmt.Sprintf("%s is a system daemon. Changing it can affect the software that depends on it. Continue?", it.Name)
 	}
@@ -403,7 +419,7 @@ func (p *Provider) commands(it service.Item, a service.Action) ([][]string, erro
 func (p *Provider) Do(it service.Item, a service.Action) error {
 	if a == service.Remove {
 		if p.Config.Source != service.UserAgent {
-			return fmt.Errorf("only user agents can be removed")
+			return p.removeAsRoot(it)
 		}
 		if it.State != service.StateStopped {
 			// Not loaded is fine too.

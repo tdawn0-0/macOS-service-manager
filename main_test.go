@@ -535,8 +535,8 @@ func TestNewLaunchAgent(t *testing.T) {
 
 	h := newHarness(t)
 	h.click("User Agents")
-	h.click("New Launch Agent…")
-	h.wantText("New Launch Agent", "Label", "Command", "Save")
+	h.click("New Job…")
+	h.wantText("New Job", "Label", "Command", "Save", "User Agent", "System Agent", "Daemon", "As a service")
 
 	// Invalid: the error shows, and nothing is written.
 	h.click("Save")
@@ -552,7 +552,7 @@ func TestNewLaunchAgent(t *testing.T) {
 	if err := h.tt.Click("Command"); err != nil {
 		t.Fatal(err)
 	}
-	h.tt.Type("/bin/sleep")
+	h.tt.Type("sleep 1 && echo done")
 	h.tt.Frame()
 	h.click("Save")
 
@@ -565,7 +565,7 @@ func TestNewLaunchAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.Label != "com.example.job" || !slices.Equal(spec.Args, []string{"/bin/sleep"}) || !spec.RunAtLoad {
+	if spec.Label != "com.example.job" || !slices.Equal(spec.Args, []string{"/bin/sh", "-c", "sleep 1 && echo done"}) || !spec.RunAtLoad {
 		t.Errorf("spec = %+v\n%s", spec, data)
 	}
 	if !strings.HasSuffix(spec.StdOut, "/Library/Logs/com.example.job.log") {
@@ -740,8 +740,13 @@ func shots(t *testing.T, dir, name string, dark bool, width, height int) {
 		t.Fatal(err)
 	}
 	shot(h.tt, "5-bulk")
-	h.click("New Launch Agent…")
+	h.click("New Job…")
 	shot(h.tt, "6-editor")
+	h.a.editor.kind, h.a.editor.when = 2, whenCalendar
+	h.a.editor.minute, h.a.editor.hour, h.a.editor.weekday = "0,30", "9-17", "1-5"
+	shot(h.tt, "6-editor-daemon-calendar")
+	h.a.editor.kind, h.a.editor.when = 0, whenService
+	h.a.editor.minute, h.a.editor.hour, h.a.editor.weekday = "", "", ""
 	h.click("Cancel")
 	h.click("Login Items")
 	h.click("Mac Mouse Fix Helper")
@@ -1095,6 +1100,324 @@ func TestBundleOf(t *testing.T) {
 	} {
 		if got := bundleOf(exe); got != want {
 			t.Errorf("bundleOf(%q) = %q, want %q", exe, got, want)
+		}
+	}
+}
+
+// rootJobs is a source of jobs that only root can write, which remembers them.
+type rootJobs struct {
+	fake
+	made   []launchd.Spec
+	loads  []bool
+	edited []string
+	dir    string
+	err    error
+}
+
+func (r *rootJobs) SaveAsRoot(s launchd.Spec, existing string, load bool) (string, error) {
+	r.made, r.loads, r.edited = append(r.made, s), append(r.loads, load), append(r.edited, existing)
+	if r.err != nil {
+		return "", r.err
+	}
+	return filepath.Join(r.dir, s.Label+".plist"), nil
+}
+
+func (h *harness) typeInto(label, text string) {
+	h.t.Helper()
+	if err := h.tt.Click(label); err != nil {
+		h.t.Fatalf("click %q: %v\ntexts: %q", label, err, h.tt.Texts())
+	}
+	h.tt.Type(text)
+	h.tt.Frame()
+}
+
+func TestANewDaemonGoesToRootWithItsUser(t *testing.T) {
+	old := system.Run
+	defer func() { system.Run = old }()
+	system.Run = func(string, ...string) (string, error) { return "", nil }
+
+	h := newHarness(t)
+	h.tt.SetSize(1080, 1500)
+	jobs := &rootJobs{fake: fake{src: service.Daemon}, dir: "/Library/LaunchDaemons"}
+	h.a.providers[service.Daemon] = jobs
+	h.click("Daemons")
+	h.click("New Job…")
+	if h.a.editor.source() != service.Daemon {
+		t.Fatalf("the form opens on the list's kind: %v", h.a.editor.source())
+	}
+	h.wantText("Starts at boot", "Runs as", "User", "Group", "Root directory")
+
+	h.typeInto("Label", "com.example.nightly")
+	h.typeInto("Command", "/usr/local/bin/backup")
+	h.typeInto("User", "_backup")
+	h.click("Save")
+	if len(jobs.made) != 1 || !jobs.loads[0] {
+		t.Fatalf("made %+v, loads %v, error %q", jobs.made, jobs.loads, h.a.editor.err)
+	}
+	spec := jobs.made[0]
+	if spec.UserName != "_backup" || spec.Label != "com.example.nightly" {
+		t.Errorf("spec = %+v", spec)
+	}
+	// A log root could write, but this user may not.
+	if spec.StdOut != "" {
+		t.Errorf("a daemon with a user has no default log: %q", spec.StdOut)
+	}
+	if h.a.editor.open || h.a.nav != string(service.Daemon) {
+		t.Errorf("open %v, nav %q", h.a.editor.open, h.a.nav)
+	}
+	if entries, _ := os.ReadDir(h.a.agentDir); len(entries) != 0 {
+		t.Errorf("nothing goes to the user's agents: %v", entries)
+	}
+
+	// As root, its log goes where root logs.
+	h.a.newJob()
+	h.a.editor.label, h.a.editor.args = "com.example.root", "/bin/date"
+	got, err := h.a.editor.spec()
+	if err != nil || got.StdOut != "/Library/Logs/com.example.root.log" {
+		t.Errorf("spec = %+v, %v", got, err)
+	}
+}
+
+func TestASystemAgentHasNoUserAndNoDefaultLog(t *testing.T) {
+	h := newHarness(t)
+	jobs := &rootJobs{fake: fake{src: service.SystemAgent}, dir: "/Library/LaunchAgents"}
+	h.a.providers[service.SystemAgent] = jobs
+	h.click("System Agents")
+	h.click("New Job…")
+	h.wantText("Starts at login", "Saving asks for your password")
+	h.wantNoText("Runs as", "Root directory", "if no log file is set")
+	h.a.editor.label, h.a.editor.args = "com.example.all", "/bin/date"
+	got, err := h.a.editor.spec()
+	if err != nil || got.StdOut != "" {
+		t.Errorf("spec = %+v, %v", got, err)
+	}
+}
+
+func TestAFailureToCreateARootJobKeepsTheForm(t *testing.T) {
+	h := newHarness(t)
+	h.a.providers[service.Daemon] = &rootJobs{fake: fake{src: service.Daemon}, err: errors.New("authorization canceled")}
+	h.click("Daemons")
+	h.click("New Job…")
+	h.typeInto("Label", "com.example.nightly")
+	h.typeInto("Command", "/bin/date")
+	h.click("Save")
+	if !h.a.editor.open || !h.tt.HasText("authorization canceled") {
+		t.Errorf("open %v, %q", h.a.editor.open, h.tt.Texts())
+	}
+}
+
+func TestTheFormsScheduleModes(t *testing.T) {
+	h := newHarness(t)
+	h.tt.SetSize(1080, 1500)
+	h.click("User Agents")
+	h.click("New Job…")
+	e := &h.a.editor
+	e.label, e.args = "com.example.job", "/bin/date"
+
+	// As a service: restarting after a crash runs it at load, whatever the switch.
+	h.click("After a crash")
+	spec, err := e.spec()
+	if err != nil || !spec.RestartOnCrash || spec.KeepAlive {
+		t.Errorf("spec = %+v, %v", spec, err)
+	}
+	h.tt.Frame()
+	e.mount, e.queue = true, "/tmp/a, /tmp/b"
+
+	// A schedule drops what only a service does, which it no longer shows.
+	h.click("At an interval")
+	h.wantText("Run every (seconds)", "Also starts at login")
+	h.wantNoText("Queue directories", "Restarts")
+	if e.restart != restartNever || e.mount || e.queue != "" || e.runAtLoad {
+		t.Errorf("after choosing an interval: %+v", e)
+	}
+	if _, err := e.spec(); err == nil {
+		t.Error("an interval needs its seconds")
+	}
+	e.interval = "90"
+	if spec, err := e.spec(); err != nil || spec.StartInterval != 90 {
+		t.Errorf("spec = %+v, %v", spec, err)
+	}
+
+	h.click("On a calendar")
+	h.wantText("Minute", "Hour", "Day", "Month", "Weekday")
+	if _, err := e.spec(); err == nil {
+		t.Error("a calendar needs a field")
+	}
+	e.hour, e.weekday = "9-17", "1-5"
+	h.tt.Frame()
+	spec, err = e.spec()
+	if err != nil || spec.StartInterval != 0 || spec.Calendar.Hour != "9-17" || spec.Calendar.Weekday != "1-5" {
+		t.Errorf("spec = %+v, %v", spec, err)
+	}
+	e.minute = "61"
+	if _, err := e.spec(); err == nil || !strings.Contains(err.Error(), "0-59") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestEditingKeepsWhatTheFormDoesNotShow(t *testing.T) {
+	old := system.Run
+	defer func() { system.Run = old }()
+	system.Run = func(string, ...string) (string, error) { return "", nil }
+
+	h := newHarness(t)
+	path := filepath.Join(h.a.agentDir, "com.example.mixed.plist")
+	if err := os.WriteFile(path, []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>com.example.mixed</string>
+<key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string><string>date</string></array>
+<key>StartInterval</key><integer>60</integer>
+<key>KeepAlive</key><true/>
+<key>StartOnMount</key><true/>
+<key>QueueDirectories</key><array><string>/tmp/q</string></array>
+<key>Nice</key><integer>5</integer>
+</dict></plist>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.a.editJob(service.Item{Name: "com.example.mixed", Path: path, Source: service.UserAgent})
+	e := &h.a.editor
+	if e.command != commandShell || e.args != "date" || e.when != whenInterval || e.restart != restartAlways || !e.mount || e.queue != "/tmp/q" {
+		t.Fatalf("loaded: %+v", e)
+	}
+	spec, err := e.spec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !spec.KeepAlive || !spec.StartOnMount || len(spec.QueueDirs) != 1 || spec.StartInterval != 60 {
+		t.Errorf("an edit without a change drops nothing: %+v", spec)
+	}
+}
+
+// rootJobFile writes a daemon's file, as its installer might have.
+func rootJobFile(t *testing.T) (dir, path string) {
+	t.Helper()
+	dir = t.TempDir()
+	path = filepath.Join(dir, "com.vendor.helper.plist")
+	if err := os.WriteFile(path, []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>com.vendor.helper</string>
+<key>Program</key><string>/opt/vendor/helper</string>
+<key>UserName</key><string>_vendor</string>
+<key>MachServices</key><dict><key>com.vendor.helper</key><true/></dict>
+</dict></plist>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir, path
+}
+
+func TestEditingARootJobSaysWhatChangesBeforeThePassword(t *testing.T) {
+	old := system.Run
+	defer func() { system.Run = old }()
+	system.Run = func(string, ...string) (string, error) { return "", nil }
+
+	dir, path := rootJobFile(t)
+	h := newHarness(t)
+	h.tt.SetSize(1080, 1500)
+	jobs := &rootJobs{fake: fake{src: service.Daemon}, dir: dir}
+	h.a.providers[service.Daemon] = jobs
+	h.a.editJob(service.Item{Name: "com.vendor.helper", Path: path, Source: service.Daemon, State: service.StateRunning})
+	h.tt.Frame()
+	h.wantText("Edit Job", "Saving asks for your password", "Runs as", "Reload it after saving")
+	if got := h.a.editor.user; got != "_vendor" {
+		t.Errorf("user = %q", got)
+	}
+
+	// Nothing to save: no question, no password, and no restart.
+	h.click("Save")
+	if h.a.editor.open || h.a.ask.open || len(jobs.made) != 0 {
+		t.Fatalf("open %v, ask %v, made %v", h.a.editor.open, h.a.ask.open, jobs.made)
+	}
+
+	h.a.editJob(service.Item{Name: "com.vendor.helper", Path: path, Source: service.Daemon, State: service.StateRunning})
+	h.tt.Frame()
+	h.a.editor.user = "_other"
+	h.a.editor.runAtLoad = true
+	h.click("Save")
+	h.wantText("Save changes to com.vendor.helper?", "This changes RunAtLoad, UserName.", "restarts it if it runs", "macOS will ask for your password")
+	if len(jobs.made) != 0 {
+		t.Fatal("saved before the answer")
+	}
+	// Cancel, left of the answer and above the form's own, goes back to the form
+	// with what was typed.
+	answer, ok := h.tt.Find("Save Changes")
+	if !ok {
+		t.Fatal("no answer")
+	}
+	h.tt.ClickAt(answer.X-20, answer.Y+answer.H/2)
+	h.tt.Frame()
+	if h.a.ask.open || !h.a.editor.open || h.a.editor.user != "_other" || len(jobs.made) != 0 {
+		t.Fatalf("ask %v, form %v, made %v", h.a.ask.open, h.a.editor.open, jobs.made)
+	}
+
+	h.click("Save")
+	h.click("Save Changes")
+	if len(jobs.made) != 1 || jobs.edited[0] != path || !jobs.loads[0] || jobs.made[0].UserName != "_other" {
+		t.Fatalf("made %+v, edited %v, loads %v, error %q", jobs.made, jobs.edited, jobs.loads, h.a.editor.err)
+	}
+	if h.a.editor.open {
+		t.Error("the form stays open")
+	}
+}
+
+func TestAJobSavedButNotLoadedIsEditedNext(t *testing.T) {
+	old := system.Run
+	defer func() { system.Run = old }()
+	system.Run = func(string, ...string) (string, error) { return "", nil }
+
+	h := newHarness(t)
+	jobs := &savedNotLoaded{rootJobs{fake: fake{src: service.Daemon}, dir: "/Library/LaunchDaemons"}}
+	h.a.providers[service.Daemon] = jobs
+	h.click("Daemons")
+	h.click("New Job…")
+	h.a.editor.label, h.a.editor.args = "com.example.d", "/bin/date"
+	h.tt.Frame()
+	h.click("Save")
+	h.wantText("saved, but it did not load")
+	if want := "/Library/LaunchDaemons/com.example.d.plist"; h.a.editor.existing != want {
+		t.Errorf("existing = %q, want %q", h.a.editor.existing, want)
+	}
+}
+
+// savedNotLoaded saves a job and fails to load it.
+type savedNotLoaded struct{ rootJobs }
+
+func (s *savedNotLoaded) SaveAsRoot(spec launchd.Spec, existing string, load bool) (string, error) {
+	path, _ := s.rootJobs.SaveAsRoot(spec, existing, load)
+	return path, errors.New("saved, but it did not load: Input/output error")
+}
+
+func TestAnyKindOfJobCanBeEditedAndRemoved(t *testing.T) {
+	for _, c := range []struct {
+		src  service.Source
+		nav  string
+		list func() *launchd.Provider
+	}{
+		{service.SystemAgent, "System Agents", launchd.SystemAgents},
+		{service.Daemon, "Daemons", launchd.Daemons},
+	} {
+		h := newHarness(t)
+		item := service.Item{ID: string(c.src) + ":/x/com.example.job.plist", Source: c.src, Name: "com.example.job", Path: "/x/com.example.job.plist", State: service.StateLoaded}
+		h.a.providers[c.src] = c.list()
+		h.a.sources[c.src].items = []service.Item{item}
+		h.click(c.nav)
+		if err := h.tt.RightClick("com.example.job"); err != nil {
+			t.Fatal(err)
+		}
+		h.tt.Frame()
+		menu := fmt.Sprint(h.tt.Menu())
+		for _, want := range []string{"Edit…", "Remove…"} {
+			if !strings.Contains(menu, want) {
+				t.Errorf("%s: the menu lacks %q: %s", c.src, want, menu)
+			}
+		}
+		if err := h.tt.ChooseMenuItem("Remove…"); err != nil {
+			t.Fatal(err)
+		}
+		h.tt.Frame()
+		h.wantText("Remove com.example.job?", "not an undo", "may stop working", "macOS will ask for your password")
+		h.click("Cancel")
+		if h.a.ask.open {
+			t.Errorf("%s: the question stays open", c.src)
 		}
 	}
 }

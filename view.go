@@ -43,8 +43,9 @@ func (a *app) view(c *ui.Context) {
 			ui.Column(c).Width(336).Shrink(0).Background(t.Background).Children(func() { a.inspector(c) })
 		}
 	})
-	a.askDialog(c)
 	a.editorDialog(c)
+	// Above the form, which asks too.
+	a.askDialog(c)
 }
 
 func (a *app) showToasts(c *ui.Context) {
@@ -201,15 +202,15 @@ func (a *app) addButton(c *ui.Context) {
 	switch a.nav {
 	case navAll:
 		iconButton(c, iconPlus, "Add", t.TextMuted).Menu(func(m *ui.Menu) {
-			if m.Item("New Launch Agent…").Chosen() {
-				a.newAgent()
+			if m.Item("New Job…").Chosen() {
+				a.newJob()
 			}
 			if m.Item("Add Login Item…").Chosen() {
 				a.addLoginItem()
 			}
 		})
-	case string(service.UserAgent):
-		iconButton(c, iconPlus, "New Launch Agent…", t.TextMuted).OnClick(a.newAgent)
+	case string(service.UserAgent), string(service.SystemAgent), string(service.Daemon):
+		iconButton(c, iconPlus, "New Job…", t.TextMuted).OnClick(a.newJob)
 	case string(service.LoginItem):
 		iconButton(c, iconPlus, "Add Login Item…", t.TextMuted).OnClick(a.addLoginItem)
 	}

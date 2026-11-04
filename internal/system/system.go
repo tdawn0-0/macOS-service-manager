@@ -127,6 +127,12 @@ func OpenLoginItemsSettings() error {
 	return err
 }
 
+// OpenFullDiskAccessSettings opens System Settings at Full Disk Access.
+func OpenFullDiskAccessSettings() error {
+	_, err := Run("open", "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles")
+	return err
+}
+
 // Trash moves a file to the user's Trash. The app sets it to the system's
 // own, which can put the file back; this one only moves it there.
 var Trash = moveToTrash

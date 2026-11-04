@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"image"
 	"os"
 	"path/filepath"
 	"slices"
@@ -26,6 +27,34 @@ type sourceState struct {
 	again   bool // a refresh was asked for while one was running
 	loaded  bool
 	err     string
+	// limit is what macOS kept the last read from listing, and reading says
+	// the user asked for it, which macOS is authenticating.
+	limit   *service.Restriction
+	reading bool
+}
+
+// guideState is the page that leads the user to allow what macOS restricts.
+type guideState struct {
+	open bool
+	src  service.Source
+	// welcome says it opened by itself at launch, not at the user's asking.
+	welcome bool
+	checked time.Time // when it last checked whether access was allowed
+	// allowedAt is when access was allowed, which the page says for a moment.
+	allowedAt time.Time
+	// joined says System Settings was opened: the page is a small one beside
+	// its window now, where settings says that window is.
+	joined       bool
+	settings     system.Rect
+	settingsOpen bool
+	// windowAt and overlayAt are where the page's window and the overlay's are
+	// on screen, and icon is the center of the icon in the page.
+	windowAt, overlayAt image.Point
+	icon                image.Point
+	// flightStart is when the icon started showing how to drag it.
+	flightStart time.Time
+	// dragging says the user is dragging the icon, and dragged that they did.
+	dragging, dragged bool
 }
 
 // detailState is the details of the item chosen.
@@ -109,15 +138,23 @@ type app struct {
 	copy      func(string)
 	reveal    func(path string)
 	chooseApp func() (string, bool)
+	// showGuide, hideGuide and joinGuide show the guide's window, close it, and
+	// make it follow System Settings. redrawGuide redraws its windows.
+	showGuide, hideGuide, joinGuide, redrawGuide func()
+	// appPath is the app's bundle, which the guide offers to drag, and
+	// welcomedPath the file that says it opened at launch already.
+	appPath, welcomedPath string
 	// settle is how long after a command the lists are read once more:
 	// stopping a process takes a moment.
 	settle time.Duration
 
+	guide   guideState
 	sources map[service.Source]*sourceState
 	// brewNames holds the names of the Homebrew services: launchd lists their
 	// jobs too, which are the same services.
 	brewNames map[string]bool
 	busy      map[string]bool // ids of the items a command runs on
+	gone      map[string]bool // ids of items removed that a read may still return
 	toasts    []string        // messages the next frame shows
 	panelOpen bool            // the menu bar's panel shows, and the toasts with it
 
@@ -148,14 +185,19 @@ func newApp() *app {
 
 func newAppWith(providers map[service.Source]service.Provider, adder interface{ Add(string) error }, agentDir string) *app {
 	a := &app{
-		providers: providers,
-		adder:     adder,
-		agentDir:  agentDir,
-		spawn:     func(f func()) { go f() },
-		settle:    1200 * time.Millisecond,
-		sources:   map[service.Source]*sourceState{},
-		busy:      map[string]bool{},
-		nav:       navAll,
+		providers:   providers,
+		adder:       adder,
+		agentDir:    agentDir,
+		spawn:       func(f func()) { go f() },
+		showGuide:   func() {},
+		hideGuide:   func() {},
+		joinGuide:   func() {},
+		redrawGuide: func() {},
+		settle:      1200 * time.Millisecond,
+		sources:     map[service.Source]*sourceState{},
+		busy:        map[string]bool{},
+		gone:        map[string]bool{},
+		nav:         navAll,
 	}
 	for src := range providers {
 		a.sources[src] = &sourceState{}
@@ -194,6 +236,11 @@ func (a *app) refresh(src service.Source) {
 	if st == nil || p == nil {
 		return
 	}
+	// Reading a restricted source may ask for a permission that the guide
+	// makes needless. Closing the guide reads it.
+	if a.guide.open && a.guide.src == src {
+		return
+	}
 	if st.loading {
 		st.again = true
 		return
@@ -201,8 +248,13 @@ func (a *app) refresh(src service.Source) {
 	st.loading = true
 	a.spawn(func() {
 		items, err := p.List()
+		var limit *service.Restriction
+		if r, ok := p.(service.Restricted); ok {
+			limit = r.Restriction()
+		}
 		a.post(func() {
 			st.loading, st.loaded = false, true
+			st.limit = limit
 			st.err = ""
 			if err != nil {
 				st.err = err.Error()
@@ -260,6 +312,9 @@ func (a *app) find(id string) (service.Item, bool) {
 // is the service, listed under Homebrew. A job of a formula Homebrew no longer
 // has is listed, as nothing else shows it.
 func (a *app) shown(it service.Item) bool {
+	if a.gone[it.ID] {
+		return false
+	}
 	if it.Source == service.Brew || it.Source == service.LoginItem {
 		return true
 	}
@@ -453,22 +508,44 @@ func (a *app) do(it service.Item, act service.Action) {
 			}
 			if err == nil && act == service.Remove {
 				a.chosen.Remove(it.ID)
+				a.gone[it.ID] = true
 			}
 			a.refresh(it.Source)
 			if a.detail.id == it.ID && act != service.Remove {
 				a.loadDetail()
 			}
 		})
-		if a.settle > 0 {
-			time.Sleep(a.settle)
-			a.post(func() {
-				a.refresh(it.Source)
-				if a.detail.id == it.ID && act != service.Remove {
-					a.loadDetail()
-				}
-			})
-		}
+		a.settleRead(it.Source, func() {
+			if a.detail.id == it.ID && act != service.Remove {
+				a.loadDetail()
+			}
+		})
+		// What a read returns now is true, even if the item is still there.
+		a.post(func() { delete(a.gone, it.ID) })
 	})
+}
+
+// settleRead reads a source again as what was done takes effect, calling also
+// after each read. It waits, so it runs in the background: stopping a process
+// takes a moment, and System Settings' database changes seconds after a login
+// item does.
+func (a *app) settleRead(src service.Source, also func()) {
+	if a.settle <= 0 {
+		return
+	}
+	waits := []time.Duration{a.settle}
+	if src == service.LoginItem {
+		waits = append(waits, 2*a.settle, 2*a.settle)
+	}
+	for _, wait := range waits {
+		time.Sleep(wait)
+		a.post(func() {
+			a.refresh(src)
+			if also != nil {
+				also()
+			}
+		})
+	}
 }
 
 // bulkAction returns what a bulk start or stop does to an item, if anything:
@@ -533,10 +610,7 @@ func (a *app) doAll(src service.Source, items []service.Item, act service.Action
 			}
 			a.refresh(src)
 		})
-		if a.settle > 0 {
-			time.Sleep(a.settle)
-			a.post(func() { a.refresh(src) })
-		}
+		a.settleRead(src, nil)
 	})
 }
 
@@ -573,6 +647,9 @@ func (a *app) addLoginItem() {
 			a.toast("%s will open at login", strings.TrimSuffix(filepath.Base(path), ".app"))
 			a.refresh(service.LoginItem)
 		})
+		if err == nil {
+			a.settleRead(service.LoginItem, nil)
+		}
 	})
 }
 
@@ -581,6 +658,102 @@ func (a *app) openLog(path string) {
 		if err := system.OpenInConsole(path); err != nil {
 			a.post(func() { a.toast("%s", err) })
 		}
+	})
+}
+
+// openRestrictionSettings opens the setting that lifts a source's restriction.
+func (a *app) openRestrictionSettings(src service.Source) {
+	r, ok := a.providers[src].(service.Restricted)
+	if !ok {
+		return
+	}
+	a.guide.joined = true
+	a.joinGuide()
+	a.spawn(func() {
+		if err := r.OpenSettings(); err != nil {
+			a.post(func() { a.toast("%s", err) })
+		}
+	})
+}
+
+// welcome opens the guide at launch, once, if macOS restricts a source.
+func (a *app) welcome() {
+	if a.welcomedPath == "" {
+		return
+	}
+	if _, err := os.Stat(a.welcomedPath); err == nil {
+		return
+	}
+	for _, src := range service.Sources {
+		if r, ok := a.providers[src].(service.Restricted); ok && r.NeedsAccess() {
+			a.openGuide(src, true)
+			return
+		}
+	}
+}
+
+func (a *app) openGuide(src service.Source, welcome bool) {
+	if !a.guide.open {
+		a.guide = guideState{open: true, src: src, welcome: welcome}
+	}
+	a.showGuide()
+}
+
+// closeGuide ends the guide, for good as far as launches go, and reads the
+// source it held back. Closing its window comes here too.
+func (a *app) closeGuide() {
+	if !a.guide.open {
+		return
+	}
+	src := a.guide.src
+	a.guide.open = false
+	if a.welcomedPath != "" {
+		if os.MkdirAll(filepath.Dir(a.welcomedPath), 0o755) == nil {
+			_ = os.WriteFile(a.welcomedPath, nil, 0o644)
+		}
+	}
+	a.hideGuide()
+	a.refresh(src)
+}
+
+// checkGuide closes the guide once the user has allowed access. Dragging the
+// app into System Settings is the user's to do, and nothing tells the app.
+func (a *app) checkGuide() {
+	r, ok := a.providers[a.guide.src].(service.Restricted)
+	if !ok || time.Since(a.guide.checked) < time.Second {
+		return
+	}
+	a.guide.checked = time.Now()
+	a.spawn(func() {
+		needs := r.NeedsAccess()
+		a.post(func() {
+			if a.guide.open && !needs && a.guide.allowedAt.IsZero() {
+				a.guide.allowedAt = time.Now()
+				a.redrawGuide()
+			}
+		})
+	})
+}
+
+// readRestricted reads what a source's restriction leaves out, at the user's
+// asking: macOS asks them to authenticate.
+func (a *app) readRestricted(src service.Source) {
+	st, p := a.sources[src], a.providers[src]
+	r, ok := p.(service.Restricted)
+	if st == nil || !ok || st.reading {
+		return
+	}
+	st.reading = true
+	a.spawn(func() {
+		err := r.ReadOnce()
+		a.post(func() {
+			st.reading = false
+			if err != nil {
+				a.toast("%s", err)
+				return
+			}
+			a.refresh(src)
+		})
 	})
 }
 

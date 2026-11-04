@@ -341,78 +341,169 @@ func TestTheDatabaseAsksForNothing(t *testing.T) {
 	if len(items) != 2 || *dumps != 0 {
 		t.Errorf("items = %+v; sfltool ran %d times", items, *dumps)
 	}
+	if r := p.Restriction(); r != nil {
+		t.Errorf("restriction = %+v", r)
+	}
 }
 
-func TestFallbackAsksOnceAndRemembers(t *testing.T) {
+func namesOf(items []service.Item) (got []string) {
+	for _, it := range items {
+		got = append(got, it.Name)
+	}
+	return got
+}
+
+func TestFallbackNeverAsksForAnAdministratorByItself(t *testing.T) {
 	p, dumps := fallbackProvider(t, nil)
-	names := func(items []service.Item) (got []string) {
-		for _, it := range items {
-			got = append(got, it.Name)
+	for range 3 {
+		items, err := p.List()
+		if err != nil {
+			t.Fatal(err)
 		}
-		return got
+		if got := namesOf(items); !slices.Equal(got, []string{"CleanShot X", "New"}) {
+			t.Errorf("items = %v", got)
+		}
+	}
+	// The next launch.
+	next := &Provider{Dir: p.Dir, CachePath: p.CachePath, UserID: p.UserID}
+	if _, err := next.List(); err != nil {
+		t.Fatal(err)
+	}
+	if *dumps != 0 {
+		t.Errorf("sfltool ran %d times without the user asking", *dumps)
+	}
+}
+
+func TestARestrictionSaysWhyAndWhatLiftsIt(t *testing.T) {
+	p, _ := fallbackProvider(t, nil)
+	if _, err := p.List(); err != nil {
+		t.Fatal(err)
+	}
+	r := p.Restriction()
+	if r == nil || r.Settings || !strings.Contains(r.Text, "cannot read") {
+		t.Errorf("a format it does not know: %+v", r)
+	}
+
+	// macOS refuses what lacks Full Disk Access, whatever the file's mode.
+	if err := os.Chmod(p.Dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(p.Dir, 0o755) })
+	if _, err := p.List(); err != nil {
+		t.Fatal(err)
+	}
+	r = p.Restriction()
+	if r == nil || !r.Settings || !strings.Contains(r.Text, "Full Disk Access") {
+		t.Errorf("no permission: %+v", r)
+	}
+
+	// Allowed: nothing is left out.
+	if err := os.Chmod(p.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p.Dir, "BackgroundItems-v100-USER.btm"), userStoreFile(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.List(); err != nil {
+		t.Fatal(err)
+	}
+	if r := p.Restriction(); r != nil {
+		t.Errorf("a database it reads leaves out nothing: %+v", r)
+	}
+}
+
+func TestNeedsAccessIsAboutPermissionOnly(t *testing.T) {
+	p, dumps := fallbackProvider(t, nil)
+	if p.NeedsAccess() {
+		t.Error("a database it may read, in a format it does not know, is not a matter of access")
+	}
+	if err := os.Chmod(p.Dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(p.Dir, 0o755) })
+	if !p.NeedsAccess() {
+		t.Error("a database it may not read needs access")
+	}
+	if *dumps != 0 {
+		t.Errorf("asking ran sfltool %d times", *dumps)
+	}
+}
+
+func TestReadOnceIsKeptAcrossLaunches(t *testing.T) {
+	p, dumps := fallbackProvider(t, nil)
+	if err := p.ReadOnce(); err != nil {
+		t.Fatal(err)
 	}
 	items, err := p.List()
 	if err != nil {
 		t.Fatal(err)
 	}
 	// CleanShot X with what the dump knows of it, New from System Events.
-	if got := names(items); !slices.Equal(got, []string{"CleanShot X", "WeatherMenu", "New"}) {
+	if got := namesOf(items); !slices.Equal(got, []string{"CleanShot X", "WeatherMenu", "New"}) {
 		t.Errorf("items = %v", got)
 	}
 	if items[0].ID != "login-item:11111111-0000-0000-0000-000000000001" {
 		t.Errorf("an app the dump holds keeps its record: %+v", items[0])
 	}
-	for range 3 {
-		if _, err := p.List(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if *dumps != 1 {
-		t.Errorf("sfltool ran %d times in a launch, want 1", *dumps)
-	}
 
-	// The next launch: the database is as it was, so it asks nothing.
 	next := &Provider{Dir: p.Dir, CachePath: p.CachePath, UserID: p.UserID}
-	if _, err := next.List(); err != nil {
+	items, err = next.List()
+	if err != nil {
 		t.Fatal(err)
+	}
+	if got := namesOf(items); !slices.Equal(got, []string{"CleanShot X", "WeatherMenu", "New"}) {
+		t.Errorf("the next launch: items = %v", got)
+	}
+	if r := next.Restriction(); r == nil || !strings.Contains(r.Text, "are as of") {
+		t.Errorf("says how old they are: %+v", r)
 	}
 	if *dumps != 1 {
-		t.Errorf("sfltool ran again with an unchanged database: %d", *dumps)
-	}
-
-	// The database changed: the next launch asks once more.
-	later := time.Now().Add(time.Hour)
-	if err := os.Chtimes(filepath.Join(p.Dir, "BackgroundItems-v99-USER.btm"), later, later); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := next.List(); err != nil {
-		t.Fatal(err)
-	}
-	if *dumps != 2 {
-		t.Errorf("sfltool ran %d times after the database changed, want 2", *dumps)
-	}
-	if _, err := next.List(); err != nil {
-		t.Fatal(err)
-	}
-	if *dumps != 2 {
-		t.Errorf("and then no more: %d", *dumps)
+		t.Errorf("sfltool ran %d times, want the 1 the user asked for", *dumps)
 	}
 }
 
-func TestACanceledPromptIsNotRepeated(t *testing.T) {
+func TestACanceledReadKeepsTheApps(t *testing.T) {
 	p, dumps := fallbackProvider(t, errors.New("User canceled"))
-	for range 3 {
-		items, err := p.List()
-		if err == nil || !strings.Contains(err.Error(), "background helpers are not listed") {
-			t.Errorf("err = %v", err)
-		}
-		// The apps are still there.
-		if len(items) != 2 {
-			t.Errorf("items = %+v", items)
-		}
+	if err := p.ReadOnce(); err == nil {
+		t.Error("the user should hear it failed")
+	}
+	items, err := p.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Errorf("items = %+v", items)
 	}
 	if *dumps != 1 {
 		t.Errorf("sfltool ran %d times, want 1", *dumps)
+	}
+	if _, err := os.Stat(p.CachePath); err == nil {
+		t.Error("nothing to keep from a canceled read")
+	}
+}
+
+func TestARefusedAutomationSaysWhereToAllowIt(t *testing.T) {
+	p, _ := fallbackProvider(t, nil)
+	stub := system.Run
+	system.Run = func(name string, args ...string) (string, error) {
+		if name == "osascript" {
+			return "", errors.New("execution error: Not authorized to send Apple events to System Events. (-1743)")
+		}
+		return stub(name, args...)
+	}
+	_, err := p.List()
+	if err == nil || !strings.Contains(err.Error(), "Automation") {
+		t.Errorf("List: %v", err)
+	}
+	app := filepath.Join(t.TempDir(), "A.app")
+	if err := os.Mkdir(app, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Add(app); err == nil || !strings.Contains(err.Error(), "Automation") {
+		t.Errorf("Add: %v", err)
+	}
+	if err := p.Do(service.Item{Name: "A", Path: app}, service.Remove); err == nil || !strings.Contains(err.Error(), "Automation") {
+		t.Errorf("Remove: %v", err)
 	}
 }
 

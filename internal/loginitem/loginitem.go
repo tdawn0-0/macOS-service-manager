@@ -1,23 +1,27 @@
 // Package loginitem reads the login items of System Settings, and adds and
 // removes the apps that open at login.
 //
-// The items come from the background task management database, which anyone
-// may read, so listing them asks for nothing. Its format is Apple's own and
-// changes with macOS: where it cannot be read, System Events lists the apps,
-// and `sfltool dumpbtm` the rest, which takes an administrator. That asks the
-// user at most once per launch, and its answer is kept until the database
-// changes (see fallback).
+// The items come from the background task management database, which macOS
+// lets an app read only with Full Disk Access, and whose format is Apple's own
+// and changes with macOS. Where it cannot be read, System Events lists the apps
+// that open at login, for which macOS asks the user's permission once, and the
+// helpers that apps registered are left out. `sfltool dumpbtm` could list them,
+// but macOS asks for an administrator each time it runs, so it runs only when
+// the user asks (see ReadOnce), and its answer is kept.
 package loginitem
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"macos-service-manager/internal/launchd"
 	"macos-service-manager/internal/service"
@@ -139,10 +143,11 @@ type Provider struct {
 	mu sync.Mutex
 	// records are those of the last List, which the details read.
 	records []Record
-	// asked says `sfltool dumpbtm` ran since launch, with what it answered.
-	asked   bool
-	dump    []Record
-	dumpErr error
+	// restriction is what the last List left out.
+	restriction *service.Restriction
+	// dump is what `sfltool dumpbtm` last answered, and dumpAt when.
+	dump   []Record
+	dumpAt time.Time
 }
 
 // New returns the provider of the user's login items.
@@ -246,11 +251,13 @@ func itemsOf(records []Record, st launchd.State) []service.Item {
 
 func (p *Provider) List() ([]service.Item, error) {
 	records, err := p.readDatabase()
+	var restriction *service.Restriction
 	if err != nil {
+		restriction = p.restrictionOf(err)
 		records, err = p.fallback()
 	}
 	p.mu.Lock()
-	p.records = records
+	p.records, p.restriction = records, restriction
 	p.mu.Unlock()
 	// The processes are a nicety: without them, the items are still right.
 	var st launchd.State
@@ -260,19 +267,45 @@ func (p *Provider) List() ([]service.Item, error) {
 	return itemsOf(records, st), err
 }
 
-// fallback reads the items where the database cannot be: System Events
-// lists the apps that open at login, as of now, and `sfltool dumpbtm` adds the
-// helpers and what else it knows of the apps.
+// restrictionOf says what is left out because the database failed to read.
+func (p *Provider) restrictionOf(err error) *service.Restriction {
+	denied := errors.Is(err, fs.ErrPermission)
+	why := "the app cannot read where this version of macOS keeps them"
+	if denied {
+		why = "macOS lets only apps with Full Disk Access read them"
+	}
+	text := "Helpers that apps registered are not listed: " + why + "."
+	if _, at := p.remembered(); !at.IsZero() {
+		text = "Helpers that apps registered are as of " + at.Format("2 Jan 2006, 15:04") + ": " + why + "."
+	}
+	return &service.Restriction{Text: text, Settings: denied}
+}
+
+// Restriction says what the last List left out.
+func (p *Provider) Restriction() *service.Restriction {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.restriction
+}
+
+// NeedsAccess reports whether macOS refuses the app the database.
+func (p *Provider) NeedsAccess() bool {
+	_, err := os.ReadDir(p.Dir)
+	return errors.Is(err, fs.ErrPermission)
+}
+
+// OpenSettings opens the setting that lets the app read the database.
+func (*Provider) OpenSettings() error { return system.OpenFullDiskAccessSettings() }
+
+// fallback reads the items where the database cannot be: System Events lists
+// the apps that open at login, as of now, and the last answer of `sfltool
+// dumpbtm`, if there is one, adds the helpers and what else it knows of the
+// apps. It never runs that itself.
 func (p *Provider) fallback() ([]Record, error) {
-	apps, appsErr := openAtLogin()
-	dump, dumpErr := p.dumpOnce()
-	switch {
-	case appsErr != nil && dumpErr != nil:
-		return nil, dumpErr
-	case dumpErr != nil:
-		return apps, fmt.Errorf("background helpers are not listed: %w", dumpErr)
-	case appsErr != nil:
-		return dump, nil
+	dump, _ := p.remembered()
+	apps, err := openAtLogin()
+	if err != nil {
+		return dump, err
 	}
 	// System Events is the newer of the two about the apps.
 	byPath := make(map[string]Record, len(apps))
@@ -295,13 +328,22 @@ func (p *Provider) fallback() ([]Record, error) {
 	return records, nil
 }
 
+// automationError says where to allow what macOS refused: its error -1743 is
+// the user's answer to whether the app may control System Events.
+func automationError(err error) error {
+	if err != nil && strings.Contains(err.Error(), "-1743") {
+		return errors.New("macOS does not let this app control System Events: allow it in System Settings, under Privacy & Security, Automation")
+	}
+	return err
+}
+
 // openAtLogin reads the apps that open at login from System Events, which
 // takes no administrator; macOS asks once whether the app may control it.
 func openAtLogin() ([]Record, error) {
 	out, err := system.Run("osascript", "-e",
 		`tell application "System Events" to get the path of every login item`)
 	if err != nil {
-		return nil, err
+		return nil, automationError(err)
 	}
 	var records []Record
 	for _, path := range strings.Split(strings.TrimSpace(out), ", ") {
@@ -319,63 +361,48 @@ func openAtLogin() ([]Record, error) {
 	return records, nil
 }
 
-// cached is what the cache file holds: what `sfltool dumpbtm` answered, while
-// the database was as Stamp says.
+// cached is what the cache file holds: what `sfltool dumpbtm` answered, and
+// when.
 type cached struct {
-	Stamp   string
+	At      time.Time
 	Records []Record
 }
 
-// stamp says when the database last changed, or "" if that is unknown.
-func (p *Provider) stamp() string {
-	files, err := filepath.Glob(filepath.Join(p.Dir, "BackgroundItems-*"))
-	if err != nil {
-		return ""
-	}
-	newest := ""
-	for _, file := range files {
-		if info, err := os.Stat(file); err == nil {
-			if s := info.ModTime().UTC().Format("2006-01-02T15:04:05.000000000"); s > newest {
-				newest = s
-			}
-		}
-	}
-	return newest
-}
-
-// dumpOnce returns what `sfltool dumpbtm` says, which macOS asks the user to
-// authenticate for each time. So it asks at most once per launch, and not at
-// all while the database is as it was when it last answered.
-func (p *Provider) dumpOnce() ([]Record, error) {
-	stamp := p.stamp()
-	if stamp != "" && p.CachePath != "" {
-		if data, err := os.ReadFile(p.CachePath); err == nil {
-			var c cached
-			if json.Unmarshal(data, &c) == nil && c.Stamp == stamp {
-				return c.Records, nil
-			}
-		}
-	}
+// remembered returns what `sfltool dumpbtm` last answered, and when, in this
+// launch or an earlier one.
+func (p *Provider) remembered() ([]Record, time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.asked {
-		return p.dump, p.dumpErr
+	if p.dumpAt.IsZero() && p.CachePath != "" {
+		if data, err := os.ReadFile(p.CachePath); err == nil {
+			var c cached
+			if json.Unmarshal(data, &c) == nil {
+				p.dump, p.dumpAt = c.Records, c.At
+			}
+		}
 	}
-	p.asked = true
+	return p.dump, p.dumpAt
+}
+
+// ReadOnce runs `sfltool dumpbtm`, for which macOS asks for an administrator
+// each time, and keeps its answer for the lists to come.
+func (p *Provider) ReadOnce() error {
 	out, err := system.Run("sfltool", "dumpbtm")
 	if err != nil {
-		p.dumpErr = err
-		return nil, err
+		return err
 	}
-	p.dump = ParseBTM(out, os.Getuid())
-	if stamp != "" && p.CachePath != "" {
-		if data, err := json.Marshal(cached{stamp, p.dump}); err == nil {
+	dump, at := ParseBTM(out, os.Getuid()), time.Now()
+	p.mu.Lock()
+	p.dump, p.dumpAt = dump, at
+	p.mu.Unlock()
+	if p.CachePath != "" {
+		if data, err := json.Marshal(cached{at, dump}); err == nil {
 			if os.MkdirAll(filepath.Dir(p.CachePath), 0o700) == nil {
 				_ = os.WriteFile(p.CachePath, data, 0o600)
 			}
 		}
 	}
-	return p.dump, nil
+	return nil
 }
 
 func (p *Provider) Detail(it service.Item) (service.Detail, error) {
@@ -450,7 +477,7 @@ func (*Provider) Do(it service.Item, a service.Action) error {
 	return found
 end tell`)
 	if err != nil {
-		return err
+		return automationError(err)
 	}
 	if strings.TrimSpace(out) == "0" {
 		return fmt.Errorf("%s registered itself: turn it off in System Settings or in the app", it.Name)
@@ -469,5 +496,5 @@ func (*Provider) Add(path string) error {
 	_, err := system.Run("osascript", "-e",
 		"tell application \"System Events\" to make login item at end with properties {path:"+
 			system.AppleScriptString(path)+", hidden:false}")
-	return err
+	return automationError(err)
 }

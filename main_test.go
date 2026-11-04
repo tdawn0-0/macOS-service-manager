@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"image"
 	"image/png"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -411,6 +414,61 @@ func TestBulkOnItemsThatTakeAnAdminAsksOnce(t *testing.T) {
 	}
 }
 
+// staleSource is a source whose reads lag behind what was done to it, as System
+// Settings' database does.
+type staleSource struct{ fake }
+
+func (f *staleSource) Do(it service.Item, a service.Action) error {
+	f.calls = append(f.calls, fmt.Sprintf("%s %s", a, it.Name))
+	return nil // the item stays in what List returns
+}
+
+func TestARemovedItemIsNotListedWhileReadsLagBehind(t *testing.T) {
+	src := &staleSource{fake{src: service.LoginItem, items: []service.Item{
+		{ID: "login-item:1", Source: service.LoginItem, Name: "CleanShot X", Path: "/Applications/CleanShot X.app", Autostart: service.AutostartOn},
+	}}}
+	h := &harness{t: t, login: &loginFake{}}
+	h.start(map[service.Source]service.Provider{service.LoginItem: src})
+	// Hold back what the background work hands over, to run it in turn.
+	var queued []func()
+	h.a.post = func(f func()) { queued = append(queued, f) }
+	h.a.do(src.items[0], service.Remove)
+	if len(queued) != 2 {
+		t.Fatalf("queued %d", len(queued))
+	}
+	report, settled := queued[0], queued[1]
+	queued = nil
+	report() // it reports, and reads the source
+	if len(queued) != 1 {
+		t.Fatalf("the report reads the source: queued %d", len(queued))
+	}
+	queued[0]() // what that read returned, still with the item
+	h.tt.Frame()
+	if len(h.a.visible) != 0 {
+		t.Errorf("a removed item is listed: %+v", h.a.visible)
+	}
+	settled()
+	h.tt.Frame()
+	// In the end the source decides: it did not go, so it shows again.
+	if len(h.a.visible) != 1 {
+		t.Errorf("after the reads settle, visible = %+v", h.a.visible)
+	}
+}
+
+func TestSettleReadsALoginItemUntilItsDatabaseChanges(t *testing.T) {
+	h := newHarness(t)
+	h.a.settle = time.Millisecond
+	reads := 0
+	h.a.post = func(f func()) { reads++; f() }
+	h.a.settleRead(service.LoginItem, nil)
+	login := reads
+	reads = 0
+	h.a.settleRead(service.Brew, nil)
+	if login != 3*reads || reads == 0 {
+		t.Errorf("login items are read %d times as they settle, others %d", login, reads)
+	}
+}
+
 func TestAPartialListKeepsItsItems(t *testing.T) {
 	h := newHarness(t)
 	h.login.listErr = errors.New("background helpers are not listed")
@@ -688,6 +746,37 @@ func shots(t *testing.T, dir, name string, dark bool, width, height int) {
 	h.click("Login Items")
 	h.click("Mac Mouse Fix Helper")
 	shot(h.tt, "7-login")
+	h.a.providers[service.LoginItem] = &restrictedLogin{loginFake: h.login, limit: &service.Restriction{
+		Text:     "Helpers that apps registered are not listed: macOS lets only apps with Full Disk Access read them.",
+		Settings: true,
+	}}
+	h.a.refresh(service.LoginItem)
+	shot(h.tt, "7-login-restricted")
+	h.a.appPath = "/Applications/Service Manager.app"
+	guide := ui.NewTester(h.a.guideView, guideWidth, guideHeight)
+	guide.SetDark(dark)
+	for _, welcome := range []bool{true, false} {
+		h.a.guide = guideState{open: true, src: service.LoginItem, welcome: welcome, checked: time.Now()}
+		shot(guide, map[bool]string{true: "10-welcome", false: "11-guide"}[welcome])
+	}
+	h.a.guide = guideState{open: true, src: service.LoginItem, welcome: true, joined: true, settingsOpen: true, checked: time.Now()}
+	guide.SetSize(sidecarWidth, sidecarHeight)
+	shot(guide, "12-sidecar")
+	h.a.guide.allowedAt = time.Now()
+	shot(guide, "13-done")
+	overlay := ui.NewTester(h.a.overlayView, 1400, 900)
+	overlay.SetDark(dark)
+	h.a.guide = guideState{open: true, src: service.LoginItem, joined: true, settingsOpen: true, settings: system.Rect{X: 200, Y: 120, Width: 740, Height: 625},
+		windowAt: image.Pt(954, 120), icon: image.Pt(144, 106), flightStart: time.Now().Add(-flightTime / 2)}
+	overlay.Frame()
+	shot(overlay, "14-overlay-flight")
+	h.a.guide.dragging, h.a.guide.dragged = true, true
+	overlay.Frame()
+	overlay.Advance(time.Second)
+	shot(overlay, "15-overlay-drag")
+	h.a.guide = guideState{}
+	h.a.providers[service.LoginItem] = h.login
+	h.a.refresh(service.LoginItem)
 	h.a.query = "zzz"
 	h.a.chosen.Clear()
 	shot(h.tt, "8-empty")
@@ -696,4 +785,316 @@ func shots(t *testing.T, dir, name string, dark bool, width, height int) {
 	panel := ui.NewTester(func(c *ui.Context) { h.a.menubarView(c, func() {}) }, 320, h.a.panelHeight())
 	panel.SetDark(dark)
 	shot(panel, "9-panel")
+}
+
+// macOS tints a template image by its alpha, at the height of the menu bar.
+func TestMenubarIconIsATemplate(t *testing.T) {
+	img, err := png.Decode(bytes.NewReader(menubarIcon))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := img.Bounds(); b.Dx() != 36 || b.Dy() != 36 {
+		t.Errorf("size %v, want 36×36", b.Size())
+	}
+	drawn := 0
+	for y := range img.Bounds().Dy() {
+		for x := range img.Bounds().Dx() {
+			r, g, b, a := img.At(x, y).RGBA()
+			if r|g|b != 0 {
+				t.Fatalf("(%d, %d) is not black", x, y)
+			}
+			if a > 0 {
+				drawn++
+			}
+		}
+	}
+	if drawn == 0 {
+		t.Error("the icon is empty")
+	}
+}
+
+// restrictedLogin is a login source that macOS lets read only in part.
+type restrictedLogin struct {
+	*loginFake
+	limit  *service.Restriction
+	needs  bool
+	lists  int
+	opened int
+	reads  int
+}
+
+func (r *restrictedLogin) List() ([]service.Item, error) {
+	r.lists++
+	return r.loginFake.List()
+}
+
+func (r *restrictedLogin) Restriction() *service.Restriction { return r.limit }
+
+func (r *restrictedLogin) NeedsAccess() bool { return r.needs }
+
+func (r *restrictedLogin) OpenSettings() error {
+	r.opened++
+	return nil
+}
+
+func (r *restrictedLogin) ReadOnce() error {
+	r.reads++
+	r.limit = nil
+	return nil
+}
+
+// restrict makes the harness's login source one that macOS restricts, and
+// counts how the guide's window is shown, closed and moved.
+func (h *harness) restrict() (login *restrictedLogin, shown, hidden, joined *int) {
+	login = &restrictedLogin{loginFake: h.login, needs: true, limit: &service.Restriction{Text: "Helpers are not listed", Settings: true}}
+	h.a.providers[service.LoginItem] = login
+	shown, hidden, joined = new(int), new(int), new(int)
+	h.a.showGuide = func() { *shown++ }
+	h.a.hideGuide = func() { *hidden++ }
+	h.a.joinGuide = func() { *joined++ }
+	h.a.welcomedPath = filepath.Join(h.t.TempDir(), "state", "welcomed")
+	return login, shown, hidden, joined
+}
+
+func TestARestrictedSourceOffersWaysToListTheRest(t *testing.T) {
+	h := newHarness(t)
+	login, shown, _, _ := h.restrict()
+	h.a.refresh(service.LoginItem)
+	h.tt.Frame()
+	h.wantNoText("Helpers are not listed")
+
+	h.click("Login Items")
+	h.wantText("Helpers are not listed", "Allow Full Disk Access…", "Read Once with Password", "CleanShot X")
+	if login.reads != 0 {
+		t.Errorf("read %d times before the user asked", login.reads)
+	}
+
+	h.click("Allow Full Disk Access…")
+	if *shown != 1 || !h.a.guide.open || h.a.guide.welcome {
+		t.Errorf("the guide: shown %d, %+v", *shown, h.a.guide)
+	}
+	h.a.closeGuide()
+	h.tt.Frame()
+	h.click("Read Once with Password")
+	if login.reads != 1 {
+		t.Errorf("read %d times", login.reads)
+	}
+	h.wantNoText("Helpers are not listed", "Read Once with Password")
+}
+
+func TestARestrictionWithoutASettingOffersOnlyThePassword(t *testing.T) {
+	h := newHarness(t)
+	h.a.providers[service.LoginItem] = &restrictedLogin{loginFake: h.login, limit: &service.Restriction{Text: "Helpers are not listed"}}
+	h.a.refresh(service.LoginItem)
+	h.click("Login Items")
+	h.wantText("Read Once with Password")
+	h.wantNoText("Allow Full Disk Access…")
+}
+
+func TestTheWelcomeOpensOnceAndCanBeSkipped(t *testing.T) {
+	h := newHarness(t)
+	login, shown, hidden, _ := h.restrict()
+	h.a.welcome()
+	if *shown != 1 || !h.a.guide.open || !h.a.guide.welcome || h.a.guide.src != service.LoginItem {
+		t.Fatalf("shown %d, %+v", *shown, h.a.guide)
+	}
+
+	// What may ask for a permission waits for the user's answer to this page.
+	h.a.refreshAll()
+	if login.lists != 0 {
+		t.Errorf("listed %d times with the welcome open", login.lists)
+	}
+
+	page := ui.NewTester(h.a.guideView, guideWidth, guideHeight)
+	page.Frame()
+	for _, want := range []string{"Welcome to Service Manager", "Full Disk Access", "Allow…", "Skip for Now", "Without it, some login items may not show. Everything else works, and you can do this later from Login Items."} {
+		if !page.HasText(want) {
+			t.Errorf("missing %q in %q", want, page.Texts())
+		}
+	}
+	if err := page.Click("Skip for Now"); err != nil {
+		t.Fatal(err)
+	}
+	if h.a.guide.open || *hidden != 1 {
+		t.Errorf("skipping: open %v, hidden %d", h.a.guide.open, *hidden)
+	}
+	if login.lists != 1 {
+		t.Errorf("skipping reads the source: %d", login.lists)
+	}
+
+	// It does not come back at the next launch, which still may read.
+	h.a.welcome()
+	if *shown != 1 {
+		t.Errorf("shown %d times", *shown)
+	}
+}
+
+func TestNoWelcomeWithAccess(t *testing.T) {
+	h := newHarness(t)
+	login, shown, _, _ := h.restrict()
+	login.needs = false
+	h.a.welcome()
+	if *shown != 0 || h.a.guide.open {
+		t.Errorf("shown %d, %+v", *shown, h.a.guide)
+	}
+}
+
+func TestTheGuideLeadsToSettingsAndClosesOnceAllowed(t *testing.T) {
+	h := newHarness(t)
+	login, _, hidden, joined := h.restrict()
+	h.a.appPath = "/Applications/Service Manager.app"
+	h.a.welcome()
+	page := ui.NewTester(h.a.guideView, guideWidth, guideHeight)
+	page.Frame()
+
+	if err := page.Click("Allow…"); err != nil {
+		t.Fatal(err)
+	}
+	if login.opened != 1 || *joined != 1 || !h.a.guide.joined {
+		t.Errorf("settings opened %d times, joined %d, %+v", login.opened, *joined, h.a.guide)
+	}
+	page.SetSize(sidecarWidth, sidecarHeight)
+	page.Frame()
+	if !h.a.guide.open {
+		t.Error("the guide stays open for the drag")
+	}
+	for _, want := range []string{"Drag into the list", "Open Settings", "Skip for Now"} {
+		if !page.HasText(want) {
+			t.Errorf("missing %q in %q", want, page.Texts())
+		}
+	}
+	if _, ok := page.Find("Drag Service Manager into the list"); !ok {
+		t.Errorf("no icon to drag in %q", page.Texts())
+	}
+
+	// System Settings shows.
+	h.a.guide.settingsOpen = true
+	page.Frame()
+	if !page.HasText("Waiting for access") || page.HasText("Open Settings") {
+		t.Errorf("with settings open: %q", page.Texts())
+	}
+
+	// macOS allows it while the page is open: the page says so, and closes.
+	login.needs = false
+	h.a.guide.checked = time.Time{}
+	page.Frame()
+	page.Frame()
+	if !page.HasText("Full Disk Access is on") || !h.a.guide.open {
+		t.Errorf("once allowed: %q, open %v", page.Texts(), h.a.guide.open)
+	}
+	h.a.guide.allowedAt = time.Now().Add(-2 * guideDoneAfter)
+	page.Frame()
+	if h.a.guide.open || *hidden != 1 || login.lists != 1 {
+		t.Errorf("closing: open %v, hidden %d, lists %d", h.a.guide.open, *hidden, login.lists)
+	}
+	if _, err := os.Stat(h.a.welcomedPath); err != nil {
+		t.Error("the welcome is done:", err)
+	}
+}
+
+func TestTheIconDragsAsTheAppsBundle(t *testing.T) {
+	h := newHarness(t)
+	h.a.appPath = "/Applications/Service Manager.app"
+	data, err := h.a.guideDragData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files, err := data.Files(); err != nil || !slices.Equal(files, []string{h.a.appPath}) {
+		t.Errorf("files = %v, %v", files, err)
+	}
+	if p := dragPreview(); p == nil || p.Bounds().Dx() != 72 {
+		t.Errorf("preview = %v", p)
+	}
+	if guideIcon() == nil {
+		t.Error("no icon")
+	}
+
+	// A build outside a bundle has nothing to drag.
+	h.restrict()
+	h.a.welcome()
+	h.a.guide.joined = true
+	h.a.appPath = ""
+	page := ui.NewTester(h.a.guideView, sidecarWidth, sidecarHeight)
+	page.Frame()
+	if _, ok := page.Find("Drag Service Manager into the list"); ok || !page.HasText("Add this app to the list") {
+		t.Errorf("without a bundle: %q", page.Texts())
+	}
+}
+
+func TestTheOverlayShowsTheWayThenTheWindowToDropOn(t *testing.T) {
+	h := newHarness(t)
+	h.a.guide = guideState{open: true, joined: true, src: service.LoginItem, settingsOpen: true, settings: system.Rect{X: 100, Y: 100, Width: 700, Height: 600}}
+	page := ui.NewTester(h.a.overlayView, 1400, 900)
+	page.Frame()
+	if !page.HasText("Drop here") {
+		t.Errorf("before the drag: %q", page.Texts())
+	}
+	h.a.guide.dragging, h.a.guide.dragged = true, true
+	page.Frame()
+	page.Advance(time.Second)
+	page.Frame()
+	if !page.HasText("Drop it in the list to allow access") || page.HasText("Drop here") {
+		t.Errorf("during the drag: %q", page.Texts())
+	}
+	h.a.guide.settingsOpen = false
+	page.Frame()
+	if page.HasText("Drop it in the list to allow access") {
+		t.Errorf("without the window: %q", page.Texts())
+	}
+}
+
+func TestAFlightArcsToTheDropAndStops(t *testing.T) {
+	from, to := image.Pt(1000, 200), image.Pt(400, 500)
+	start := flightAt(from, to, 0)
+	if !start.flying || start.x != 1000 || start.y != 200 || start.opacity != 0 {
+		t.Errorf("start = %+v", start)
+	}
+	mid := flightAt(from, to, flightTime/2)
+	if mid.y >= 350 {
+		t.Errorf("the middle of the way is lifted: %+v", mid)
+	}
+	if mid.opacity < 0.9 || mid.scale >= 1 || mid.scale <= 0.8 {
+		t.Errorf("mid = %+v", mid)
+	}
+	landed := flightAt(from, to, flightTime+rippleTime/2)
+	if landed.flying || landed.ripple <= 0 || landed.ripple >= 1 || landed.x != 400 {
+		t.Errorf("landed = %+v", landed)
+	}
+	if again := flightAt(from, to, flightTime+flightPause); !again.flying {
+		t.Errorf("a next flight: %+v", again)
+	}
+	if end := flightAt(from, to, flightsShown*(flightTime+flightPause)); !end.done || end.flying {
+		t.Errorf("end = %+v", end)
+	}
+}
+
+func TestSidecarOrigin(t *testing.T) {
+	area := system.Rect{X: 0, Y: 30, Width: 1920, Height: 1000}
+	for _, test := range []struct {
+		name string
+		s    system.Rect
+		x, y int
+	}{
+		{"at its right", system.Rect{X: 500, Y: 200, Width: 700, Height: 600}, 1214, 200},
+		{"at its left", system.Rect{X: 1000, Y: 200, Width: 700, Height: 600}, 698, 200},
+		{"over its corner", system.Rect{X: 100, Y: 200, Width: 1700, Height: 600}, 1618, 200},
+		{"on the screen, above", system.Rect{X: 500, Y: -40, Width: 700, Height: 600}, 1214, 30},
+		{"on the screen, below", system.Rect{X: 500, Y: 900, Width: 700, Height: 600}, 1214, 700},
+	} {
+		if x, y := sidecarOrigin(test.s, area, sidecarWidth, sidecarHeight); x != test.x || y != test.y {
+			t.Errorf("%s: (%d, %d), want (%d, %d)", test.name, x, y, test.x, test.y)
+		}
+	}
+}
+
+func TestBundleOf(t *testing.T) {
+	for exe, want := range map[string]string{
+		"/Applications/Service Manager.app/Contents/MacOS/Service Manager": "/Applications/Service Manager.app",
+		"/Users/me/go/bin/msm": "",
+		"/tmp/x.app/msm":       "",
+	} {
+		if got := bundleOf(exe); got != want {
+			t.Errorf("bundleOf(%q) = %q, want %q", exe, got, want)
+		}
+	}
 }

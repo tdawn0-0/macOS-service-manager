@@ -10,7 +10,7 @@ GPU, with no webview and no JavaScript.
 | Source | Read | Change |
 |---|---|---|
 | **Homebrew** services | `brew services`, and launchd for those registered as root | start, stop, restart; start at login |
-| **Login items** | System Settings' database, which needs no permission | add and remove the apps that open at login; helpers that apps registered are read-only (System Settings has their switch) |
+| **Login items** | System Settings' database, with Full Disk Access; otherwise System Events, for the apps only | add and remove the apps that open at login; helpers that apps registered are read-only (System Settings has their switch) |
 | **User agents** `~/Library/LaunchAgents` | property lists + launchd | load, unload, start, stop, restart; enable/disable; **create, edit, remove** |
 | **System agents** `/Library/LaunchAgents` | same | load, unload, start, stop, restart; enable/disable |
 | **Daemons** `/Library/LaunchDaemons` | same, without root | the same, after macOS asks you to authenticate |
@@ -26,6 +26,11 @@ GPU, with no webview and no JavaScript.
 - **Menu bar:** the app stays in the menu bar when its window is closed. Its
   icon shows how many Homebrew services and user agents run, and opens a panel
   with a switch for each.
+- **Welcome guide:** where macOS keeps the app from the login items' database, the
+  first launch asks for Full Disk Access, and says what skipping it costs; Login
+  Items offers it again. Allowing it opens System Settings: a small page follows
+  its window with an icon to drag, the icon shows the way into the list, and
+  during the drag all but that window darkens.
 - `⌘R` refreshes, `⌘F` goes to the search. A right click on a row lists
   everything that can be done to it.
 - Reading never asks for a password. Changing something does only where macOS
@@ -38,11 +43,44 @@ Needs Go 1.27.3 or later, and Homebrew for the Homebrew source.
 ```bash
 go tool mygo dev      # run with live reload
 go test ./...         # views run without a window; backends run on stubbed commands
-go tool mygo build    # package the app: build/darwin-arm64/*.app and *.dmg
+go tool mygo build    # a build for this Mac, signed ad hoc: build/darwin-arm64/*.app and *.dmg
 ```
+
+### Packaging
+
+```bash
+scripts/package.sh                 # universal, signed: build/darwin-universal/*.app and *.dmg
+scripts/package.sh --arch arm64    # one architecture
+```
+
+The script runs the tests, signs with the keychain's `Developer ID Application`
+certificate (or `SIGNING_IDENTITY`), with the hardened runtime and a timestamp,
+and checks the app and the disk image. Other Macs warn before opening what is
+not notarized, so give it a profile to notarize and staple the disk image:
+
+```bash
+xcrun notarytool store-credentials msm --apple-id <you> --team-id <team>
+NOTARY_PROFILE=msm scripts/package.sh
+```
+
+The app signed this way is a new app to macOS: it asks once more for permission
+to control System Events, and needs Full Disk Access allowed again. The same
+certificate keeps both across versions.
+
+### Icons
+
+`assets/icons/*.svg` are the sources, and `scripts/icons.sh` (which needs
+`rsvg-convert`) renders them: `resources/icon.png` becomes the app's icon,
+`resources/icon-dev.png` the icon of `mygo dev`, and `assets/icons/menubar.png`
+the menu bar's, built into the binary. That one is black on transparent, for
+macOS to tint. `assets/icons/guide.png` and `drag.png` are the welcome guide's
+icon, and what follows the pointer as it is dragged.
+
+### Layout
 
 ```
 main.go, menubar.go     the window, and the menu bar icon with its panel
+guide.go                the welcome guide, its window, and the overlay that shows where to drag
 app.go                  the state, and the background work that changes it
 view*.go                sidebar, list, details, logs, the launch agent editor
 theme.go, icons.go      the look: colors, status dots, buttons, icons
@@ -51,7 +89,7 @@ internal/brew           Homebrew services
 internal/launchd        launch agents and daemons; the plist editor (edit.go)
 internal/loginitem      login items, from System Settings' database (database.go)
 internal/logs           the end of a log file
-internal/system         running commands, and as root through macOS' own prompt
+internal/system         running commands, as root through macOS' own prompt; where System Settings' window is
 ```
 
 Each source is a `service.Provider`; the interface knows nothing of Homebrew
@@ -61,11 +99,16 @@ a goroutine and hand their result back with `Window.Update`.
 ### Notes
 
 - **Login items** come from `/private/var/db/com.apple.backgroundtaskmanagement`,
-  which anyone can read. Its format is Apple's own and changes with macOS. Where
-  it cannot be read, System Events lists the apps and `sfltool dumpbtm` the
-  rest. `sfltool` asks for an administrator every time it runs, so the app runs
-  it at most once per launch, and keeps its answer in the user's cache directory
-  until the database changes.
+  which macOS lets an app read only with Full Disk Access. A process started from
+  a terminal that has it inherits it, so test this with `open`, not from the
+  terminal. The database's format is Apple's own and changes with macOS.
+- **Without that access,** System Events lists the apps that open at login, and
+  the list says that it leaves out the helpers, with two ways to change that:
+  allowing Full Disk Access, once, through the guide, or `sfltool dumpbtm`. While
+  the guide is open the source is not read, so that System Events asks nothing
+  that allowing the access would make needless. `sfltool` asks for an
+  administrator every time it runs, so the app runs it only when the user asks,
+  and keeps its answer in the user's cache directory, showing how old it is.
 - **Homebrew's autostart** is the service's property list in
   `~/Library/LaunchAgents`, which the switch adds and removes itself, as `brew
   services start` and `stop` do but without starting or stopping the service.
@@ -74,8 +117,8 @@ a goroutine and hand their result back with `Window.Update`.
 - **Services registered as root** (`sudo brew services`) are jobs of the system
   domain, of which `brew services` run as the user reports nothing: their state
   comes from launchd, and they change with `launchctl`, after macOS asks.
-- The first time the app adds or removes a login item, macOS asks whether it may
-  control System Events.
+- The first time the app uses System Events, to list the login items without
+  Full Disk Access, or to add or remove one, macOS asks whether it may control it.
 - Daemons are changed with `osascript … with administrator privileges`, which shows
   macOS' authentication dialog.
 - UI tests write screenshots of every pane, light, dark and at the smallest

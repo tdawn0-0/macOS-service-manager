@@ -1,17 +1,20 @@
 package main
 
 import (
-	"bytes"
+	_ "embed"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"macos-service-manager/internal/service"
 )
+
+// menubarIcon is black on transparent for macOS to tint to the menu bar, from
+// assets/icons/menubar.svg (see scripts/icons.sh).
+//
+//go:embed assets/icons/menubar.png
+var menubarIcon []byte
 
 // menubar is the app's icon in the menu bar, and the panel it opens: the
 // services the user runs by hand, with a switch each, for starting and
@@ -215,7 +218,7 @@ func (m *menubar) toggle() {
 func (m *menubar) install() error {
 	tray, err := mygo.NewTray(mygo.TrayOptions{
 		ID:             "xyz.jyeu.msm.menubar",
-		Icon:           menubarIcon(),
+		Icon:           menubarIcon,
 		IconIsTemplate: true,
 		ToolTip:        "Service Manager",
 	})
@@ -241,26 +244,4 @@ func (m *menubar) install() error {
 	})
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) { tray.Destroy() })
 	return nil
-}
-
-// menubarIcon draws a power symbol, black on transparent for macOS to tint
-// to the menu bar.
-func menubarIcon() []byte {
-	const size = 32
-	img := image.NewNRGBA(image.Rect(0, 0, size, size))
-	ink := color.NRGBA{A: 255}
-	for y := range size {
-		for x := range size {
-			dx, dy := float64(x)-15.5, float64(y)-15.5+1.5
-			d := dx*dx + dy*dy
-			ring := d < 12.5*12.5 && d > 9.5*9.5 && !(dy < -2 && dx > -3.2 && dx < 3.2)
-			bar := dx > -1.6 && dx < 1.6 && dy > -13 && dy < -2
-			if ring || bar {
-				img.Set(x, y, ink)
-			}
-		}
-	}
-	var b bytes.Buffer
-	_ = png.Encode(&b, img)
-	return b.Bytes()
 }

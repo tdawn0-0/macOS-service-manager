@@ -156,6 +156,7 @@ func (a *app) listPane(c *ui.Context) {
 			ui.Text(c, e).FontSize(textSmall).Grow(1).MinWidth(0)
 		})
 	}
+	a.restrictionNote(c)
 	if len(a.visible) == 0 {
 		a.emptyList(c)
 		return
@@ -168,6 +169,29 @@ func (a *app) listPane(c *ui.Context) {
 			return
 		}
 		a.row(r, e.item, bulk)
+	})
+}
+
+// restrictionNote says what macOS keeps the source shown from listing, and how
+// to change that. It only offers: asking for a password is the user's choice.
+func (a *app) restrictionNote(c *ui.Context) {
+	src := service.Source(a.nav)
+	st := a.sources[src]
+	if st == nil || st.limit == nil {
+		return
+	}
+	t := c.Theme()
+	ui.Column(c).Shrink(0).Margin(8, 12, 0).Padding(9, 10).Gap(8).Radius(8).Background(t.Text.Alpha(0.05)).Children(func() {
+		ui.Row(c).Gap(8).Children(func() {
+			ui.Icon(c, iconLock).FontSize(13).TextColor(t.TextMuted).AlignSelf(ui.Start).Margin(1, 0, 0)
+			ui.Text(c, st.limit.Text).FontSize(textSmall).TextColor(t.TextMuted).Grow(1).MinWidth(0)
+		})
+		ui.Row(c).Wrap().Gap(6).Children(func() {
+			if st.limit.Settings {
+				labeledButton(c, iconOpen, "Allow Full Disk Access…", false).OnClick(func() { a.openGuide(src, false) })
+			}
+			labeledButton(c, iconLock, "Read Once with Password", false).Disabled(st.reading).OnClick(func() { a.readRestricted(src) })
+		})
 	})
 }
 

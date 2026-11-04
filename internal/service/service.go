@@ -215,6 +215,28 @@ type Provider interface {
 	Do(Item, Action) error
 }
 
+// Restriction is what macOS keeps a provider from listing.
+type Restriction struct {
+	// Text says what the list leaves out, and why.
+	Text string
+	// Settings says that System Settings can lift it.
+	Settings bool
+}
+
+// Restricted is a provider that macOS may let read only part of its items.
+type Restricted interface {
+	// Restriction says what the last List left out, or nil if nothing.
+	Restriction() *Restriction
+	// NeedsAccess reports whether macOS refuses what the setting allows. It
+	// asks the user nothing, and is quick enough to run every second.
+	NeedsAccess() bool
+	// OpenSettings opens the setting that lifts the restriction.
+	OpenSettings() error
+	// ReadOnce reads what is left out for the next List, after macOS asks the
+	// user to authenticate. Only the user's asking may start it.
+	ReadOnce() error
+}
+
 // Batcher is a provider that runs an action on several items at once, so
 // that macOS asks the user to authenticate only once.
 type Batcher interface {

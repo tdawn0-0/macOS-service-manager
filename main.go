@@ -5,12 +5,16 @@ package main
 
 import (
 	"log"
+	"path/filepath"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"macos-service-manager/internal/system"
 )
+
+// The smallest window the layout fits.
+const minWidth, minHeight = 900, 520
 
 func main() {
 	a := newApp()
@@ -36,8 +40,8 @@ func main() {
 			Title:     "Service Manager",
 			Width:     1120,
 			Height:    720,
-			MinWidth:  900,
-			MinHeight: 520,
+			MinWidth:  minWidth,
+			MinHeight: minHeight,
 			// The sidebar goes up under the window controls, over the
 			// desktop's material; the title bar is the top of each pane.
 			TitleBarStyle:  mygo.TitleBarHiddenInset,
@@ -47,6 +51,11 @@ func main() {
 			StateKey: "main",
 			Content:  ui.View(a.view),
 		})
+		// The size kept from an older version is restored as it is, even
+		// below the minimum, where the layout does not fit.
+		if width, height := win.Size(); width < minWidth || height < minHeight {
+			win.SetSize(max(width, minWidth), max(height, minHeight))
+		}
 
 		// The app stays in the menu bar when its window is closed.
 		win.OnClose(func(e *mygo.CloseEvent) {
@@ -61,6 +70,13 @@ func main() {
 			}
 		})
 
+		guide := &guideWindow{a: a}
+		a.showGuide, a.hideGuide, a.joinGuide, a.redrawGuide = guide.show, guide.close, guide.join, guide.update
+		a.appPath = bundlePath()
+		if dir, err := mygo.App.Path(mygo.PathUserData); err == nil {
+			a.welcomedPath = filepath.Join(dir, "welcomed")
+		}
+
 		bar := &menubar{a: a, win: win}
 		if err := bar.install(); err != nil {
 			log.Print("menu bar: ", err)
@@ -70,8 +86,10 @@ func main() {
 			win.Update(func() {
 				f()
 				bar.update()
+				guide.update()
 			})
 		}
+		a.welcome()
 		a.refreshAll()
 	})
 	if err := mygo.App.Run(); err != nil {

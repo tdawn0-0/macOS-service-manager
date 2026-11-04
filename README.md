@@ -153,6 +153,9 @@ go test ./...         # views run without a window; backends run on stubbed comm
 go tool mygo build    # a build for this Mac, signed ad hoc
 ```
 
+GitHub runs `go test ./...` on pull requests and on pushes to any branch. A
+release tag runs the tests again, then signs, notarizes and publishes.
+
 ### Project layout
 
 ```
@@ -195,9 +198,28 @@ NOTARY_PROFILE=msm scripts/package.sh
 The app signed this way is a new app to macOS: it asks once more to control System Events,
 and needs Full Disk Access allowed again. The same certificate keeps both across versions.
 
-Pushing to the `release` branch tests and builds both architectures, and uploads the disk
-images to a draft release named after the version in `mygo.json`. Those builds are signed
-ad hoc.
+### Releasing
+
+Push a tag on `master`, and GitHub does the rest: it tests, builds a universal app, signs it
+with the Developer ID, notarizes it, and publishes the disk image. The version comes from the
+tag, and a tag with a suffix, as `v0.2.0-rc.1`, makes a prerelease.
+
+```bash
+git tag v0.2.0 && git push origin master v0.2.0
+```
+
+A tag that is not on `master`, or that was released already, stops before anything is built,
+and nothing is published unless Apple's notarization is stapled to the disk image.
+
+The certificate and the notarization password live in a GitHub environment named `release`,
+which only these tags can use. Notarizing uses an Apple ID and an app-specific password, the
+same way as a `notarytool` keychain profile. To set it up once, export the
+`Developer ID Application` certificate from Keychain Access as a `.p12` and run this, which
+checks both with Apple before sending GitHub anything:
+
+```bash
+scripts/setup-release-secrets.sh --p12 developer-id.p12 --apple-id <you> --team-id <team>
+```
 
 ### Icons and pictures
 

@@ -12,6 +12,12 @@
 #                     the disk image is notarized and stapled, so that it opens
 #                     without a warning on other Macs. Without it, it is only
 #                     signed, and the script says so.
+#   NOTARY_KEYCHAIN   the keychain that holds NOTARY_PROFILE, when that is not
+#                     the login keychain.
+#   NOTARY_KEY        instead of a profile, the path of an App Store Connect API
+#   NOTARY_KEY_ID     key and its ID, and for a team key its issuer ID, as a
+#   NOTARY_ISSUER     machine with no profile uses.
+#   REQUIRE_NOTARIZE  when set, stop unless the disk image is notarized.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -37,7 +43,7 @@ while [ $# -gt 0 ]; do
 		shift
 		;;
 	-h | --help)
-		sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+		sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
 		exit 0
 		;;
 	*) die "unknown argument: $1 (see --help)" ;;
@@ -45,6 +51,24 @@ while [ $# -gt 0 ]; do
 done
 
 [ "$(uname)" = Darwin ] || die "signing and disk images need macOS"
+
+notary=()
+if [ -n "${NOTARY_PROFILE:-}" ]; then
+	notary=(--keychain-profile "$NOTARY_PROFILE")
+	if [ -n "${NOTARY_KEYCHAIN:-}" ]; then
+		notary+=(--keychain "$NOTARY_KEYCHAIN")
+	fi
+elif [ -n "${NOTARY_KEY:-}" ]; then
+	[ -f "$NOTARY_KEY" ] || die "NOTARY_KEY is not a file: $NOTARY_KEY"
+	[ -n "${NOTARY_KEY_ID:-}" ] || die "NOTARY_KEY needs NOTARY_KEY_ID"
+	notary=(--key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID")
+	if [ -n "${NOTARY_ISSUER:-}" ]; then
+		notary+=(--issuer "$NOTARY_ISSUER")
+	fi
+fi
+if [ -n "${REQUIRE_NOTARIZE:-}" ] && [ "${#notary[@]}" -eq 0 ]; then
+	die "notarizing was required, and neither NOTARY_PROFILE nor NOTARY_KEY is set"
+fi
 
 identity=${SIGNING_IDENTITY:-}
 if [ -z "$identity" ]; then
@@ -86,9 +110,22 @@ printf '%s\n' "$details" | grep -q '^Timestamp=' || die "the app lacks a secure 
 hdiutil verify -quiet "$dmg" || die "the disk image is damaged"
 
 notarized=0
-if [ -n "${NOTARY_PROFILE:-}" ]; then
-	echo "==> Notarizing with profile $NOTARY_PROFILE (this uploads the disk image to Apple)"
-	xcrun notarytool submit "$dmg" --keychain-profile "$NOTARY_PROFILE" --wait
+if [ "${#notary[@]}" -gt 0 ]; then
+	echo "==> Notarizing (this uploads the disk image to Apple)"
+	log=$(mktemp)
+	if ! xcrun notarytool submit "$dmg" "${notary[@]}" --wait --timeout 30m >"$log" 2>&1; then
+		cat "$log" >&2
+		id=$(sed -n 's/^  id: //p' "$log")
+		id=${id%%$'\n'*}
+		if [ -n "$id" ]; then
+			echo "==> Apple's notarization log" >&2
+			xcrun notarytool log "$id" "${notary[@]}" >&2 || true
+		fi
+		rm -f "$log"
+		die "Apple did not notarize the disk image"
+	fi
+	cat "$log"
+	rm -f "$log"
 	xcrun stapler staple "$dmg"
 	xcrun stapler validate "$dmg"
 	spctl --assess --type open --context context:primary-signature --verbose "$dmg"

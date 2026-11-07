@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -156,30 +155,9 @@ func (m *Manager) AvailableLocalPort(ctx context.Context) (int, error) {
 	for _, i := range s.Instances {
 		reserved[i.Port] = true
 	}
-	reserveSite := func(site Site) { reserved[site.Port] = true; reserved[addressPort(site.Upstream)] = true }
-	for _, site := range s.Sites {
-		reserveSite(site)
-	}
-	for _, p := range s.Projects {
-		for _, site := range p.Sites {
-			reserveSite(site)
-		}
-		for _, svc := range p.Services {
-			reserved[addressPort(svc.Health)] = true
-			if port, err := strconv.Atoi(svc.Environment["PORT"]); err == nil {
-				reserved[port] = true
-			}
-			if len(svc.Command) == 0 {
-				continue
-			}
-			for n, arg := range svc.Command {
-				previous := ""
-				if n > 0 {
-					previous = svc.Command[n-1]
-				}
-				reserved[argumentPort(arg, previous, filepath.Base(svc.Command[0]))] = true
-			}
-		}
+	reserved[s.ProxyListenerPort] = true
+	for _, rule := range s.ProxyRules {
+		reserved[rule.LocalPort] = true
 	}
 	if err := ctx.Err(); err != nil {
 		return 0, err

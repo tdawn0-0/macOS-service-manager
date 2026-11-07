@@ -188,32 +188,6 @@ func (m *Manager) instanceAction(ctx context.Context, id, action string) error {
 }
 
 func (m *Manager) checkInstanceAction(ctx context.Context, s State, id, action string) error {
-	if action == "start" {
-		return ctx.Err()
-	}
-	for _, p := range s.Projects {
-		for _, ref := range p.Instances {
-			if ref != id {
-				continue
-			}
-			if action == "remove" {
-				return errors.New("instance referenced by a project")
-			}
-			jobs := []string{"project-" + p.ID}
-			for _, svc := range p.Services {
-				jobs = append(jobs, "p-"+p.ID+"-"+svc.ID)
-			}
-			for _, job := range jobs {
-				loaded, e := m.packageJobLoaded(ctx, m.label(job))
-				if e != nil {
-					return fmt.Errorf("cannot confirm whether project %s is stopped: %w", p.ID, e)
-				}
-				if loaded {
-					return errors.New("instance used by a running project; stop its projects first")
-				}
-			}
-		}
-	}
 	return ctx.Err()
 }
 func (m *Manager) databaseCommand(ctx context.Context, s *State, id, tool string, args ...string) (string, error) {

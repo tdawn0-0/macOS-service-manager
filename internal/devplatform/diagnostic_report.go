@@ -158,37 +158,6 @@ func (m *Manager) diagnose(ctx context.Context, s State, p diagnosticProbes) (Di
 			add("Package", id, "Failed", "Installed files or the installation index need repair.", "Stop its users, then use Repair in Software to restore the same exact version.")
 		}
 	}
-	for _, id := range diagnosticKeys(s.Projects) {
-		project := s.Projects[id]
-		if err := projectFolderError(project.Directory); err != nil {
-			add("Project folder", "Project "+project.Name, "Failed", err.Error(), "Stop the project, choose its current working folder in Projects, save and apply the folder preview.")
-		} else {
-			add("Project folder", "Project "+project.Name, "OK", "Working folder is available.", "")
-		}
-		for _, svc := range project.Services {
-			if err := ctx.Err(); err != nil {
-				return r, err
-			}
-			resource := "Project " + project.Name + " / " + svc.ID
-			state := m.observeService(ctx, "p-"+id+"-"+svc.ID, svc)
-			switch state.Status {
-			case "Stopped":
-				add("Process", resource, "Stopped", "Service is not registered in launchd.", "Start the project when it is needed.")
-			case "Failed":
-				add("Process", resource, "Failed", "Service is registered but its process is not running. "+state.Message, "Read the service logs, correct the command or environment, then restart the project.")
-			case "Restarting":
-				add("Process", resource, "Warning", state.Message, "Read service logs if repeated exits continue; stop the project to disable restarts.")
-			case "Running":
-				add("Readiness", resource, "Warning", "Process is running; readiness is not configured.", "Add a process, TCP or HTTP readiness check in Projects → Services.")
-			case "Not ready":
-				add("Readiness", resource, "Failed", state.Message, "Check the readiness address, application logs and listening port.")
-			case "Healthy":
-				add("Readiness", resource, "OK", state.Message, "")
-			default:
-				add("Process", resource, "Warning", "Process observation did not complete.", "Retry diagnostics before changing the service configuration.")
-			}
-		}
-	}
 	for _, id := range diagnosticKeys(s.Instances) {
 		instance := s.Instances[id]
 		resource := "Database " + id
@@ -249,9 +218,6 @@ func (m *Manager) diagnose(ctx context.Context, s State, p diagnosticProbes) (Di
 	var sites []Site
 	for _, site := range s.Sites {
 		sites = append(sites, site)
-	}
-	for _, project := range s.Projects {
-		sites = append(sites, project.Sites...)
 	}
 	sort.Slice(sites, func(i, j int) bool { return sites[i].Domain < sites[j].Domain })
 	for _, site := range sites {

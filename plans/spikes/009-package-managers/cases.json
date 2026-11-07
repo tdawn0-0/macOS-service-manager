@@ -1,0 +1,687 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "npm-inferred-lock",
+      "input": {
+        "package": {},
+        "locks": [
+          "package-lock.json"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "ready",
+        "manager": "npm",
+        "version": "10.9.2",
+        "argv": [
+          "npm",
+          "ci"
+        ],
+        "cwdPolicy": "project-root",
+        "reason": "review-command",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "npm-exact-declaration",
+      "input": {
+        "package": {
+          "packageManager": "npm@10.9.2"
+        },
+        "locks": [
+          "package-lock.json"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "ready",
+        "manager": "npm",
+        "version": "10.9.2",
+        "argv": [
+          "npm",
+          "ci"
+        ],
+        "cwdPolicy": "project-root",
+        "reason": "review-command",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "npm-shrinkwrap",
+      "input": {
+        "package": {},
+        "locks": [
+          "npm-shrinkwrap.json"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "ready",
+        "manager": "npm",
+        "version": "10.9.2",
+        "argv": [
+          "npm",
+          "ci"
+        ],
+        "cwdPolicy": "project-root",
+        "reason": "review-command",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "npm-both-compatible-locks",
+      "input": {
+        "package": {},
+        "locks": [
+          "package-lock.json",
+          "npm-shrinkwrap.json"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "ready",
+        "manager": "npm",
+        "version": "10.9.2",
+        "argv": [
+          "npm",
+          "ci"
+        ],
+        "cwdPolicy": "project-root",
+        "reason": "review-command",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "npm-no-lock",
+      "input": {
+        "package": {
+          "packageManager": "npm@10.9.2"
+        },
+        "locks": [],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "blocked",
+        "manager": "npm",
+        "version": "10.9.2",
+        "argv": [],
+        "cwdPolicy": "project-root",
+        "reason": "missing-lockfile",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "no-declaration-no-lock",
+      "input": {
+        "package": {},
+        "locks": [],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "needs-choice",
+        "manager": null,
+        "version": null,
+        "argv": [],
+        "cwdPolicy": "project-root",
+        "reason": "choose-manager",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "pnpm-exact",
+      "input": {
+        "package": {
+          "packageManager": "pnpm@10.0.0"
+        },
+        "locks": [
+          "pnpm-lock.yaml"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "pnpm",
+            "version": "10.0.0",
+            "source": "managed-exact",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "ready",
+        "manager": "pnpm",
+        "version": "10.0.0",
+        "argv": [
+          "pnpm",
+          "install",
+          "--frozen-lockfile"
+        ],
+        "cwdPolicy": "project-root",
+        "reason": "review-command",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "yarn-classic",
+      "input": {
+        "package": {
+          "packageManager": "yarn@1.22.22"
+        },
+        "locks": [
+          "yarn.lock"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "yarn",
+            "version": "1.22.22",
+            "source": "managed-exact",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "ready",
+        "manager": "yarn",
+        "version": "1.22.22",
+        "argv": [
+          "yarn",
+          "install",
+          "--frozen-lockfile"
+        ],
+        "cwdPolicy": "project-root",
+        "reason": "review-command",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "yarn-modern",
+      "input": {
+        "package": {
+          "packageManager": "yarn@4.6.0"
+        },
+        "locks": [
+          "yarn.lock"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "yarn",
+            "version": "4.6.0",
+            "source": "managed-exact",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "ready",
+        "manager": "yarn",
+        "version": "4.6.0",
+        "argv": [
+          "yarn",
+          "install",
+          "--immutable"
+        ],
+        "cwdPolicy": "project-root",
+        "reason": "review-command",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "declaration-lock-conflict",
+      "input": {
+        "package": {
+          "packageManager": "pnpm@10.0.0"
+        },
+        "locks": [
+          "package-lock.json"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "needs-choice",
+        "manager": null,
+        "version": null,
+        "argv": [],
+        "cwdPolicy": "project-root",
+        "reason": "declaration-lock-conflict",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "multiple-locks",
+      "input": {
+        "package": {},
+        "locks": [
+          "package-lock.json",
+          "yarn.lock"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "needs-choice",
+        "manager": null,
+        "version": null,
+        "argv": [],
+        "cwdPolicy": "project-root",
+        "reason": "conflicting-lockfiles",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "no-node",
+      "input": {
+        "package": {},
+        "locks": [
+          "package-lock.json"
+        ],
+        "nodeAvailable": false,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "blocked",
+        "manager": null,
+        "version": null,
+        "argv": [],
+        "cwdPolicy": "project-root",
+        "reason": "missing-node",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "missing-exact-manager",
+      "input": {
+        "package": {
+          "packageManager": "npm@10.9.3"
+        },
+        "locks": [
+          "package-lock.json"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "blocked",
+        "manager": "npm",
+        "version": "10.9.3",
+        "argv": [],
+        "cwdPolicy": "project-root",
+        "reason": "exact-tool-unavailable",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "system-path-untrusted",
+      "input": {
+        "package": {},
+        "locks": [
+          "package-lock.json"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "system-path",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "blocked",
+        "manager": "npm",
+        "version": null,
+        "argv": [],
+        "cwdPolicy": "project-root",
+        "reason": "exact-tool-unavailable",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "npm-offline-unverified",
+      "input": {
+        "package": {},
+        "locks": [
+          "package-lock.json"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ],
+        "offline": true
+      },
+      "expected": {
+        "status": "blocked",
+        "manager": "npm",
+        "version": "10.9.2",
+        "argv": [],
+        "cwdPolicy": "project-root",
+        "reason": "offline-policy-unverified",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "pnpm-offline",
+      "input": {
+        "package": {
+          "packageManager": "pnpm@10.0.0"
+        },
+        "locks": [
+          "pnpm-lock.yaml"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "pnpm",
+            "version": "10.0.0",
+            "source": "managed-exact",
+            "verified": true
+          }
+        ],
+        "offline": true
+      },
+      "expected": {
+        "status": "ready",
+        "manager": "pnpm",
+        "version": "10.0.0",
+        "argv": [
+          "pnpm",
+          "install",
+          "--frozen-lockfile",
+          "--offline"
+        ],
+        "cwdPolicy": "project-root",
+        "reason": "review-command",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "workspace-not-reviewed",
+      "input": {
+        "package": {},
+        "locks": [
+          "package-lock.json"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ],
+        "workspace": true
+      },
+      "expected": {
+        "status": "needs-choice",
+        "manager": null,
+        "version": null,
+        "argv": [],
+        "cwdPolicy": "reviewed-workspace-root",
+        "reason": "review-workspace-root",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "workspace-reviewed",
+      "input": {
+        "package": {},
+        "locks": [
+          "package-lock.json"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ],
+        "workspace": true,
+        "workspaceReviewed": true
+      },
+      "expected": {
+        "status": "ready",
+        "manager": "npm",
+        "version": "10.9.2",
+        "argv": [
+          "npm",
+          "ci"
+        ],
+        "cwdPolicy": "reviewed-workspace-root",
+        "reason": "review-command",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "bad-json",
+      "input": {
+        "package": null,
+        "locks": [
+          "package-lock.json"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "blocked",
+        "manager": null,
+        "version": null,
+        "argv": [],
+        "cwdPolicy": "project-root",
+        "reason": "invalid-manifest",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "unsupported-manager",
+      "input": {
+        "package": {
+          "packageManager": "bun@1.0.0"
+        },
+        "locks": [
+          "package-lock.json"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "blocked",
+        "manager": null,
+        "version": null,
+        "argv": [],
+        "cwdPolicy": "project-root",
+        "reason": "unsupported-manager-declaration",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "script-is-data",
+      "input": {
+        "package": {
+          "scripts": {
+            "postinstall": "untrusted text only"
+          }
+        },
+        "locks": [
+          "package-lock.json"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "ready",
+        "manager": "npm",
+        "version": "10.9.2",
+        "argv": [
+          "npm",
+          "ci"
+        ],
+        "cwdPolicy": "project-root",
+        "reason": "review-command",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "dirty-draft",
+      "input": {
+        "package": {},
+        "locks": [
+          "package-lock.json"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ],
+        "dirty": true
+      },
+      "expected": {
+        "status": "blocked",
+        "manager": null,
+        "version": null,
+        "argv": [],
+        "cwdPolicy": "project-root",
+        "reason": "save-and-finish-tasks",
+        "requiresConfirmation": true
+      }
+    },
+    {
+      "id": "unsupported-lockfile",
+      "input": {
+        "package": {},
+        "locks": [
+          "bun.lock"
+        ],
+        "nodeAvailable": true,
+        "tools": [
+          {
+            "manager": "npm",
+            "version": "10.9.2",
+            "source": "selected-node-bundle",
+            "verified": true
+          }
+        ]
+      },
+      "expected": {
+        "status": "blocked",
+        "manager": null,
+        "version": null,
+        "argv": [],
+        "cwdPolicy": "project-root",
+        "reason": "unsupported-lockfile",
+        "requiresConfirmation": true
+      }
+    }
+  ]
+}

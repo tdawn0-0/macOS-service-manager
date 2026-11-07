@@ -485,8 +485,14 @@ func (m *Manager) SaveProject(ctx context.Context, p Project) error {
 	}
 	defer release()
 	return m.withStateTransaction(ctx, func(s *State) (func() error, func(), error) {
-		if old, ok := s.Projects[p.ID]; ok && !reflect.DeepEqual(old, p) && m.projectActive(ctx, old) {
-			return nil, nil, errors.New("stop the project before changing its settings")
+		if old, ok := s.Projects[p.ID]; ok && !reflect.DeepEqual(old, p) {
+			active, err := m.projectActiveKnown(ctx, old)
+			if err != nil {
+				return nil, nil, err
+			}
+			if active {
+				return nil, nil, errors.New("stop the project before changing its settings")
+			}
 		}
 		s.Projects[p.ID] = p
 		if e := validateSites(allSites(s)); e != nil {

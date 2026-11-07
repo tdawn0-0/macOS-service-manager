@@ -163,3 +163,135 @@ func TestProjectSaveFailureRestoresLoginPreference(t *testing.T) {
 		})
 	}
 }
+
+func projectSaveGuardFixture(t *testing.T) (*Manager, Project) {
+	t.Helper()
+	m := testManager(t)
+	m.LoginDir = t.TempDir()
+	m.Program = filepath.Join(t.TempDir(), "fixture-app")
+	if e := os.WriteFile(m.Program, []byte("#!/bin/sh\n"), 0700); e != nil {
+		t.Fatal(e)
+	}
+	p := Project{SchemaVersion: Schema, ID: "save-guard", Name: "Saved", Directory: t.TempDir(), Autostart: true, Services: []Service{{ID: "web", Command: []string{"/bin/echo", "fixture"}}}}
+	if e := m.SaveProject(context.Background(), p); e != nil {
+		t.Fatal(e)
+	}
+	return m, p
+}
+func TestProjectSaveRejectsUnknownState(t *testing.T) {
+	for _, change := range []string{"rename-service", "remove-service", "autostart"} {
+		for _, failure := range []error{errors.New("observation denied"), context.DeadlineExceeded} {
+			t.Run(change+"-"+failure.Error(), func(t *testing.T) {
+				m, p := projectSaveGuardFixture(t)
+				statePath := filepath.Join(m.Root, "state.json")
+				before, e := os.ReadFile(statePath)
+				if e != nil {
+					t.Fatal(e)
+				}
+				login, e := os.ReadFile(m.loginPath(p.ID))
+				if e != nil {
+					t.Fatal(e)
+				}
+				jobs, e := os.ReadDir(filepath.Join(m.Root, "jobs"))
+				if e != nil {
+					t.Fatal(e)
+				}
+				m.Run = func(_ context.Context, name string, args ...string) (string, error) {
+					if name != "launchctl" || args[0] != "print" {
+						t.Fatal("unexpected mutation", name, args)
+					}
+					return "", failure
+				}
+				draft := p.Clone()
+				switch change {
+				case "rename-service":
+					draft.Services[0].ID = "renamed"
+				case "remove-service":
+					draft.Services = nil
+				case "autostart":
+					draft.Autostart = false
+				}
+				if e = m.SaveProject(context.Background(), draft); e == nil {
+					t.Fatal("accepted unknown state")
+				}
+				after, e := os.ReadFile(statePath)
+				if e != nil || string(after) != string(before) {
+					t.Fatal("state changed", e)
+				}
+				after, e = os.ReadFile(m.loginPath(p.ID))
+				if e != nil || string(after) != string(login) {
+					t.Fatal("login configuration changed", e)
+				}
+				afterJobs, e := os.ReadDir(filepath.Join(m.Root, "jobs"))
+				if e != nil || len(afterJobs) != len(jobs) {
+					t.Fatal("jobs changed", e)
+				}
+			})
+		}
+	}
+}
+func TestProjectSaveAllowsKnownStoppedState(t *testing.T) {
+	m, p := projectSaveGuardFixture(t)
+	m.Run = func(_ context.Context, name string, args ...string) (string, error) {
+		if name != "launchctl" || args[0] != "print" {
+			t.Fatal("unexpected mutation", name, args)
+		}
+		return "", errors.New("Could not find service")
+	}
+	p.Name = "Changed"
+	if e := m.SaveProject(context.Background(), p); e != nil {
+		t.Fatal(e)
+	}
+	s, e := m.Read()
+	if e != nil || s.Projects[p.ID].Name != "Changed" {
+		t.Fatal("known stopped save failed", e)
+	}
+}
+func TestProjectSaveStateGuardMatrix(t *testing.T) {
+	for _, scenario := range []string{"marker-loaded", "service-loaded", "stopped", "new", "same", "cancelled"} {
+		t.Run(scenario, func(t *testing.T) {
+			m := testManager(t)
+			m.LoginDir = t.TempDir()
+			p := Project{SchemaVersion: Schema, ID: "matrix", Name: "Saved", Directory: t.TempDir(), Services: []Service{{ID: "web", Command: []string{"/bin/echo"}}}}
+			if scenario != "new" {
+				if e := m.SaveProject(context.Background(), p); e != nil {
+					t.Fatal(e)
+				}
+			}
+			calls := 0
+			m.Run = func(_ context.Context, name string, args ...string) (string, error) {
+				calls++
+				if name != "launchctl" || args[0] != "print" {
+					t.Fatal("unexpected mutation", name, args)
+				}
+				if scenario == "marker-loaded" || scenario == "service-loaded" && strings.HasSuffix(args[len(args)-1], m.label("p-"+p.ID+"-web")) {
+					return "running", nil
+				}
+				return "", errors.New("Could not find service")
+			}
+			if scenario != "same" {
+				p.Name = "Changed"
+			}
+			ctx := context.Background()
+			if scenario == "cancelled" {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			e := m.SaveProject(ctx, p)
+			reject := scenario == "marker-loaded" || scenario == "service-loaded" || scenario == "cancelled"
+			if (e != nil) != reject {
+				t.Fatal("wrong save result", e)
+			}
+			if (scenario == "new" || scenario == "same" || scenario == "cancelled") && calls != 0 {
+				t.Fatal("queried unnecessary state", calls)
+			}
+			if reject {
+				s, readErr := m.Read()
+				if readErr != nil || s.Projects[p.ID].Name != "Saved" {
+					t.Fatal("rejected save persisted", readErr)
+				}
+			}
+		})
+	}
+}

@@ -24,7 +24,7 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--dev" {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		if e := devcli.Run(ctx, os.Args[2:], os.Stdout); e != nil {
+		if e := devcli.RunInternal(ctx, os.Args[2:], os.Stdout); e != nil {
 			log.Print(e)
 			os.Exit(1)
 		}

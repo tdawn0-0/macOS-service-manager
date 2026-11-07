@@ -14,6 +14,29 @@ import (
 	"time"
 )
 
+// internalCommands are the only entries the shipped app answers to when it is
+// started with --dev. They are what the app's own launchd jobs, workers and
+// shell setup start; none of them is an interface for people. Everything a
+// person does is in the window.
+var internalCommands = map[string]bool{
+	"serve":           true, // the HTTPS proxy
+	"maintain":        true, // log rotation
+	"up":              true, // a project that starts at login
+	"command-worker":  true, // project commands that outlive the window
+	"database-worker": true, // database work that outlives the window
+	"node":            true, // the Node.js version for a directory, for the shell setup
+}
+
+// RunInternal is what the app executable runs for --dev.
+func RunInternal(ctx context.Context, args []string, out io.Writer) error {
+	if len(args) == 0 || !internalCommands[args[0]] {
+		return errors.New("this program has no command line; use the window")
+	}
+	return Run(ctx, args, out)
+}
+
+// Run is every command, for tests and the verification scripts through
+// cmd/devmgr. It is not shipped in the app and not a maintained interface.
 func Run(ctx context.Context, args []string, out io.Writer) error {
 	m := devplatform.New(devplatform.DefaultRoot())
 	m.Event = func(s string) { fmt.Fprintln(out, s) }

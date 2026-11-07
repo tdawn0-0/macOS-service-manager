@@ -29,3 +29,24 @@ func TestNodeCommandLineKeepsOnlyTheShellHook(t *testing.T) {
 		t.Fatalf("%v: the help lists a node command", err)
 	}
 }
+
+// The shipped app answers only to what its own jobs and shell setup start.
+func TestShippedAppHasNoCommandLineForPeople(t *testing.T) {
+	t.Setenv("MSM_DEV_HOME", t.TempDir())
+	for _, args := range [][]string{{}, {"help"}, {"install", "node", "22.14.0"}, {"import", "/tmp"}, {"status"}, {"doctor"}, {"exec", "p", "node"}, {"trust"}, {"db", "start", "x"}, {"node", "install", "22"}} {
+		var out bytes.Buffer
+		err := RunInternal(context.Background(), args, &out)
+		if err == nil || out.Len() != 0 {
+			t.Errorf("%v: %v %q", args, err, out.String())
+		}
+	}
+	for name := range internalCommands {
+		if name == "node" {
+			continue
+		}
+		// Reaching the command (and failing for lack of arguments) shows it is allowed.
+		if err := RunInternal(context.Background(), []string{name}, &bytes.Buffer{}); err != nil && strings.Contains(err.Error(), "no command line") {
+			t.Errorf("%s is refused", name)
+		}
+	}
+}

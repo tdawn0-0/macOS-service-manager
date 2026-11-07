@@ -9,6 +9,10 @@ import (
 	"syscall"
 )
 
+// Command devmgr is the test and verification harness of the development
+// platform: the tests and scripts/ drive the platform through it. It is not
+// shipped, documented for users or maintained as an interface; the app has
+// no command line.
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

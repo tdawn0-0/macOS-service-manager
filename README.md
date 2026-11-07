@@ -70,7 +70,7 @@ Everything is in **Software → Node.js**; there is no command line to learn.
 - **Version** lists the newest release of each major, with the long-term support lines named. **Exact version** takes any other release, or a name: `22`, `22.14`, `22.x`, `^20.1`, `>=18 <23`, `lts`, `lts/iron`, `latest`. A name is resolved to one release, and shown in the review, before anything is installed.
 - **Default** is set from the installed list; the first version installed becomes the default. Uninstalling a version also removes its global npm packages.
 - **Enable in terminal** adds one block to `~/.zshrc`, which only sources a script this app keeps up to date; **Disable in terminal** removes the block. Each new directory then runs the version named by the nearest `.node-version`, `.nvmrc` or `package.json` `engines.node`, else the default. `system` in `.nvmrc` leaves the shell's own Node.js alone, and a version that is not installed is reported in the terminal.
-- **Global packages** (`npm install -g`) go to a folder of their own for each version, so the verified installation stays intact. The shell setup starts this app's executable on each `cd`, which takes about a tenth of a second. Turn off fnm and nvm's shell hooks first, or they will fight over `PATH`.
+- **Global packages** (`npm install -g`) go to a folder of their own for each version, so the verified installation stays intact. The shell setup starts an internal entry of this app's executable on each `cd`, which takes about a tenth of a second. The app has no command line for people. Turn off fnm and nvm's shell hooks first, or they will fight over `PATH`.
 
 ## Jobs
 

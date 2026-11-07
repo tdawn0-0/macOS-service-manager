@@ -21,10 +21,8 @@ func (m *Manager) nodeDefaultLink() string { return filepath.Join(m.nodeHome(), 
 func (m *Manager) nodeGlobalPrefix(version string) string {
 	return filepath.Join(m.nodeHome(), "global", version)
 }
-func (m *Manager) nodeInitPath() string { return filepath.Join(m.nodeHome(), "init.sh") }
-func (m *Manager) nodeWrapperPath() string {
-	return filepath.Join(m.Root, "bin", "msm")
-}
+func (m *Manager) nodeInitPath() string    { return filepath.Join(m.nodeHome(), "init.sh") }
+func (m *Manager) nodeWrapperPath() string { return filepath.Join(m.nodeHome(), "resolve") }
 
 // InstalledNode is a Node.js version in the workspace.
 type InstalledNode struct {
@@ -235,14 +233,14 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''
 
 func (m *Manager) nodeInitScript() string {
 	return `# Written by Service Manager. Changes are overwritten.
-MSM_NODE_CLI=` + shellQuote(m.nodeWrapperPath()) + `
+MSM_NODE_RESOLVE=` + shellQuote(m.nodeWrapperPath()) + `
 export MSM_NODE_HOME=` + shellQuote(m.nodeHome()) + `
 
 # Puts the Node.js version for the current directory first in PATH: the one
 # .node-version, .nvmrc or engines.node of package.json names, else the default.
 __msm_node_apply() {
   local out frag prefix
-  out="$("$MSM_NODE_CLI" node path "$PWD")" || out=""
+  out="$("$MSM_NODE_RESOLVE" node path "$PWD")" || out=""
   frag="${out%%$'\n'*}"
   prefix=""
   case "$out" in *$'\n'*) prefix="${out#*$'\n'}" ;; esac

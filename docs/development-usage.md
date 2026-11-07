@@ -2,10 +2,10 @@
 
 ## 当前使用方式
 
+App 不提供面向用户的命令行，所有操作都在窗口里完成。可执行文件的 `--dev` 入口只回答 App 自己的 launchd 任务和 worker 启动的内部命令（HTTPS 代理、日志轮转、项目登录自启、后台项目命令和数据库任务、终端里选 Node 版本），其他命令一律拒绝。`cmd/devmgr` 是测试与验证脚本使用的工具，不随 App 打包，也不作为接口维护。
+
 ```sh
 go tool mygo dev
-go build -o build/devmgr ./cmd/devmgr
-build/devmgr help
 ```
 
 打开 Development，四个页面均通过图形表单配置，无需编辑 JSON：
@@ -82,7 +82,7 @@ HTTPS 的 Customize proxy settings 提供连接超时和响应头超时，单位
 
 数据库详情显示关联项目。项目启动后通过一个有限时 launchd 标记记录本次登录会话中的归属，不运行额外监管进程；只有数据库的项目也能正确持有共享实例。停止一个项目不会停止另一个活动项目仍使用的实例；未启动项目不会误停单独启动的实例。项目和独立数据库均可通过按钮或 CLI 重启。默认客户端通过无密码 URI 打开，密码需要用户显式复制，任务结果中不显示密码。
 
-测试管理员操作可用 build/devmgr proxy-verify 合并为一次授权，验证停止、端口释放、恢复与重启。build/devmgr proxy-stop 移除本应用的网络监听任务；站点配置和 CA 数据保留。测试授权失效时 macOS 仍可能要求重新认证，应用不改变永久免密规则。
+测试管理员操作时，验证工具 devmgr 的 proxy-verify 把停止、端口释放、恢复与重启合并为一次授权；proxy-stop 移除本应用的网络监听任务，站点配置和 CA 数据保留。测试授权失效时 macOS 仍可能要求重新认证，应用不改变永久免密规则。
 
 导入时读取 .nvmrc、.node-version、package.json engines/volta、.php-version 和 composer.json PHP 声明，展示来源。不同精确版本的冲突会提示；范围不会被假装解析成精确版本，但 Node 的 22、lts、lts/iron、latest 和范围在 Software 里会按 nodejs.org 的发布列表解析成明确版本，预览确认后才安装。只发现声明不会自动下载或执行 npm/composer 脚本；仅在存在 dev/start 脚本时建议 npm 命令。总览可重新扫描，运行时选择不覆盖版本声明文件。Node 版本来自 nodejs.org 的 index.json（仅 Apple Silicon 构建，缓存一小时，离线时使用上次列表），安装包按同一发布的 SHASUMS256.txt 校验；可用 MSM_NODE_DIST_MIRROR 指定 HTTPS 镜像。不存在的版本明确失败，不静默换版本。
 
@@ -108,7 +108,7 @@ Repair 重新准备已登记的同一来源、版本、架构和校验值，重�
 
 macOS 以同卷目录交换完成替换，原目录在状态提交成功前保留。取消或状态保存失败会恢复原目录及索引；下载失败不改动安装目录。文件系统不支持安全交换时拒绝替换。数据目录与安装目录分离，修复不改动数据库数据、项目环境或系统默认运行时。异常的安装路径、无法安全处理的索引类型和清理失败会明确提示查看，保留待检查文件。
 
-CLI 对应 devmgr check-package <package-id> 与 devmgr repair <package-id>。Needs repair 使检查命令返回非零；Not recorded 明确标记没有可信基准。完整性范围不包括时间戳、扩展属性或对能改写整个本机状态的同一用户构建安全边界。
+Needs repair 使验证工具的检查命令返回非零；Not recorded 明确标记没有可信基准。完整性范围不包括时间戳、扩展属性或对能改写整个本机状态的同一用户构建安全边界。
 
 
 共享环境导出会短暂生成 .devmanager-export.json 恢复记录，正常完成后自动移除。记录权限为 0600，只保存脱敏后的新声明、版本锁和旧文件摘要，不保存旧声明正文；无需编辑它。准备阶段、两个保存阶段和操作编号会显示在任务进度中。

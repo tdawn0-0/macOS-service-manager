@@ -12,7 +12,7 @@
 - **Depends on**: 无；未来诊断跳转实现应复用本计划的导航保护
 - **Category**: bug
 - **Planned at**: commit `0cbf7e9`, 2026-11-07
-- **Status**: TODO
+- **Status**: DONE
 - **Confidence**: HIGH（源码证据；本计划指定的新增测试尚未实现）
 
 ## Why this matters
@@ -190,14 +190,14 @@ func TestStatusPollCannotOverwriteAnOperationOrUnsavedDraft(t *testing.T) {
 
 以下全部满足才可记为 DONE：
 
-- [ ] 三个 TestProjectNavigation* 测试组实际执行且通过，含两个窗口尺寸和明暗主题。
-- [ ] 当前项目重复点击不改草稿、服务字段和详情位置。
-- [ ] dirty 跨项目切换只有确认后发生；取消不保存也不丢弃。
-- [ ] saved state 不因导航写入；程序化 selectProject 调用语义保持原样。
-- [ ] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
-- [ ] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
-- [ ] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
-- [ ] plans/README.md 中该计划状态及验证说明已更新。
+- [x] 三个 TestProjectNavigation* 测试组实际执行且通过，含两个窗口尺寸和明暗主题。
+- [x] 当前项目重复点击不改草稿、服务字段和详情位置。
+- [x] dirty 跨项目切换只有确认后发生；取消不保存也不丢弃。
+- [x] saved state 不因导航写入；程序化 selectProject 调用语义保持原样。
+- [x] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
+- [x] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
+- [x] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
+- [x] plans/README.md 中该计划状态及验证说明已更新。
 
 ## STOP conditions
 

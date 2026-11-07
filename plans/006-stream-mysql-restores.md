@@ -12,7 +12,7 @@
 - **Depends on**: 无
 - **Category**: perf
 - **Planned at**: commit `0cbf7e9`, 2026-11-07
-- **Status**: TODO
+- **Status**: DONE
 - **Confidence**: HIGH（源码证据；本计划指定的新增测试尚未实现）
 
 ## Why this matters
@@ -185,14 +185,14 @@ func (m *Manager) withDatabaseOperation(ctx context.Context, id string, fn func(
 
 以下全部满足才可记为 DONE：
 
-- [ ] TestMySQLRestore* 全部实际执行且通过，包括分块 gate 测试。
-- [ ] MySQL restore 分支不使用 os.ReadFile、io.ReadAll 或 dump 大字符串拼接。
-- [ ] 新 restore 命令不使用无界 CombinedOutput，敏感 SQL 不进错误/测试输出。
-- [ ] 打开源失败时零建库调用；取消后子进程被等待并退出。
-- [ ] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
-- [ ] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
-- [ ] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
-- [ ] plans/README.md 中该计划状态及验证说明已更新。
+- [x] TestMySQLRestore* 全部实际执行且通过，包括分块 gate 测试。
+- [x] MySQL restore 分支不使用 os.ReadFile、io.ReadAll 或 dump 大字符串拼接。
+- [x] 新 restore 命令不使用无界 CombinedOutput，敏感 SQL 不进错误/测试输出。
+- [x] 打开源失败时零建库调用；取消后子进程被等待并退出。
+- [x] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
+- [x] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
+- [x] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
+- [x] plans/README.md 中该计划状态及验证说明已更新。
 
 ## STOP conditions
 

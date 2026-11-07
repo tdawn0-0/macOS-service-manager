@@ -12,7 +12,7 @@
 - **Depends on**: 无；008 的原生验收工具依赖本计划
 - **Category**: dx
 - **Planned at**: commit `0cbf7e9`, 2026-11-07
-- **Status**: TODO
+- **Status**: DONE
 - **Confidence**: HIGH（源码证据；本计划指定的新增测试尚未实现）
 
 ## Why this matters
@@ -195,14 +195,14 @@ cli 函数用传入 harness 执行 log-rotation off、install-manifest、instanc
 
 以下全部满足才可记为 DONE：
 
-- [ ] 新脚本测试至少覆盖上述六类情形且全部通过。
-- [ ] --help 显示 --devmgr，执行不创建目录或子进程。
-- [ ] main.go 和 internal/devcli/cli.go 没有修改；App 的允许列表保持限制。
-- [ ] 文档含独立 harness 构建命令与完整参数示例，并区分模拟验证和实机验收。
-- [ ] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
-- [ ] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
-- [ ] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
-- [ ] plans/README.md 中该计划状态及验证说明已更新。
+- [x] 新脚本测试至少覆盖上述六类情形且全部通过。
+- [x] --help 显示 --devmgr，执行不创建目录或子进程。
+- [x] main.go 和 internal/devcli/cli.go 没有修改；App 的允许列表保持限制。
+- [x] 文档含独立 harness 构建命令与完整参数示例，并区分模拟验证和实机验收。
+- [x] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
+- [x] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
+- [x] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
+- [x] plans/README.md 中该计划状态及验证说明已更新。
 
 ## STOP conditions
 

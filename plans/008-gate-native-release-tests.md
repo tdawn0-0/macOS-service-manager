@@ -12,7 +12,7 @@
 - **Depends on**: 002 完成；其专用 harness 约定用于原生 QA，六软件测试与修复代码独立
 - **Category**: tests
 - **Planned at**: commit `0cbf7e9`, 2026-11-07
-- **Status**: TODO
+- **Status**: BLOCKED — 精确PHP keg缺失，原生验收待授权/CI
 - **Confidence**: HIGH（源码证据；本计划指定的新增测试尚未实现）
 
 ## Why this matters

@@ -12,7 +12,7 @@
 - **Depends on**: 无硬前置；未来 GUI 实现应在 004 草稿保护之后
 - **Category**: direction
 - **Planned at**: commit `0cbf7e9`, 2026-11-07
-- **Status**: TODO
+- **Status**: DONE
 - **Confidence**: HIGH（源码证据；本计划指定的新增测试尚未实现）
 
 ## Why this matters
@@ -165,15 +165,15 @@ prototype.py 暴露 resolve_request(fixture)，只读传入 dict，返回固定�
 
 以下全部满足才可记为 DONE：
 
-- [ ] 四个 scope 文件均存在；design.md 所有固定章节有实质内容。
-- [ ] cases.json 至少 16 个唯一场景，覆盖三个管理器与冲突/缺失/离线/workspace。
-- [ ] unittest 全部通过，原型没有安装、网络、shell 或真实项目读取副作用。
-- [ ] design.md 给出推荐方案、被拒绝选项、资料日期及明确的未来 Go 实施里程碑。
-- [ ] 产品源码、go.mod、CI 和用户配置无变化；DONE 只表示设计验证完成。
-- [ ] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
-- [ ] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
-- [ ] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
-- [ ] plans/README.md 中该计划状态及验证说明已更新。
+- [x] 四个 scope 文件均存在；design.md 所有固定章节有实质内容。
+- [x] cases.json 至少 16 个唯一场景，覆盖三个管理器与冲突/缺失/离线/workspace。
+- [x] unittest 全部通过，原型没有安装、网络、shell 或真实项目读取副作用。
+- [x] design.md 给出推荐方案、被拒绝选项、资料日期及明确的未来 Go 实施里程碑。
+- [x] 产品源码、go.mod、CI 和用户配置无变化；DONE 只表示设计验证完成。
+- [x] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
+- [x] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
+- [x] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
+- [x] plans/README.md 中该计划状态及验证说明已更新。
 
 ## STOP conditions
 

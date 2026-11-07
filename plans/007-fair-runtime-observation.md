@@ -12,7 +12,7 @@
 - **Depends on**: 无
 - **Category**: perf
 - **Planned at**: commit `0cbf7e9`, 2026-11-07
-- **Status**: TODO
+- **Status**: DONE
 - **Confidence**: HIGH（源码证据；本计划指定的新增测试尚未实现）
 
 ## Why this matters
@@ -222,15 +222,15 @@ func (m *Manager) Snapshot(ctx context.Context, s State) RuntimeSnapshot {
 
 以下全部满足才可记为 DONE：
 
-- [ ] TestRuntimeSnapshotFairBudget、TestRuntimeSnapshotBoundedCancellation、TestRuntimeSnapshotKeepsCompletedResults 执行且通过。
-- [ ] 聚焦 race 测试连续三轮通过，活跃观察数不超过 4。
-- [ ] 已完成健康项不被全局过期抹除；未观察项明确 Unknown。
-- [ ] 单服务 600ms 合法健康响应、PID 归属和独立数据库归属既有测试通过。
-- [ ] UI 轮询间隔、持久状态格式和服务启动 readiness 逻辑不变。
-- [ ] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
-- [ ] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
-- [ ] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
-- [ ] plans/README.md 中该计划状态及验证说明已更新。
+- [x] TestRuntimeSnapshotFairBudget、TestRuntimeSnapshotBoundedCancellation、TestRuntimeSnapshotKeepsCompletedResults 执行且通过。
+- [x] 聚焦 race 测试连续三轮通过，活跃观察数不超过 4。
+- [x] 已完成健康项不被全局过期抹除；未观察项明确 Unknown。
+- [x] 单服务 600ms 合法健康响应、PID 归属和独立数据库归属既有测试通过。
+- [x] UI 轮询间隔、持久状态格式和服务启动 readiness 逻辑不变。
+- [x] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
+- [x] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
+- [x] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
+- [x] plans/README.md 中该计划状态及验证说明已更新。
 
 ## STOP conditions
 

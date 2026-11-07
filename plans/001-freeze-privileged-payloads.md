@@ -12,7 +12,7 @@
 - **Depends on**: 无
 - **Category**: security
 - **Planned at**: commit `0cbf7e9`, 2026-11-07
-- **Status**: TODO
+- **Status**: DONE
 - **Confidence**: HIGH（源码证据；本计划指定的新增测试尚未实现）
 
 ## Why this matters
@@ -192,14 +192,14 @@ func TestAuthorizedSocketInstallEmbedsImmutableConfiguration(t *testing.T) {
 
 以下全部满足才可记为 DONE：
 
-- [ ] 两个新增测试组均执行且通过；批准后的数据来源不再是用户临时文件。
-- [ ] 新建/编辑与 agent/daemon 权限分工、授权取消和加载失败语义的既有测试通过。
-- [ ] hosts 摘要冲突拒绝与无变化不授权的断言通过。
-- [ ] 所有生成脚本通过 /bin/sh -n；测试不执行真实 root 安装。
-- [ ] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
-- [ ] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
-- [ ] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
-- [ ] plans/README.md 中该计划状态及验证说明已更新。
+- [x] 两个新增测试组均执行且通过；批准后的数据来源不再是用户临时文件。
+- [x] 新建/编辑与 agent/daemon 权限分工、授权取消和加载失败语义的既有测试通过。
+- [x] hosts 摘要冲突拒绝与无变化不授权的断言通过。
+- [x] 所有生成脚本通过 /bin/sh -n；测试不执行真实 root 安装。
+- [x] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
+- [x] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
+- [x] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
+- [x] plans/README.md 中该计划状态及验证说明已更新。
 
 ## STOP conditions
 

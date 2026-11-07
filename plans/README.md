@@ -2,7 +2,7 @@
 
 由 improve 技能生成于 2026-11-07。用户已选择全部 8 项审查问题及 2 个产品方向。
 基线提交：`0cbf7e9`（Restrict the shipped app to internal commands）。开始写计划时工作区干净。
-本轮只创建计划，没有修复源码、安装软件、执行提权操作或提交 Git。
+已实施001–008，并完成009–010设计与离线原型。001–007、009–010审查通过；008代码已完成，真实六软件验收因精确 PHP keg 缺失等待安装授权。每项任务独立提交；主代理完成全量验证和最终集成。未推送远端。
 
 ## 执行顺序与状态
 
@@ -13,13 +13,13 @@
 | [001](001-freeze-privileged-payloads.md) | 固定管理员批准的任务与 hosts 内容 | P1 | M | 无 | DONE |
 | [002](002-repair-native-qa-harness.md) | 修复原生验收准备脚本的入口 | P1 | S | 无 | DONE |
 | [003](003-reject-unknown-project-state.md) | 状态未知时拒绝项目配置保存 | P1 | S | 无 | DONE |
-| [004](004-preserve-project-drafts.md) | 项目导航保留未保存草稿 | P1 | S–M | 无 | TODO |
-| [005](005-preserve-zshrc-symlinks.md) | 保留符号链接形式的 shell 配置 | P1 | S–M | 无 | TODO |
-| [006](006-stream-mysql-restores.md) | MySQL 恢复流式读取备份 | P2 | M | 无 | TODO |
-| [007](007-fair-runtime-observation.md) | 状态轮询不持续遗漏后置资源 | P2 | M | 无 | TODO |
-| [008](008-gate-native-release-tests.md) | 发行要求原生软件测试实际通过 | P2 | M–L | 002 | TODO |
-| [009](009-design-project-package-managers.md) | 设计 npm/yarn/pnpm 项目依赖流程 | P3 | M | 无 | TODO |
-| [010](010-design-diagnostic-navigation.md) | 设计诊断结果到设置的导航 | P3 | S–M | 无 | TODO |
+| [004](004-preserve-project-drafts.md) | 项目导航保留未保存草稿 | P1 | S–M | 无 | DONE |
+| [005](005-preserve-zshrc-symlinks.md) | 保留符号链接形式的 shell 配置 | P1 | S–M | 无 | DONE |
+| [006](006-stream-mysql-restores.md) | MySQL 恢复流式读取备份 | P2 | M | 无 | DONE |
+| [007](007-fair-runtime-observation.md) | 状态轮询不持续遗漏后置资源 | P2 | M | 无 | DONE |
+| [008](008-gate-native-release-tests.md) | 发行要求原生软件测试实际通过 | P2 | M–L | 002 | BLOCKED — 精确PHP keg缺失，待安装授权/CI验收 |
+| [009](009-design-project-package-managers.md) | 设计 npm/yarn/pnpm 项目依赖流程 | P3 | M | 无 | DONE |
+| [010](010-design-diagnostic-navigation.md) | 设计诊断结果到设置的导航 | P3 | S–M | 无 | DONE |
 
 S 为数小时，M 约一天，L 为多天，均包含测试。估算不是交付承诺。
 008 的工作量相较初审上调：必须准备精确软件、严格检查测试事件，并在一次性原生环境验证完整矩阵。
@@ -42,7 +42,7 @@ S 为数小时，M 约一天，L 为多天，均包含测试。估算不是交�
 
 - 分支使用 `codex/NNN-<slug>`。执行起点先记录 HEAD 与工作区状态；不自动覆盖、提交、合并、推送或发布。
 - 每份计划标明允许修改的文件，其他文件只是只读证据。遇到相关代码漂移，核对摘录与新行为，先更新计划。
-- 009、010 的设计材料和离线原型未来写入 `plans/spikes/` 对应目录；这些产物目前尚未创建。它们的 DONE 表示设计验证完成，不表示 App 功能已经上线。
+- 009、010 的设计材料和离线原型已写入 `plans/spikes/` 对应目录；这些产物已通过离线验证。它们的 DONE 表示设计验证完成，不表示 App 功能已经上线。
 - 默认 Go 测试集中包含真实 launchd 启停。普通执行先跑各计划的聚焦隔离测试与 `go vet ./...`；完整测试在隔离、可清理的 macOS 验证会话运行，并单列所有 SKIP。
 - 不自动操作真实 `/etc/hosts`、钥匙串、用户数据库、管理员授权、注销或重启。001 使用捕获脚本和无特权测试，008 使用无签名权限的一次性测试 job。
 - 不把包缓存、CA、凭据、原始 SQL、用户项目目录打包进报告；发现真实秘密只记录位置和类型。
@@ -57,16 +57,16 @@ S 为数小时，M 约一天，L 为多天，均包含测试。估算不是交�
 
 各执行者在对应编号下添加：执行提交/工作区基线、命令、结果、实际执行的测试名、SKIP、平台、未完成的实机边界。不得复制秘密输出。
 
-- 001：APPROVE。独立 worktree `/Users/jyeu/code/service-manager-execute`，分支 `codex/001-freeze-privileged-payloads`。审查四个 scope 文件；reviewer 独立重跑聚焦 race 测试、go vet 和 diff --check 均通过。验证固定 payload、64KiB 上限、冲突二次检查、私有 hosts fixture 权限及 staging 清理；未操作真实 hosts/授权/钥匙串。ConfigureHosts 无变化/取消分支保持原实现，未直接实机覆盖。尚未合入用户工作树。
+- 001：APPROVE。独立 worktree `/Users/jyeu/code/service-manager-execute`，分支 `codex/001-freeze-privileged-payloads`。审查四个 scope 文件；reviewer 独立重跑聚焦 race 测试、go vet 和 diff --check 均通过。验证固定 payload、64KiB 上限、冲突二次检查、私有 hosts fixture 权限及 staging 清理；未操作真实 hosts/授权/钥匙串。ConfigureHosts 无变化/取消分支保持原实现，未直接实机覆盖。由最终集成快进合入用户当前分支。
 - 002：APPROVE。审查完整脚本及新增测试与文档；reviewer 独立运行 11 项 Python unittest、--help、diff --check 通过。验收准备命令只走显式 harness；成功记录保留原生 App 路径，失败清理只针对私有根；没有真实签名或数据库运行。
 - 003：APPROVE。reviewer 已读完整 diff，独立运行 go test -race ./internal/devplatform -run ^TestProjectSave -count=1 -v、go vet ./...、diff --check 全部通过；覆盖 6 个未知状态变更、6 个状态矩阵及既有登录回滚。状态未知时拒绝保存，明确停止仍允许保存。未运行完整默认测试集。
-- 004：未执行。
-- 005：未执行。
-- 006：未执行。
-- 007：未执行。
-- 008：未执行。
-- 009：未执行。
-- 010：未执行。
+- 004：APPROVE。用户导航保护及最小窗口明暗主题检查通过；主代理独立聚焦race复核通过。最终全量发现两处旧E2E漏处理丢弃确认，已保留原草稿断言并显式确认，适配压入004同一个提交。
+- 005：APPROVE。主代理读完整diff并独立运行NodeShell/SelectNode相关race测试通过；有效链接保留、无效目标拒绝、外部变化保护。
+- 006：APPROVE。主代理复核流式命令及测试，独立MySQL恢复race测试通过；32MiB惰性输入、输出丢弃、错误和子进程取消回收。
+- 007：APPROVE。主代理复核完整观察与聚合变更，独立相关race测试三轮通过；4 worker上限、预算、公平性、取消清理和已完成结果保留。
+- 008：代码APPROVE，原生验收BLOCKED。18项专项Python测试及最终29项脚本测试通过。主代理实际运行 --run --local-existing-kegs，返回结构化错误 exact existing keg is missing: php 8.5.12。元数据revision0，本机只有8.5.12_1等版本；未安装或修改共享Homebrew。安装确认已发出，尚未获答。完整六软件门槛未记作通过。
+- 009：APPROVE（设计计划）。设计含官方资料与后续Go实施拆分；23个场景、3个unittest方法通过。只交付设计与纯离线原型，没有生产包管理器安装功能。
+- 010：APPROVE（设计计划）。18个导航场景、5个unittest方法通过；额外修正畸形action kind输入，稳定复合ID、草稿保护和显式脱敏DTO得到离线验证。未增加生产导航按钮。
 
 ## 已考虑但不单独立项
 
@@ -82,3 +82,72 @@ S 为数小时，M 约一天，L 为多天，均包含测试。估算不是交�
 
 审查覆盖项目/数据库生命周期、安装与权限边界、Node 集成、界面热点、测试/CI 与产品文档。
 没有逐行覆盖所有源文件、第三方模块、真实 macOS 授权窗口、最低系统兼容性、重启恢复或发行基础设施账户配置。
+
+## 最终集成验证（2026-11-07）
+
+平台：macOS 27.3 arm64，Go 1.27.3。所有子代理交付后，由主代理统一执行。
+
+- go test ./...：最终exit0；主包97.114秒，其他包通过（可复用结果为cached）。首轮两处旧E2E流程适配已纳入004。
+- go test -race -json ./...：exit0；9个有测试包通过，803个pass、34个skip（计数含子用例），无fail或竞态报告；主包137.595秒。
+- Python脚本全集：29项通过；009原型3项、010原型5项通过，共37个unittest方法。案例分别为23和18个。
+- go vet ./...、go mod verify、git diff --check：通过。
+- collect-third-party-notices.py --check：15个模块、50份发行许可文件通过。
+- 008真实软件门槛：未通过，精确PHP 8.5.12缺失，禁止将普通套件的SKIP作为其成功。
+
+完整日志留在执行worktree /Users/jyeu/code/service-manager-execute/build/ 的 full-test-final.log、full-race.jsonl、python-full.log 和 integration-summary.json。日志未提交。
+
+### 原子实现提交
+
+| 任务 | 提交 |
+|---|---|
+|001|d4dfb72|
+|002|4c10af7|
+|003|bab4dfc|
+|004|099374f|
+|005|365ace0|
+|006|58f5a36|
+|007|dc53659|
+|008|73af41f|
+|009|74eb829|
+|010|4c2bd3d|
+
+另有独立的计划文档提交和最终验证记录提交，不混入任务实现。
+
+### 全量race显式跳过项
+
+以下均不计作已验证：
+
+- TestUIBackgroundDatabaseBackupKeepsConfigurationAndIndependentInstance/cancel-false
+- TestUIBackgroundDatabaseBackupKeepsConfigurationAndIndependentInstance/cancel-true
+- TestUITwoPostgreSQLInstancesKeepSameNamedDatabasesIsolated
+- TestUIDatabaseWorkCallerDeathReviewKeepsRealRedisAndBackup/minimum-dark-false
+- TestUIDatabaseWorkCallerDeathReviewKeepsRealRedisAndBackup/minimum-dark-true
+- TestAdditionalEnginesIntegration
+- TestHomebrewLiveMetadataAndExistingKeg
+- TestUISoftwareInstallAndDatabaseWorkflow
+- TestUISoftwareCatalogAllSix
+- TestLogRotationLaunchdLifecycle
+- TestUIInstanceDeletionPreviewConfirmationAndPreservedBackup/minimum-dark-false
+- TestUIInstanceDeletionPreviewConfirmationAndPreservedBackup/minimum-dark-true
+- TestUIInstanceDeletionActualCrashRestoresOrFinishes/Database_data_staged_for_deletion
+- TestUIInstanceDeletionActualCrashRestoresOrFinishes/Database_deletion_committed
+- TestUIDatabaseBackgroundInitializationAllowsConfigurationAndKeepsDrafts
+- TestUIDatabaseInitializationActualCrashArchiveOrFinish
+- TestUIDatabaseInitializationCancellationKeepsAnotherPreparation
+- TestUIDatabaseInitializationQuitWaitsAndCancellationKeepsPreparedData
+- TestUIDatabaseInitializationArchiveCrashFinishesWhileReusedInstanceRuns
+- TestUIBackgroundInstanceStartupKeepsPhaseConfigurationAndIndependentInstance/cancel-false
+- TestUIBackgroundInstanceStartupKeepsPhaseConfigurationAndIndependentInstance/cancel-true
+- TestRedisPackageRepairPreservesInstanceData
+- TestShots
+- TestUICheckRepairRealNodeAndRefuseRunningUsers
+- TestUIBackgroundPackagesAllowConfigurationAndKeepDrafts
+- TestUIBackgroundCompletionDoesNotOverrideLaterRuntimeChoice
+- TestUIQuitCanCancelBackgroundPackageBeforeLeaving
+- TestUIPackageOtherCallerBusyDetailsAndRetry
+- TestUIBackgroundCancelOnePackageKeepsOtherPackageRunning
+- TestSharedDatabaseOnlyProjectOwnership
+- TestUIRealNPMDependencyCommandCancellationAndRetryUsesManagedNode
+- TestReadmeShots
+- TestUIRuntimeDeclarationsReviewInstallAndHTTPS
+- TestUIUnlistedExactNodeVersionReview

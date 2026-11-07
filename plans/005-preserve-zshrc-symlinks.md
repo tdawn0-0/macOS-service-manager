@@ -12,7 +12,7 @@
 - **Depends on**: 无
 - **Category**: bug
 - **Planned at**: commit `0cbf7e9`, 2026-11-07
-- **Status**: TODO
+- **Status**: DONE
 - **Confidence**: HIGH（源码证据；本计划指定的新增测试尚未实现）
 
 ## Why this matters
@@ -208,14 +208,14 @@ func TestNodeShellBlockIsAddedOnceAndRemovedCleanly(t *testing.T) {
 
 以下全部满足才可记为 DONE：
 
-- [ ] TestNodeShellSymlinkLifecycle、TestNodeShellSymlinkRejectsUnsafeTarget、TestNodeShellRejectsChangedConfiguration 通过。
-- [ ] 链接字节不变，目标仅变化集成块，0640 权限保持。
-- [ ] 无效链接和检测到的外部修改不被覆盖。
-- [ ] model.go 的 atomicWrite 与运行时版本选择逻辑未修改。
-- [ ] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
-- [ ] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
-- [ ] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
-- [ ] plans/README.md 中该计划状态及验证说明已更新。
+- [x] TestNodeShellSymlinkLifecycle、TestNodeShellSymlinkRejectsUnsafeTarget、TestNodeShellRejectsChangedConfiguration 通过。
+- [x] 链接字节不变，目标仅变化集成块，0640 权限保持。
+- [x] 无效链接和检测到的外部修改不被覆盖。
+- [x] model.go 的 atomicWrite 与运行时版本选择逻辑未修改。
+- [x] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
+- [x] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
+- [x] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
+- [x] plans/README.md 中该计划状态及验证说明已更新。
 
 ## STOP conditions
 

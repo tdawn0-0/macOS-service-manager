@@ -12,7 +12,7 @@
 - **Depends on**: 无硬前置；未来产品实现依赖 004 的草稿导航保护
 - **Category**: direction
 - **Planned at**: commit `0cbf7e9`, 2026-11-07
-- **Status**: TODO
+- **Status**: DONE
 - **Confidence**: HIGH（源码证据；本计划指定的新增测试尚未实现）
 
 ## Why this matters
@@ -192,15 +192,15 @@ prototype.py 暴露 resolve_action(fixture) 与 redact_report(report)，两个�
 
 以下全部满足才可记为 DONE：
 
-- [ ] 四个 scope 文件存在，设计固定章节齐全。
-- [ ] 至少 15 个案例涵盖五类目标、陈旧/删除/同名情况和草稿确认。
-- [ ] unittest 全部通过，所有动作 mutations 为空。
-- [ ] 导出契约采用字段 allowlist 或等价明确隔离，内部 action、ID、域名、路径不出现在匿名输出。
-- [ ] 有 UI 文案、最小窗口规范和未来 Go 接入清单；源码未变，未声称功能已上线。
-- [ ] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
-- [ ] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
-- [ ] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
-- [ ] plans/README.md 中该计划状态及验证说明已更新。
+- [x] 四个 scope 文件存在，设计固定章节齐全。
+- [x] 至少 15 个案例涵盖五类目标、陈旧/删除/同名情况和草稿确认。
+- [x] unittest 全部通过，所有动作 mutations 为空。
+- [x] 导出契约采用字段 allowlist 或等价明确隔离，内部 action、ID、域名、路径不出现在匿名输出。
+- [x] 有 UI 文案、最小窗口规范和未来 Go 接入清单；源码未变，未声称功能已上线。
+- [x] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
+- [x] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
+- [x] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
+- [x] plans/README.md 中该计划状态及验证说明已更新。
 
 ## STOP conditions
 

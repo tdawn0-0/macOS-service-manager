@@ -12,7 +12,7 @@
 - **Depends on**: 无
 - **Category**: bug
 - **Planned at**: commit `0cbf7e9`, 2026-11-07
-- **Status**: TODO
+- **Status**: DONE
 - **Confidence**: HIGH（源码证据；本计划指定的新增测试尚未实现）
 
 ## Why this matters
@@ -190,14 +190,14 @@ func (m *Manager) packageJobLoaded(ctx context.Context, label string) (bool, err
 
 以下全部满足才可记为 DONE：
 
-- [ ] TestProjectSaveRejectsUnknownState、TestProjectSaveAllowsKnownStoppedState、TestProjectSaveStateGuardMatrix 实际执行并通过。
-- [ ] TestProjectSaveFailureRestoresLoginPreference 通过。
-- [ ] 保存检查调用 projectActiveKnown；loaded/projectActive 定义保持原样。
-- [ ] 状态未知时持久配置、登录 plist、任务文件保持原字节。
-- [ ] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
-- [ ] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
-- [ ] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
-- [ ] plans/README.md 中该计划状态及验证说明已更新。
+- [x] TestProjectSaveRejectsUnknownState、TestProjectSaveAllowsKnownStoppedState、TestProjectSaveStateGuardMatrix 实际执行并通过。
+- [x] TestProjectSaveFailureRestoresLoginPreference 通过。
+- [x] 保存检查调用 projectActiveKnown；loaded/projectActive 定义保持原样。
+- [x] 状态未知时持久配置、登录 plist、任务文件保持原字节。
+- [x] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
+- [x] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
+- [x] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
+- [x] plans/README.md 中该计划状态及验证说明已更新。
 
 ## STOP conditions
 

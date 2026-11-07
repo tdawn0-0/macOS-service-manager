@@ -7,6 +7,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -147,18 +148,41 @@ func (m *Manager) otherRestore(ctx context.Context, s *State, i Instance, name, 
 		return m.redisRestore(ctx, i, name, path)
 	}
 	if i.Kind == "mysql" {
-		if e := m.otherCreateDatabase(ctx, s, i, name); e != nil {
-			return e
-		}
-		b, e := os.ReadFile(path)
+		source, e := os.Open(path)
 		if e != nil {
 			return e
 		}
-		_, e = m.mysqlSQL(ctx, s, i, "USE "+sqlIdentifier(name)+";\n"+string(b))
-		return e
+		defer source.Close()
+		info, e := source.Stat()
+		if e != nil {
+			return e
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("MySQL restore input must be a regular file")
+		}
+		if e = m.otherCreateDatabase(ctx, s, i, name); e != nil {
+			return e
+		}
+		return m.mysqlRestoreInput(ctx, s, i, name, source)
 	}
 	if i.Kind == "mongodb" {
 		return m.mongoRestore(ctx, i, name, path)
 	}
 	return errors.New("restore for this engine is not implemented")
+}
+
+// mysqlRestoreInput streams SQL without retaining dump contents or command output.
+func (m *Manager) mysqlRestoreInput(ctx context.Context, s *State, i Instance, name string, source io.Reader) error {
+	bin, e := m.Binary(s, i.Package, "mysql")
+	if e != nil {
+		return e
+	}
+	c := exec.CommandContext(ctx, bin, "--defaults-file="+filepath.Join(m.instanceDirectory(i.ID), "client.cnf"), "--batch", "--skip-column-names")
+	c.Stdin = io.MultiReader(strings.NewReader("USE "+sqlIdentifier(name)+";\n"), contextReader{ctx, source})
+	c.Stdout = io.Discard
+	c.Stderr = io.Discard
+	if e = c.Run(); e != nil {
+		return fmt.Errorf("MySQL restore failed: %w", e)
+	}
+	return nil
 }

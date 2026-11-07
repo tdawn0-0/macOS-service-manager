@@ -725,3 +725,53 @@ App/DMG 签名、hdiutil 镜像检查通过；只读挂载后 App 签名及 50 �
 - 最终全量 go test ./... 已通过，主包 113.098 秒、devplatform 77.967 秒；全量启动后补充的 Homebrew 诊断分支另经专项 race 验证。go vet ./...、脚本语法及 git diff --check 通过。未配置的其他真实软件包集成测试仍为跳过，不算通过。
 
 已按用户要求清理默认 Development 中的旧 PHP 验证项目、Lerd 包和缓存、测试作业/日志，以及 /private/tmp/msm-development-verification、/private/tmp/msm-six-verification 两个旧验证环境。默认工作区 projects/packages/instances/sites 均为空，proxy 的测试路由清空；现有本地 CA 与 hosts 备份保留，未变更系统 hosts 或信任。原有测试站点的历史 HTTP 200 记录不再表示清理后仍有演示服务运行。本轮未重新打包发布 App/DMG，以上验证针对工作区源码。
+
+## 发行前原生软件门槛（计划 008）
+
+新增 `scripts/verify-native-release.py`。`--check-events FILE` 严格解析
+`go test -json`：核心 Node/Redis 两项、六软件父用例和六个子用例必须实际 PASS；
+缺失、SKIP、FAIL、重复完成事件、包级失败及截断 JSON 均失败。输出仅含测试名与结果。
+
+`--run` 仅接受 Darwin arm64、普通用户且标识为 GitHub-hosted 的一次性 runner。
+它先检查 GUI launchd domain、工具和可用空间，再构建独立 `cmd/devmgr`，
+在私有根准备经校验的 Node 22.14.0/20.19.0、MySQL 8.4.4、Redis 7.4.7、
+MongoDB 8.0.5，以及 PHP 8.5（shivammathur/php）和 PostgreSQL 17（Homebrew core）。
+不调用 `brew services`，不写 hosts 或钥匙串，不复用用户数据库或 CA。
+缓存变量显式传入；核心测试通过后才运行六软件矩阵；超时杀死本次测试进程组并令门槛失败。
+
+发行 workflow 的 `native-test` job 只读、无 release environment，`release` 必须等待它通过，
+然后才访问签名凭据。普通 CI 保持快速检查，可用 `workflow_dispatch` 单独运行原生 job。
+不要求为了验收创建发行 tag。
+
+完整命令（仅在该一次性 runner 上执行）：
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/verify-native-release.py --run
+```
+
+成功摘要写入忽略的 `build/native-qa/results.json`，只包含平台、工具版本、软件版本/摘要/
+来源域名、测试结果和耗时；原始 JSON、工作根、CA 和凭据不作为 artifact 上传。
+清理只停止本次根的维护任务。测试失败或超时后应回收整个一次性 runner，不能扫描停止其他任务。
+
+本次本机为 Darwin arm64，但不是一次性 GitHub-hosted runner。安全预检拒绝了 `--run`，
+因此六软件完整原生门槛尚未在一次性环境执行，不能记作通过。新纯单测使用模拟命令和临时数据，
+不代替完整原生验收；也不证明最低 macOS、系统信任授权或重启恢复已验收。
+
+### 明确启用的只读现有 keg 本机模式
+
+经本轮范围调整，新增 `--run --local-existing-kegs`。该模式不伪造 hosted 环境，
+在构建或下载前先读取当前 Homebrew metadata，检查其精确版本、revision、receipt tap、
+源版本和可执行文件。缺少或不匹配即失败；准备步骤不运行 brew tap/install/upgrade。
+之后所有 harness 和 Go 测试子进程由 sandbox-exec 禁止写入 `/opt/homebrew`，
+防止检查后 keg 消失时安装逻辑回退修改共享软件。测试 TMPDIR 仅使用此次私有根，
+清理仅检查该根中的任务；无法确认归属或解除注册时保留目录并报错。
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/verify-native-release.py --run --local-existing-kegs
+```
+
+2026-11-07 实际本机执行在只读预检失败：PHP metadata 将 `shivammathur/php/php@8.5`
+解析为 alias `shivammathur/php/php`，stable 8.5.12、revision 0；当前安装的对应版本为
+8.5.12_1，缺少 metadata 要求的精确 8.5.12 keg。PostgreSQL 17.11_1 与 metadata 匹配。
+因此未执行软件安装、下载和 native 用例，未对 Homebrew 做更改。不能把本次预检失败记作
+完整矩阵 PASS；需要一致的精确 keg 或一次性 hosted runner 后重跑。

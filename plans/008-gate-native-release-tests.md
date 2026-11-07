@@ -236,3 +236,7 @@ checker 的纯单测至少包括完整 pass、缺失目标、skip、fail、包�
 ## Maintenance notes
 
 新增六软件测试时同步更新显式 required-tests。缓存仅加速，不代表完整性已验证；缓存 miss 应正常准备而不是 skip。产品目录变动应带版本清单和测试矩阵的同步审查。大归档/下载失败是发行阻塞，不是放宽结果检查的理由。
+
+## 执行时修订（2026-11-07）
+
+用户要求完成全部实施与全量验证。008 允许显式 --local-existing-kegs 模式：在独立私有测试根中下载经校验的归档；只复用已存在且精确匹配来源、版本、receipt 和 binary 的 Homebrew keg，不执行 tap/install/upgrade。local 模式用 sandbox-exec 禁止对 /opt/homebrew 写入（含测试子进程），不得伪造 hosted runner 环境变量。缺失精确 keg 时仍失败，不降级来源。该模式实际运行原有核心与六软件矩阵且严格零 SKIP，等价满足软件闭环门槛；不代表干净机器或系统授权已验收。CI 默认仍使用一次性 hosted runner。允许修改文件保持原 Scope。

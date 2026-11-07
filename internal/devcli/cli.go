@@ -21,8 +21,6 @@ import (
 var internalCommands = map[string]bool{
 	"serve":           true, // the HTTPS proxy
 	"maintain":        true, // log rotation
-	"up":              true, // a project that starts at login
-	"command-worker":  true, // project commands that outlive the window
 	"database-worker": true, // database work that outlives the window
 	"node":            true, // the Node.js version for a directory, for the shell setup
 }
@@ -52,30 +50,16 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	switch args[0] {
 	case "help":
 		fmt.Fprintln(out, `Development commands:
- import <directory>               Import without executing scripts
- export <project-id>              Export a shareable environment and version lock
- export-recovery <directory>      Review an interrupted export and its fingerprint
- export-recover <dir> <fingerprint> Complete the exact reviewed export
- export-discard <dir> <fingerprint> Discard its record while keeping both files
- project-folder <id> <new-dir>    Preview relocation of a stopped project
- project-folder-apply <id> <new-dir> <fingerprint> Apply the reviewed folder change
  port <number>                    Inspect IPv4 loopback and listener metadata
  available-port                   Suggest an unused high local port
  db-port <instance-id> <number>    Change a stopped database port, keeping its data
  db-port-repair <instance-id>      Reconcile endpoint files with the saved port
- prepare <project-id>             Install locked software and initialize private instances
- project <id> <config.json>        Save project configuration
- install <software> <version>     PHP, Node.js, MySQL, PostgreSQL, Redis or MongoDB
+ install <software> <version>     Node.js, MySQL, PostgreSQL, Redis or MongoDB
  install-manifest <package.json>   Install a verified binary archive
  check-package <package-id>        Check installed files against the installation index
  repair <package-id>               Restore the same exact software version; stop its users first
- up|down|restart|remove <id>       Manage project services with launchctl
  status                           Print configuration (no stored passwords)
- exec <project-id> <command...>    Execute in the selected runtime
- project-commands                 Review unfinished finite project commands
- project-command-resolve <id> <revision> Stop the reviewed owned command and clear its private task files
  doctor [--json|--export]          Diagnose layers; anonymize JSON and exported reports
- site <site.json>                 Save a .test HTTPS reverse proxy
  proxy                            Apply proxy configuration
  hosts                            Apply managed hosts block (macOS authorization)
  trust|untrust                    Install/remove this app's CA trust
@@ -111,22 +95,6 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		return nil
 	case "node":
 		return runNode(ctx, m, args[1:], out)
-	case "command-worker":
-		if e := need(3); e != nil {
-			return e
-		}
-		return devplatform.New(args[1]).RunProjectCommandWorker(ctx, args[2])
-	case "project-commands":
-		rows, e := m.PendingProjectCommands(ctx)
-		if e != nil {
-			return e
-		}
-		return json.NewEncoder(out).Encode(rows)
-	case "project-command-resolve":
-		if e := need(3); e != nil {
-			return e
-		}
-		return m.ResolveProjectCommand(ctx, args[1], args[2])
 	case "database-worker":
 		if e := need(3); e != nil {
 			return e
@@ -286,67 +254,6 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 			return errors.New("instance not found")
 		}
 		return m.ChangeInstancePort(ctx, instance, port)
-	case "project-folder", "project-folder-apply":
-		if e := need(3); e != nil {
-			return e
-		}
-		s, e := m.Read()
-		if e != nil {
-			return e
-		}
-		p, ok := s.Projects[args[1]]
-		if !ok {
-			return errors.New("project not found")
-		}
-		p = p.Clone()
-		p.Directory = args[2]
-		if args[0] == "project-folder-apply" {
-			if e = need(4); e != nil {
-				return e
-			}
-			return m.ApplyProjectFolder(ctx, p, args[3])
-		}
-		r, e := m.PreviewProjectFolder(ctx, p)
-		if e != nil {
-			return e
-		}
-		fmt.Fprintf(out, "Project: %s\nFrom: %s\nTo: %s\nFingerprint: %s\n", r.ProjectName, r.From, r.To, r.Fingerprint)
-		for _, change := range r.Changes {
-			fmt.Fprintf(out, "%s / %s: %s -> %s\n", change.Service, change.Field, change.From, change.To)
-		}
-		for _, warning := range r.Warnings {
-			fmt.Fprintln(out, "Review:", warning)
-		}
-		return nil
-	case "export-recovery":
-		if e := need(2); e != nil {
-			return e
-		}
-		r, e := m.InspectExportRecovery(ctx, args[1])
-		if e != nil {
-			return e
-		}
-		if r == nil {
-			fmt.Fprintln(out, "No interrupted environment export.")
-			return nil
-		}
-		fmt.Fprintf(out, "Operation: %s\nPhase: %s\nCreated: %s\nCan resume: %t\nFingerprint: %s\n", r.OperationID, r.Phase, r.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), r.CanResume, r.Fingerprint)
-		fmt.Fprintf(out, "Prepared snapshot: %s (%d services, %d databases, %d sites)\n", r.ProjectName, r.Services, r.Databases, r.Sites)
-		for _, id := range r.PackageIDs {
-			fmt.Fprintln(out, "Locked software:", id)
-		}
-		for _, file := range r.Files {
-			fmt.Fprintf(out, "%s: %s\n", file.Name, file.Status)
-		}
-		return nil
-	case "export-recover", "export-discard":
-		if e := need(3); e != nil {
-			return e
-		}
-		if args[0] == "export-recover" {
-			return m.RecoverExport(ctx, args[1], args[2])
-		}
-		return m.DiscardExport(ctx, args[1], args[2])
 	case "check-package":
 		if e := need(2); e != nil {
 			return e
@@ -424,16 +331,6 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		text, e := m.Doctor(ctx)
 		fmt.Fprintln(out, text)
 		return e
-	case "export":
-		if e := need(2); e != nil {
-			return e
-		}
-		return m.ExportProject(ctx, args[1])
-	case "prepare":
-		if e := need(2); e != nil {
-			return e
-		}
-		return m.PrepareEnvironment(ctx, args[1])
 	case "logs":
 		if e := need(2); e != nil {
 			return e
@@ -444,12 +341,6 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		return nil
 	case "status":
 		s, e := m.Read()
-		for id, p := range s.Projects {
-			for n := range p.Services {
-				p.Services[n].Environment = nil
-			}
-			s.Projects[id] = p
-		}
 		if e != nil {
 			return e
 		}
@@ -459,26 +350,6 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		}{s, m.Snapshot(ctx, s)}, "", "  ")
 		fmt.Fprintln(out, string(b))
 		return e
-	case "import":
-		if e := need(2); e != nil {
-			return e
-		}
-		p, e := m.Import(ctx, args[1])
-		if e == nil {
-			b, _ := json.MarshalIndent(p, "", "  ")
-			fmt.Fprintln(out, string(b))
-		}
-		return e
-	case "project":
-		if e := need(3); e != nil {
-			return e
-		}
-		var p devplatform.Project
-		if e := read(args[2], &p); e != nil {
-			return e
-		}
-		p.ID = args[1]
-		return m.SaveProject(ctx, p)
 	case "install":
 		if e := need(3); e != nil {
 			return e
@@ -497,42 +368,6 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 			return e
 		}
 		return m.Install(ctx, p)
-	case "up", "down", "restart", "remove":
-		if e := need(2); e != nil {
-			return e
-		}
-		switch args[0] {
-		case "up":
-			if e := m.EnsureLogMaintenance(ctx); e != nil {
-				return e
-			}
-			return m.Up(ctx, args[1])
-		case "restart":
-			if e := m.EnsureLogMaintenance(ctx); e != nil {
-				return e
-			}
-			return m.RestartProject(ctx, args[1])
-		case "down":
-			return m.Down(ctx, args[1])
-		default:
-			return m.RemoveProject(ctx, args[1])
-		}
-	case "exec":
-		if e := need(3); e != nil {
-			return e
-		}
-		text, e := m.Exec(ctx, args[1], args[2:])
-		fmt.Fprint(out, text)
-		return e
-	case "site":
-		if e := need(2); e != nil {
-			return e
-		}
-		var s devplatform.Site
-		if e := read(args[1], &s); e != nil {
-			return e
-		}
-		return m.SaveSite(ctx, s)
 	case "proxy-verify":
 		return m.VerifySocketLifecycle(ctx)
 	case "proxy-restart":

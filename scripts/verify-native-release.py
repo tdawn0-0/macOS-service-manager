@@ -20,7 +20,9 @@ CORE = ('TestUIStandaloneRuntimeAndHTTPS',
         'TestUIDatabaseInitializationKeepsIndependentDrafts')
 CATALOG = 'TestUISoftwareCatalogAllFive'
 MATRIX = (CATALOG,) + tuple(CATALOG + '/' + x for x in ('node', 'mysql', 'postgresql', 'redis', 'mongodb'))
-REQUIRED = CORE + MATRIX
+NATIVE = ('TestNativeResourceProduct',) + tuple('TestNativeResourceProduct/' + x for x in
+          ('node-terminal', 'external-upstream-https', 'resource-quit', 'connection-profiles'))
+REQUIRED = CORE + MATRIX + NATIVE
 SANDBOX = ('sandbox-exec', '-p', '(version 1)(allow default)(deny file-write* (subpath "/opt/homebrew"))')
 
 VERSIONS = (('node', '22.14.0'), ('node', '20.19.0'), ('mysql', '8.4.4'),
@@ -30,8 +32,9 @@ VERSIONS = (('node', '22.14.0'), ('node', '20.19.0'), ('mysql', '8.4.4'),
 def check_events(lines, required=REQUIRED):
     """Accept only completed, passing root-package streams; output is never copied."""
     terminals = {}
+    runs = set()
     package_pass = False
-    seen = False
+    package_start = False
     for number, line in enumerate(lines, 1):
         try:
             event = json.loads(line)
@@ -44,20 +47,29 @@ def check_events(lines, required=REQUIRED):
             raise ValueError('unexpected event action')
         if package_pass:
             raise ValueError('events after package completion')
-        seen = True
         test = event.get('Test')
         if test is not None and (not isinstance(test, str) or not test.startswith('Test')):
             raise ValueError('invalid test identity')
+        if action == 'start' and test is None:
+            if package_start:
+                raise ValueError('duplicate package start')
+            package_start = True
         if action in {'skip', 'fail'}:
             raise ValueError('native test skipped or failed: ' + (test or 'package'))
+        if action == 'run' and test is not None:
+            if test in runs:
+                raise ValueError('duplicate test run: ' + test)
+            runs.add(test)
         if action == 'pass':
             if test is None:
                 package_pass = True
             else:
                 if test in terminals:
                     raise ValueError('duplicate test result: ' + test)
+                if test not in runs:
+                    raise ValueError('test passed without running: ' + test)
                 terminals[test] = 'pass'
-    if not seen or not package_pass:
+    if not package_start or not package_pass:
         raise ValueError('incomplete package result')
     missing = set(required) - terminals.keys()
     if missing:
@@ -111,7 +123,7 @@ def package_summary(packages):
 
 
 def test_phase(root, env, names, sandbox=()):
-    events = root / ('core.jsonl' if names == CORE else 'matrix.jsonl')
+    events = root / ('core.jsonl' if names == CORE else 'matrix.jsonl' if names == MATRIX else 'native.jsonl')
     roots = sorted({name.split('/')[0] for name in names})
     argv = list(sandbox) + ['go', 'test', '-json', '-race', '-count=1', '-timeout=25m', '-run', '^(' + '|'.join(roots) + ')$', '.']
     with events.open('w') as output, (root / 'test-stderr.txt').open('w') as errors:
@@ -228,6 +240,9 @@ def run_native(local_existing=False):
         if local_existing:
             validate_existing_kegs()
         results += test_phase(root, env, MATRIX)
+        if local_existing:
+            validate_existing_kegs()
+        results += test_phase(root, env, NATIVE)
         summary = {'schemaVersion': 1, 'macOS': checked(['sw_vers', '-productVersion']).strip(),
                    'arch': 'arm64', 'go': checked(['go', 'version']).strip(), 'packages': packages,
                    'tests': results, 'elapsedSeconds': round(time.monotonic() - started, 2)}

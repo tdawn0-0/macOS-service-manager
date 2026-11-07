@@ -61,9 +61,12 @@ def main():
         instances = []
         try:
             for name, version in [('node', '22.14.0'), ('node', '20.19.0'),
-                                  ('postgresql', '17'), ('redis', '7.4.7')]:
+                                  ('mysql', '8.4.4'), ('postgresql', '17'),
+                                  ('redis', '7.4.7'), ('mongodb', '8.0.5')]:
                 cli('install', name, version)
             packages = json.loads(cli('status'))['packages']
+            if {value['name'] for value in packages.values()} != {'node', 'mysql', 'postgresql', 'redis', 'mongodb'}:
+                raise AssertionError('five software categories were not installed')
             pg_id, pg_pkg = next((key, value) for key, value in packages.items() if value['name'] == 'postgresql')
             node = root / 'packages/node@22.14.0-arm64/bin/node'
             node20 = root / 'packages/node@20.19.0-arm64/bin/node'

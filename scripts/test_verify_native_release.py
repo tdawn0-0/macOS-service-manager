@@ -57,7 +57,7 @@ class NativeReleaseTests(unittest.TestCase):
         rows = events(m.REQUIRED)
         rows.insert(1, {'Package':m.PACKAGE,'Action':'output','Output':'private output must not be copied'})
         result = m.check_events(lines(rows))
-        self.assertEqual(len(result), 8)
+        self.assertEqual(len(result), len(m.REQUIRED))
         self.assertNotIn('private', json.dumps(result))
 
     def test_missing_skip_fail_duplicate_and_truncated_rejected(self):
@@ -68,6 +68,12 @@ class NativeReleaseTests(unittest.TestCase):
                      complete[:-1] + [complete[2]] + [complete[-1]],
                      [], [{'Package':'foreign','Action':'pass'}],
                      [{'Package':m.PACKAGE,'Action':'build-fail'}]]
+        scenarios += [
+            [row for row in complete if not (row.get('Test') == m.NATIVE[-1] and row['Action'] in {'run', 'pass'})],
+            [row for row in complete if not (row.get('Test') == m.NATIVE[-1] and row['Action'] == 'run')],
+            [dict(row, Package='wrong-package') if row.get('Test') == m.NATIVE[-1] else row for row in complete],
+            [row for row in complete if row['Action'] != 'run'],
+        ]
         for action in ['skip', 'fail']:
             scenarios.append([dict(row, Action=action) if row.get('Test')==m.REQUIRED[0] and row['Action']=='pass' else row for row in complete])
         for rows in scenarios:
@@ -121,7 +127,7 @@ class NativeReleaseTests(unittest.TestCase):
                 self.assertFalse(root.exists())
                 install=[call.args[0][-2:] for call in calls.call_args_list if 'install' in call.args[0]]
                 self.assertEqual(install,[list(row) for row in m.VERSIONS])
-                self.assertEqual(len(phases.call_args_list),2)
+                self.assertEqual([call.args[2] for call in phases.call_args_list], [m.CORE, m.MATRIX, m.NATIVE])
                 for call in phases.call_args_list:
                     self.assertEqual(call.args[1]['MSM_DEV_HOME'],str(root))
                     self.assertEqual(call.args[1]['MSM_UI_E2E_PACKAGE_CACHE'],str(root/'downloads'))
@@ -238,8 +244,8 @@ class NativeReleaseTests(unittest.TestCase):
                     observed=[]
                     phases.side_effect=lambda *args: observed.append(receipts.call_count) or []
                     m.run_native(True)
-                    self.assertEqual(observed,[2,3])
-                preflight.assert_called_once_with(True);self.assertEqual(receipts.call_count,3);cleanup.assert_called_once_with(root)
+                    self.assertEqual(observed,[2,3,4])
+                preflight.assert_called_once_with(True);self.assertEqual(receipts.call_count,4);cleanup.assert_called_once_with(root)
                 for call in calls.call_args_list:
                     argv=call.args[0]
                     self.assertNotIn('brew',argv)

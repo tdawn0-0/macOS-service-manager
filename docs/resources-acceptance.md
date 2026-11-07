@@ -1,6 +1,6 @@
 # Resource product acceptance contract
 
-Status: **015-A contract only**. All results below are **NOT RUN** at baseline `2ec48ab` (2026-11-08). The current app still has Project, PHP, and Site behavior; no row claims that the new product has been implemented or tested. [Product scope](product-scope.md) defines the intended behavior. Evidence must name the actual commit, command, test result, environment, and any SKIP before a row can change status. Mocked, isolated-native, and system-trust/Chrome evidence are distinct layers and cannot substitute for each other.
+Status: contract defined in 015-A on baseline `2ec48ab` (2026-11-08), with resource implementation in the isolated 011–017 commit chain. All rows remain **NOT RUN for full acceptance** because the required disposable-runner native gate and signed App/system-trust/Chrome gate have not been observed. Code-level verification is recorded in [development-verification.md](development-verification.md). [Product scope](product-scope.md) defines the intended behavior. Evidence must name the actual commit, command, test result, environment, and any SKIP before a row can change status. Mocked, isolated-native, and system-trust/Chrome evidence are distinct layers and cannot substitute for each other.
 
 | ID | Synthetic input and user action | Required observable result and external side effects | Test layer and planned test | Owner | Result |
 |---|---|---|---|---|---|

@@ -90,8 +90,8 @@ def _main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--devmgr', type=Path, required=True, help='Test harness built from cmd/devmgr')
     parser.add_argument('--app', type=Path, default=Path('build/darwin-arm64/MacOS Service Manager.app'))
-    parser.add_argument('--node-root', type=Path, default=Path('/tmp/msm-development-verification'))
-    parser.add_argument('--redis-root', type=Path, default=Path('/tmp/msm-six-verification'))
+    parser.add_argument('--node-root', type=Path, default=Path('/tmp/msm-native-node-cache'))
+    parser.add_argument('--redis-root', type=Path, default=Path('/tmp/msm-native-redis-cache'))
     parser.add_argument('--reuse-ca', type=Path, required=True, help='Existing development root; never changes its material or trust')
     args = parser.parse_args(argv)
     try:
@@ -195,6 +195,7 @@ def _main(argv=None):
         external_process = start_external_app(node_binary, app_dir, app_env, web_port,
                                               root/'logs/verification-app.log')
         record = dict(harness=str(devmgr),base=str(base),root=str(root),app=str(app),executable=str(exe),instance=instance['id'],
+                      proxyRules=[{'domain':'service-manager-verify.test','localPort':web_port}],
                       externalPID=external_process.pid, externalBinary=str(node_binary), appDirectory=str(app_dir),
                       webPort=web_port,redisPort=redis_port,httpsPort=https_port,url=f'https://service-manager-verify.test:{https_port}/',
                       labelPrefix='xyz.jyeu.msm.dev.'+hashlib.sha256(str(root).encode()).hexdigest()[:8]+'.',identifier=info['CFBundleIdentifier'])

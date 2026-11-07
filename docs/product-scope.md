@@ -1,6 +1,6 @@
 # Product scope: software, databases, and HTTPS
 
-Status: target contract for the planned resource-only product, defined in 015-A on baseline `2ec48ab`. Implementation and acceptance are **NOT RUN**. This document takes precedence over the existing project-oriented planning document for new work. It does not claim that the current app already has these behaviors. See [resources-acceptance.md](resources-acceptance.md) for observable checks.
+Status: current resource-product contract, defined in 015-A on baseline `2ec48ab` and implemented through the 011–017 worktree chain. Code-level checks pass; full native and system-trust/Chrome acceptance remain **NOT RUN**. See [resources-acceptance.md](resources-acceptance.md) for observable checks.
 
 ## Primary navigation
 
@@ -22,4 +22,4 @@ Project registration, source-directory management, command execution, dependency
 
 ## Delivery sequence
 
-015-A fixes this target and its acceptance matrix. 011 deletes the old model and prepares the new core. 012 handles Node terminal use; 013 handles resource lifecycle; 014 builds the HTTPS rule page; 016 adds diagnostics; 017 adds database connection profiles. 015-B updates public usage documentation and executes the full test gates. Until then, this is a target contract rather than a release claim.
+015-A fixes this target and its acceptance matrix. 011 deletes the old model and prepares the new core. 012 handles Node terminal use; 013 handles resource lifecycle; 014 builds the HTTPS rule page; 016 adds diagnostics; 017 adds database connection profiles. 015-B updates public usage documentation and executes the full test gates. The signed App/system-trust/Chrome gate has not been observed, so this is not a release acceptance claim.

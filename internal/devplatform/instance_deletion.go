@@ -462,6 +462,7 @@ func (m *Manager) DeleteInstanceData(ctx context.Context, id, fingerprint, confi
 				}
 				w.emit("Database data staged for deletion")
 				delete(s.Instances, id)
+				removeInstanceProfiles(s, id)
 				return undo, func() {
 					commitErr = syncExportDirectory(w.Root)
 					if commitErr == nil {

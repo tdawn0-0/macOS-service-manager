@@ -25,62 +25,65 @@ type proxyRuleDraft struct {
 }
 
 type developmentState struct {
-	databaseWorkOpen                                                        bool
-	databaseWork                                                            []devplatform.DatabaseWorkInfo
-	databaseTasks                                                           map[string]*databaseTask
-	databaseNeedsRefresh, dbNewDraft, initializationsOpen                   bool
-	lastDatabaseTask                                                        *databaseTask
-	initializations                                                         []devplatform.InstanceInitializationInfo
-	packageTasks                                                            map[string]*packageTask
-	packageNeedsRefresh                                                     bool
-	lastPackageTask                                                         *packageTask
-	packageContention                                                       *devplatform.PackageBusyError
-	instanceDeletionPreview                                                 *devplatform.InstanceDeletionPreview
-	instanceDeletions                                                       []devplatform.InstanceDeletionInfo
-	deletionsOpen                                                           bool
-	deleteConfirmation                                                      string
-	operationsOpen                                                          bool
-	operations                                                              []devplatform.OperationRecord
-	operationID, operationsError                                            string
-	operationScroll                                                         ui.ScrollState
-	authorityOpen                                                           bool
-	authorityStatus                                                         *devplatform.AuthorityStatus
-	portChecks                                                              map[int]devplatform.PortInspection
-	diagnosticsOpen                                                         bool
-	diagnosticReport                                                        *devplatform.DiagnosticReport
-	diagnosticScroll                                                        ui.ScrollState
-	diagnosticJSON                                                          string
-	diagnosticPendingTarget                                                 *devplatform.DiagnosticTarget
-	packagePreview                                                          *devplatform.PackageDetails
-	packageDetailsText                                                      string
-	packageChecks                                                           map[string]devplatform.PackageIntegrityResult
-	detailScroll                                                            [3]ui.ScrollState
-	managerFactory                                                          func() *devplatform.Manager
-	softwareContext                                                         string
-	statuses                                                                map[string]string
-	statusPolling                                                           bool
-	statusLast                                                              time.Time
-	taskSequence                                                            uint64
-	loaded, busy                                                            bool
-	tab                                                                     int
-	state                                                                   devplatform.State
-	output                                                                  string
-	cancel                                                                  context.CancelFunc
-	software, version                                                       string
-	dbKind, dbID, dbPackage, dbPort, dbName, dbUser, dbPassword, backupPath string
-	persistent                                                              bool
-	proxyDraft                                                              []proxyRuleDraft
-	proxyListenerPort                                                       string
-	proxyDraftRevision                                                      uint64
-	proxyDraftLoaded                                                        bool
-	proxyChecks                                                             map[string]devplatform.ProxyHTTPResult
-	proxyChecking                                                           map[string]bool
-	proxyCheckGeneration                                                    uint64
-	nodeReleases                                                            []devplatform.NodeRelease
-	nodeReleasesTried, nodeReleasesRefresh, nodeReleasesStale               bool
-	nodeReleasesError                                                       string
-	nodeShell                                                               int
-	showResult                                                              bool
+	databaseWorkOpen                                                                                    bool
+	databaseWork                                                                                        []devplatform.DatabaseWorkInfo
+	databaseTasks                                                                                       map[string]*databaseTask
+	databaseNeedsRefresh, dbNewDraft, initializationsOpen                                               bool
+	lastDatabaseTask                                                                                    *databaseTask
+	initializations                                                                                     []devplatform.InstanceInitializationInfo
+	packageTasks                                                                                        map[string]*packageTask
+	packageNeedsRefresh                                                                                 bool
+	lastPackageTask                                                                                     *packageTask
+	packageContention                                                                                   *devplatform.PackageBusyError
+	instanceDeletionPreview                                                                             *devplatform.InstanceDeletionPreview
+	instanceDeletions                                                                                   []devplatform.InstanceDeletionInfo
+	deletionsOpen                                                                                       bool
+	deleteConfirmation                                                                                  string
+	operationsOpen                                                                                      bool
+	operations                                                                                          []devplatform.OperationRecord
+	operationID, operationsError                                                                        string
+	operationScroll                                                                                     ui.ScrollState
+	authorityOpen                                                                                       bool
+	authorityStatus                                                                                     *devplatform.AuthorityStatus
+	portChecks                                                                                          map[int]devplatform.PortInspection
+	diagnosticsOpen                                                                                     bool
+	diagnosticReport                                                                                    *devplatform.DiagnosticReport
+	diagnosticScroll                                                                                    ui.ScrollState
+	diagnosticJSON                                                                                      string
+	diagnosticPendingTarget                                                                             *devplatform.DiagnosticTarget
+	packagePreview                                                                                      *devplatform.PackageDetails
+	packageDetailsText                                                                                  string
+	packageChecks                                                                                       map[string]devplatform.PackageIntegrityResult
+	detailScroll                                                                                        [3]ui.ScrollState
+	managerFactory                                                                                      func() *devplatform.Manager
+	softwareContext                                                                                     string
+	statuses                                                                                            map[string]string
+	statusPolling                                                                                       bool
+	statusLast                                                                                          time.Time
+	taskSequence                                                                                        uint64
+	loaded, busy                                                                                        bool
+	tab                                                                                                 int
+	state                                                                                               devplatform.State
+	output                                                                                              string
+	cancel                                                                                              context.CancelFunc
+	software, version                                                                                   string
+	dbKind, dbID, dbPackage, dbPort, dbName, dbUser, dbPassword, backupPath                             string
+	profileDraft                                                                                        devplatform.ConnectionProfile
+	profileSelected, profileDraftInstance, profilePendingInstance, profilePendingSelect, profileRedisDB string
+	profileOffer                                                                                        *connectionOperationOffer
+	persistent                                                                                          bool
+	proxyDraft                                                                                          []proxyRuleDraft
+	proxyListenerPort                                                                                   string
+	proxyDraftRevision                                                                                  uint64
+	proxyDraftLoaded                                                                                    bool
+	proxyChecks                                                                                         map[string]devplatform.ProxyHTTPResult
+	proxyChecking                                                                                       map[string]bool
+	proxyCheckGeneration                                                                                uint64
+	nodeReleases                                                                                        []devplatform.NodeRelease
+	nodeReleasesTried, nodeReleasesRefresh, nodeReleasesStale                                           bool
+	nodeReleasesError                                                                                   string
+	nodeShell                                                                                           int
+	showResult                                                                                          bool
 }
 
 func (a *app) devTask(fn func(*devplatform.Manager) (string, error)) {
@@ -409,22 +412,30 @@ func (a *app) devMaster(c *ui.Context) {
 		}
 	case devTabDatabases:
 		if ui.PrimaryButton(c, "New database instance").Disabled(d.busy).Clicked() {
-			d.dbNewDraft = true
-			d.databaseWorkOpen = false
-			d.initializationsOpen = false
-			d.deletionsOpen = false
-			d.instanceDeletionPreview = nil
-			d.deleteConfirmation = ""
-			d.dbID = ""
-			d.dbKind = "postgresql"
-			d.dbPort = "55432"
-			d.dbPackage = ""
-			d.persistent = true
+			if a.connectionProfileDirty() {
+				d.profilePendingInstance = "new"
+			} else {
+				d.dbNewDraft = true
+				d.databaseWorkOpen = false
+				d.initializationsOpen = false
+				d.deletionsOpen = false
+				d.instanceDeletionPreview = nil
+				d.deleteConfirmation = ""
+				d.dbID = ""
+				d.dbKind = "postgresql"
+				d.dbPort = "55432"
+				d.dbPackage = ""
+				d.persistent = true
+			}
 		}
 		for _, id := range sortedKeys(d.state.Instances) {
 			i := d.state.Instances[id]
 			status := d.statuses["instance:"+id]
 			if devListEntry(c, "Instance "+id, id, status, devNews(status), d.dbID == id) {
+				if id != d.dbID && a.connectionProfileDirty() {
+					d.profilePendingInstance = id
+					continue
+				}
 				d.dbNewDraft = false
 				d.databaseWorkOpen = false
 				d.initializationsOpen = false
@@ -436,6 +447,7 @@ func (a *app) devMaster(c *ui.Context) {
 				d.dbPackage = i.Package
 				d.dbPort = strconv.Itoa(i.Port)
 				d.persistent = i.Persistent
+				a.loadConnectionProfileDraft(id, "")
 			}
 		}
 	case devTabHTTPS:
@@ -655,49 +667,7 @@ func (a *app) devDatabases(c *ui.Context) {
 			}
 		})
 		ui.Row(c).Wrap().Gap(8).Children(func() {
-			if ui.Button(c, "Show connection details").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
-				id := d.dbID
-				a.devTask(func(m *devplatform.Manager) (string, error) { return m.Connection(id) })
-			}
-			if ui.Button(c, "Copy connection URI").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
-				id := d.dbID
-				a.devTask(func(m *devplatform.Manager) (string, error) {
-					info, e := m.ConnectionInfo(id)
-					if e == nil {
-						a.post(func() {
-							if a.copy != nil {
-								a.copy(info.URI)
-							}
-						})
-					}
-					return "Connection URI copied", e
-				})
-			}
-			if ui.Button(c, "Copy database password").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
-				id := d.dbID
-				a.devTask(func(m *devplatform.Manager) (string, error) {
-					password, e := m.DatabasePassword(id)
-					if e == nil {
-						a.post(func() {
-							if a.copy != nil {
-								a.copy(password)
-							}
-						})
-					}
-					return "Database password copied", e
-				})
-			}
-			if ui.Button(c, "Open external database client").Disabled(d.busy).Clicked() {
-				id := d.dbID
-				a.devTask(func(m *devplatform.Manager) (string, error) {
-					info, e := m.ConnectionInfo(id)
-					if e != nil {
-						return "", e
-					}
-					_, e = m.Run(m.Context, "/usr/bin/open", info.URI)
-					return "Opening the default client for " + softwareTitle(instance.Kind), e
-				})
-			}
+			a.devDatabaseConnections(c, instance)
 			if ui.Button(c, "Read instance logs").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 				id := "db-" + instance.ID
 				d.showResult = true
@@ -752,9 +722,9 @@ func (a *app) devDatabases(c *ui.Context) {
 	if d.dbKind != "redis" {
 		if ui.Button(c, "Create database").AlignSelf(ui.Start).Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
 			id, name := d.dbID, d.dbName
-			a.startDatabaseOperation(d.state.Instances[id], "create database", func(m *devplatform.Manager) (string, error) {
+			a.startDatabaseOperationWithOffer(d.state.Instances[id], "create database", func(m *devplatform.Manager) (string, error) {
 				return "Created database " + name, m.CreateDatabase(m.Context, id, name)
-			})
+			}, &connectionOperationOffer{InstanceID: id, Kind: d.dbKind, Database: name})
 		}
 		devField(c, "Database user", &d.dbUser, "app_user")
 		ui.Field(c, "New user password", func() { ui.TextInput(c, &d.dbPassword).Password() })

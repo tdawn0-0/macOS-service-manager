@@ -181,6 +181,7 @@ func (m *Manager) instanceAction(ctx context.Context, id, action string) error {
 				return e
 			}
 			delete(latest.Instances, id)
+			removeInstanceProfiles(latest, id)
 			return nil
 		})
 	}

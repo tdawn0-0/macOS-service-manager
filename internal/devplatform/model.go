@@ -95,19 +95,20 @@ type Instance struct {
 	Persistent bool   `json:"persistent"`
 }
 type State struct {
-	ProxyRules          []ProxyRule         `json:"proxyRules"`
-	ProxyListenerPort   int                 `json:"proxyListenerPort"`
-	ProxyRulesRevision  uint64              `json:"proxyRulesRevision"`
-	PackageIntegrity    map[string]string   `json:"packageIntegrity,omitempty"`
-	LogRotationDisabled bool                `json:"logRotationDisabled,omitempty"`
-	NodeDefault         string              `json:"nodeDefault,omitempty"`
-	SchemaVersion       int                 `json:"schemaVersion"`
-	Packages            map[string]Package  `json:"packages"`
-	Instances           map[string]Instance `json:"instances"`
+	ConnectionProfiles  map[string]ConnectionProfile `json:"connectionProfiles"`
+	ProxyRules          []ProxyRule                  `json:"proxyRules"`
+	ProxyListenerPort   int                          `json:"proxyListenerPort"`
+	ProxyRulesRevision  uint64                       `json:"proxyRulesRevision"`
+	PackageIntegrity    map[string]string            `json:"packageIntegrity,omitempty"`
+	LogRotationDisabled bool                         `json:"logRotationDisabled,omitempty"`
+	NodeDefault         string                       `json:"nodeDefault,omitempty"`
+	SchemaVersion       int                          `json:"schemaVersion"`
+	Packages            map[string]Package           `json:"packages"`
+	Instances           map[string]Instance          `json:"instances"`
 }
 
 func emptyState() State {
-	return State{SchemaVersion: Schema, Packages: map[string]Package{}, Instances: map[string]Instance{}, ProxyRules: []ProxyRule{}, ProxyListenerPort: 443}
+	return State{SchemaVersion: Schema, Packages: map[string]Package{}, Instances: map[string]Instance{}, ConnectionProfiles: map[string]ConnectionProfile{}, ProxyRules: []ProxyRule{}, ProxyListenerPort: 443}
 }
 
 type Manager struct {
@@ -242,6 +243,15 @@ func (m *Manager) Read() (State, error) {
 	}
 	if decoded.Packages == nil || decoded.Instances == nil || decoded.ProxyRules == nil || decoded.ProxyListenerPort < 1 || decoded.ProxyListenerPort > 65535 {
 		return s, errors.New("incomplete state")
+	}
+	if decoded.ConnectionProfiles == nil {
+		decoded.ConnectionProfiles = map[string]ConnectionProfile{}
+	}
+	for id, profile := range decoded.ConnectionProfiles {
+		instance, ok := decoded.Instances[profile.InstanceID]
+		if !ok || id != profile.ID || validateConnectionProfile(profile, instance.Kind) != nil {
+			return s, errors.New("invalid connection profile state")
+		}
 	}
 	if _, e = normalizeProxyRules(decoded.ProxyListenerPort, decoded.ProxyRules); e != nil {
 		return s, fmt.Errorf("invalid state proxy rules: %w", e)

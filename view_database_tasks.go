@@ -72,6 +72,15 @@ func (a *app) startDatabaseTask(i devplatform.Instance) {
 }
 
 func (a *app) startDatabaseOperation(i devplatform.Instance, kind string, work func(*devplatform.Manager) (string, error)) {
+	a.startDatabaseOperationWithOffer(i, kind, work, nil)
+}
+
+type connectionOperationOffer struct {
+	InstanceID, Kind, Database, Username, MongoAuthSource string
+	OperationID                                           uint64
+}
+
+func (a *app) startDatabaseOperationWithOffer(i devplatform.Instance, kind string, work func(*devplatform.Manager) (string, error), offer *connectionOperationOffer) {
 	d := &a.dev
 	if d.busy || a.quit.open || a.quit.allow {
 		return
@@ -86,6 +95,12 @@ func (a *app) startDatabaseOperation(i devplatform.Instance, kind string, work f
 	task := &databaseTask{Instance: i, Kind: kind, Progress: "Preparing " + i.ID, Running: true, cancel: cancel}
 	d.databaseTasks[i.ID] = task
 	d.taskSequence++
+	if offer != nil {
+		copy := *offer
+		copy.OperationID = d.taskSequence
+		offer = &copy
+		d.profileOffer = nil
+	}
 	a.applyDatabaseTaskPhases()
 	factory := d.managerFactory
 	a.spawn(func() {
@@ -107,6 +122,7 @@ func (a *app) startDatabaseOperation(i devplatform.Instance, kind string, work f
 			})
 		}
 		result, err := work(m)
+		completed := err == nil && ctx.Err() == nil
 		var inspection *devplatform.PortInspection
 		var portError *devplatform.PortUnavailableError
 		if errors.As(err, &portError) {
@@ -127,6 +143,12 @@ func (a *app) startDatabaseOperation(i devplatform.Instance, kind string, work f
 			task.syncPending = true
 			task.err = err
 			task.Result = result
+			if completed && offer != nil {
+				if current, exists := a.dev.state.Instances[offer.InstanceID]; exists && current.Kind == offer.Kind {
+					copy := *offer
+					a.dev.profileOffer = &copy
+				}
+			}
 			if err != nil {
 				label := "Database operation"
 				if kind == "initialize" {

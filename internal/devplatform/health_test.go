@@ -147,3 +147,153 @@ func TestObservedHealthUsesTheStartupProbeDeadline(t *testing.T) {
 		t.Fatal("an acceptable startup probe became unready only because status polling used a shorter deadline", result)
 	}
 }
+
+func TestRuntimeSnapshotFairBudget(t *testing.T) {
+	m := testManager(t)
+	s := emptyState()
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	defer slow.Close()
+	fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	defer fast.Close()
+	for n := 0; n < 6; n++ {
+		id := fmt.Sprintf("slow-%d", n)
+		s.Projects[id] = Project{ID: id, Directory: t.TempDir(), Services: []Service{{ID: "web", Command: []string{"fixture"}, Health: slow.URL}}}
+	}
+	s.Projects["z-healthy"] = Project{ID: "z-healthy", Directory: t.TempDir(), Services: []Service{{ID: "web", Command: []string{"fixture"}, Health: fast.URL}}}
+	m.Run = func(context.Context, string, ...string) (string, error) { return "state = running\npid = 123", nil }
+	r := m.Snapshot(context.Background(), s)
+	if r.States["project:z-healthy"] != "Healthy" || r.Services[ServiceStatusKey("z-healthy", "web")].Status != "Healthy" {
+		t.Fatal("later healthy service was starved", r.States)
+	}
+	for n := 0; n < 6; n++ {
+		status := r.States["project:"+fmt.Sprintf("slow-%d", n)]
+		if status != "Not ready" && status != "Unknown" {
+			t.Fatal("slow service not classified", status)
+		}
+	}
+}
+
+func TestRuntimeSnapshotBoundedCancellation(t *testing.T) {
+	m := testManager(t)
+	s := emptyState()
+	for n := 0; n < 12; n++ {
+		id := fmt.Sprintf("db-%02d", n)
+		s.Instances[id] = Instance{ID: id}
+	}
+	var active, peak atomic.Int32
+	entered := make(chan struct{}, 4)
+	m.Run = func(ctx context.Context, _ string, _ ...string) (string, error) {
+		n := active.Add(1)
+		defer active.Add(-1)
+		for old := peak.Load(); n > old; old = peak.Load() {
+			if peak.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan RuntimeSnapshot, 1)
+	go func() { done <- m.Snapshot(ctx, s) }()
+	for n := 0; n < 4; n++ {
+		select {
+		case <-entered:
+		case <-time.After(3 * time.Second):
+			t.Fatal("worker pool did not start")
+		}
+	}
+	cancel()
+	select {
+	case r := <-done:
+		for _, status := range r.States {
+			if status != "Unknown" {
+				t.Fatal("cancelled observation inferred state", status)
+			}
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancelled snapshot did not return")
+	}
+	if active.Load() != 0 || peak.Load() > 4 {
+		t.Fatal("observation concurrency leaked/exceeded", active.Load(), peak.Load())
+	}
+}
+func TestRuntimeSnapshotKeepsCompletedResults(t *testing.T) {
+	m := testManager(t)
+	s := emptyState()
+	s.Instances["slow"] = Instance{ID: "slow"}
+	fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	defer fast.Close()
+	s.Projects["fast"] = Project{ID: "fast", Directory: t.TempDir(), Services: []Service{{ID: "web", Command: []string{"fixture"}, Health: fast.URL}}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	m.Run = func(check context.Context, _ string, args ...string) (string, error) {
+		if strings.HasSuffix(args[len(args)-1], m.label("db-slow")) {
+			<-check.Done()
+			cancel()
+			return "", check.Err()
+		}
+		return "state = running\npid = 123", nil
+	}
+	r := m.Snapshot(ctx, s)
+	if ctx.Err() == nil {
+		t.Fatal("fixture failed to expire shared context")
+	}
+	if r.States["instance:slow"] != "Unknown" || r.States["project:fast"] != "Healthy" || r.Services[ServiceStatusKey("fast", "web")].Status != "Healthy" {
+		t.Fatal("completed health erased by other timeout", r.States)
+	}
+}
+func TestRuntimeSnapshotProxyAndPID(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		m := testManager(t)
+		m.Run = func(context.Context, string, ...string) (string, error) {
+			t.Fatal("empty snapshot queried process")
+			return "", nil
+		}
+		r := m.Snapshot(context.Background(), emptyState())
+		if len(r.States) != 0 {
+			t.Fatal(r.States)
+		}
+	})
+	t.Run("proxy-only", func(t *testing.T) {
+		m := testManager(t)
+		s := emptyState()
+		s.Projects["proxy-only"] = Project{ID: "proxy-only", Directory: t.TempDir()}
+		m.Run = func(_ context.Context, name string, args ...string) (string, error) {
+			if strings.HasSuffix(args[len(args)-1], m.label("project-proxy-only")) {
+				return "state = not running", nil
+			}
+			if strings.HasSuffix(args[len(args)-1], m.label("proxy")) {
+				return "state = running\npid = 123", nil
+			}
+			return "", errors.New("not found")
+		}
+		r := m.Snapshot(context.Background(), s)
+		if r.States["project:proxy-only"] != "Running" {
+			t.Fatal(r.States)
+		}
+	})
+	t.Run("changed-pid", func(t *testing.T) {
+		m := testManager(t)
+		s := emptyState()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+		defer server.Close()
+		s.Projects["app"] = Project{ID: "app", Directory: t.TempDir(), Services: []Service{{ID: "web", Command: []string{"fixture"}, Health: server.URL}}}
+		var calls atomic.Int32
+		m.Run = func(_ context.Context, _ string, args ...string) (string, error) {
+			if strings.HasSuffix(args[len(args)-1], m.label("p-app-web")) {
+				return fmt.Sprintf("state = running\npid = %d", calls.Add(1)), nil
+			}
+			return "", errors.New("not found")
+		}
+		r := m.Snapshot(context.Background(), s)
+		if r.States["project:app"] != "Not ready" || calls.Load() != 2 {
+			t.Fatal("PID ownership check lost", r.States)
+		}
+	})
+}

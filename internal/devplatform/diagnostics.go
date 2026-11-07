@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -97,33 +98,126 @@ func (m *Manager) Snapshot(ctx context.Context, s State) RuntimeSnapshot {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	out := RuntimeSnapshot{States: map[string]string{}, Services: map[string]ServiceStatus{}, FolderErrors: map[string]string{}}
+	type observation struct {
+		key, status, folder string
+		service             ServiceStatus
+	}
+	type task struct {
+		key string
+		run func(context.Context) observation
+	}
+	var tasks []task
+	for _, id := range diagnosticKeys(s.Instances) {
+		key := "instance:" + id
+		tasks = append(tasks, task{key, func(check context.Context) observation {
+			job, err := m.readJobState(check, "db-"+id)
+			status := "Stopped"
+			if err == nil {
+				status = "Failed"
+				if job.Running {
+					status = "Running"
+				}
+			}
+			if check.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				status = "Unknown"
+			}
+			return observation{key: key, status: status}
+		}})
+	}
+	needsProxy := false
+	for _, id := range diagnosticKeys(s.Projects) {
+		p := s.Projects[id]
+		key := "marker:" + id
+		tasks = append(tasks, task{key, func(check context.Context) observation {
+			r := observation{key: key, status: "Stopped"}
+			if err := projectFolderError(p.Directory); err != nil {
+				r.folder = err.Error()
+			}
+			_, err := m.Run(check, "launchctl", "print", domain()+"/"+m.label("project-"+id))
+			if err == nil {
+				r.status = "Loaded"
+			}
+			if check.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				r.status = "Unknown"
+			}
+			return r
+		}})
+		if len(p.Services)+len(p.Instances) == 0 {
+			needsProxy = true
+		}
+		for _, svc := range p.Services {
+			key := ServiceStatusKey(id, svc.ID)
+			tasks = append(tasks, task{key, func(check context.Context) observation {
+				state := m.observeService(check, "p-"+id+"-"+svc.ID, svc)
+				return observation{key: key, status: state.Status, service: state}
+			}})
+		}
+	}
+	if needsProxy {
+		tasks = append(tasks, task{"proxy", func(check context.Context) observation {
+			job, err := m.readJobState(check, "proxy")
+			status := "Failed"
+			if (err == nil && job.Running) || m.socketLoaded(check) {
+				status = "Running"
+			}
+			if check.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				status = "Unknown"
+			}
+			return observation{key: "proxy", status: status}
+		}})
+	}
+	// A fixed worker pool bounds launchctl/probe concurrency. Divide the available
+	// time across worst-case queue batches, reserving 10% for collection. Every
+	// queued item gets a budget, rather than later items inheriting an empty one.
+	results := make(chan observation, len(tasks))
+	queue := make(chan task, len(tasks))
+	for _, work := range tasks {
+		queue <- work
+	}
+	close(queue)
+	deadline, _ := ctx.Deadline()
+	batches := max(1, (len(tasks)+3)/4)
+	budget := time.Until(deadline) * 9 / 10 / time.Duration(batches)
+	var workers sync.WaitGroup
+	for n := 0; n < min(4, len(tasks)); n++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for work := range queue {
+				r := observation{key: work.key, status: "Unknown", service: ServiceStatus{Status: "Unknown"}}
+				if ctx.Err() == nil && budget > 0 {
+					check, done := context.WithTimeout(ctx, budget)
+					r = work.run(check)
+					done()
+				}
+				results <- r
+			}
+		}()
+	}
+	workers.Wait()
+	close(results)
+	observed := make(map[string]observation, len(tasks))
+	for r := range results {
+		observed[r.key] = r
+	}
 	instanceRunning := map[string]bool{}
 	for _, id := range diagnosticKeys(s.Instances) {
-		job, err := m.readJobState(ctx, "db-"+id)
-		status := "Stopped"
-		if err == nil {
-			status = "Failed"
-		}
-		if err == nil && job.Running {
-			status = "Running"
-			instanceRunning[id] = true
-		}
-		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			status = "Unknown"
-		}
+		status := observed["instance:"+id].status
 		out.States["instance:"+id] = status
+		instanceRunning[id] = status == "Running"
 	}
 	for _, id := range diagnosticKeys(s.Projects) {
 		p := s.Projects[id]
-		if err := projectFolderError(p.Directory); err != nil {
-			out.FolderErrors[id] = err.Error()
+		marker := observed["marker:"+id]
+		if marker.folder != "" {
+			out.FolderErrors[id] = marker.folder
 		}
-		marked := m.loaded(ctx, "project-"+id)
+		marked := marker.status == "Loaded"
 		owns := marked
 		running, healthy, unready, restarting, failed, unknown := 0, 0, 0, 0, 0, 0
 		for _, svc := range p.Services {
-			state := m.observeService(ctx, "p-"+id+"-"+svc.ID, svc)
 			key := ServiceStatusKey(id, svc.ID)
+			state := observed[key].service
 			out.Services[key] = state
 			out.States[key] = state.Status
 			if state.Status != "Stopped" && state.Status != "Unknown" {
@@ -159,12 +253,14 @@ func (m *Manager) Snapshot(ctx context.Context, s State) RuntimeSnapshot {
 		status := "Stopped"
 		total := len(p.Services) + len(p.Instances)
 		switch {
-		case ctx.Err() != nil || unknown > 0:
+		case marker.status == "Unknown" || unknown > 0:
 			status = "Unknown"
 		case total == 0 && marked:
 			status = "Failed"
-			if proxy, err := m.readJobState(ctx, "proxy"); (err == nil && proxy.Running) || m.socketLoaded(ctx) {
+			if observed["proxy"].status == "Running" {
 				status = "Running"
+			} else if observed["proxy"].status == "Unknown" {
+				status = "Unknown"
 			}
 		case !owns: // A standalone database is not a project owner.
 		case running > 0 && running < total:

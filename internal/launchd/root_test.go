@@ -1,10 +1,13 @@
 package launchd
 
 import (
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -281,12 +284,7 @@ func TestAFailureSaysWhetherTheFileWasSaved(t *testing.T) {
 	// As root would: the file goes in place, and launchd refuses it.
 	system.RunAdmin = func(name string, args ...string) (string, error) {
 		script := args[1]
-		_, rest, _ := strings.Cut(script, "wheel '")
-		tmp, _, _ := strings.Cut(rest, "'")
-		data, err := os.ReadFile(tmp)
-		if err != nil {
-			t.Fatal(err)
-		}
+		data := approvedJobBytes(t, script)
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -494,5 +492,72 @@ func TestOptionalThrottlePreservesExistingJobPolicy(t *testing.T) {
 	out, err = spec.Marshal(data)
 	if err != nil || decode(t, out)["ThrottleInterval"] != uint64(3) {
 		t.Fatal("explicit throttle was not applied", err, decode(t, out))
+	}
+}
+
+func approvedJobBytes(t *testing.T, script string) []byte {
+	t.Helper()
+	m := regexp.MustCompile(`/usr/bin/printf '%s' '([A-Za-z0-9+/=]+)'`).FindStringSubmatch(script)
+	if len(m) != 2 {
+		t.Fatal("authorized command does not embed approved bytes")
+	}
+	b, err := base64.StdEncoding.DecodeString(m[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+func TestAuthorizedJobPayload(t *testing.T) {
+	for _, edit := range []bool{false, true} {
+		for _, load := range []bool{false, true} {
+			t.Run(fmt.Sprintf("edit-%t-load-%t", edit, load), func(t *testing.T) {
+				_, admin := stubRoot(t)
+				dir := t.TempDir()
+				existing := ""
+				spec := Spec{Label: "com.example.fixed", Args: []string{"/bin/echo", "quoted ' Unicode 字段"}}
+				if edit {
+					existing = filepath.Join(dir, "com.example.fixed.plist")
+					b, e := spec.Marshal(nil)
+					if e != nil {
+						t.Fatal(e)
+					}
+					if e = os.WriteFile(existing, b, 0644); e != nil {
+						t.Fatal(e)
+					}
+				}
+				p := &Provider{Config{Dir: dir, Domain: "system", Elevated: true}}
+				if _, e := p.SaveAsRoot(spec, existing, load); e != nil {
+					t.Fatal(e)
+				}
+				line := (*admin)[0][2]
+				b := approvedJobBytes(t, line)
+				var decoded map[string]any
+				if _, e := plist.Unmarshal(b, &decoded); e != nil {
+					t.Fatal(e)
+				}
+				if decoded["Label"] != spec.Label {
+					t.Fatal("approved label changed")
+				}
+				args := decoded["ProgramArguments"].([]any)
+				if args[1] != spec.Args[1] {
+					t.Fatal("approved arguments changed")
+				}
+				if strings.Contains(line, os.TempDir()+"/.msm-") {
+					t.Fatal("reads user staging file")
+				}
+				if out, e := exec.Command("/bin/sh", "-n", "-c", line).CombinedOutput(); e != nil {
+					t.Fatal(e, string(out))
+				}
+			})
+		}
+	}
+}
+
+func TestAuthorizedJobPayloadSizeLimit(t *testing.T) {
+	_, admin := stubRoot(t)
+	p := &Provider{Config{Dir: t.TempDir(), Domain: "system", Elevated: true}}
+	_, e := p.SaveAsRoot(Spec{Label: "com.example.large", Args: []string{"/bin/echo", strings.Repeat("x", 65<<10)}}, "", true)
+	if e == nil || !strings.Contains(e.Error(), "size limit") || len(*admin) != 0 {
+		t.Fatal("oversized configuration reached authorization", e)
 	}
 }

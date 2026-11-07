@@ -2,6 +2,7 @@ package launchd
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -409,6 +410,9 @@ func (p *Provider) SaveAsRoot(s Spec, existing string, load bool) (string, error
 	if err != nil {
 		return "", err
 	}
+	if len(data) > 64<<10 {
+		return "", fmt.Errorf("job configuration exceeds authorized command size limit")
+	}
 	tmp, err := writeChecked(os.TempDir(), data)
 	if err != nil {
 		return "", err
@@ -417,9 +421,9 @@ func (p *Provider) SaveAsRoot(s Spec, existing string, load bool) (string, error
 	// Agents load into the user's domain, for which the user needs no root.
 	inScript := load && p.Elevated
 	target := p.Domain + "/" + s.Label
-	script := installScript(tmp, path, p.Domain, inScript)
+	script := installScript(data, path, p.Domain, inScript)
 	if existing != "" {
-		script = replaceScript(tmp, path, p.Domain, target, inScript)
+		script = replaceScript(data, path, p.Domain, target, inScript)
 	}
 	if _, err := system.RunAdmin("/bin/sh", "-c", script); err != nil {
 		// Root may have saved it and failed to load it.
@@ -442,24 +446,23 @@ func (p *Provider) SaveAsRoot(s Spec, existing string, load bool) (string, error
 	return path, nil
 }
 
+// approvedJobStage embeds reviewed bytes and stages them in the protected target directory.
+func approvedJobStage(data []byte, path string) string {
+	return "/bin/mkdir -p " + system.ShellQuote(filepath.Dir(path)) + " && tmp=$(/usr/bin/mktemp " + system.ShellQuote(filepath.Join(filepath.Dir(path), ".msm-approved.XXXXXX")) + ") && trap '/bin/rm -f \"$tmp\"' EXIT && /usr/bin/printf '%s' " + system.ShellQuote(base64.StdEncoding.EncodeToString(data)) + " | /usr/bin/base64 -D > \"$tmp\" && /usr/bin/plutil -lint \"$tmp\" >/dev/null && "
+}
+
 // installScript is what root runs for a new job: it never replaces a job that
 // appeared since the check, and launchd refuses a file that root does not own.
-func installScript(tmp, path, domain string, load bool) string {
-	script := "[ ! -e " + system.ShellQuote(path) + " ]" +
-		" && /bin/mkdir -p " + system.ShellQuote(filepath.Dir(path)) +
-		" && /usr/bin/install -S -m 644 -o root -g wheel " + system.ShellQuote(tmp) + " " + system.ShellQuote(path)
+func installScript(data []byte, path, domain string, load bool) string {
+	script := "[ ! -e " + system.ShellQuote(path) + " ] && [ ! -L " + system.ShellQuote(path) + " ] && " + approvedJobStage(data, path) + "[ ! -e " + system.ShellQuote(path) + " ] && [ ! -L " + system.ShellQuote(path) + " ] && /usr/bin/install -S -m 644 -o root -g wheel \"$tmp\" " + system.ShellQuote(path)
 	if load {
 		script += " && /bin/launchctl bootstrap " + system.ShellQuote(domain) + " " + system.ShellQuote(path)
 	}
 	return script
 }
-
-// replaceScript is what root runs for an edit. The job stays as it is until the
-// new file is in place, which replaces the old one all at once, and a loaded job
-// keeps what it was loaded with until it loads again.
-func replaceScript(tmp, path, domain, target string, load bool) string {
-	script := "[ -f " + system.ShellQuote(path) + " ]" +
-		" && /usr/bin/install -S -m 644 -o root -g wheel " + system.ShellQuote(tmp) + " " + system.ShellQuote(path)
+func replaceScript(data []byte, path, domain, target string, load bool) string {
+	check := "[ -f " + system.ShellQuote(path) + " ] && [ ! -L " + system.ShellQuote(path) + " ] && "
+	script := check + approvedJobStage(data, path) + check + "/usr/bin/install -S -m 644 -o root -g wheel \"$tmp\" " + system.ShellQuote(path)
 	if load {
 		script += " && { " + unloadScript(target) + " /bin/launchctl bootstrap " + system.ShellQuote(domain) + " " + system.ShellQuote(path) + "; }"
 	}

@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -343,22 +344,23 @@ func (m *Manager) ConfigureHosts(ctx context.Context) error {
 		if e = atomicWrite(filepath.Join(m.Root, "hosts.backup"), old, 0600); e != nil {
 			return e
 		}
-		tmp, e := os.CreateTemp("", "msm-hosts-")
+		script, e := hostsInstallScript(old, []byte(updated))
 		if e != nil {
 			return e
 		}
-		defer os.Remove(tmp.Name())
-		if _, e = tmp.WriteString(updated); e != nil {
-			tmp.Close()
-			return e
-		}
-		tmp.Close()
-		// Check the original hash in the privileged operation before replacement.
-		sum := sha1.Sum(old)
-		script := "test \"$(/usr/bin/shasum /etc/hosts | /usr/bin/cut -d ' ' -f 1)\" = " + system.ShellQuote(hex.EncodeToString(sum[:])) + " && /bin/cat " + system.ShellQuote(tmp.Name()) + " > /etc/hosts && /usr/bin/dscacheutil -flushcache"
 		_, e = system.RunAdmin("/bin/sh", "-c", script)
 		return e
 	})
+}
+
+// hostsInstallScript freezes the reviewed bytes before the authorization dialog.
+func hostsInstallScript(old, updated []byte) (string, error) {
+	if len(updated) > 64<<10 {
+		return "", errors.New("hosts configuration exceeds authorized command size limit")
+	}
+	sum := sha1.Sum(old)
+	check := "[ -f /etc/hosts ] && [ ! -L /etc/hosts ] && test \"$(/usr/bin/shasum /etc/hosts | /usr/bin/cut -d ' ' -f 1)\" = " + system.ShellQuote(hex.EncodeToString(sum[:]))
+	return check + " && tmp=$(/usr/bin/mktemp /etc/.msm-hosts.XXXXXX) && trap '/bin/rm -f \"$tmp\"' EXIT && /usr/bin/printf '%s' " + system.ShellQuote(base64.StdEncoding.EncodeToString(updated)) + " | /usr/bin/base64 -D > \"$tmp\" && set -- $(/usr/bin/stat -f '%u %g %Lp' /etc/hosts) && /usr/sbin/chown \"$1:$2\" \"$tmp\" && /bin/chmod \"$3\" \"$tmp\" && " + check + " && /bin/mv -f \"$tmp\" /etc/hosts && /usr/bin/dscacheutil -flushcache", nil
 }
 
 func (m *Manager) proxySites() ([]Site, error) {

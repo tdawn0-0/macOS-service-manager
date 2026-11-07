@@ -61,8 +61,11 @@ func newDevUIHarnessSize(t *testing.T, width, height int, dark bool) *devUIHarne
 	a.dev.loaded = true
 	a.post = func(f func()) { h.posted <- f }
 	a.spawn = func(f func()) { go f() }
+	a.dev.nodeReleasesTried = true // the release list is read from nodejs.org only where a test asks
+	home := t.TempDir()
 	a.dev.managerFactory = func() *devplatform.Manager {
 		m := devplatform.New(root)
+		m.Home = home
 		m.Program = binary
 		realRun := m.Run
 		m.Run = func(ctx context.Context, name string, args ...string) (string, error) {

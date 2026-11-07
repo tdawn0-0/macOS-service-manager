@@ -306,8 +306,21 @@ func (m *Manager) Uninstall(ctx context.Context, id string) error {
 				return e
 			}
 		}
+		if p.Name == "node" {
+			if s.NodeDefault == id {
+				s.NodeDefault = ""
+			}
+			if e := os.RemoveAll(m.nodeGlobalPrefix(p.Version)); e != nil {
+				return e
+			}
+		}
 		delete(s.Packages, id)
 		delete(s.PackageIntegrity, id)
+		if p.Name == "node" {
+			if e := m.linkNodeDefault(*s); e != nil {
+				return e
+			}
+		}
 		if err := os.Remove(m.integrityPath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}

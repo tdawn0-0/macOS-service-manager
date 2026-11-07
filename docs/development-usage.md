@@ -27,7 +27,7 @@ build/devmgr help
 
 | 软件 | 当前已验证的实现 |
 | --- | --- |
-| Node.js | 上游精确版本下载、校验、项目版本选择和 launchctl 托管 |
+| Node.js | nodejs.org 版本列表与精确版本下载、校验、默认版本、按目录切换（替代 fnm/nvm）、项目版本选择和 launchctl 托管 |
 | PostgreSQL | Homebrew core postgresql@17 / @18 / @16；实例仍使用 App 的独立数据目录和端口 |
 | PHP | shivammathur/php tap；支持选择 8.5 / 8.4 / 8.3 等系列，解析当前补丁版本 |
 | MySQL | 官方 8.4.4 包；独立实例、用户、数据库、备份恢复已实测 |
@@ -84,7 +84,7 @@ HTTPS 的 Customize proxy settings 提供连接超时和响应头超时，单位
 
 测试管理员操作可用 build/devmgr proxy-verify 合并为一次授权，验证停止、端口释放、恢复与重启。build/devmgr proxy-stop 移除本应用的网络监听任务；站点配置和 CA 数据保留。测试授权失效时 macOS 仍可能要求重新认证，应用不改变永久免密规则。
 
-导入时读取 .nvmrc、.node-version、package.json engines/volta、.php-version 和 composer.json PHP 声明，展示来源。不同精确版本的冲突会提示；范围不会被假装解析成精确版本。只发现声明不会自动下载或执行 npm/composer 脚本；仅在存在 dev/start 脚本时建议 npm 命令。总览可重新扫描，运行时选择不覆盖版本声明文件。Node 支持手输上游精确版本；不存在的版本明确失败，不静默换版本。
+导入时读取 .nvmrc、.node-version、package.json engines/volta、.php-version 和 composer.json PHP 声明，展示来源。不同精确版本的冲突会提示；范围不会被假装解析成精确版本，但 Node 的 22、lts、lts/iron、latest 和范围在 Software 里会按 nodejs.org 的发布列表解析成明确版本，预览确认后才安装。只发现声明不会自动下载或执行 npm/composer 脚本；仅在存在 dev/start 脚本时建议 npm 命令。总览可重新扫描，运行时选择不覆盖版本声明文件。Node 版本来自 nodejs.org 的 index.json（仅 Apple Silicon 构建，缓存一小时，离线时使用上次列表），安装包按同一发布的 SHASUMS256.txt 校验；可用 MSM_NODE_DIST_MIRROR 指定 HTTPS 镜像。不存在的版本明确失败，不静默换版本。
 
 顶部 Diagnostics 或 HTTPS 的 Diagnose HTTPS 打开分层报告。DNS 必须只返回代理实际监听的 127.0.0.1，其他回环别名、IPv6 或外部地址不会被当作成功。解析超时单独标记为未完成的警告，不直接判断 hosts 配置错误。检查进程/就绪、数据库端口、CA 有效期与 macOS 信任、上游 TCP/TLS，以及以系统信任校验的本地 HTTPS。归档软件包按已记录索引检查完整文件树；Homebrew 包仅核对收据的 tap、版本与必需可执行文件。数据库认证和普通上游 HTTP 响应不在该报告的检测范围，页面和结果会说明。诊断只读取状态，不应用 hosts、修改信任或启停服务。
 
@@ -259,3 +259,11 @@ worker 最长运行 30 分钟。正常调用者取消时会停止它自己的 wo
 **Reveal private command files** 打开经过目录身份核对的任务文件夹。输入和输出可能包含秘密，不会自动复制进操作历史。收尾仅清除该任务的私有文件和占用记录，保留命令对项目的写入，不自动再次执行。未审阅记录继续保护项目、关联数据库和软件版本；独立资源仍可使用。CLI `project-commands` 与 `project-command-resolve <id> <revision>` 提供相同能力，revision 取最新快照。
 
 PHP/PostgreSQL 不使用 Homebrew 默认服务，仍由 App 为每个实例生成独立 launchd 任务。精确 Cellar 路径缺失时会报错，不跟随 opt 软链接改用其他版本。Homebrew 不保证历史补丁包可长期安装。工作区的 Remove from workspace 只移除注册记录，保留共享 keg；修复需停止使用方后通过 brew reinstall <formula> 完成。
+
+## Node.js 版本管理
+
+全部在 Software → Node.js 里完成，不提供命令行管理。版本下拉列出每个主版本的最新发布（LTS 标注代号）；精确版本框接受具体版本或别名（22、22.x、^20.1、>=18 <23、lts、lts/iron、latest），解析结果在预览里确认后才安装。第一个安装的版本自动成为默认版本，已安装列表里可“Set default”或卸载；卸载同时删除该版本的全局 npm 包，被项目服务引用的版本拒绝卸载。
+
+“Enable in terminal”向 `~/.zshrc` 追加一个带标记的块，只 source 本 App 维护的脚本；“Disable in terminal”只删除该块。启用后每次 `cd` 按最近的 `.node-version`、`.nvmrc`、`package.json` 的 `engines.node` 选择版本，否则用默认版本；`.nvmrc` 写 `system` 时不改动 PATH；版本未安装时在终端提示去窗口里安装。脚本每次 `cd` 调用 App 可执行文件的内部入口（`--dev node path`，不是管理命令，约 0.1 秒）。
+
+全局 npm 包写入 `node/global/<版本>`（通过 `npm_config_prefix`），不进入已校验的安装目录，所以“Check files”不会因全局安装而报告变化。fnm、nvm 已安装的版本不会被导入或修改，两者的 shell 钩子需要先关闭。

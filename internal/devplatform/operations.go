@@ -418,7 +418,12 @@ func (m *Manager) RetryOperation(ctx context.Context, id, revision string) error
 }
 
 func (m *Manager) Install(ctx context.Context, p Package) error {
-	return m.runOperation(ctx, OperationRequest{Kind: "install", Resource: p.ID(), Name: p.Name, Version: p.Version, Arch: p.Arch, SHA256: p.SHA256}, "", func(w *Manager) error { return w.install(ctx, p) })
+	return m.runOperation(ctx, OperationRequest{Kind: "install", Resource: p.ID(), Name: p.Name, Version: p.Version, Arch: p.Arch, SHA256: p.SHA256}, "", func(w *Manager) error {
+		if e := w.install(ctx, p); e != nil {
+			return e
+		}
+		return w.defaultFirstNode(ctx, p)
+	})
 }
 func (m *Manager) RepairPackage(ctx context.Context, id string) error {
 	return m.runOperation(ctx, OperationRequest{Kind: "repair", Resource: id}, "", func(w *Manager) error { return w.repairPackage(ctx, id) })

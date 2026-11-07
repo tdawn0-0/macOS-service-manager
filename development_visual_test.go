@@ -49,6 +49,9 @@ func designFixture(t *testing.T) *app {
 	a.dev.dbPackage = "postgresql@17.11_1-arm64"
 	a.dev.dbPort = "5432"
 	a.dev.selectSite(p.Sites[0], p.ID)
+	a.dev.nodeReleasesTried, a.dev.nodeShell = true, 2
+	a.dev.nodeReleases = []devplatform.NodeRelease{{Version: "24.1.0"}, {Version: "22.14.0", LTS: "Jod"}, {Version: "20.19.0", LTS: "Iron"}, {Version: "18.20.8", LTS: "Hydrogen"}}
+	a.dev.state.NodeDefault = "node@22.14.0-arm64"
 	a.dev.output = "Workspace ready"
 	a.dev.logText = "api.log:\nServer listening on 127.0.0.1:3000\nGET / 200\nWebSocket client connected\n"
 	return a

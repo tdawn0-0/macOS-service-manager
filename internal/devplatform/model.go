@@ -193,6 +193,7 @@ type Instance struct {
 type State struct {
 	PackageIntegrity    map[string]string   `json:"packageIntegrity,omitempty"`
 	LogRotationDisabled bool                `json:"logRotationDisabled,omitempty"`
+	NodeDefault         string              `json:"nodeDefault,omitempty"`
 	SchemaVersion       int                 `json:"schemaVersion"`
 	Packages            map[string]Package  `json:"packages"`
 	Projects            map[string]Project  `json:"projects"`
@@ -212,6 +213,7 @@ type Manager struct {
 	operation      *operationWriter
 	Program        string
 	LoginDir       string
+	Home           string // Test fixture override of the user's home folder.
 	Context        context.Context
 	Root           string
 	Run            func(context.Context, string, ...string) (string, error)

@@ -29,6 +29,14 @@ type PackageDetails struct {
 // offline. Repository lock restoration deliberately uses Resolve instead.
 func (m *Manager) ResolveInstalledOrCatalog(ctx context.Context, name, version string) (Package, error) {
 	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if name == "node" && !exactRuntimeVersion.MatchString(version) {
+		// 22, lts, lts/iron, latest and ranges name the newest matching release.
+		release, e := m.ResolveNodeSpec(ctx, version)
+		if e != nil {
+			return Package{}, e
+		}
+		version = release.Version
+	}
 	state, e := m.Read()
 	if e != nil {
 		return Package{}, e

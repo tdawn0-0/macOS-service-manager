@@ -10,7 +10,7 @@ Local development environments and launchd services on macOS.
 ![Go 1.27.3 or later](https://img.shields.io/badge/Go-1.27.3%2B-00ADD8?logo=go&logoColor=white)
 [![Built with MyGo](https://img.shields.io/badge/UI-MyGo-5B5BD6)](https://github.com/egoist/mygo)
 
-[Features](#features) · [Sources](#sources) · [Jobs](#jobs) · [Permissions](#permissions) · [Install](#install) · [Development](#development)
+[Features](#features) · [Sources](#sources) · [Node.js](#nodejs-versions) · [Jobs](#jobs) · [Permissions](#permissions) · [Install](#install) · [Development](#development)
 
 </div>
 
@@ -27,6 +27,7 @@ Local development environments and launchd services on macOS.
 
 - **Projects.** Import a folder, pick runtime versions, services and databases, then start it. Everything is a form; no configuration files to edit. Importing runs no project scripts.
 - **Software.** PHP, Node.js, MySQL, PostgreSQL, Redis and MongoDB, each version kept apart. PHP and PostgreSQL come from Homebrew; the rest are verified downloads in app-owned storage. Check and repair installed files.
+- **Node.js.** Replaces fnm and nvm: versions come from nodejs.org, each folder runs the version its `.node-version`, `.nvmrc` or `engines.node` names, and everything is managed in the window. See [Node.js versions](#nodejs-versions).
 - **Databases.** Private instances with their own port and data. Create databases and users, back up and restore. Permanent deletion needs a path preview and a typed confirmation.
 - **HTTPS.** `.test` domains behind a trusted local CA and a loopback reverse proxy, with WebSocket, SSE and uploads. Port 443 uses launchd socket activation.
 - **Tasks and diagnostics.** Background installs and database work with cancellation, a history of interrupted work, and a layered check of processes, DNS, CA trust and TLS. Reports export without paths or secrets.
@@ -60,6 +61,16 @@ Local development environments and launchd services on macOS.
 | **User agents** | `~/Library/LaunchAgents` | Load, unload, start, stop, restart; enable, disable; create, edit, remove |
 | **System agents** | `/Library/LaunchAgents` | The same; creating, editing and removing take your password |
 | **Daemons** | `/Library/LaunchDaemons` | The same; every change takes your password |
+
+## Node.js versions
+
+Everything is in **Software → Node.js**; there is no command line to learn.
+
+- **Releases** come from [nodejs.org](https://nodejs.org/dist/) for Apple Silicon, and each archive is checked against the release's published SHA-256 sums. Set `MSM_NODE_DIST_MIRROR` to an HTTPS mirror to use one instead.
+- **Version** lists the newest release of each major, with the long-term support lines named. **Exact version** takes any other release, or a name: `22`, `22.14`, `22.x`, `^20.1`, `>=18 <23`, `lts`, `lts/iron`, `latest`. A name is resolved to one release, and shown in the review, before anything is installed.
+- **Default** is set from the installed list; the first version installed becomes the default. Uninstalling a version also removes its global npm packages.
+- **Enable in terminal** adds one block to `~/.zshrc`, which only sources a script this app keeps up to date; **Disable in terminal** removes the block. Each new directory then runs the version named by the nearest `.node-version`, `.nvmrc` or `package.json` `engines.node`, else the default. `system` in `.nvmrc` leaves the shell's own Node.js alone, and a version that is not installed is reported in the terminal.
+- **Global packages** (`npm install -g`) go to a folder of their own for each version, so the verified installation stays intact. The shell setup starts this app's executable on each `cd`, which takes about a tenth of a second. Turn off fnm and nvm's shell hooks first, or they will fight over `PATH`.
 
 ## Jobs
 

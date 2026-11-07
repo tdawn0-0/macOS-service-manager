@@ -86,6 +86,8 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
  maintain <root>                 Internal finite log rotation task
  serve <root>                     Internal launchd proxy entry point`)
 		return nil
+	case "node":
+		return runNode(ctx, m, args[1:], out)
 	case "command-worker":
 		if e := need(3); e != nil {
 			return e

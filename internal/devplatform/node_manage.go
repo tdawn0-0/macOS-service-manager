@@ -1,0 +1,409 @@
+package devplatform
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+// What Node.js version management leaves where: the default as a link, the
+// global npm packages of each version apart from the verified installation,
+// and the shell setup.
+func (m *Manager) nodeHome() string        { return filepath.Join(m.Root, "node") }
+func (m *Manager) nodeDefaultLink() string { return filepath.Join(m.nodeHome(), "default") }
+func (m *Manager) nodeGlobalPrefix(version string) string {
+	return filepath.Join(m.nodeHome(), "global", version)
+}
+func (m *Manager) nodeInitPath() string { return filepath.Join(m.nodeHome(), "init.sh") }
+func (m *Manager) nodeWrapperPath() string {
+	return filepath.Join(m.Root, "bin", "msm")
+}
+
+// InstalledNode is a Node.js version in the workspace.
+type InstalledNode struct {
+	ID      string
+	Version string
+	LTS     string
+	Default bool
+	Package Package
+}
+
+func (m *Manager) cachedNodeReleases() []NodeRelease {
+	var cached nodeIndexCache
+	if b, e := os.ReadFile(m.nodeIndexPath()); e == nil && json.Unmarshal(b, &cached) == nil {
+		return cached.Releases
+	}
+	return nil
+}
+
+func installedNodes(s State, index []NodeRelease) []InstalledNode {
+	lts := map[string]string{}
+	for _, r := range index {
+		lts[r.Version] = r.LTS
+	}
+	var out []InstalledNode
+	for id, p := range s.Packages {
+		if p.Name == "node" && p.Formula == "" && (p.Arch == "arm64" || p.Arch == "universal") {
+			out = append(out, InstalledNode{ID: id, Version: p.Version, LTS: lts[p.Version], Default: id == s.NodeDefault, Package: p})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return versionGreater(out[i].Version, out[j].Version) })
+	return out
+}
+
+// InstalledNodes lists the installed Node.js versions, newest first.
+func (m *Manager) InstalledNodes() ([]InstalledNode, error) {
+	s, e := m.Read()
+	if e != nil {
+		return nil, e
+	}
+	return installedNodes(s, m.cachedNodeReleases()), nil
+}
+
+// defaultFirstNode makes the first Node.js version installed the default, as
+// fnm does; later installs leave the default alone.
+func (m *Manager) defaultFirstNode(ctx context.Context, p Package) error {
+	if p.Name != "node" || p.Formula != "" {
+		return nil
+	}
+	return m.withState(ctx, func(s *State) error {
+		if _, ok := s.Packages[p.ID()]; !ok || s.NodeDefault != "" {
+			return nil
+		}
+		s.NodeDefault = p.ID()
+		return m.linkNodeDefault(*s)
+	})
+}
+
+// SetNodeDefault makes an installed version the one a shell uses outside a
+// project that asks for another.
+func (m *Manager) SetNodeDefault(ctx context.Context, id string) error {
+	return m.withState(ctx, func(s *State) error {
+		p, ok := s.Packages[id]
+		if !ok || p.Name != "node" {
+			return errors.New("that Node.js version is not installed")
+		}
+		s.NodeDefault = id
+		return m.linkNodeDefault(*s)
+	})
+}
+
+// linkNodeDefault points the stable path of the default at its installation.
+func (m *Manager) linkNodeDefault(s State) error {
+	link := m.nodeDefaultLink()
+	if e := os.MkdirAll(m.nodeHome(), 0700); e != nil {
+		return e
+	}
+	if e := os.Remove(link); e != nil && !errors.Is(e, os.ErrNotExist) {
+		return e
+	}
+	p, ok := s.Packages[s.NodeDefault]
+	if !ok {
+		return nil
+	}
+	return os.Symlink(m.packageDir(p), link)
+}
+
+// A NodeSelection is the version a directory runs.
+type NodeSelection struct {
+	ID      string
+	Version string
+	Dir     string // the installation
+	Prefix  string // where npm install -g puts packages for this version
+	Spec    string // what was asked, empty for the default
+	Source  string // the file, or "default"
+	System  bool   // .nvmrc says "system": no managed version applies
+}
+
+// Bin is the installation's bin directory.
+func (n NodeSelection) Bin() string { return filepath.Join(n.Dir, "bin") }
+
+// Path is what goes ahead of PATH: the global packages, then Node.js.
+func (n NodeSelection) Path() string {
+	if n.System {
+		return ""
+	}
+	return filepath.Join(n.Prefix, "bin") + string(os.PathListSeparator) + n.Bin()
+}
+
+// NodeMissingError says that what a directory asks for is not installed.
+type NodeMissingError struct{ Spec, Source string }
+
+func (e *NodeMissingError) Error() string {
+	return fmt.Sprintf("Node.js %s, asked for by %s, is not installed. Install it in Service Manager: Software, Node.js", e.Spec, e.Source)
+}
+
+// NoNodeDefaultError says that nothing is installed or chosen.
+var ErrNoNodeDefault = errors.New("no default Node.js version. Install one in Service Manager: Software, Node.js")
+
+// NodeVersionFile finds what a directory, or the nearest one above it, asks
+// for: .node-version, .nvmrc, then the engines.node of package.json.
+func NodeVersionFile(dir string) (spec, source string) {
+	dir, e := filepath.Abs(dir)
+	if e != nil {
+		return "", ""
+	}
+	for {
+		for _, name := range []string{".node-version", ".nvmrc"} {
+			if b, e := os.ReadFile(filepath.Join(dir, name)); e == nil {
+				for _, line := range strings.Split(string(b), "\n") {
+					if line = strings.TrimSpace(strings.SplitN(line, "#", 2)[0]); line != "" {
+						return line, filepath.Join(dir, name)
+					}
+				}
+			}
+		}
+		if b, e := os.ReadFile(filepath.Join(dir, "package.json")); e == nil {
+			var pkg struct {
+				Engines struct {
+					Node string `json:"node"`
+				} `json:"engines"`
+			}
+			if json.Unmarshal(b, &pkg) == nil && strings.TrimSpace(pkg.Engines.Node) != "" {
+				return strings.TrimSpace(pkg.Engines.Node), filepath.Join(dir, "package.json")
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", ""
+		}
+		dir = parent
+	}
+}
+
+func (m *Manager) selectionOf(n InstalledNode, spec, source string) NodeSelection {
+	return NodeSelection{ID: n.ID, Version: n.Version, Dir: m.packageDir(n.Package), Prefix: m.nodeGlobalPrefix(n.Version), Spec: spec, Source: source}
+}
+
+// SelectNode chooses the version for a directory. override, when set, beats
+// the project's files, which beat the default.
+func (m *Manager) SelectNode(dir, override string) (NodeSelection, error) {
+	s, e := m.Read()
+	if e != nil {
+		return NodeSelection{}, e
+	}
+	installed := installedNodes(s, m.cachedNodeReleases())
+	spec, source := strings.TrimSpace(override), "the requested version"
+	if spec == "" {
+		spec, source = NodeVersionFile(dir)
+	}
+	if spec == "" {
+		for _, n := range installed {
+			if n.ID == s.NodeDefault {
+				return m.selectionOf(n, "", "default"), nil
+			}
+		}
+		return NodeSelection{}, ErrNoNodeDefault
+	}
+	if strings.EqualFold(spec, "system") {
+		return NodeSelection{Spec: spec, Source: source, System: true}, nil
+	}
+	candidates := make([]NodeRelease, len(installed))
+	for i, n := range installed {
+		candidates[i] = NodeRelease{Version: n.Version, LTS: n.LTS}
+	}
+	best, ok, e := PickNode(spec, candidates)
+	if e != nil {
+		return NodeSelection{}, fmt.Errorf("%s: %w", source, e)
+	}
+	if !ok {
+		return NodeSelection{}, &NodeMissingError{Spec: spec, Source: source}
+	}
+	for _, n := range installed {
+		if n.Version == best.Version {
+			return m.selectionOf(n, spec, source), nil
+		}
+	}
+	return NodeSelection{}, &NodeMissingError{Spec: spec, Source: source}
+}
+
+// The shell setup. The rc file only sources init.sh, which this app rewrites,
+// so a change here reaches every shell without editing a dotfile again.
+const (
+	nodeBlockBegin = "# >>> Service Manager Node.js >>>"
+	nodeBlockEnd   = "# <<< Service Manager Node.js <<<"
+)
+
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+func (m *Manager) nodeInitScript() string {
+	return `# Written by Service Manager. Changes are overwritten.
+MSM_NODE_CLI=` + shellQuote(m.nodeWrapperPath()) + `
+export MSM_NODE_HOME=` + shellQuote(m.nodeHome()) + `
+
+# Puts the Node.js version for the current directory first in PATH: the one
+# .node-version, .nvmrc or engines.node of package.json names, else the default.
+__msm_node_apply() {
+  local out frag prefix
+  out="$("$MSM_NODE_CLI" node path "$PWD")" || out=""
+  frag="${out%%$'\n'*}"
+  prefix=""
+  case "$out" in *$'\n'*) prefix="${out#*$'\n'}" ;; esac
+  [ "$frag" = "$__MSM_NODE_PATH" ] && return 0
+  if [ -n "$__MSM_NODE_PATH" ]; then
+    PATH=":$PATH:"
+    PATH="${PATH//:$__MSM_NODE_PATH:/:}"
+    PATH="${PATH#:}"
+    PATH="${PATH%:}"
+  fi
+  if [ -n "$frag" ]; then
+    export PATH="$frag:$PATH"
+    export npm_config_prefix="$prefix"
+  else
+    unset npm_config_prefix
+  fi
+  __MSM_NODE_PATH="$frag"
+}
+
+if [ -n "$ZSH_VERSION" ]; then
+  autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook chpwd __msm_node_apply
+elif [ -n "$BASH_VERSION" ]; then
+  __msm_node_prompt() {
+    [ "$PWD" = "$__MSM_NODE_PWD" ] && return 0
+    __MSM_NODE_PWD="$PWD"
+    __msm_node_apply
+  }
+  case ";$PROMPT_COMMAND;" in *";__msm_node_prompt;"*) ;; *) PROMPT_COMMAND="__msm_node_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;; esac
+fi
+__msm_node_apply
+`
+}
+
+func (m *Manager) home() (string, error) {
+	if m.Home != "" {
+		return m.Home, nil
+	}
+	return os.UserHomeDir()
+}
+
+func (m *Manager) zshrc() (string, error) {
+	h, e := m.home()
+	if e != nil {
+		return "", e
+	}
+	return filepath.Join(h, ".zshrc"), nil
+}
+
+func (m *Manager) nodeBlock() string {
+	return nodeBlockBegin + "\n[ -r " + shellQuote(m.nodeInitPath()) + " ] && . " + shellQuote(m.nodeInitPath()) + "\n" + nodeBlockEnd + "\n"
+}
+
+// NodeShellEnabled reports whether ~/.zshrc sources the setup.
+func (m *Manager) NodeShellEnabled() bool {
+	rc, e := m.zshrc()
+	if e != nil {
+		return false
+	}
+	b, e := os.ReadFile(rc)
+	return e == nil && bytes.Contains(b, []byte(nodeBlockBegin))
+}
+
+// WriteNodeShell writes the command wrapper and the setup script, without
+// touching any dotfile.
+func (m *Manager) WriteNodeShell() error {
+	exe, e := m.helperExecutable("cli")
+	if e != nil {
+		return e
+	}
+	if e = os.MkdirAll(m.nodeHome(), 0700); e != nil {
+		return e
+	}
+	wrapper := "#!/bin/sh\nexec " + shellQuote(exe) + " --dev \"$@\"\n"
+	if e = atomicWrite(m.nodeWrapperPath(), []byte(wrapper), 0700); e != nil {
+		return e
+	}
+	return atomicWrite(m.nodeInitPath(), []byte(m.nodeInitScript()), 0600)
+}
+
+// EnableNodeShell adds one marked block to ~/.zshrc. Running it again changes
+// nothing.
+func (m *Manager) EnableNodeShell(ctx context.Context) (string, error) {
+	if e := ctx.Err(); e != nil {
+		return "", e
+	}
+	rc, e := m.zshrc()
+	if e != nil {
+		return "", e
+	}
+	if e = m.WriteNodeShell(); e != nil {
+		return rc, e
+	}
+	mode := os.FileMode(0644)
+	b, e := os.ReadFile(rc)
+	switch {
+	case e == nil:
+		if st, se := os.Stat(rc); se == nil {
+			mode = st.Mode().Perm()
+		}
+	case errors.Is(e, os.ErrNotExist):
+		b = nil
+	default:
+		return rc, e
+	}
+	if bytes.Contains(b, []byte(nodeBlockBegin)) {
+		return rc, nil
+	}
+	if len(b) > 0 && !bytes.HasSuffix(b, []byte("\n")) {
+		b = append(b, '\n')
+	}
+	if len(b) > 0 {
+		b = append(b, '\n')
+	}
+	b = append(b, m.nodeBlock()...)
+	return rc, atomicWrite(rc, b, mode)
+}
+
+// DisableNodeShell removes the block it added, and nothing else.
+func (m *Manager) DisableNodeShell(ctx context.Context) (string, error) {
+	if e := ctx.Err(); e != nil {
+		return "", e
+	}
+	rc, e := m.zshrc()
+	if e != nil {
+		return "", e
+	}
+	b, e := os.ReadFile(rc)
+	if errors.Is(e, os.ErrNotExist) {
+		return rc, nil
+	}
+	if e != nil {
+		return rc, e
+	}
+	begin := bytes.Index(b, []byte(nodeBlockBegin))
+	if begin < 0 {
+		return rc, nil
+	}
+	end := bytes.Index(b[begin:], []byte(nodeBlockEnd))
+	if end < 0 {
+		return rc, errors.New("the Service Manager block in .zshrc has no end line; remove it by hand")
+	}
+	end += begin + len(nodeBlockEnd)
+	if end < len(b) && b[end] == '\n' {
+		end++
+	}
+	// The blank line that separated the block from what came before goes too.
+	if begin > 0 && b[begin-1] == '\n' && (begin == 1 || b[begin-2] == '\n') {
+		begin--
+	}
+	st, e := os.Stat(rc)
+	if e != nil {
+		return rc, e
+	}
+	return rc, atomicWrite(rc, append(b[:begin:begin], b[end:]...), st.Mode().Perm())
+}
+
+// NodeIndexAge says how old the cached release list is, zero when there is none.
+func (m *Manager) NodeIndexAge() time.Duration {
+	var cached nodeIndexCache
+	if b, e := os.ReadFile(m.nodeIndexPath()); e == nil && json.Unmarshal(b, &cached) == nil {
+		return time.Since(cached.FetchedAt)
+	}
+	return 0
+}

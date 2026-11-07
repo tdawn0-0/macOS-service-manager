@@ -90,6 +90,10 @@ type developmentState struct {
 	siteID, siteDomain, siteUpstream, sitePort, siteProject                          string
 	siteDisabled                                                                     bool
 	siteOriginalID, siteOriginalProject                                              string
+	nodeReleases                                                                     []devplatform.NodeRelease
+	nodeReleasesTried, nodeReleasesRefresh, nodeReleasesStale                        bool
+	nodeReleasesError                                                                string
+	nodeShell                                                                        int // 0 not read, 1 on, 2 off
 }
 
 func (a *app) devTask(fn func(*devplatform.Manager) (string, error)) {
@@ -417,6 +421,7 @@ func (a *app) developmentView(c *ui.Context) {
 			}
 			muted := c.Theme().TextMuted
 			if iconButton(c, iconRestart, "Refresh", muted).Disabled(d.busy).Clicked() {
+				d.nodeReleasesTried, d.nodeReleasesRefresh = false, true
 				a.devTask(func(m *devplatform.Manager) (string, error) { return "Workspace refreshed.", nil })
 			}
 			if iconButton(c, iconTasks, "Tasks", muted).Disabled(d.busy).Clicked() {
@@ -624,10 +629,7 @@ func (a *app) devMaster(c *ui.Context) {
 				d.runtimeTargetProject = ""
 				d.runtimeTargetService = ""
 				d.softwareContext = ""
-				versions := devplatform.AvailableVersions(name)
-				if len(versions) > 0 {
-					d.version = versions[0]
-				}
+				d.version = a.defaultVersion(name)
 			}
 		}
 	case 2:
@@ -1019,8 +1021,19 @@ func (a *app) devSoftware(c *ui.Context) {
 	}
 	devHeading(c, softwareTitle(d.software), "")
 	a.devPackageTasks(c)
-	devChoice(c, "Version", &d.version, devplatform.AvailableVersions(d.software))
-	devField(c, "Exact version", &d.version, "For example 22.14.0")
+	if d.software == "node" {
+		a.loadNodeReleases()
+		devNodeChoice(c, &d.version, d.nodeReleases)
+		if d.nodeReleasesError != "" {
+			ui.Text(c, d.nodeReleasesError).FontSize(textSmall).TextColor(c.Theme().Warning)
+		} else if d.nodeReleasesStale {
+			ui.Text(c, "nodejs.org could not be reached. Showing the last release list.").FontSize(textSmall).TextColor(c.Theme().Warning)
+		}
+		devField(c, "Exact version", &d.version, "22.14.0, 22, lts or latest")
+	} else {
+		devChoice(c, "Version", &d.version, devplatform.AvailableVersions(d.software))
+		devField(c, "Exact version", &d.version, "For example 22.14.0")
+	}
 	if d.software == "php" {
 		if ui.Button(c, "Add shivammathur/php repository").AlignSelf(ui.Start).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
@@ -1042,6 +1055,15 @@ func (a *app) devSoftware(c *ui.Context) {
 		ui.Row(c).Gap(8).Children(func() {
 			ui.Text(c, softwareTitle(p.Name)+" · "+p.Version).Grow(1).MinWidth(0).SingleLine()
 			ui.Spacer(c)
+			if p.Name == "node" {
+				if id == d.state.NodeDefault {
+					ui.Text(c, "Default").FontSize(textSmall).FontWeight(600).TextColor(c.Theme().Accent).Shrink(0)
+				} else if ui.Button(c, "Set default "+p.Version).Disabled(d.busy).Clicked() {
+					a.devTask(func(m *devplatform.Manager) (string, error) {
+						return "Default is Node.js " + p.Version, m.SetNodeDefault(m.Context, id)
+					})
+				}
+			}
 			removeLabel := "Uninstall " + p.Name + " " + p.Version
 			if p.Formula != "" {
 				removeLabel = "Remove from workspace " + p.Name + " " + p.Version
@@ -1056,6 +1078,125 @@ func (a *app) devSoftware(c *ui.Context) {
 			}
 		})
 		a.devPackageIntegrity(c, id, p)
+	}
+	if d.software == "node" {
+		a.devNodeTerminal(c)
+	}
+}
+
+// devNodeTerminal offers the shell setup that makes this app replace fnm and
+// nvm: each folder runs the Node.js version its files name.
+func (a *app) devNodeTerminal(c *ui.Context) {
+	d := &a.dev
+	if d.nodeShell == 0 {
+		d.nodeShell = 2
+		if a.devManager().NodeShellEnabled() {
+			d.nodeShell = 1
+			m := a.devManager()
+			a.spawn(func() { _ = m.WriteNodeShell() })
+		}
+	}
+	devDivider(c, "Terminal")
+	ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
+		if d.nodeShell == 1 {
+			ui.Text(c, "Enabled in ~/.zshrc").FontSize(textSmall).TextColor(c.Theme().Success).Grow(1).MinWidth(0)
+			if ui.Button(c, "Disable in terminal").Disabled(d.busy).Clicked() {
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					_, e := m.DisableNodeShell(m.Context)
+					a.post(func() { a.dev.nodeShell = 0 })
+					return "Removed the Service Manager block from ~/.zshrc", e
+				})
+			}
+			return
+		}
+		if ui.PrimaryButton(c, "Enable in terminal").Tooltip("Adds one block to ~/.zshrc. Each folder then runs the Node.js its .node-version, .nvmrc or package.json engines name, else the default.").Disabled(d.busy).Clicked() {
+			a.devTask(func(m *devplatform.Manager) (string, error) {
+				rc, e := m.EnableNodeShell(m.Context)
+				a.post(func() { a.dev.nodeShell = 0 })
+				return "Added the Service Manager block to " + rc + ". Open a new terminal.", e
+			})
+		}
+	})
+}
+
+// devManager is the manager the window's tasks would use.
+// defaultVersion is the version offered first: for Node.js the newest
+// long-term support release once nodejs.org's list is read.
+func (a *app) defaultVersion(name string) string {
+	if name == "node" {
+		for _, r := range a.dev.nodeReleases {
+			if r.LTS != "" {
+				return r.Version
+			}
+		}
+	}
+	if versions := devplatform.AvailableVersions(name); len(versions) > 0 {
+		return versions[0]
+	}
+	return ""
+}
+
+func (a *app) devManager() *devplatform.Manager {
+	if a.dev.managerFactory != nil {
+		return a.dev.managerFactory()
+	}
+	return devplatform.New(devplatform.DefaultRoot())
+}
+
+// loadNodeReleases reads nodejs.org's release list in the background, once,
+// and again when the workspace is refreshed.
+func (a *app) loadNodeReleases() {
+	d := &a.dev
+	if d.nodeReleasesTried || a.post == nil {
+		return
+	}
+	d.nodeReleasesTried = true
+	refresh := d.nodeReleasesRefresh
+	d.nodeReleasesRefresh = false
+	m := a.devManager()
+	a.spawn(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		releases, stale, e := m.NodeReleases(ctx, refresh)
+		a.post(func() {
+			a.dev.nodeReleases, a.dev.nodeReleasesStale, a.dev.nodeReleasesError = releases, stale, ""
+			if e != nil {
+				a.dev.nodeReleasesError = "Releases could not be read from nodejs.org: " + e.Error()
+			}
+		})
+	})
+}
+
+// devNodeChoice picks among the newest release of each major version, with
+// the long-term support lines named. Any other version goes in the field
+// below it.
+func devNodeChoice(c *ui.Context, version *string, releases []devplatform.NodeRelease) {
+	if len(releases) == 0 {
+		devChoice(c, "Version", version, devplatform.AvailableVersions("node"))
+		return
+	}
+	var options []string
+	lookup := map[string]string{}
+	display := ""
+	seen := map[string]bool{}
+	for _, r := range releases {
+		major := strings.SplitN(r.Version, ".", 2)[0]
+		if seen[major] {
+			continue
+		}
+		seen[major] = true
+		label := r.Version
+		if r.LTS != "" {
+			label += " · LTS " + r.LTS
+		}
+		options = append(options, label)
+		lookup[label] = r.Version
+		if r.Version == *version {
+			display = label
+		}
+	}
+	if devChoice(c, "Version", &display, options) {
+		*version = lookup[display]
 	}
 }
 func (a *app) devDatabases(c *ui.Context) {

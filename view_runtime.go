@@ -91,9 +91,13 @@ func (a *app) devRuntimeHints(c *ui.Context) {
 	for _, hint := range d.draft.RuntimeHints {
 		ui.Text(c, softwareTitle(hint.Name)+" "+hint.Version+" · "+hint.Source).FontSize(textSmall).SingleLine().Tooltip(hint.Source + ": " + hint.Version)
 		version := hint.ExactVersion()
+		installed := version
+		if installed == "" && hint.Name == "node" {
+			installed = d.installedNodeFor(hint.Version)
+		}
 		for _, id := range sortedKeys(d.state.Packages) {
 			pkg := d.state.Packages[id]
-			if version != "" && pkg.Name == hint.Name && pkg.Version == version {
+			if installed != "" && pkg.Name == hint.Name && pkg.Version == installed {
 				label := "Use installed " + softwareTitle(pkg.Name) + " " + pkg.Version + " from " + hint.Source
 				if ui.Button(c, label).AlignSelf(ui.Start).Disabled(d.busy).Clicked() && d.flushService() {
 					d.noteRuntimeEdit(d.id, d.runtimeService(hint.Name))
@@ -118,7 +122,7 @@ func (a *app) devRuntimeHints(c *ui.Context) {
 			d.software = hint.Name
 			d.version = version
 			if version == "" {
-				d.version = devplatform.AvailableVersions(hint.Name)[0]
+				d.version = a.hintVersion(hint)
 			}
 			d.softwareContext = fmt.Sprintf("%s declares %s %s.", hint.Source, softwareTitle(hint.Name), hint.Version)
 			d.tab = 1
@@ -157,7 +161,7 @@ func (a *app) devPackageReview(c *ui.Context) {
 				a.post(func() {
 					a.dev.packagePreview = &info
 					a.dev.packageDetailsText = packageDetailsText(info)
-					if pkg.Formula != "" && a.dev.software == name && strings.TrimSpace(a.dev.version) == version {
+					if (pkg.Formula != "" || name == "node") && a.dev.software == name && strings.TrimSpace(a.dev.version) == version {
 						a.dev.version = pkg.Version
 					}
 				})
@@ -266,4 +270,35 @@ func (a *app) devPackageReview(c *ui.Context) {
 			d.detailScroll[0].Y = 0
 		}
 	}
+}
+
+// installedNodeFor is the newest installed Node.js version a declaration such
+// as 22, lts/* or >=18 names, or "".
+func (d *developmentState) installedNodeFor(spec string) string {
+	var candidates []devplatform.NodeRelease
+	lts := map[string]string{}
+	for _, r := range d.nodeReleases {
+		lts[r.Version] = r.LTS
+	}
+	for _, p := range d.state.Packages {
+		if p.Name == "node" && p.Formula == "" {
+			candidates = append(candidates, devplatform.NodeRelease{Version: p.Version, LTS: lts[p.Version]})
+		}
+	}
+	best, ok, err := devplatform.PickNode(spec, candidates)
+	if err != nil || !ok {
+		return ""
+	}
+	return best.Version
+}
+
+// hintVersion is the version to offer for a declaration that is not exact:
+// for Node.js the newest release it names, else the first suggested.
+func (a *app) hintVersion(hint devplatform.RuntimeHint) string {
+	if hint.Name == "node" {
+		if best, ok, err := devplatform.PickNode(hint.Version, a.dev.nodeReleases); err == nil && ok {
+			return best.Version
+		}
+	}
+	return a.defaultVersion(hint.Name)
 }

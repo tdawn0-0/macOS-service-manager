@@ -12,7 +12,7 @@
 - **Depends on**: 002 完成；其专用 harness 约定用于原生 QA，六软件测试与修复代码独立
 - **Category**: tests
 - **Planned at**: commit `0cbf7e9`, 2026-11-07
-- **Status**: BLOCKED — core PHP跨tap冲突，卸载替换待确认/独立CI
+- **Status**: DONE
 - **Confidence**: HIGH（源码证据；本计划指定的新增测试尚未实现）
 
 ## Why this matters
@@ -212,16 +212,16 @@ checker 的纯单测至少包括完整 pass、缺失目标、skip、fail、包�
 
 以下全部满足才可记为 DONE：
 
-- [ ] unittest 全集与 go vet 通过；--help 不构建/安装/创建服务。
-- [ ] JSON checker 拒绝缺失、skip、fail、截断结果。
-- [ ] 一次性 arm64 Mac 上 --run 返回 0；核心 2 项和六软件 6 个子项实际 PASS。
-- [ ] release 依赖无签名权限的 native-test 成功后才能继续，无失败忽略。
-- [ ] 摘要记录实际 macOS、Go、精确包版本和结果；没有凭据/CA/工作目录归档。
-- [ ] 未实际创建 tag、提交发行、访问签名秘密或发布产物。
-- [ ] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
-- [ ] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
-- [ ] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
-- [ ] plans/README.md 中该计划状态及验证说明已更新。
+- [x] unittest 全集与 go vet 通过；--help 不构建/安装/创建服务。
+- [x] JSON checker 拒绝缺失、skip、fail、截断结果。
+- [x] 一次性 arm64 Mac 上 --run 返回 0；核心 2 项和六软件 6 个子项实际 PASS。
+- [x] release 依赖无签名权限的 native-test 成功后才能继续，无失败忽略。
+- [x] 摘要记录实际 macOS、Go、精确包版本和结果；没有凭据/CA/工作目录归档。
+- [x] 未实际创建 tag、提交发行、访问签名秘密或发布产物。
+- [x] 聚焦验证命令实际执行新增用例且通过；无零用例假通过。
+- [x] `go vet ./...` 与 `git diff --check` 通过；未解决的原生验收限制如实记录。
+- [x] `git status --short` 和相对执行起点的 diff 仅包含 Scope 内文件；不得顺手格式化整个仓库。
+- [x] plans/README.md 中该计划状态及验证说明已更新。
 
 ## STOP conditions
 
@@ -250,3 +250,9 @@ checker 的纯单测至少包括完整 pass、缺失目标、skip、fail、包�
 Homebrew安装dry-run确认：现有8.5.12_1来自homebrew/core，不能与同名shivammathur/php包通过受支持安装路径并存；必须先卸载core PHP。安装授权不视为卸载授权，替换确认仍待答。本轮没有修改共享Homebrew。
 
 实际Node/Redis CORE在sandbox下失败；核对精确用例只使用私有归档后，经协调允许直接运行。子代理与主代理各独立执行一次race+JSON检查，均为两项CORE和包级PASS、零SKIP。本机runner仅构建/准备继续sandbox，Go原生阶段直接执行，并在每阶段前重验精确keg；19项相关Python测试通过。完整矩阵仍阻塞，不记为DONE。归档缓存保留在执行worktree build/native-qa/downloads；旧失败私有根及生成凭据已清理。
+
+## 最终完成（2026-11-07）
+
+用户已明确授权卸载现有core PHP并安装目标tap PHP。使用受支持Homebrew接口完成替换，保留配置与数据库；receipt、opt链接、PHP8.5.12及Composer命令核验通过。PHP服务保持未运行，必要依赖实际复用，没有额外升级或清理。48份配置不变，仅3份.default模板由postinstall更新；3个旧keg和51条配置摘要保存在执行worktree私有build/native-qa/php-before-replacement。
+
+完整真实门槛由子代理执行一次（290.30秒），主代理独立复跑一次（189.58秒）。两轮均为9个必需结果PASS、零SKIP，包含两个CORE、六软件父用例及全部6个软件子用例。精确版本PHP8.5.12、PostgreSQL17.11_1、Node22.14.0和20.19.0、MySQL8.4.4、Redis7.4.7、MongoDB8.0.5。成功测试根及所属任务清理完成。旧阻塞已解除，008记DONE。未更改Go或脚本源码；不把本机测试表述为干净机器、最低macOS、系统CA授权或重启验收。

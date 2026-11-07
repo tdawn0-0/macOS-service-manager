@@ -2,7 +2,7 @@
 
 由 improve 技能生成于 2026-11-07。用户已选择全部 8 项审查问题及 2 个产品方向。
 基线提交：`0cbf7e9`（Restrict the shipped app to internal commands）。开始写计划时工作区干净。
-已实施001–008，并完成009–010设计与离线原型。001–007、009–010审查通过；008代码已完成，真实六软件验收因精确 PHP keg 缺失等待core PHP卸载替换确认。每项任务独立提交；主代理完成全量验证和最终集成。未推送远端。
+已实施001–008，并完成009–010设计与离线原型。全部10项计划审查通过；008完成两轮真实六软件验收、零跳过（009–010按批准范围交付设计与离线原型）。每项任务独立提交；主代理完成全量验证和最终集成。未推送远端。
 
 ## 执行顺序与状态
 
@@ -17,7 +17,7 @@
 | [005](005-preserve-zshrc-symlinks.md) | 保留符号链接形式的 shell 配置 | P1 | S–M | 无 | DONE |
 | [006](006-stream-mysql-restores.md) | MySQL 恢复流式读取备份 | P2 | M | 无 | DONE |
 | [007](007-fair-runtime-observation.md) | 状态轮询不持续遗漏后置资源 | P2 | M | 无 | DONE |
-| [008](008-gate-native-release-tests.md) | 发行要求原生软件测试实际通过 | P2 | M–L | 002 | BLOCKED — 精确PHP keg缺失，待core PHP替换确认/CI验收 |
+| [008](008-gate-native-release-tests.md) | 发行要求原生软件测试实际通过 | P2 | M–L | 002 | DONE |
 | [009](009-design-project-package-managers.md) | 设计 npm/yarn/pnpm 项目依赖流程 | P3 | M | 无 | DONE |
 | [010](010-design-diagnostic-navigation.md) | 设计诊断结果到设置的导航 | P3 | S–M | 无 | DONE |
 
@@ -36,7 +36,7 @@ S 为数小时，M 约一天，L 为多天，均包含测试。估算不是交�
 - **002 与 004** 都可能修改 `docs/development-ui.md`；按不同小节合并，保留对方说明。**008** 基于 002 完成后的工具约定复核漂移。
 - **003** 可能暴露历史测试把任意 launchctl error 当作“未找到”的夹具。计划已经要求停止列出超范围 fixture，而不是放宽生产检查；需要调整范围时先修订计划。
 - **007** 先建立公平预算的失败回归，再修改并发；不能仅凭 race detector 通过认定没有饥饿。
-- **008** 的最终完成条件包含一次性 arm64 Mac 上的真实测试。没有 runner 时可交付待审代码，但应记录 BLOCKED，不能用 mock 结果冒充原生通过。
+- **008** 已按批准的本机existing-kegs模式完成真实原生测试，完整门槛两轮PASS、零SKIP；CI默认仍使用一次性runner。不能以mock替代原生结果。
 
 ## 工作方式与验证边界
 
@@ -64,7 +64,7 @@ S 为数小时，M 约一天，L 为多天，均包含测试。估算不是交�
 - 005：APPROVE。主代理读完整diff并独立运行NodeShell/SelectNode相关race测试通过；有效链接保留、无效目标拒绝、外部变化保护。
 - 006：APPROVE。主代理复核流式命令及测试，独立MySQL恢复race测试通过；32MiB惰性输入、输出丢弃、错误和子进程取消回收。
 - 007：APPROVE。主代理复核完整观察与聚合变更，独立相关race测试三轮通过；4 worker上限、预算、公平性、取消清理和已完成结果保留。
-- 008：代码APPROVE，原生验收BLOCKED。18项专项Python测试及最终29项脚本测试通过。主代理实际运行 --run --local-existing-kegs，返回结构化错误 exact existing keg is missing: php 8.5.12。元数据revision0，本机只有8.5.12_1等版本；未安装或修改共享Homebrew。安装已获授权；后续dry-run发现同名core→tap冲突，额外卸载替换确认待答。完整六软件门槛未记作通过。
+- 008：APPROVE / DONE。用户授权core→shivammathur/php替换后，PHP8.5.12来源与CLI核验通过。两轮完整原生门槛均9个必需结果PASS、零SKIP：子代理290.30秒，主代理189.58秒。测试根和任务清理完成；活动配置及数据库不变，3份默认模板更新，旧keg有私有备份。
 - 009：APPROVE（设计计划）。设计含官方资料与后续Go实施拆分；23个场景、3个unittest方法通过。只交付设计与纯离线原型，没有生产包管理器安装功能。
 - 010：APPROVE（设计计划）。18个导航场景、5个unittest方法通过；额外修正畸形action kind输入，稳定复合ID、草稿保护和显式脱敏DTO得到离线验证。未增加生产导航按钮。
 
@@ -92,7 +92,7 @@ S 为数小时，M 约一天，L 为多天，均包含测试。估算不是交�
 - Python脚本全集：29项通过；009原型3项、010原型5项通过，共37个unittest方法。案例分别为23和18个。
 - go vet ./...、go mod verify、git diff --check：通过。
 - collect-third-party-notices.py --check：15个模块、50份发行许可文件通过。
-- 008真实软件门槛：未通过，精确PHP 8.5.12缺失，禁止将普通套件的SKIP作为其成功。
+- 当时008真实软件门槛尚未通过；后续已解除阻塞并完成真实验证，见文末关闭记录。普通套件的SKIP始终不算原生通过。
 
 完整日志留在执行worktree /Users/jyeu/code/service-manager-execute/build/ 的 full-test-final.log、full-race.jsonl、python-full.log 和 integration-summary.json。日志未提交。
 
@@ -152,10 +152,18 @@ S 为数小时，M 约一天，L 为多天，均包含测试。估算不是交�
 - TestUIRuntimeDeclarationsReviewInstallAndHTTPS
 - TestUIUnlistedExactNodeVersionReview
 
-## 008 授权后验收记录
+## 008 最初授权后验收记录（历史阻塞，现已解除）
 
 用户已授权精确PHP keg及必要依赖安装。Homebrew dry-run在普通和force模式均拒绝跨tap同名共存，要求先卸载现有core PHP；未执行卸载、安装、重链或服务变更。008仍BLOCKED，原因更新为卸载替换等待确认。
 
 已实际下载并核验Node22.14.0、20.19.0和Redis7.4.7；子代理与主代理各独立运行精确CORE两用例（含Redis明暗子用例），race+严格JSON均PASS、零SKIP。完整六软件矩阵没有执行。sandbox继承曾导致TCP_NODELAY/launchd错误；本机模式已修正为准备阶段sandbox，原生测试直接运行，各阶段前重验keg。
 
 主代理重新运行30项脚本unittest，全部通过（其中008为19项）；Go源码未变，保留上次全量/race通过结果，不重复声称本次跑过完整矩阵。原型8项测试未受影响。独立CORE结果位于执行worktree build/native-qa/core-review.jsonl；脱敏概要为core-results.json。3份验证归档保留于build/native-qa/downloads，旧失败根和生成凭据已清理。
+
+## 008 最终关闭记录
+
+用户明确授权替换core PHP后，已安装shivammathur/php的精确PHP8.5.12；Composer2.11.1保留，PHP服务仍未启动，必要依赖复用且无无关升级/清理。主代理独立重算配置摘要：48份不变，仅php-fpm.conf.default、pear.conf.default、php-fpm.d/www.conf.default三份默认模板更新，数据库未触碰。恢复备份和摘要在执行worktree build/native-qa/php-before-replacement（0700，Git忽略）。
+
+子代理和主代理独立运行完整原生门槛，分别290.30秒和189.58秒，均为9个必需结果PASS、零SKIP：2个核心用例、六软件父用例和6个软件子用例。版本为Node22.14.0/20.19.0、PHP8.5.12、MySQL8.4.4、PostgreSQL17.11_1、Redis7.4.7、MongoDB8.0.5。主代理结果build/native-qa/results.json、原始review-core.jsonl/review-matrix.jsonl均留在执行worktree，未提交日志/凭据。成功测试根和任务清理完成。
+
+本轮未改Go或脚本源码，保留上轮全量Go/race及30项脚本测试的通过记录；补齐了先前缺失的完整原生软件验收。所有10项计划现在DONE，其中009–010为已批准的设计和离线原型交付。未触发远程CI、推送或发布，也不宣称新机/最低系统/系统信任/重启验收。

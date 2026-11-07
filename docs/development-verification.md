@@ -816,3 +816,56 @@ Node 单次命令的 launchctl bootstrap 返回错误 5；该轮严格检查判�
 根据上述实测，随后仅调整本机模式的隔离边界：构建/准备仍受 sandbox 保护，实际原生
 Go 测试直接执行，每个阶段前重新验证精确 keg。新增单测固定此调用顺序和拒绝变化行为。
 完整矩阵仍须满足 PHP 前置条件；本轮未更改 Homebrew、hosts 或钥匙串。
+
+### 完整六软件门槛通过（授权替换 core PHP 后）
+
+用户随后明确授权卸载现有 Homebrew core PHP，再安装 shivammathur/php 的目标 PHP。
+实施前保存了原 PHP Cellar rack 的私有备份，并记录 51 个既有配置文件的摘要；
+原 PHP Homebrew 服务状态为 none。使用支持的 Homebrew uninstall/install API，禁用自动更新、
+安装清理及已安装依赖项检查；Composer 保留，没有启动或停止任何 Homebrew 服务。
+
+实际安装结果：`/opt/homebrew/Cellar/php/8.5.12/INSTALL_RECEIPT.json` 的 tap 为
+`shivammathur/php`；opt/php 链接到该精确 keg，命令行 PHP 报告 8.5.12。
+安装后的 PHP 服务仍为 none，Composer 2.11.1 保留。dry-run 曾提出 6 个必要依赖升级，
+实际安装复用了既有兼容依赖，其 Cellar 版本没有变化。
+51 个原配置中 48 个摘要不变，3 个安装器维护的默认模板变化：
+`8.5/php-fpm.conf.default`、`8.5/pear.conf.default`、`8.5/php-fpm.d/www.conf.default`。
+活动 php.ini、php-fpm.conf 和 www.conf 保持原内容；没有编辑数据库目录。
+
+随后实际运行完整 `--run --local-existing-kegs`，仅通过临时验证包装器预填下载缓存，
+不修改 runner 的测试、判断或权限策略。下载复用仍以摘要为文件名且重新校验；
+构建/准备受 sandbox 保护，原生测试直接执行，每阶段前复核精确 Homebrew keg。
+完整运行返回 exit 0，严格 JSON checker 确认以下 9 个必需结果均 PASS、零 SKIP：
+
+- 两项 CORE：Node 运行时/HTTPS、Redis 后台初始化与草稿保留。
+- `TestUISoftwareCatalogAllSix` 父用例。
+- php、node、mysql、postgresql、redis、mongodb 六个子用例。
+
+实际环境 macOS 27.3、Go 1.27.3 darwin/arm64，总耗时 290.30 秒。
+软件精确版本：PHP 8.5.12、PostgreSQL 17.11_1、Node 22.14.0 和 20.19.0、
+MySQL 8.4.4、Redis 7.4.7、MongoDB 8.0.5。MySQL/PostgreSQL/Redis/MongoDB
+沿用既有真实 UI 工作流验证数据库操作、备份和恢复断言；没有弱化测试。
+
+完整脱敏结果位于忽略的 `build/native-qa/results.json`，5 个经摘要复核的归档缓存
+保留在 `build/native-qa/downloads`，用于复核者独立重跑。成功夹具根和本次所属任务
+已经清理；未复制 CA、凭据或原始工作根到产物目录。旧 keg 私有恢复备份仍保留，
+不提交到仓库。此次没有新的 hosts、钥匙串或系统信任操作，也没有创建发行 tag。
+
+本机恢复备份位置（私有、未提交）：
+`/Users/jyeu/code/service-manager-execute/build/native-qa/php-before-replacement/Cellar-php`。
+同级 `config-hashes.json` 仅记录相对配置文件名与摘要，供独立复核活动配置保持情况。
+
+### 复核者独立重跑完整门槛
+
+复核者随后在新的私有根独立重跑完整 `--run --local-existing-kegs`，复用经摘要复核的
+归档缓存，不复用第一次运行的项目、实例或 CA。实际 exit 0，耗时 189.58 秒；
+严格 checker 确认两项 CORE、六软件父用例及 php/node/mysql/postgresql/redis/mongodb
+六个子用例共 9 个必需结果全部 PASS，零 SKIP。
+
+本轮实际版本再次确认：MongoDB 8.0.5、MySQL 8.4.4、Node 20.19.0 和 22.14.0、
+PHP 8.5.12、PostgreSQL 17.11_1、Redis 7.4.7。忽略目录中的
+`build/native-qa/results.json` 当前是此次独立复核的脱敏结果；原始复核事件仅在私有、
+受忽略的证据目录保留，不作为公开 artifact 上传。
+
+计划 008 的软件原生测试门槛至此完成实施与独立验收。此结论仅覆盖软件安装及现有
+项目/数据库工作流，不扩大为干净机器安装、最低 macOS、系统信任授权或整机重启验收。

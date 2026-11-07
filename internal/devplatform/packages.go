@@ -274,20 +274,13 @@ func (m *Manager) Uninstall(ctx context.Context, id string) error {
 		if err != nil {
 			return err
 		}
-		for _, pr := range s.Projects {
-			for _, svc := range pr.Services {
-				if svc.Package == id {
-					return fmt.Errorf("package is used by project %s", pr.Name)
-				}
-			}
-		}
 		for _, i := range s.Instances {
 			if i.Package == id {
 				return fmt.Errorf("package is used by instance %s", i.ID)
 			}
 		}
-		if p.Name == "caddy" && len(allSites(s)) > 0 {
-			return errors.New("Caddy is used by configured sites")
+		if p.Name == "caddy" && len(s.ProxyRules) > 0 {
+			return errors.New("Caddy is used by configured HTTPS proxy rules")
 		}
 		// Refuse packages referenced by generated launchd jobs, including interrupted operations.
 		files, _ := filepath.Glob(filepath.Join(m.Root, "jobs", "*.plist"))

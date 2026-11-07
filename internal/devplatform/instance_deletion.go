@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"syscall"
 	"time"
 )
@@ -162,20 +161,7 @@ func (m *Manager) instanceDeletionPreview(ctx context.Context, s State, id strin
 	if !ok {
 		return p, errors.New("database instance not found")
 	}
-	p = InstanceDeletionPreview{InstanceID: id, Kind: i.Kind, Package: i.Package, Path: filepath.Join(m.Root, "instances", id), CanDelete: true, Detail: "Permanently removes this instance record, data, local configuration and credentials. Installed software, source projects and backups outside this path are retained."}
-	for _, project := range s.Projects {
-		for _, ref := range project.Instances {
-			if ref == id {
-				p.References = append(p.References, project.Name+" ("+project.ID+")")
-				break
-			}
-		}
-	}
-	sort.Strings(p.References)
-	if len(p.References) > 0 {
-		p.CanDelete = false
-		p.Detail = "Unlink this database from every project before deleting its data."
-	}
+	p = InstanceDeletionPreview{InstanceID: id, Kind: i.Kind, Package: i.Package, Path: filepath.Join(m.Root, "instances", id), CanDelete: true, Detail: "Permanently removes this instance record, data, local configuration and credentials. Installed software and backups outside this path are retained."}
 	loaded, e := m.packageJobLoaded(ctx, m.label("db-"+id))
 	if e != nil {
 		p.CanDelete = false

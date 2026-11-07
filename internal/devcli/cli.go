@@ -54,7 +54,7 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
  available-port                   Suggest an unused high local port
  db-port <instance-id> <number>    Change a stopped database port, keeping its data
  db-port-repair <instance-id>      Reconcile endpoint files with the saved port
- install <software> <version>     Node.js, MySQL, PostgreSQL, Redis or MongoDB
+ install <software> <version>     Node.js, Java, Go, MySQL, PostgreSQL, Redis or MongoDB
  install-manifest <package.json>   Install a verified binary archive
  check-package <package-id>        Check installed files against the installation index
  repair <package-id>               Restore the same exact software version; stop its users first

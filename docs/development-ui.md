@@ -15,3 +15,7 @@ These representative images come from the synthetic UI layout tests:
 - [HTTPS rules at 900×520](images/development/https-rules-900x520.png)
 - [HTTPS diagnostics at 1120×720, dark](images/development/https-diagnostics-1120x720-dark.png)
 - [Database connection profiles at 1120×720, dark](images/development/database-profiles-1120x720-dark.png)
+
+## Java, Go, Python and external database locations
+
+The software list contains eight entries. Java and Go list exact releases on explicit refresh; installed versions remain usable when the catalog fails. Python has a uv-specific page showing the selected executable, managed installed versions, installation requests and global-pin actions. New database instances select an exact installed package, a port, and an optional new absolute data location. Existing instance details show the package version and resolved data path. External permanent deletion is disabled with its path and retention reason. These views have 900×520 and 1120×720 light/dark layout tests in `TestUIAdditionalRuntimes` and `TestUIDatabaseLocations`.

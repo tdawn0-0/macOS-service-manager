@@ -13,6 +13,14 @@ import (
 )
 
 func (m *Manager) initializeInstanceData(ctx context.Context, s *State, i Instance, dir string) error {
+	if e := m.verifyDataLocation(i); e != nil {
+		return e
+	}
+	if i.DataDirectory != "" && (i.Kind == "redis" || i.Kind == "valkey") {
+		if e := os.MkdirAll(m.DatabaseDataDirectory(i), 0700); e != nil {
+			return e
+		}
+	}
 	password := randomID() + randomID()
 	if e := atomicWrite(filepath.Join(dir, "password"), []byte(password), 0600); e != nil {
 		return e
@@ -22,7 +30,7 @@ func (m *Manager) initializeInstanceData(ctx context.Context, s *State, i Instan
 		if e != nil {
 			return e
 		}
-		if _, e = m.runInitializationTool(ctx, bin, "-D", filepath.Join(dir, "data"), "-U", "devmanager", "--locale=C", "--encoding=UTF8", "--auth-host=scram-sha-256", "--auth-local=scram-sha-256", "--pwfile="+filepath.Join(dir, "password")); e != nil {
+		if _, e = m.runInitializationTool(ctx, bin, "-D", m.DatabaseDataDirectory(i), "-U", "devmanager", "--locale=C", "--encoding=UTF8", "--auth-host=scram-sha-256", "--auth-local=scram-sha-256", "--pwfile="+filepath.Join(dir, "password")); e != nil {
 			return e
 		}
 	} else if i.Kind == "mysql" || i.Kind == "mongodb" {
@@ -37,7 +45,7 @@ func (m *Manager) initializeInstanceData(ctx context.Context, s *State, i Instan
 		if _, e := m.Binary(s, i.Package, binary); e != nil {
 			return e
 		}
-		config := fmt.Sprintf("bind 127.0.0.1\nport %d\ndir %q\nrequirepass %s\ndaemonize no\n", i.Port, filepath.Join(m.Root, "instances", i.ID), password)
+		config := fmt.Sprintf("bind 127.0.0.1\nport %d\ndir %q\nrequirepass %s\ndaemonize no\n", i.Port, m.DatabaseDataDirectory(i), password)
 		if i.Persistent {
 			config += "appendonly yes\n"
 		} else {
@@ -51,41 +59,18 @@ func (m *Manager) initializeInstanceData(ctx context.Context, s *State, i Instan
 	return nil
 }
 func (m *Manager) startInstance(ctx context.Context, s *State, i Instance) error {
+	if e := m.verifyDataLocation(i); e != nil {
+		return e
+	}
 	if out, e := m.Run(ctx, "launchctl", "print", domain()+"/"+m.label(m.databaseJobID(i.ID))); e != nil || !strings.Contains(out, "state = running") {
 		if e := freeDatabasePort(i.Port); e != nil {
 			return e
 		}
 	}
 	dir := m.instanceDirectory(i.ID)
-	var args []string
-	if i.Kind == "postgresql" {
-		bin, e := m.Binary(s, i.Package, "postgres")
-		if e != nil {
-			return e
-		}
-		args = []string{bin, "-D", filepath.Join(dir, "data"), "-h", "127.0.0.1", "-p", fmt.Sprint(i.Port), "-k", ""}
-	} else if i.Kind == "mysql" {
-		bin, e := m.Binary(s, i.Package, "mysqld")
-		if e != nil {
-			return e
-		}
-		args = []string{bin, "--no-defaults", "--basedir=" + m.packageDir(s.Packages[i.Package]), "--datadir=" + filepath.Join(dir, "data"), "--bind-address=127.0.0.1", "--port=" + fmt.Sprint(i.Port), "--mysqlx=OFF", "--socket=" + filepath.Join("/tmp", "msm-"+i.ID+"-"+randomID()+".sock")}
-	} else if i.Kind == "mongodb" {
-		bin, e := m.Binary(s, i.Package, "mongod")
-		if e != nil {
-			return e
-		}
-		args = []string{bin, "--dbpath", filepath.Join(dir, "data"), "--bind_ip", "127.0.0.1", "--port", fmt.Sprint(i.Port), "--auth"}
-	} else {
-		binary := "valkey-server"
-		if i.Kind == "redis" {
-			binary = "redis-server"
-		}
-		bin, e := m.Binary(s, i.Package, binary)
-		if e != nil {
-			return e
-		}
-		args = []string{bin, filepath.Join(dir, "valkey.conf")}
+	args, e := m.instanceStartArguments(s, i)
+	if e != nil {
+		return e
 	}
 	var env map[string]string
 	if i.Kind == "postgresql" {
@@ -102,6 +87,40 @@ func (m *Manager) startInstance(ctx context.Context, s *State, i Instance) error
 		return e
 	}
 	return nil
+}
+func (m *Manager) instanceStartArguments(s *State, i Instance) ([]string, error) {
+	dir := m.instanceDirectory(i.ID)
+	var args []string
+	if i.Kind == "postgresql" {
+		bin, e := m.Binary(s, i.Package, "postgres")
+		if e != nil {
+			return nil, e
+		}
+		args = []string{bin, "-D", m.DatabaseDataDirectory(i), "-h", "127.0.0.1", "-p", fmt.Sprint(i.Port), "-k", ""}
+	} else if i.Kind == "mysql" {
+		bin, e := m.Binary(s, i.Package, "mysqld")
+		if e != nil {
+			return nil, e
+		}
+		args = []string{bin, "--no-defaults", "--basedir=" + m.packageDir(s.Packages[i.Package]), "--datadir=" + m.DatabaseDataDirectory(i), "--bind-address=127.0.0.1", "--port=" + fmt.Sprint(i.Port), "--mysqlx=OFF", "--socket=" + filepath.Join("/tmp", "msm-"+i.ID+"-"+randomID()+".sock")}
+	} else if i.Kind == "mongodb" {
+		bin, e := m.Binary(s, i.Package, "mongod")
+		if e != nil {
+			return nil, e
+		}
+		args = []string{bin, "--dbpath", m.DatabaseDataDirectory(i), "--bind_ip", "127.0.0.1", "--port", fmt.Sprint(i.Port), "--auth"}
+	} else {
+		binary := "valkey-server"
+		if i.Kind == "redis" {
+			binary = "redis-server"
+		}
+		bin, e := m.Binary(s, i.Package, binary)
+		if e != nil {
+			return nil, e
+		}
+		args = []string{bin, filepath.Join(dir, "valkey.conf")}
+	}
+	return args, nil
 }
 func freeDatabasePort(port int) error {
 	l, e := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
@@ -189,6 +208,11 @@ func (m *Manager) instanceAction(ctx context.Context, id, action string) error {
 }
 
 func (m *Manager) checkInstanceAction(ctx context.Context, s State, id, action string) error {
+	if action == "start" || action == "restart" {
+		if e := m.verifyDataLocation(s.Instances[id]); e != nil {
+			return e
+		}
+	}
 	return ctx.Err()
 }
 func (m *Manager) databaseCommand(ctx context.Context, s *State, id, tool string, args ...string) (string, error) {

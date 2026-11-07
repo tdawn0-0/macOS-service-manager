@@ -310,6 +310,12 @@ func (m *Manager) Uninstall(ctx context.Context, id string) error {
 				return e
 			}
 		}
+		if s.RuntimeDefaults[p.Name] == id {
+			delete(s.RuntimeDefaults, p.Name)
+			if err := os.Remove(m.runtimeScript(p.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
 		delete(s.Packages, id)
 		delete(s.PackageIntegrity, id)
 		if p.Name == "node" {

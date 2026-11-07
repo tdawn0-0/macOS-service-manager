@@ -250,6 +250,9 @@ func (m *Manager) runDatabaseWork(ctx context.Context, req databaseWorkRequest, 
 	if !ok {
 		return "", errors.New("database instance not found")
 	}
+	if e := m.verifyDataLocation(instance); e != nil {
+		return "", e
+	}
 	pkgRelease, e := m.packageLease(ctx, instance.Package, false)
 	if e != nil {
 		return "", e
@@ -445,6 +448,9 @@ func (m *Manager) RunDatabaseWorker(ctx context.Context, id string) error {
 	}
 	defer os.Remove(filepath.Join(dir, "input.json"))
 	m.databaseWork = &databaseWorkContext{record: record, dir: dir}
+	if e := m.verifyDataLocation(record.Instance); e != nil {
+		return e
+	}
 	m.emit("Executing database task " + id)
 	var output string
 	switch record.Request.Kind {

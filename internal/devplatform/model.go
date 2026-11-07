@@ -88,13 +88,18 @@ type processProbe struct {
 }
 
 type Instance struct {
-	ID         string `json:"id"`
-	Kind       string `json:"kind"`
-	Package    string `json:"package"`
-	Port       int    `json:"port"`
-	Persistent bool   `json:"persistent"`
+	DataIdentity  string `json:"dataIdentity,omitempty"`
+	DataDirectory string `json:"dataDirectory,omitempty"`
+	DataOwner     string `json:"dataOwner,omitempty"`
+	ID            string `json:"id"`
+	Kind          string `json:"kind"`
+	Package       string `json:"package"`
+	Port          int    `json:"port"`
+	Persistent    bool   `json:"persistent"`
 }
 type State struct {
+	UVExecutable        string                       `json:"uvExecutable,omitempty"`
+	RuntimeDefaults     map[string]string            `json:"runtimeDefaults,omitempty"`
 	ConnectionProfiles  map[string]ConnectionProfile `json:"connectionProfiles"`
 	ProxyRules          []ProxyRule                  `json:"proxyRules"`
 	ProxyListenerPort   int                          `json:"proxyListenerPort"`

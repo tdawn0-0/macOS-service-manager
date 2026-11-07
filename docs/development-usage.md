@@ -23,3 +23,7 @@ Closing the window keeps managed resources running. The menu bar has database ro
 ## Verification status
 
 See [development-verification.md](development-verification.md). Unit, isolated-native, and signed App/system-trust/Chrome evidence are separate. An unrun native or browser check stays NOT RUN.
+
+## Additional runtimes and database locations
+
+Software also includes Java, Go, and Python (uv). The [runtime and data-location guide](development-runtimes-and-data.md) explains exact versions, terminal defaults, existing uv storage, and custom database paths. Database versions are selected per instance; changing the major version requires a separate instance and an explicit data migration outside this feature.

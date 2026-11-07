@@ -45,6 +45,7 @@ func (a *app) reviewOperation(r devplatform.OperationRecord) {
 		d.dbKind = req.Name
 		d.dbPackage = req.Version
 		d.dbPort = ""
+		d.dbDataDirectory = ""
 		d.initializationsOpen = true
 		d.detailScroll[devTabDatabases].Y = 0
 		a.initializationTaskThen(nil, func(err error) {

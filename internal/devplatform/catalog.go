@@ -44,6 +44,8 @@ func Resolve(ctx context.Context, name, version string) (Package, error) {
 		return p, errors.New("choose an exact package version")
 	}
 	switch name {
+	case "java":
+		return resolveJava(ctx, version)
 	case "mysql":
 		if p.Version != "8.4.4" {
 			return p, errors.New("supported MySQL version: 8.4.4")

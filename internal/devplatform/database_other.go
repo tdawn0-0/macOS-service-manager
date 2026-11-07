@@ -33,7 +33,7 @@ func (m *Manager) createOther(ctx context.Context, s *State, i Instance, dir, pa
 		if _, e := m.Binary(s, i.Package, "mongod"); e != nil {
 			return e
 		}
-		if e := os.MkdirAll(filepath.Join(dir, "data"), 0700); e != nil {
+		if e := os.MkdirAll(m.DatabaseDataDirectory(i), 0700); e != nil {
 			return e
 		}
 		if e := m.startInstance(ctx, s, i); e != nil {
@@ -52,7 +52,7 @@ func (m *Manager) createOther(ctx context.Context, s *State, i Instance, dir, pa
 			return e
 		}
 		pkg := s.Packages[i.Package]
-		if _, e = m.runInitializationTool(ctx, bin, "--no-defaults", "--initialize-insecure", "--basedir="+m.packageDir(pkg), "--datadir="+filepath.Join(dir, "data")); e != nil {
+		if _, e = m.runInitializationTool(ctx, bin, "--no-defaults", "--initialize-insecure", "--basedir="+m.packageDir(pkg), "--datadir="+m.DatabaseDataDirectory(i)); e != nil {
 			return e
 		}
 		if e = m.mysqlConfig(i, dir, ""); e != nil {

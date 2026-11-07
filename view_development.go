@@ -25,6 +25,9 @@ type proxyRuleDraft struct {
 }
 
 type developmentState struct {
+	runtimeVersions                                                                                     map[string][]string
+	uvPath, uvDescription, uvPin, uvVersion                                                             string
+	uvInstalled, uvAvailable                                                                            []devplatform.UVPython
 	databaseWorkOpen                                                                                    bool
 	databaseWork                                                                                        []devplatform.DatabaseWorkInfo
 	databaseTasks                                                                                       map[string]*databaseTask
@@ -67,6 +70,7 @@ type developmentState struct {
 	output                                                                                              string
 	cancel                                                                                              context.CancelFunc
 	software, version                                                                                   string
+	dbDataDirectory                                                                                     string
 	dbKind, dbID, dbPackage, dbPort, dbName, dbUser, dbPassword, backupPath                             string
 	profileDraft                                                                                        devplatform.ConnectionProfile
 	profileSelected, profileDraftInstance, profilePendingInstance, profilePendingSelect, profileRedisDB string
@@ -390,7 +394,7 @@ func devNews(status string) string {
 	return status
 }
 func softwareTitle(name string) string {
-	if title, ok := map[string]string{"node": "Node.js", "mysql": "MySQL", "postgresql": "PostgreSQL", "redis": "Redis", "mongodb": "MongoDB"}[name]; ok {
+	if title, ok := map[string]string{"node": "Node.js", "java": "Java", "go": "Go", "python": "Python (uv)", "mysql": "MySQL", "postgresql": "PostgreSQL", "redis": "Redis", "mongodb": "MongoDB"}[name]; ok {
 		return title
 	}
 	return name
@@ -399,9 +403,13 @@ func (a *app) devMaster(c *ui.Context) {
 	d := &a.dev
 	switch d.tab {
 	case devTabSoftware:
-		for _, name := range []string{"node", "mysql", "postgresql", "redis", "mongodb"} {
+		for _, name := range []string{"node", "java", "go", "python", "mysql", "postgresql", "redis", "mongodb"} {
 			count := ""
-			if n := len(d.packages(name)); n > 0 {
+			n := len(d.packages(name))
+			if name == "python" {
+				n = len(d.uvInstalled)
+			}
+			if n > 0 {
 				count = strconv.Itoa(n)
 			}
 			if devListEntry(c, "Software "+name, softwareTitle(name), "", count, d.software == name) {
@@ -425,6 +433,7 @@ func (a *app) devMaster(c *ui.Context) {
 				d.dbKind = "postgresql"
 				d.dbPort = "55432"
 				d.dbPackage = ""
+				d.dbDataDirectory = ""
 				d.persistent = true
 			}
 		}
@@ -491,6 +500,10 @@ func (a *app) devSoftware(c *ui.Context) {
 		d.version = devplatform.AvailableVersions("node")[0]
 	}
 	devHeading(c, softwareTitle(d.software), "")
+	if d.software == "python" {
+		a.devPython(c)
+		return
+	}
 	a.devPackageTasks(c)
 	if d.software == "node" {
 		a.loadNodeReleases()
@@ -501,6 +514,8 @@ func (a *app) devSoftware(c *ui.Context) {
 			ui.Text(c, "nodejs.org could not be reached. Showing the last release list.").FontSize(textSmall).TextColor(c.Theme().Warning)
 		}
 		devField(c, "Exact version", &d.version, "22.14.0, 22, lts or latest")
+	} else if d.software == "java" || d.software == "go" {
+		a.devRuntimeCatalog(c)
 	} else {
 		devChoice(c, "Version", &d.version, devplatform.AvailableVersions(d.software))
 		devField(c, "Exact version", &d.version, "For example 22.14.0")
@@ -513,9 +528,19 @@ func (a *app) devSoftware(c *ui.Context) {
 		}
 		devDivider(c, "Installed")
 		ui.Text(c, "License: "+p.License).FontSize(textSmall).TextColor(c.Theme().TextMuted)
-		ui.Row(c).Gap(8).Children(func() {
-			ui.Text(c, softwareTitle(p.Name)+" · "+p.Version).Grow(1).MinWidth(0).SingleLine()
-			ui.Spacer(c)
+		additionalRuntime := p.Name == "java" || p.Name == "go"
+		if additionalRuntime {
+			ui.Text(c, softwareTitle(p.Name)+" · "+p.Version)
+		}
+		row := ui.Row(c).Gap(8)
+		if additionalRuntime {
+			row.Wrap()
+		}
+		row.Children(func() {
+			if !additionalRuntime {
+				ui.Text(c, softwareTitle(p.Name)+" · "+p.Version).Grow(1).MinWidth(0).SingleLine()
+				ui.Spacer(c)
+			}
 			if p.Name == "node" {
 				if id == d.state.NodeDefault {
 					ui.Text(c, "Default").FontSize(textSmall).FontWeight(600).TextColor(c.Theme().Accent).Shrink(0)
@@ -527,6 +552,9 @@ func (a *app) devSoftware(c *ui.Context) {
 			}
 			if p.Name == "node" {
 				a.devNodeExecutable(c, id)
+			}
+			if p.Name == "java" || p.Name == "go" {
+				a.devAdditionalRuntimeInstalled(c, id, p)
 			}
 			removeLabel := "Uninstall " + p.Name + " " + p.Version
 			if p.Formula != "" {
@@ -545,6 +573,9 @@ func (a *app) devSoftware(c *ui.Context) {
 	}
 	if d.software == "node" {
 		a.devNodeTerminal(c)
+	}
+	if d.software == "java" || d.software == "go" {
+		a.devAdditionalRuntimeShell(c)
 	}
 }
 
@@ -677,6 +708,8 @@ func (a *app) devDatabases(c *ui.Context) {
 
 		a.devDatabasePort(c, instance)
 		devDivider(c, "Data")
+		ui.Text(c, "Version: "+d.state.Packages[instance.Package].Version)
+		ui.Text(c, "Data: "+a.devManager().DatabaseDataDirectory(instance)).FontSize(textSmall)
 	} else {
 		d.dbNewDraft = true
 		devHeading(c, "New instance", "")
@@ -694,6 +727,8 @@ func (a *app) devDatabases(c *ui.Context) {
 			d.dbPort = map[string]string{"mysql": "3306", "postgresql": "5432", "redis": "6379", "mongodb": "27017"}[d.dbKind]
 		}
 		devPackageChoice(c, "Database version", &d.dbPackage, d.packages(d.dbKind), d.state.Packages, false)
+		devField(c, "Data location", &d.dbDataDirectory, "Blank for app storage, or a new absolute directory")
+		ui.Text(c, "External locations keep data when the instance is removed. Existing data is not adopted.").FontSize(textSmall)
 		devField(c, "Local port", &d.dbPort, "55432")
 		a.devPortControls(c, &d.dbPort, "database")
 		if d.dbKind == "redis" {
@@ -706,7 +741,7 @@ func (a *app) devDatabases(c *ui.Context) {
 			if e != nil {
 				d.output = "Error: Enter a valid port"
 			} else {
-				i := devplatform.Instance{ID: d.dbID, Kind: d.dbKind, Package: d.dbPackage, Port: port, Persistent: d.persistent}
+				i := devplatform.Instance{ID: d.dbID, Kind: d.dbKind, Package: d.dbPackage, Port: port, Persistent: d.persistent, DataDirectory: d.dbDataDirectory}
 				d.dbNewDraft = true
 				a.startDatabaseTask(i)
 			}

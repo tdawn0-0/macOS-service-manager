@@ -166,6 +166,9 @@ func (m *Manager) stopInitializationJobs(ctx context.Context, r initializationRe
 	return nil
 }
 func (m *Manager) checkNewInstance(ctx context.Context, s State, i Instance) error {
+	if e := m.validateDataLocation(s, i); e != nil {
+		return e
+	}
 	if _, ok := s.Instances[i.ID]; ok {
 		return errors.New("instance already exists")
 	}
@@ -196,7 +199,14 @@ func (m *Manager) createInstance(ctx context.Context, i Instance) (err error) {
 	if i.Port < 1024 || i.Port > 65535 {
 		return errors.New("database port must be 1024–65535")
 	}
-	release, e := m.resourceLeases(ctx, resourceKey{"database instance", i.ID}, resourceKey{"TCP port", strconv.Itoa(i.Port)})
+	if i.DataDirectory != "" {
+		i.DataOwner = randomID()
+	}
+	keys := []resourceKey{{"database instance", i.ID}, {"TCP port", strconv.Itoa(i.Port)}}
+	if i.DataDirectory != "" {
+		keys = append(keys, resourceKey{"database locations", "creation"})
+	}
+	release, e := m.resourceLeases(ctx, keys...)
 	if e != nil {
 		return e
 	}
@@ -273,6 +283,13 @@ func (m *Manager) createInstance(ctx context.Context, i Instance) (err error) {
 		defer cancel()
 		err = errors.Join(err, worker.stopInitializationJobs(cleanup, c.record))
 	}()
+	if e = worker.prepareDataLocation(&i); e != nil {
+		return e
+	}
+	c.record.Instance = i
+	if e = writeJSON(path, c.record); e != nil {
+		return e
+	}
 	worker.emit("Initializing database " + i.ID)
 	if e = worker.initializeInstanceData(ctx, &s, i, data); e != nil {
 		return e
@@ -393,6 +410,9 @@ func (m *Manager) initializationInfo(ctx context.Context, s State, r initializat
 			info.Status = "Needs inspection"
 			info.Detail = "The recorded data directory is missing. No other data will be moved."
 		}
+	}
+	if r.Instance.DataDirectory != "" {
+		info.Detail += " External database files stay at " + m.DatabaseDataDirectory(r.Instance) + ". Only application metadata is archived; this location cannot be reused automatically."
 	}
 	fingerprint, _ := json.Marshal(struct {
 		Record, Stage, Canonical, Retained string

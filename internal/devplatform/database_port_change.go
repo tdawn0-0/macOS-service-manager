@@ -83,6 +83,9 @@ func (m *Manager) changeInstancePort(ctx context.Context, expected Instance, por
 		if !ok {
 			return nil, nil, errors.New("instance not found")
 		}
+		if e := m.verifyDataLocation(i); e != nil {
+			return nil, nil, e
+		}
 		if i != expected {
 			return nil, nil, errors.New("database settings changed; select the instance again before changing its port")
 		}

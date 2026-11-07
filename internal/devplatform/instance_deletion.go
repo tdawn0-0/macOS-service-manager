@@ -162,6 +162,12 @@ func (m *Manager) instanceDeletionPreview(ctx context.Context, s State, id strin
 		return p, errors.New("database instance not found")
 	}
 	p = InstanceDeletionPreview{InstanceID: id, Kind: i.Kind, Package: i.Package, Path: filepath.Join(m.Root, "instances", id), CanDelete: true, Detail: "Permanently removes this instance record, data, local configuration and credentials. Installed software and backups outside this path are retained."}
+	if i.DataDirectory != "" {
+		p.CanDelete = false
+		p.Path = m.DatabaseDataDirectory(i)
+		p.Detail = "External data is retained. Remove the instance registration to keep this data location; permanent erasure is not supported for external data."
+		return p, nil
+	}
 	loaded, e := m.packageJobLoaded(ctx, m.label("db-"+id))
 	if e != nil {
 		p.CanDelete = false

@@ -93,6 +93,8 @@ func (a *app) devDatabaseConnections(c *ui.Context, instance devplatform.Instanc
 						d.dbID = ""
 						d.dbKind = "postgresql"
 						d.dbPort = "55432"
+						d.dbPackage = ""
+						d.dbDataDirectory = ""
 					} else {
 						a.loadConnectionProfileDraft(instance.ID, selected)
 					}

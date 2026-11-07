@@ -476,3 +476,23 @@ func TestRemovingARootJobKeepsItIfAnythingFails(t *testing.T) {
 		t.Errorf("canceling keeps the file: %v", err)
 	}
 }
+
+// Legacy editing must preserve a throttle it does not expose, while managed
+// development services can explicitly choose their own restart throttle.
+func TestOptionalThrottlePreservesExistingJobPolicy(t *testing.T) {
+	data := []byte(`<plist version="1.0"><dict><key>Label</key><string>a</string><key>ProgramArguments</key><array><string>/bin/date</string></array><key>ThrottleInterval</key><integer>45</integer></dict></plist>`)
+	spec, err := specFromBytes(t, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := spec.Marshal(data)
+	if err != nil || decode(t, out)["ThrottleInterval"] != uint64(45) {
+		t.Fatal("legacy edit changed restart throttle", err, decode(t, out))
+	}
+	throttle := 3
+	spec.ThrottleInterval = &throttle
+	out, err = spec.Marshal(data)
+	if err != nil || decode(t, out)["ThrottleInterval"] != uint64(3) {
+		t.Fatal("explicit throttle was not applied", err, decode(t, out))
+	}
+}

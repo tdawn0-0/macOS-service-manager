@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 90
     # Holds the secrets, and hands them only to the tags above.
     environment: release
@@ -70,7 +70,10 @@ jobs:
       - name: test
         run: |
           set -euo pipefail
+          test "$(uname -m)" = arm64
           go test ./...
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'
+          python3 scripts/collect-third-party-notices.py --check
 
       - name: set the version
         run: |
@@ -143,9 +146,9 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          dmg=$(find build/darwin-universal -maxdepth 1 -name '*.dmg' -print -quit)
+          dmg=$(find build/darwin-arm64 -maxdepth 1 -name '*.dmg' -print -quit)
           if [ -z "$dmg" ] || [ ! -f "$dmg" ]; then
-            echo "::error::no disk image in build/darwin-universal"
+            echo "::error::no disk image in build/darwin-arm64"
             exit 1
           fi
           # Nothing goes out that macOS would warn about.

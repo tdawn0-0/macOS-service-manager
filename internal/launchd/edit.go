@@ -36,6 +36,9 @@ type Spec struct {
 	RestartOnCrash bool
 	// StartInterval runs the job every this many seconds; 0 is never.
 	StartInterval int
+	// Nil preserves a key this editor did not change. Development services set
+	// an explicit throttle; existing legacy jobs keep their original policy.
+	ThrottleInterval *int
 	// Calendar runs the job at the times it says.
 	Calendar Calendar
 	// CalendarCustom says the file has a calendar that a Calendar cannot say,
@@ -83,6 +86,9 @@ func (s Spec) Validate() error {
 	}
 	if s.StartInterval < 0 {
 		return fmt.Errorf("the interval cannot be negative")
+	}
+	if s.ThrottleInterval != nil && (*s.ThrottleInterval < 1 || *s.ThrottleInterval > 3600) {
+		return fmt.Errorf("the throttle interval must be 1–3600 seconds")
 	}
 	if _, err := s.Calendar.Entries(); err != nil {
 		return err
@@ -184,6 +190,9 @@ func (s Spec) Marshal(current []byte) ([]byte, error) {
 		}
 	}
 	dict["Label"] = s.Label
+	if s.ThrottleInterval != nil {
+		dict["ThrottleInterval"] = *s.ThrottleInterval
+	}
 	setProgram(dict, s.Args)
 	setBool("RunAtLoad", s.RunAtLoad || s.RestartOnCrash)
 	switch {

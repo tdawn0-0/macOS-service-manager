@@ -4,9 +4,15 @@
   "version": "0.1.0",
   "out": "build",
   "macos": {
+    "minimumSystemVersion": "13.0",
     "entitlements": "entitlements.plist",
     "infoPlist": {
       "NSAppleEventsUsageDescription": "Service Manager asks System Events to add apps to your login items, and to remove them."
     }
-  }
+  },
+  "resources": [
+    "LICENSE",
+    "NOTICE",
+    "licenses"
+  ]
 }

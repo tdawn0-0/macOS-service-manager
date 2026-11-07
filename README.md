@@ -4,12 +4,13 @@
 
 # macOS Service Manager
 
-**Everything that starts on your Mac, in one place.**
+**Import a project. Configure its environment. Open it over local HTTPS.**
 
-Homebrew services, launch agents and daemons, and login items, in one native app
-drawn on the GPU, with no webview and no JavaScript.
+A native macOS workspace for PHP, Node.js, MySQL, PostgreSQL, Redis and MongoDB.
+The app downloads and manages verified binaries; launchd runs the services.
+Homebrew services, launch agents, daemons and login items remain available.
 
-![macOS 12 or later](https://img.shields.io/badge/macOS-12%2B-000000?logo=apple&logoColor=white)
+![macOS 13 or later](https://img.shields.io/badge/macOS-13%2B-000000?logo=apple&logoColor=white)
 ![Go 1.27.3 or later](https://img.shields.io/badge/Go-1.27.3%2B-00ADD8?logo=go&logoColor=white)
 [![Built with MyGo](https://img.shields.io/badge/UI-MyGo-5B5BD6)](https://github.com/egoist/mygo)
 
@@ -20,12 +21,36 @@ drawn on the GPU, with no webview and no JavaScript.
 <br>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/window-dark.png">
-  <img src="docs/images/window-light.png" alt="The main window: a sidebar of sources, a list grouped by source, and the details of postgresql@17.">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/development/projects-1120x720-dark-true.png">
+  <img src="docs/images/development/projects-1120x720-dark-false.png" alt="Development workspace: projects, software, databases, local HTTPS and graphical project settings.">
 </picture>
 
 ## Features
 
+- **Project environments.** Import a folder, choose runtime versions, configure
+  services and database dependencies, then start the project. Forms handle all
+  settings; users do not need to edit configuration files. Runtime declarations
+  show their source and conflicting exact versions before you choose one.
+  Dependency installation runs in the background. Review unfinished project
+  commands after a caller exits, without automatically rerunning repository scripts.
+- **Local HTTPS.** Use `.test` domains, a trusted local CA and a loopback reverse
+  proxy, including WebSocket, SSE and uploads. Default 443 uses launchd socket
+  activation while the proxy runs as the current user.
+- **Managed software and databases.** Keep versions separate, initialize private
+  instances, create databases and users, and back up and restore data. Review
+  package sources, checksums, size and system requirements before installing.
+  Check installed files and repair the same exact version after stopping its users.
+  Installation and repair run in the background, with per-version cancellation;
+  other projects remain configurable while independent packages prepare.
+  Removing an instance keeps its data; permanent data deletion has a separate
+  path/impact preview, typed confirmation and interrupted-deletion recovery.
+- **Diagnostics by layer.** Check processes, readiness, DNS, CA trust and TLS;
+  copy or export an anonymous report from the workspace.
+- **Share environments.** Export locked software and database declarations;
+  import another working copy with separate instances and credentials.
+- **Project controls in the menu bar.** Start or stop a project and open its sites.
+- **Bounded log maintenance.** A scheduled user task rotates development logs
+  while the app is closed. The Projects → Logs page controls it.
 - **One list for everything.** Search every source together, filter by running or
   stopped, and see each item once: a Homebrew service is not listed again as a
   launch agent.
@@ -37,6 +62,8 @@ drawn on the GPU, with no webview and no JavaScript.
   together. Daemons changed together ask for your password once.
 - **Stays in the menu bar.** Close the window and the app stays. Its icon shows how
   many Homebrew services and user agents run, and opens a panel with a switch for each.
+  Quit offers to keep services or stop managed projects and databases, with a
+  separate choice for the local HTTPS proxy.
 - **Asks only when macOS requires it.** Reading never asks for a password, and a lock
   icon marks what changing will.
 
@@ -101,8 +128,9 @@ conditions, and calendars that are not all the combinations of their values.
 that will change, and asks nothing at all if none do. Removing one says what you will
 lose. Software you installed may depend on these jobs, or undo your edit when it updates.
 
-**Full Disk Access is optional.** The first launch offers it and says what skipping it
-costs; Login Items offers it again later. Allowing it opens System Settings, where a small
+**Full Disk Access is optional.** The Development workspace does not read login items
+or request their permissions on startup. Login Items offers the original guide when needed.
+Allowing access opens System Settings, where a small
 page follows the window with an icon to drag, shows the way into the list, and darkens
 everything else during the drag.
 
@@ -120,17 +148,23 @@ everything else during the drag.
 
 Build it from source. You need:
 
-- macOS 12 or later
+- macOS 13 or later on Apple Silicon (M-series, arm64)
 - Go 1.27.3 or later
 - Homebrew, only for the Homebrew source
+
+Individual managed packages have higher macOS requirements; see the
+[current compatibility and verification notes](docs/development-usage.md).
+The current Go 1.27 toolchain requires macOS 13; an earlier macOS 12 label was
+incorrect. This states the binary requirement, not a claim that every supported
+macOS version has been tested on hardware.
 
 ```bash
 git clone https://github.com/tdawn0-0/macOS-service-manager.git
 cd macOS-service-manager
-go tool mygo build
+go tool mygo build -platform darwin/arm64
 ```
 
-The app and a disk image are in `build/darwin-arm64/`, or `build/darwin-amd64/` on Intel.
+The Apple Silicon app and disk image are in `build/darwin-arm64/`. Intel Macs and Intel-only development binaries are outside the supported scope.
 To sign with a Developer ID, see [Packaging](#packaging).
 
 > [!NOTE]
@@ -146,6 +180,14 @@ To sign with a Developer ID, see [Packaging](#packaging).
 | Right click on a row | List everything that can be done to it |
 
 ## Development
+
+The new **Development** section adds managed runtimes, projects, database instances,
+and local HTTPS through launchd. See [usage and verification (中文)](docs/development-usage.md)
+for the current implementation, commands, and remaining limitations.
+
+The product requirements and release gates are documented in the
+[local development platform requirements and plan (中文)](docs/local-dev-platform-plan.md).
+It also records remaining validation; see the verification notes for completed work.
 
 ```bash
 go tool mygo dev      # run with live reload
@@ -180,8 +222,8 @@ their result back with `Window.Update`.
 ### Packaging
 
 ```bash
-scripts/package.sh                 # universal, signed: build/darwin-universal/*.app and *.dmg
-scripts/package.sh --arch arm64    # one architecture (arm64 or amd64)
+scripts/package.sh                 # Apple Silicon, signed: build/darwin-arm64/*.app and *.dmg
+scripts/package.sh --arch arm64    # optional; arm64 is the only supported architecture
 scripts/package.sh --skip-tests    # without running the tests first
 ```
 
@@ -200,7 +242,7 @@ and needs Full Disk Access allowed again. The same certificate keeps both across
 
 ### Releasing
 
-Push a tag on `master`, and GitHub does the rest: it tests, builds a universal app, signs it
+Push a tag on `master`, and GitHub does the rest: it tests, builds an Apple Silicon app, signs it
 with the Developer ID, notarizes it, and publishes the disk image. The version comes from the
 tag, and a tag with a suffix, as `v0.2.0-rc.1`, makes a prerelease.
 
@@ -303,3 +345,12 @@ They go through `osascript … with administrator privileges`, which shows macOS
 
 Built with [MyGo](https://github.com/egoist/mygo). The options of the job form follow
 [Launched](https://launched.zerowidth.com/).
+
+
+## License
+
+Project-authored source is licensed under [Apache-2.0](LICENSE); see [NOTICE](NOTICE).
+The standard license text is copied from the [Apache Software Foundation](https://www.apache.org/licenses/LICENSE-2.0.txt).
+Third-party components retain their own terms. The app includes the pinned
+[dependency notice inventory](licenses/README.md); separately downloaded runtimes
+and databases are described in [third-party software](docs/third-party-software.md).

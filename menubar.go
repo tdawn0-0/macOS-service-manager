@@ -3,6 +3,8 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"macos-service-manager/internal/devplatform"
+	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -38,7 +40,7 @@ func (a *app) panelItems(src service.Source) []service.Item {
 	}
 	var items []service.Item
 	for _, it := range st.items {
-		if a.shown(it) {
+		if a.shown(it) && !strings.HasPrefix(it.Name, "xyz.jyeu.msm.dev.") {
 			items = append(items, it)
 		}
 	}
@@ -48,6 +50,11 @@ func (a *app) panelItems(src service.Source) []service.Item {
 // panelRunning counts what runs among the items the panel shows.
 func (a *app) panelRunning() int {
 	running := 0
+	for id := range a.dev.state.Projects {
+		if status := a.dev.statuses["project:"+id]; devProjectStarted(status) && status != "Failed" {
+			running++
+		}
+	}
 	for _, src := range panelSources {
 		for _, it := range a.panelItems(src) {
 			if it.Up() {
@@ -76,17 +83,48 @@ func (a *app) menubarView(c *ui.Context, openWindow func()) {
 				ui.Text(c, "Service Manager").FontSize(14).FontWeight(650).SingleLine()
 				ui.Text(c, fmt.Sprintf("%d running", a.panelRunning())).TextColor(t.TextMuted).FontSize(textCaption)
 			})
-			if a.loading() {
+			if a.loading() || a.dev.busy {
 				ui.Spinner(c).Label("Loading").Size(14, 14)
 			}
-			iconButton(c, iconRestart, "Refresh", t.TextMuted).Disabled(a.loading()).OnClick(func() {
+			iconButton(c, iconRestart, "Refresh", t.TextMuted).Disabled(a.loading() || a.dev.busy).OnClick(func() {
+				a.devTask(func(*devplatform.Manager) (string, error) { return "Workspace refreshed.", nil })
 				for _, src := range panelSources {
 					a.refresh(src)
 				}
 			})
 		})
 		ui.Scroll(c).Grow(1).MinHeight(0).Padding(0, 8, 8).Gap(2).Children(func() {
-			empty := true
+			empty := len(a.dev.state.Projects) == 0
+			if !empty {
+				ui.Text(c, "Projects").FontSize(textCaption).FontWeight(650).TextColor(t.TextMuted).Padding(8, 8, 4)
+				for _, id := range sortedKeys(a.dev.state.Projects) {
+					p := a.dev.state.Projects[id]
+					on := devProjectStarted(a.dev.statuses["project:"+id])
+					ui.Row(c.Key("project-"+id)).Height(34).AlignItems(ui.Center).Gap(8).Padding(0, 8).Children(func() {
+						state := service.StateStopped
+						if on {
+							state = service.StateRunning
+						}
+						statusDot(c, state, false)
+						ui.Text(c, p.Name).SingleLine().Grow(1).MinWidth(0).Tooltip(p.Name)
+						if ui.Switch(c, &on).Label("Run project " + p.Name).Disabled(a.dev.busy || a.projectTaskRunning(id)).Changed() {
+							kind := "down"
+							if on {
+								kind = "up"
+							}
+							a.runProjectAction(p, kind)
+						}
+					})
+					for _, site := range p.Sites {
+						if ui.Button(c, "Open "+site.Domain).Disabled(a.dev.busy || site.Disabled).Clicked() {
+							a.devTask(func(m *devplatform.Manager) (string, error) {
+								_, e := m.Run(m.Context, "/usr/bin/open", site.URL())
+								return "Opening " + site.URL(), e
+							})
+						}
+					}
+				}
+			}
 			for _, src := range panelSources {
 				items := a.panelItems(src)
 				if st := a.sources[src]; st != nil && st.err != "" {
@@ -108,7 +146,7 @@ func (a *app) menubarView(c *ui.Context, openWindow func()) {
 		ui.Column(c).Height(1).Shrink(0).Background(hairline(t))
 		ui.Row(c).Shrink(0).Padding(8, 10).Gap(6).AlignItems(ui.Center).Children(func() {
 			labeledButton(c, iconWindow, "Open Service Manager", false).Grow(1).OnClick(openWindow)
-			iconButton(c, iconQuit, "Quit", t.TextMuted).OnClick(mygo.App.Quit)
+			iconButton(c, iconQuit, "Quit", t.TextMuted).OnClick(a.requestQuit)
 		})
 	})
 }
@@ -178,6 +216,12 @@ func (m *menubar) showWindow() {
 func (a *app) panelHeight() int {
 	const header, footer, row, heading = 54, 50, 34, 30
 	height := header + footer + 16
+	if n := len(a.dev.state.Projects); n > 0 {
+		height += heading + n*row
+		for _, p := range a.dev.state.Projects {
+			height += len(p.Sites) * row
+		}
+	}
 	for _, src := range panelSources {
 		if n := len(a.panelItems(src)); n > 0 {
 			height += heading + n*row
@@ -209,6 +253,9 @@ func (m *menubar) toggle() {
 		m.a.panelOpen = false
 	})
 	// What the list shows may be old.
+	if !m.a.dev.busy {
+		m.a.devTask(func(*devplatform.Manager) (string, error) { return "Workspace refreshed.", nil })
+	}
 	for _, src := range panelSources {
 		m.a.refresh(src)
 	}
@@ -228,7 +275,12 @@ func (m *menubar) install() error {
 	m.tray = tray
 	menu := mygo.NewMenu([]*mygo.MenuItem{
 		{Label: "Open Service Manager", Click: func(*mygo.MenuItem, *mygo.Window) { m.showWindow() }},
-		{Label: "Refresh", Click: func(*mygo.MenuItem, *mygo.Window) { m.a.refreshAll() }},
+		{Label: "Refresh", Click: func(*mygo.MenuItem, *mygo.Window) {
+			m.a.refreshNavigation()
+			for _, src := range panelSources {
+				m.a.refresh(src)
+			}
+		}},
 		mygo.Separator(),
 		{Role: mygo.RoleQuit},
 	})

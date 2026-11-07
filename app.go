@@ -13,6 +13,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"macos-service-manager/internal/brew"
+	"macos-service-manager/internal/devplatform"
 	"macos-service-manager/internal/launchd"
 	"macos-service-manager/internal/loginitem"
 	"macos-service-manager/internal/logs"
@@ -193,6 +194,10 @@ type listRow struct {
 // app is the state of the window. Everything in it is read and written on
 // the main thread: background work hands its results over through post.
 type app struct {
+	quit      quitState
+	quitApp   func()
+	showQuit  func()
+	dev       developmentState
 	providers map[service.Source]service.Provider
 	adder     interface{ Add(path string) error }
 	// agentDir is where new launch agents are written.
@@ -242,13 +247,15 @@ type app struct {
 
 func newApp() *app {
 	login := loginitem.New()
-	return newAppWith(map[service.Source]service.Provider{
+	a := newAppWith(map[service.Source]service.Provider{
 		service.Brew:        brew.New(),
 		service.UserAgent:   launchd.UserAgents(),
 		service.SystemAgent: launchd.SystemAgents(),
 		service.Daemon:      launchd.Daemons(),
 		service.LoginItem:   login,
 	}, login, launchd.UserAgents().Dir)
+	a.nav = "development"
+	return a
 }
 
 func newAppWith(providers map[service.Source]service.Provider, adder interface{ Add(string) error }, agentDir string) *app {
@@ -353,6 +360,22 @@ func (a *app) refreshAll() {
 	for _, src := range service.Sources {
 		a.refresh(src)
 	}
+}
+
+// Reading legacy login items can trigger System Events consent. Development
+// has its own controller and only reads legacy sources when requested.
+func (a *app) refreshNavigation() {
+	if a.nav == "development" {
+		if !a.dev.busy {
+			a.devTask(func(m *devplatform.Manager) (string, error) { return "Workspace refreshed.", nil })
+		}
+		return
+	}
+	if a.nav == navAll {
+		a.refreshAll()
+		return
+	}
+	a.refresh(service.Source(a.nav))
 }
 
 func (a *app) loading() bool {

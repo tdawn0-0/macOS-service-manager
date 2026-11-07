@@ -1,0 +1,321 @@
+{
+  "schema": 1,
+  "go": "go1.27.3",
+  "scope": "app and CLI production Go modules and attributed assets for darwin arm64; copied notices retain their original terms",
+  "toolchain": [
+    {
+      "path": "go-toolchain/LICENSE",
+      "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+    },
+    {
+      "path": "go-toolchain/PATENTS",
+      "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+    }
+  ],
+  "modules": [
+    {
+      "module": "github.com/ebitengine/purego",
+      "version": "v0.11.1",
+      "sum": "h1:2zpWRSQNVKN4eKsKO9eM1ILDgWfYMY9GwqRmK6XeQ/0=",
+      "files": [
+        {
+          "path": "third-party/github.com/ebitengine/purego@v0.11.1/LICENSE",
+          "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"
+        }
+      ]
+    },
+    {
+      "module": "github.com/egoist/mygo",
+      "version": "v0.7.4",
+      "sum": "h1:0qkDpDRo7C9g8PM8eu4V6FVouhLiTrUdqKD6I31Lv3Q=",
+      "files": [
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.7.4/LICENSE",
+          "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
+        },
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.7.4/internal/shader/LICENSE",
+          "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"
+        },
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/cli/LICENSE",
+          "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
+        },
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/cli/npm/darwin-arm64/LICENSE",
+          "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
+        },
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/cli/npm/darwin-x64/LICENSE",
+          "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
+        },
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/cli/npm/linux-arm64/LICENSE",
+          "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
+        },
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/cli/npm/linux-x64/LICENSE",
+          "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
+        },
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/cli/npm/win32-arm64/LICENSE",
+          "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
+        },
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/cli/npm/win32-x64/LICENSE",
+          "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
+        },
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/runtime/LICENSE",
+          "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
+        },
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.7.4/plugins/fetch/LICENSE",
+          "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
+        },
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.7.4/plugins/loading/NOTICE.md",
+          "sha256": "181b45ef8039bdc3a938c013a0896f02cdd6cf703caaf26bf192d8ea36ac5986"
+        },
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.7.4/plugins/sqlite/LICENSE",
+          "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
+        },
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.7.4/plugins/watch/LICENSE",
+          "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
+        },
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.7.4/plugins/websocket/LICENSE",
+          "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
+        }
+      ]
+    },
+    {
+      "module": "github.com/go-text/typesetting",
+      "version": "v0.3.5",
+      "sum": "h1:XZPUooClHY0Vf/rFyUyuPRNEkawARaFzLMQcXLSEyPk=",
+      "files": [
+        {
+          "path": "third-party/github.com/go-text/typesetting@v0.3.5/LICENSE",
+          "sha256": "6b1bf94c77d7faa0ce94f8745595bfaf4c404f8b3873f5c2ce55ca15f8e44eca"
+        },
+        {
+          "path": "third-party/github.com/go-text/typesetting@v0.3.5/font/testdata/OFL.txt",
+          "sha256": "b8cb059605ed384a35d449bf50a8f7c0e3cd0b752e5289e6c2e9ce0d2d04ac30"
+        },
+        {
+          "path": "third-party/github.com/go-text/typesetting@v0.3.5/harfbuzz/LICENSE",
+          "sha256": "e45d96558ba3d406f95dffed6f22c3be07093475ef617bcfddf88444d6b66788"
+        }
+      ]
+    },
+    {
+      "module": "github.com/golang/snappy",
+      "version": "v1.0.0",
+      "sum": "h1:Oy607GVXHs7RtbggtPBnr2RmDArIsAefDwvrdWvRhGs=",
+      "files": [
+        {
+          "path": "third-party/github.com/golang/snappy@v1.0.0/AUTHORS",
+          "sha256": "f6f3821e64460346c1ed1a15fb32b94ad241617276b60726c1350ca315309463"
+        },
+        {
+          "path": "third-party/github.com/golang/snappy@v1.0.0/LICENSE",
+          "sha256": "f69f157b0be75da373605dbc8bbf142e8924ee82d8f44f11bcaf351335bf98cf"
+        }
+      ]
+    },
+    {
+      "module": "github.com/klauspost/compress",
+      "version": "v1.16.7",
+      "sum": "h1:2mk3MPGNzKyxErAw8YaohYh69+pa4sIQSC0fPGCFR9I=",
+      "files": [
+        {
+          "path": "third-party/github.com/klauspost/compress@v1.16.7/LICENSE",
+          "sha256": "0d9e582ee4bff57bf1189c9e514e6da7ce277f9cd3bc2d488b22fbb39a6d87cf"
+        },
+        {
+          "path": "third-party/github.com/klauspost/compress@v1.16.7/gzhttp/LICENSE",
+          "sha256": "2252a5b1e2b1d3663b53ea77051b8ed065cb9270a3d1174d5d6ead8a2de051b6"
+        },
+        {
+          "path": "third-party/github.com/klauspost/compress@v1.16.7/internal/lz4ref/LICENSE",
+          "sha256": "6a358d2540ca14048f02d366f23787c0a480157e58f058113f0e27168dd4e447"
+        },
+        {
+          "path": "third-party/github.com/klauspost/compress@v1.16.7/internal/snapref/LICENSE",
+          "sha256": "f69f157b0be75da373605dbc8bbf142e8924ee82d8f44f11bcaf351335bf98cf"
+        },
+        {
+          "path": "third-party/github.com/klauspost/compress@v1.16.7/s2/LICENSE",
+          "sha256": "08683b14bda8ae3538abf19e1879e853a39e3b8276a8d673363b529d15a61c1a"
+        },
+        {
+          "path": "third-party/github.com/klauspost/compress@v1.16.7/s2/cmd/internal/filepathx/LICENSE",
+          "sha256": "8582c87d9a6baa28f7827c5205b7d16c3179bc794ebd4c7cc287c49a89b7eaa1"
+        },
+        {
+          "path": "third-party/github.com/klauspost/compress@v1.16.7/s2/cmd/internal/readahead/LICENSE",
+          "sha256": "10fa24a602fde465db603cd5d546e37e33642a73cd24ddf5910be81724fec8b2"
+        },
+        {
+          "path": "third-party/github.com/klauspost/compress@v1.16.7/snappy/AUTHORS",
+          "sha256": "f6f3821e64460346c1ed1a15fb32b94ad241617276b60726c1350ca315309463"
+        },
+        {
+          "path": "third-party/github.com/klauspost/compress@v1.16.7/snappy/LICENSE",
+          "sha256": "f69f157b0be75da373605dbc8bbf142e8924ee82d8f44f11bcaf351335bf98cf"
+        },
+        {
+          "path": "third-party/github.com/klauspost/compress@v1.16.7/zstd/internal/xxhash/LICENSE.txt",
+          "sha256": "f566a9f97bacdaf00d9f21dd991e81dc11201c4e016c86b470799429a1c9a79c"
+        }
+      ]
+    },
+    {
+      "module": "github.com/xdg-go/pbkdf2",
+      "version": "v1.0.0",
+      "sum": "h1:Su7DPu48wXMwC3bs7MCNG+z4FhcyEuz5dlvchbq0B0c=",
+      "files": [
+        {
+          "path": "third-party/github.com/xdg-go/pbkdf2@v1.0.0/LICENSE",
+          "sha256": "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b"
+        }
+      ]
+    },
+    {
+      "module": "github.com/xdg-go/scram",
+      "version": "v1.1.2",
+      "sum": "h1:FHX5I5B4i4hKRVRBCFRxq1iQRej7WO3hhBuJf+UUySY=",
+      "files": [
+        {
+          "path": "third-party/github.com/xdg-go/scram@v1.1.2/LICENSE",
+          "sha256": "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b"
+        }
+      ]
+    },
+    {
+      "module": "github.com/xdg-go/stringprep",
+      "version": "v1.0.4",
+      "sum": "h1:XLI/Ng3O1Atzq0oBs3TWm+5ZVgkq2aqdlvP9JtoZ6c8=",
+      "files": [
+        {
+          "path": "third-party/github.com/xdg-go/stringprep@v1.0.4/LICENSE",
+          "sha256": "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b"
+        }
+      ]
+    },
+    {
+      "module": "github.com/youmark/pkcs8",
+      "version": "v0.0.0-20240726163527-a2c0da244d78",
+      "sum": "h1:ilQV1hzziu+LLM3zUTJ0trRztfwgjqKnBWNtSRkbmwM=",
+      "files": [
+        {
+          "path": "third-party/github.com/youmark/pkcs8@v0.0.0-20240726163527-a2c0da244d78/LICENSE",
+          "sha256": "6d13d89b6c33df37f92553cc95cec278d8770ddc78c9de84620cc16dfb48cef6"
+        }
+      ]
+    },
+    {
+      "module": "go.mongodb.org/mongo-driver/v2",
+      "version": "v2.4.0",
+      "sum": "h1:Oq6BmUAAFTzMeh6AonuDlgZMuAuEiUxoAD1koK5MuFo=",
+      "files": [
+        {
+          "path": "third-party/go.mongodb.org/mongo-driver/v2@v2.4.0/LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ]
+    },
+    {
+      "module": "golang.org/x/crypto",
+      "version": "v0.57.0",
+      "sum": "h1:3ZVCjf8Ggz7zneR/EHRVx68Ctf+2pmIMP2UFhh9cC6M=",
+      "files": [
+        {
+          "path": "third-party/golang.org/x/crypto@v0.57.0/LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        },
+        {
+          "path": "third-party/golang.org/x/crypto@v0.57.0/PATENTS",
+          "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+        }
+      ]
+    },
+    {
+      "module": "golang.org/x/image",
+      "version": "v0.46.0",
+      "sum": "h1:b1+oYj0Jbp6K5MDT4i4/eZpYlk3V8SJhhDKh6LBHAyQ=",
+      "files": [
+        {
+          "path": "third-party/golang.org/x/image@v0.46.0/LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        },
+        {
+          "path": "third-party/golang.org/x/image@v0.46.0/PATENTS",
+          "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+        }
+      ]
+    },
+    {
+      "module": "golang.org/x/sync",
+      "version": "v0.24.0",
+      "sum": "h1:iqiDrGoDgyuvAKrhLQthUEzU/R378N78gXbBjxed7oA=",
+      "files": [
+        {
+          "path": "third-party/golang.org/x/sync@v0.24.0/LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        },
+        {
+          "path": "third-party/golang.org/x/sync@v0.24.0/PATENTS",
+          "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+        }
+      ]
+    },
+    {
+      "module": "golang.org/x/text",
+      "version": "v0.43.0",
+      "sum": "h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=",
+      "files": [
+        {
+          "path": "third-party/golang.org/x/text@v0.43.0/LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        },
+        {
+          "path": "third-party/golang.org/x/text@v0.43.0/PATENTS",
+          "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+        }
+      ]
+    },
+    {
+      "module": "howett.net/plist",
+      "version": "v1.0.1",
+      "sum": "h1:37GdZ8tP09Q35o9ych3ehygcsL+HqKSwzctveSlarvM=",
+      "files": [
+        {
+          "path": "third-party/howett.net/plist@v1.0.1/LICENSE",
+          "sha256": "20d9b7d9372369484ecadae229d3e3efee8029b259e11c9a1b07d2e0a3c82e39"
+        }
+      ]
+    }
+  ],
+  "assets": [
+    {
+      "name": "Lucide icons",
+      "repository": "https://github.com/lucide-icons/lucide",
+      "licenseSource": "https://raw.githubusercontent.com/lucide-icons/lucide/e715245d62667c800e7f54c94b1b023692e900a3/LICENSE",
+      "licenseRevision": "e715245d62667c800e7f54c94b1b023692e900a3",
+      "licenseSHA256": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57",
+      "usedBy": [
+        "icons.go"
+      ],
+      "notes": "License snapshot for existing adapted Lucide SVG paths, including Feather-derived icons. The original geometry revision is not recorded in Git.",
+      "files": [
+        {
+          "path": "third-party-assets/lucide/LICENSE",
+          "sha256": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57"
+        }
+      ]
+    }
+  ]
+}

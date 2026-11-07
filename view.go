@@ -16,12 +16,13 @@ const barHeight = 52
 // view builds the window: a sidebar of sources over the desktop's material,
 // the list of items, and the details of the items chosen once there are any.
 func (a *app) view(c *ui.Context) {
+	a.refreshFinishedPackages()
 	style(c)
 	if !a.panelOpen {
 		a.showToasts(c)
 	}
 	if c.Shortcut(ui.Cmd, ui.KeyR) {
-		a.refreshAll()
+		a.refreshNavigation()
 	}
 	a.build()
 	a.pruneChosen()
@@ -37,7 +38,13 @@ func (a *app) view(c *ui.Context) {
 	}
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
 		a.sidebar(c)
-		ui.Column(c).Grow(1).MinWidth(0).Background(t.Background).Children(func() { a.listPane(c) })
+		ui.Column(c).Grow(1).MinWidth(0).Background(t.Background).Children(func() {
+			if a.nav == "development" {
+				a.developmentView(c)
+			} else {
+				a.listPane(c)
+			}
+		})
 		if a.chosen.Len() > 0 {
 			ui.Column(c).Width(1).Background(hairline(t))
 			ui.Column(c).Width(336).Shrink(0).Background(t.Background).Children(func() { a.inspector(c) })
@@ -46,6 +53,7 @@ func (a *app) view(c *ui.Context) {
 	a.editorDialog(c)
 	// Above the form, which asks too.
 	a.askDialog(c)
+	a.quitDialog(c)
 }
 
 func (a *app) showToasts(c *ui.Context) {
@@ -94,6 +102,7 @@ func (a *app) sidebar(c *ui.Context) {
 	column.Children(func() {
 		ui.Row(c).Height(barHeight).Shrink(0).DragWindow()
 		if ui.Sidebar(c, &a.nav, func() {
+			ui.SidebarItem(c, "development", iconServer, "Development")
 			navItem(navAll, iconAll, "All Items")
 			ui.SidebarSection(c, "Apps & Services", nil, func() {
 				for _, src := range []service.Source{service.Brew, service.LoginItem} {
@@ -108,6 +117,17 @@ func (a *app) sidebar(c *ui.Context) {
 		}).Grow(1).MinHeight(0).Background(ui.Transparent).Changed() {
 			a.chosen.Clear()
 			a.list.ScrollTo(0, ui.Start)
+			if a.nav == navAll {
+				for _, src := range service.Sources {
+					if st := a.sources[src]; st != nil && !st.loaded && !st.loading {
+						a.refresh(src)
+					}
+				}
+			} else if a.nav != "development" {
+				if st := a.sources[service.Source(a.nav)]; st != nil && !st.loaded && !st.loading {
+					a.refresh(service.Source(a.nav))
+				}
+			}
 		}
 	})
 	ui.Column(c).Width(1).Background(hairline(t))

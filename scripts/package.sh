@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds the app signed with a Developer ID, in a disk image, and checks them.
 #
-#   scripts/package.sh                 a universal app, for Apple silicon and Intel
-#   scripts/package.sh --arch arm64    for one architecture (arm64 or amd64)
+#   scripts/package.sh                 an Apple Silicon app (arm64)
+#   scripts/package.sh --arch arm64    explicitly select the supported architecture
 #   scripts/package.sh --skip-tests    without running the tests first
 #
 # Environment:
@@ -26,15 +26,15 @@ die() {
 	exit 1
 }
 
-platform=darwin/universal
+platform=darwin/arm64
 run_tests=1
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--arch)
-		[ $# -ge 2 ] || die "--arch needs arm64 or amd64"
+		[ $# -ge 2 ] || die "only --arch arm64 is supported"
 		case "$2" in
-		arm64 | amd64) platform="darwin/$2" ;;
-		*) die "--arch needs arm64 or amd64, not $2" ;;
+		arm64) platform="darwin/$2" ;;
+		*) die "only Apple Silicon (arm64) is supported, not $2" ;;
 		esac
 		shift 2
 		;;
@@ -90,6 +90,11 @@ if [ "$run_tests" = 1 ]; then
 	go test ./...
 fi
 
+echo "==> Checking bundled license notices"
+go mod verify
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'
+python3 scripts/collect-third-party-notices.py --check
+
 out="build/${platform/\//-}"
 rm -rf "$out"
 echo "==> Building $platform"
@@ -99,6 +104,7 @@ app=$(find "$out" -maxdepth 1 -name '*.app' -print -quit)
 dmg=$(find "$out" -maxdepth 1 -name '*.dmg' -print -quit)
 [ -n "$app" ] || die "no app in $out"
 [ -n "$dmg" ] || die "no disk image in $out"
+python3 scripts/verify-macos-requirements.py "$app"
 
 echo "==> Checking the signature"
 codesign --verify --deep --strict "$app" || die "the app's signature is not valid"

@@ -1,0 +1,19 @@
+MacOS Service Manager
+Copyright 2024-2026 Jyeu (J.yeu) and contributors.
+
+Project-authored source code is licensed under the Apache License, Version 2.0.
+See LICENSE for the complete terms.
+
+Third-party components retain their original copyright and license terms.
+The licenses directory contains notices copied from the pinned Go dependency
+and toolchain sources. All notice files supplied by each included module are
+preserved; some concern optional or test assets that are not in the executable.
+See licenses/manifest.json for versions, file paths and SHA-256 checksums.
+
+The adapted Lucide SVG icons in icons.go retain the upstream ISC license and
+the MIT notice for Feather-derived icons. Their complete upstream notice is
+included in licenses/third-party-assets/lucide/LICENSE.
+
+Development runtimes and database servers downloaded by the app are separate
+components. They retain their own licenses; the project's Apache license does
+not replace those terms. See docs/third-party-software.md in the source tree.

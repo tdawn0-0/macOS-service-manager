@@ -124,36 +124,7 @@ func (m *Manager) Snapshot(ctx context.Context, s State) RuntimeSnapshot {
 			return observation{key: key, status: status}
 		}})
 	}
-	needsProxy := false
-	for _, id := range diagnosticKeys(s.Projects) {
-		p := s.Projects[id]
-		key := "marker:" + id
-		tasks = append(tasks, task{key, func(check context.Context) observation {
-			r := observation{key: key, status: "Stopped"}
-			if err := projectFolderError(p.Directory); err != nil {
-				r.folder = err.Error()
-			}
-			_, err := m.Run(check, "launchctl", "print", domain()+"/"+m.label("project-"+id))
-			if err == nil {
-				r.status = "Loaded"
-			}
-			if check.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				r.status = "Unknown"
-			}
-			return r
-		}})
-		if len(p.Services)+len(p.Instances) == 0 {
-			needsProxy = true
-		}
-		for _, svc := range p.Services {
-			key := ServiceStatusKey(id, svc.ID)
-			tasks = append(tasks, task{key, func(check context.Context) observation {
-				state := m.observeService(check, "p-"+id+"-"+svc.ID, svc)
-				return observation{key: key, status: state.Status, service: state}
-			}})
-		}
-	}
-	if needsProxy {
+	{
 		tasks = append(tasks, task{"proxy", func(check context.Context) observation {
 			job, err := m.readJobState(check, "proxy")
 			status := "Failed"
@@ -200,85 +171,10 @@ func (m *Manager) Snapshot(ctx context.Context, s State) RuntimeSnapshot {
 	for r := range results {
 		observed[r.key] = r
 	}
-	instanceRunning := map[string]bool{}
 	for _, id := range diagnosticKeys(s.Instances) {
-		status := observed["instance:"+id].status
-		out.States["instance:"+id] = status
-		instanceRunning[id] = status == "Running"
+		out.States["instance:"+id] = observed["instance:"+id].status
 	}
-	for _, id := range diagnosticKeys(s.Projects) {
-		p := s.Projects[id]
-		marker := observed["marker:"+id]
-		if marker.folder != "" {
-			out.FolderErrors[id] = marker.folder
-		}
-		marked := marker.status == "Loaded"
-		owns := marked
-		running, healthy, unready, restarting, failed, unknown := 0, 0, 0, 0, 0, 0
-		for _, svc := range p.Services {
-			key := ServiceStatusKey(id, svc.ID)
-			state := observed[key].service
-			out.Services[key] = state
-			out.States[key] = state.Status
-			if state.Status != "Stopped" && state.Status != "Unknown" {
-				owns = true
-			}
-			switch state.Status {
-			case "Healthy":
-				running++
-				healthy++
-			case "Running":
-				running++
-			case "Not ready":
-				running++
-				unready++
-			case "Restarting":
-				restarting++
-			case "Failed":
-				failed++
-			case "Unknown":
-				unknown++
-			}
-		}
-		for _, ref := range p.Instances {
-			if instanceRunning[ref] {
-				running++
-			} else if marked {
-				failed++
-			}
-			if out.States["instance:"+ref] == "Unknown" {
-				unknown++
-			}
-		}
-		status := "Stopped"
-		total := len(p.Services) + len(p.Instances)
-		switch {
-		case marker.status == "Unknown" || unknown > 0:
-			status = "Unknown"
-		case total == 0 && marked:
-			status = "Failed"
-			if observed["proxy"].status == "Running" {
-				status = "Running"
-			} else if observed["proxy"].status == "Unknown" {
-				status = "Unknown"
-			}
-		case !owns: // A standalone database is not a project owner.
-		case running > 0 && running < total:
-			status = "Partly running"
-		case failed > 0 || (marked && running == 0 && restarting == 0):
-			status = "Failed"
-		case restarting > 0:
-			status = "Restarting"
-		case unready > 0:
-			status = "Not ready"
-		case running == total && total > 0:
-			status = "Running"
-			if len(p.Services) > 0 && healthy == len(p.Services) {
-				status = "Healthy"
-			}
-		}
-		out.States["project:"+id] = status
-	}
+	out.States["proxy"] = observed["proxy"].status
 	return out
 }
 func (m *Manager) Statuses(ctx context.Context, s State) map[string]string {

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -320,6 +321,67 @@ func (m *Manager) WriteNodeShell() error {
 	return atomicWrite(m.nodeInitPath(), []byte(m.nodeInitScript()), 0600)
 }
 
+// nodeShellConfiguration keeps the observed identity separate from the path
+// replaced by atomicWrite, so a dotfile symlink remains intact.
+type nodeShellConfiguration struct {
+	rc, target  string
+	entry, file os.FileInfo
+	data        []byte
+	mode        os.FileMode
+}
+
+func readNodeShellConfiguration(rc string) (nodeShellConfiguration, error) {
+	c := nodeShellConfiguration{rc: rc, target: rc, mode: 0644}
+	entry, e := os.Lstat(rc)
+	if errors.Is(e, os.ErrNotExist) {
+		return c, nil
+	}
+	if e != nil {
+		return c, e
+	}
+	c.entry = entry
+	target, e := filepath.EvalSymlinks(rc)
+	if e != nil {
+		return c, fmt.Errorf("cannot resolve shell configuration; repair the link and retry: %w", e)
+	}
+	c.target = target
+	file, e := os.Lstat(target)
+	if e != nil {
+		return c, e
+	}
+	if !file.Mode().IsRegular() {
+		return c, errors.New("shell configuration target must be a regular file")
+	}
+	if st, ok := file.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
+		return c, errors.New("hard-linked shell configuration is not supported; use a single file or symbolic link")
+	}
+	c.file = file
+	c.mode = file.Mode().Perm()
+	c.data, e = os.ReadFile(target)
+	return c, e
+}
+func (c nodeShellConfiguration) commit(data []byte) error {
+	current, e := readNodeShellConfiguration(c.rc)
+	if e != nil {
+		return fmt.Errorf("shell configuration changed; review it and retry: %w", e)
+	}
+	same := c.target == current.target && c.mode == current.mode && bytes.Equal(c.data, current.data)
+	if c.entry == nil {
+		same = same && current.entry == nil
+	} else {
+		same = same && current.entry != nil && os.SameFile(c.entry, current.entry)
+	}
+	if c.file == nil {
+		same = same && current.file == nil
+	} else {
+		same = same && current.file != nil && os.SameFile(c.file, current.file)
+	}
+	if !same {
+		return errors.New("shell configuration changed; review it and retry")
+	}
+	return atomicWrite(c.target, data, c.mode)
+}
+
 // EnableNodeShell adds one marked block to ~/.zshrc. Running it again changes
 // nothing.
 func (m *Manager) EnableNodeShell(ctx context.Context) (string, error) {
@@ -333,18 +395,11 @@ func (m *Manager) EnableNodeShell(ctx context.Context) (string, error) {
 	if e = m.WriteNodeShell(); e != nil {
 		return rc, e
 	}
-	mode := os.FileMode(0644)
-	b, e := os.ReadFile(rc)
-	switch {
-	case e == nil:
-		if st, se := os.Stat(rc); se == nil {
-			mode = st.Mode().Perm()
-		}
-	case errors.Is(e, os.ErrNotExist):
-		b = nil
-	default:
+	config, e := readNodeShellConfiguration(rc)
+	if e != nil {
 		return rc, e
 	}
+	b := bytes.Clone(config.data)
 	if bytes.Contains(b, []byte(nodeBlockBegin)) {
 		return rc, nil
 	}
@@ -355,7 +410,7 @@ func (m *Manager) EnableNodeShell(ctx context.Context) (string, error) {
 		b = append(b, '\n')
 	}
 	b = append(b, m.nodeBlock()...)
-	return rc, atomicWrite(rc, b, mode)
+	return rc, config.commit(b)
 }
 
 // DisableNodeShell removes the block it added, and nothing else.
@@ -367,13 +422,11 @@ func (m *Manager) DisableNodeShell(ctx context.Context) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	b, e := os.ReadFile(rc)
-	if errors.Is(e, os.ErrNotExist) {
-		return rc, nil
-	}
+	config, e := readNodeShellConfiguration(rc)
 	if e != nil {
 		return rc, e
 	}
+	b := bytes.Clone(config.data)
 	begin := bytes.Index(b, []byte(nodeBlockBegin))
 	if begin < 0 {
 		return rc, nil
@@ -390,11 +443,7 @@ func (m *Manager) DisableNodeShell(ctx context.Context) (string, error) {
 	if begin > 0 && b[begin-1] == '\n' && (begin == 1 || b[begin-2] == '\n') {
 		begin--
 	}
-	st, e := os.Stat(rc)
-	if e != nil {
-		return rc, e
-	}
-	return rc, atomicWrite(rc, append(b[:begin:begin], b[end:]...), st.Mode().Perm())
+	return rc, config.commit(append(b[:begin:begin], b[end:]...))
 }
 
 // NodeIndexAge says how old the cached release list is, zero when there is none.

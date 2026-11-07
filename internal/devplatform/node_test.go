@@ -3,6 +3,7 @@ package devplatform
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -334,5 +335,163 @@ func TestTheFirstNodeInstalledBecomesTheDefault(t *testing.T) {
 	other := Package{Name: "redis", Version: "7.4.7", Arch: "arm64"}
 	if err := m.defaultFirstNode(context.Background(), other); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func shellLinkFixture(t *testing.T) (*Manager, string, string) {
+	t.Helper()
+	m := New(t.TempDir())
+	m.Home = t.TempDir()
+	m.Program = filepath.Join(t.TempDir(), "fixture-app")
+	if e := os.WriteFile(m.Program, []byte("#!/bin/sh\n"), 0700); e != nil {
+		t.Fatal(e)
+	}
+	return m, filepath.Join(m.Home, ".zshrc"), filepath.Join(m.Home, "managed-rc")
+}
+func TestNodeShellSymlinkLifecycle(t *testing.T) {
+	for _, kind := range []string{"relative", "absolute", "chain"} {
+		t.Run(kind, func(t *testing.T) {
+			m, rc, target := shellLinkFixture(t)
+			original := []byte("export EDITOR=vim\n")
+			if e := os.WriteFile(target, original, 0640); e != nil {
+				t.Fatal(e)
+			}
+			link := target
+			if kind == "relative" {
+				link = filepath.Base(target)
+			}
+			if kind == "chain" {
+				link = filepath.Join(m.Home, "indirect")
+				if e := os.Symlink(target, link); e != nil {
+					t.Fatal(e)
+				}
+			}
+			if e := os.Symlink(link, rc); e != nil {
+				t.Fatal(e)
+			}
+			for _, enable := range []bool{true, true, false, false} {
+				var e error
+				if enable {
+					_, e = m.EnableNodeShell(context.Background())
+				} else {
+					_, e = m.DisableNodeShell(context.Background())
+				}
+				if e != nil {
+					t.Fatal(e)
+				}
+				got, e := os.Readlink(rc)
+				if e != nil || got != link {
+					t.Fatal("symlink replaced", e)
+				}
+				b, e := os.ReadFile(target)
+				if e != nil {
+					t.Fatal(e)
+				}
+				st, e := os.Stat(target)
+				if e != nil || st.Mode().Perm() != 0640 {
+					t.Fatal("permissions changed", e)
+				}
+				if m.NodeShellEnabled() != enable {
+					t.Fatal("enabled state differs")
+				}
+				if enable {
+					if strings.Count(string(b), nodeBlockBegin) != 1 || !strings.HasPrefix(string(b), string(original)) {
+						t.Fatal("bad integration block")
+					}
+				} else if string(b) != string(original) {
+					t.Fatal("failed to remove only block")
+				}
+			}
+		})
+	}
+}
+func TestNodeShellSymlinkRejectsUnsafeTarget(t *testing.T) {
+	for _, kind := range []string{"dangling", "cycle", "directory"} {
+		for _, enable := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s-enable-%t", kind, enable), func(t *testing.T) {
+				m, rc, target := shellLinkFixture(t)
+				if kind == "cycle" {
+					target = rc
+				}
+				if kind == "directory" {
+					if e := os.Mkdir(target, 0700); e != nil {
+						t.Fatal(e)
+					}
+				}
+				if e := os.Symlink(target, rc); e != nil {
+					t.Fatal(e)
+				}
+				var e error
+				if enable {
+					_, e = m.EnableNodeShell(context.Background())
+				} else {
+					_, e = m.DisableNodeShell(context.Background())
+				}
+				if e == nil {
+					t.Fatal("unsafe target accepted")
+				}
+				if got, e := os.Readlink(rc); e != nil || got != target {
+					t.Fatal("link changed", e)
+				}
+			})
+		}
+	}
+}
+func TestNodeShellRejectsChangedConfiguration(t *testing.T) {
+	for _, change := range []string{"content", "target", "link"} {
+		for _, enable := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s-enable-%t", change, enable), func(t *testing.T) {
+				m, rc, target := shellLinkFixture(t)
+				initial := []byte("initial\n")
+				if !enable {
+					initial = append(initial, []byte(m.nodeBlock())...)
+				}
+				if e := os.WriteFile(target, initial, 0640); e != nil {
+					t.Fatal(e)
+				}
+				if e := os.Symlink(target, rc); e != nil {
+					t.Fatal(e)
+				}
+				c, e := readNodeShellConfiguration(rc)
+				if e != nil {
+					t.Fatal(e)
+				}
+				switch change {
+				case "content":
+					e = os.WriteFile(target, []byte("changed\n"), 0640)
+				case "target":
+					e = os.Rename(target, target+".old")
+					if e == nil {
+						e = os.WriteFile(target, initial, 0640)
+					}
+				case "link":
+					e = os.Remove(rc)
+					if e == nil {
+						e = os.Symlink(filepath.Base(target), rc)
+					}
+				}
+				if e != nil {
+					t.Fatal(e)
+				}
+				before, e := os.ReadFile(target)
+				if e != nil {
+					t.Fatal(e)
+				}
+				link, e := os.Readlink(rc)
+				if e != nil {
+					t.Fatal(e)
+				}
+				if e = c.commit([]byte("must not write")); e == nil {
+					t.Fatal("overwrote changed configuration")
+				}
+				after, e := os.ReadFile(target)
+				if e != nil || string(before) != string(after) {
+					t.Fatal("changed target overwritten", e)
+				}
+				if got, e := os.Readlink(rc); e != nil || got != link {
+					t.Fatal("changed link overwritten", e)
+				}
+			})
+		}
 	}
 }

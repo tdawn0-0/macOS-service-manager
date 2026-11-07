@@ -55,7 +55,7 @@ func Resolve(ctx context.Context, name, version string) (Package, error) {
 		p.Binaries = map[string]string{"mysqld": "bin/mysqld", "mysql": "bin/mysql", "mysqldump": "bin/mysqldump"}
 		return p, p.Validate()
 
-	case "php", "postgresql":
+	case "postgresql":
 		return resolveHomebrew(ctx, name, version, runCommand)
 	case "redis":
 		if p.Version != "7.4.7" {
@@ -160,8 +160,6 @@ func Resolve(ctx context.Context, name, version string) (Package, error) {
 
 func AvailableVersions(name string) []string {
 	switch name {
-	case "php":
-		return []string{"8.5", "8.4", "8.3"}
 	case "node":
 		return []string{"22.14.0", "20.19.0"}
 	case "mysql":

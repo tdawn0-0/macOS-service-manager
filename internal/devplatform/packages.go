@@ -44,7 +44,10 @@ func (m *Manager) Binary(s *State, id, name string) (string, error) {
 	if p.ID() != id {
 		return "", errors.New("installed package identity mismatch")
 	}
-	if p.Formula != "" || p.Name == "php" || p.Name == "postgresql" {
+	if p.Name == "php" || p.Name == "php-fpm" {
+		return "", errors.New("PHP is not managed by this app")
+	}
+	if p.Formula != "" || p.Name == "postgresql" {
 		if e := p.Validate(); e != nil {
 			return "", e
 		}

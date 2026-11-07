@@ -47,8 +47,11 @@ func (p Package) Validate() error {
 	if !nameRE.MatchString(p.Name) || !nameRE.MatchString(p.Version) || (p.Arch != "arm64" && p.Arch != "universal") {
 		return errors.New("invalid package identity")
 	}
-	if (p.Name == "php" || p.Name == "postgresql") && p.Formula == "" {
-		return errors.New("PHP and PostgreSQL require Homebrew packages")
+	if p.Name == "php" || p.Name == "php-fpm" {
+		return errors.New("PHP is not managed by this app")
+	}
+	if p.Name == "postgresql" && p.Formula == "" {
+		return errors.New("PostgreSQL requires a Homebrew package")
 	}
 	u, e := url.Parse(p.URL)
 	if e != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
@@ -191,6 +194,9 @@ type Instance struct {
 	Persistent bool   `json:"persistent"`
 }
 type State struct {
+	ProxyRules          []ProxyRule         `json:"proxyRules"`
+	ProxyListenerPort   int                 `json:"proxyListenerPort"`
+	ProxyRulesRevision  uint64              `json:"proxyRulesRevision"`
 	PackageIntegrity    map[string]string   `json:"packageIntegrity,omitempty"`
 	LogRotationDisabled bool                `json:"logRotationDisabled,omitempty"`
 	NodeDefault         string              `json:"nodeDefault,omitempty"`
@@ -202,7 +208,7 @@ type State struct {
 }
 
 func emptyState() State {
-	return State{SchemaVersion: Schema, Packages: map[string]Package{}, Projects: map[string]Project{}, Instances: map[string]Instance{}, Sites: map[string]Site{}}
+	return State{SchemaVersion: Schema, Packages: map[string]Package{}, Projects: map[string]Project{}, Instances: map[string]Instance{}, Sites: map[string]Site{}, ProxyRules: []ProxyRule{}, ProxyListenerPort: 443}
 }
 
 type Manager struct {

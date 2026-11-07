@@ -634,7 +634,7 @@ func devNews(status string) string {
 	return status
 }
 func softwareTitle(name string) string {
-	if title, ok := map[string]string{"php": "PHP", "node": "Node.js", "mysql": "MySQL", "postgresql": "PostgreSQL", "redis": "Redis", "mongodb": "MongoDB"}[name]; ok {
+	if title, ok := map[string]string{"node": "Node.js", "mysql": "MySQL", "postgresql": "PostgreSQL", "redis": "Redis", "mongodb": "MongoDB"}[name]; ok {
 		return title
 	}
 	return name
@@ -655,7 +655,7 @@ func (a *app) devMaster(c *ui.Context) {
 			}
 		}
 	case 1:
-		for _, name := range []string{"php", "node", "mysql", "postgresql", "redis", "mongodb"} {
+		for _, name := range []string{"node", "mysql", "postgresql", "redis", "mongodb"} {
 			count := ""
 			if n := len(d.packages(name)); n > 0 {
 				count = strconv.Itoa(n)
@@ -1069,16 +1069,6 @@ func (a *app) devSoftware(c *ui.Context) {
 	} else {
 		devChoice(c, "Version", &d.version, devplatform.AvailableVersions(d.software))
 		devField(c, "Exact version", &d.version, "For example 22.14.0")
-	}
-	if d.software == "php" {
-		if ui.Button(c, "Add shivammathur/php repository").AlignSelf(ui.Start).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
-			a.devTask(func(m *devplatform.Manager) (string, error) {
-				if err := m.AddPHPRepository(m.Context); err != nil {
-					return "PHP repository setup did not complete.", err
-				}
-				return "PHP repository added. Review the version to install.", nil
-			})
-		}
 	}
 	a.devPackageReview(c)
 	for _, id := range sortedKeys(d.state.Packages) {

@@ -29,28 +29,20 @@ type homebrewFormula struct {
 	} `json:"ruby_source_checksum"`
 }
 
-var phpBrewVersion = regexp.MustCompile(`^(\d+\.\d+)(?:\.\d+)?(?:_\d+)?$`)
 var postgresBrewVersion = regexp.MustCompile(`^(\d+)(?:\.\d+)?(?:_\d+)?$`)
 
 func homebrewFormulaFor(name, version string) (string, error) {
 	version = strings.TrimPrefix(version, "v")
 	switch name {
-	case "php":
-		if match := phpBrewVersion.FindStringSubmatch(version); match != nil {
-			return "shivammathur/php/php@" + match[1], nil
-		}
 	case "postgresql":
 		if match := postgresBrewVersion.FindStringSubmatch(version); match != nil {
 			return "postgresql@" + match[1], nil
 		}
 	}
-	return "", errors.New("choose a PHP major.minor version (for example 8.5) or PostgreSQL major version (for example 17), or an exact Homebrew version")
+	return "", errors.New("choose a PostgreSQL major version (for example 17) or an exact Homebrew version")
 }
 
 func homebrewBinaries(name string) map[string]string {
-	if name == "php" {
-		return map[string]string{"php": "bin/php", "php-fpm": "sbin/php-fpm"}
-	}
 	bins := map[string]string{}
 	for _, bin := range []string{"postgres", "initdb", "pg_dump", "pg_restore", "psql", "createdb"} {
 		bins[bin] = "bin/" + bin
@@ -63,12 +55,12 @@ func validHomebrewPackage(p Package) bool {
 	if e != nil || p.Arch != "arm64" || p.Strip != 0 {
 		return false
 	}
-	if p.Formula != formula && !(p.Name == "php" && p.Formula == "shivammathur/php/php") {
+	if p.Formula != formula {
 		return false
 	}
 	// Persist exact keg versions, never a moving major/minor channel or opt link.
 	base := strings.Split(p.Version, "_")[0]
-	if (p.Name == "php" && strings.Count(base, ".") != 2) || (p.Name == "postgresql" && strings.Count(base, ".") != 1) {
+	if p.Name != "postgresql" || strings.Count(base, ".") != 1 {
 		return false
 	}
 	return reflect.DeepEqual(p.Binaries, homebrewBinaries(p.Name))
@@ -79,7 +71,7 @@ func brewRun(ctx context.Context, run commandRunner, args ...string) (string, er
 	env := []string{"HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_CLEANUP=1", "HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1", homebrewProgram}
 	out, err := run(ctx, "/usr/bin/env", append(env, args...)...)
 	if err != nil {
-		return "", fmt.Errorf("Homebrew %s: %w. PHP and PostgreSQL require Apple Silicon Homebrew at %s", args[0], err, homebrewProgram)
+		return "", fmt.Errorf("Homebrew %s: %w. PostgreSQL requires Apple Silicon Homebrew at %s", args[0], err, homebrewProgram)
 	}
 	return out, nil
 }
@@ -91,9 +83,6 @@ func resolveHomebrew(ctx context.Context, name, requested string, run commandRun
 	}
 	out, err := brewRun(ctx, run, "info", "--json=v2", "--formula", formula)
 	if err != nil {
-		if name == "php" {
-			return Package{}, fmt.Errorf("%w; add the shivammathur/php repository in Software, or run brew tap shivammathur/php", err)
-		}
 		return Package{}, err
 	}
 	var result struct {
@@ -103,7 +92,7 @@ func resolveHomebrew(ctx context.Context, name, requested string, run commandRun
 		return Package{}, errors.New("invalid Homebrew formula metadata")
 	}
 	f := result.Formulae[0]
-	if (f.FullName != formula && !(name == "php" && f.FullName == "shivammathur/php/php")) || f.Name != filepath.Base(f.FullName) || f.Revision < 0 {
+	if f.FullName != formula || f.Name != filepath.Base(f.FullName) || f.Revision < 0 {
 		return Package{}, errors.New("Homebrew returned a different formula or tap")
 	}
 	version := f.Versions.Stable
@@ -111,23 +100,15 @@ func resolveHomebrew(ctx context.Context, name, requested string, run commandRun
 		version += fmt.Sprintf("_%d", f.Revision)
 	}
 	requested = strings.TrimPrefix(requested, "v")
-	channel := strings.TrimPrefix(formula, "shivammathur/php/php@")
-	if name == "postgresql" {
-		channel = strings.TrimPrefix(formula, "postgresql@")
-	}
+	channel := strings.TrimPrefix(formula, "postgresql@")
 	if requested != channel && requested != version && requested != f.Versions.Stable {
 		return Package{}, fmt.Errorf("Homebrew currently provides %s %s, not %s; review the available version", formula, version, requested)
 	}
-	// An unversioned PHP alias is only accepted for the requested release series.
 	if !strings.HasPrefix(f.Versions.Stable, channel+".") {
 		return Package{}, errors.New("Homebrew formula does not match the requested release series")
 	}
 	p := Package{Name: name, Version: version, Arch: "arm64", Format: "homebrew", Formula: f.FullName, SHA256: f.SourceChecksum.SHA256, License: f.License, Binaries: homebrewBinaries(name)}
-	if name == "php" {
-		p.URL = "https://github.com/shivammathur/homebrew-php"
-	} else {
-		p.URL = "https://formulae.brew.sh/formula/" + formula
-	}
+	p.URL = "https://formulae.brew.sh/formula/" + formula
 	return p, p.Validate()
 }
 
@@ -137,18 +118,10 @@ func (m *Manager) ResolvePackage(ctx context.Context, name, version string) (Pac
 	if err := requireAppleSiliconHost(); err != nil {
 		return Package{}, err
 	}
-	if name == "php" || name == "postgresql" {
+	if name == "postgresql" {
 		return resolveHomebrew(ctx, name, version, m.Run)
 	}
 	return Resolve(ctx, name, version)
-}
-
-func (m *Manager) AddPHPRepository(ctx context.Context) error {
-	if err := requireAppleSiliconHost(); err != nil {
-		return err
-	}
-	_, err := brewRun(ctx, m.Run, "tap", "shivammathur/php")
-	return err
 }
 
 func (m *Manager) checkHomebrewReceipt(p Package) error {
@@ -168,9 +141,6 @@ func (m *Manager) checkHomebrewReceipt(p Package) error {
 		return errors.New("invalid Homebrew installation receipt")
 	}
 	tap := "homebrew/core"
-	if p.Name == "php" {
-		tap = "shivammathur/php"
-	}
 	if receipt.Source.Tap != tap || receipt.Source.Versions.Stable != strings.Split(p.Version, "_")[0] {
 		return fmt.Errorf("Homebrew keg does not match %s %s; existing software from a different tap will not be adopted", p.Formula, p.Version)
 	}
@@ -211,25 +181,6 @@ func (m *Manager) installHomebrew(ctx context.Context, p Package) error {
 		}
 		if !reflect.DeepEqual(current, p) {
 			return errors.New("Homebrew formula changed since preview; review the package again")
-		}
-		// PHP's unversioned tap alias can share a rack with core PHP. Never
-		// implicitly replace a user's installation from the other repository.
-		if p.Name == "php" {
-			files, err := filepath.Glob(filepath.Join(filepath.Dir(m.packageDir(p)), "*", "INSTALL_RECEIPT.json"))
-			if err != nil {
-				return err
-			}
-			for _, file := range files {
-				var receipt struct {
-					Source struct {
-						Tap string `json:"tap"`
-					} `json:"source"`
-				}
-				b, err := os.ReadFile(file)
-				if err != nil || json.Unmarshal(b, &receipt) != nil || receipt.Source.Tap != "shivammathur/php" {
-					return errors.New("the PHP Cellar rack contains another tap's installation; switch it to shivammathur/php with Homebrew before installing here")
-				}
-			}
 		}
 		var releases []func()
 		defer func() {

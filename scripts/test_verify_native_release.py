@@ -225,7 +225,7 @@ class NativeReleaseTests(unittest.TestCase):
                 (cellar/'php/8.5.12/INSTALL_RECEIPT.json').unlink()
                 with self.assertRaisesRegex(RuntimeError,'missing'):m.validate_existing_kegs()
 
-    def test_local_runner_never_prepares_homebrew_and_sandboxes_children(self):
+    def test_local_runner_sandboxes_preparation_and_runs_native_phases_directly(self):
         m=module()
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory).resolve()/'private';root.mkdir()
@@ -236,16 +236,33 @@ class NativeReleaseTests(unittest.TestCase):
             try:
                 os.chdir(directory)
                 with mock.patch.object(m,'preflight') as preflight, mock.patch.object(m,'validate_existing_kegs') as receipts, mock.patch.object(m,'cleanup_local_jobs') as cleanup, mock.patch.object(m.tempfile,'mkdtemp',return_value=str(root)), mock.patch.object(m,'checked',side_effect=command) as calls, mock.patch.object(m,'package_summary',return_value=[]), mock.patch.object(m,'test_phase',return_value=[]) as phases:
+                    observed=[]
+                    phases.side_effect=lambda *args: observed.append(receipts.call_count) or []
                     m.run_native(True)
-                preflight.assert_called_once_with(True);receipts.assert_called_once();cleanup.assert_called_once_with(root)
+                    self.assertEqual(observed,[2,3])
+                preflight.assert_called_once_with(True);self.assertEqual(receipts.call_count,3);cleanup.assert_called_once_with(root)
                 for call in calls.call_args_list:
                     argv=call.args[0]
                     self.assertNotIn('brew',argv)
                     if str(root/'devmgr') in argv or 'build' in argv:
                         self.assertEqual(argv[:3],list(m.SANDBOX))
                 for call in phases.call_args_list:
-                    self.assertEqual(call.args[3],m.SANDBOX)
+                    self.assertEqual(len(call.args),3)
                     self.assertEqual(call.args[1]['TMPDIR'],str(root/'tests'))
+            finally:os.chdir(previous)
+
+    def test_changed_keg_prevents_native_phase(self):
+        m=module()
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve()/'private';root.mkdir()
+            previous=Path.cwd()
+            def command(argv,**kwargs):
+                return '{"packages":{}}' if argv[-1]=='status' else ''
+            try:
+                os.chdir(directory)
+                with mock.patch.object(m,'preflight'), mock.patch.object(m,'validate_existing_kegs',side_effect=[None,RuntimeError('receipt changed')]), mock.patch.object(m,'cleanup_local_jobs'), mock.patch.object(m.tempfile,'mkdtemp',return_value=str(root)), mock.patch.object(m,'checked',side_effect=command), mock.patch.object(m,'package_summary',return_value=[]), mock.patch.object(m,'test_phase') as phases:
+                    with self.assertRaisesRegex(RuntimeError,'receipt changed'):m.run_native(True)
+                    phases.assert_not_called()
             finally:os.chdir(previous)
 
     def test_failure_is_machine_readable(self):

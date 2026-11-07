@@ -2,7 +2,7 @@
 
 由 improve 技能生成于 2026-11-07。用户已选择全部 8 项审查问题及 2 个产品方向。
 基线提交：`0cbf7e9`（Restrict the shipped app to internal commands）。开始写计划时工作区干净。
-已实施001–008，并完成009–010设计与离线原型。001–007、009–010审查通过；008代码已完成，真实六软件验收因精确 PHP keg 缺失等待安装授权。每项任务独立提交；主代理完成全量验证和最终集成。未推送远端。
+已实施001–008，并完成009–010设计与离线原型。001–007、009–010审查通过；008代码已完成，真实六软件验收因精确 PHP keg 缺失等待core PHP卸载替换确认。每项任务独立提交；主代理完成全量验证和最终集成。未推送远端。
 
 ## 执行顺序与状态
 
@@ -17,7 +17,7 @@
 | [005](005-preserve-zshrc-symlinks.md) | 保留符号链接形式的 shell 配置 | P1 | S–M | 无 | DONE |
 | [006](006-stream-mysql-restores.md) | MySQL 恢复流式读取备份 | P2 | M | 无 | DONE |
 | [007](007-fair-runtime-observation.md) | 状态轮询不持续遗漏后置资源 | P2 | M | 无 | DONE |
-| [008](008-gate-native-release-tests.md) | 发行要求原生软件测试实际通过 | P2 | M–L | 002 | BLOCKED — 精确PHP keg缺失，待安装授权/CI验收 |
+| [008](008-gate-native-release-tests.md) | 发行要求原生软件测试实际通过 | P2 | M–L | 002 | BLOCKED — 精确PHP keg缺失，待core PHP替换确认/CI验收 |
 | [009](009-design-project-package-managers.md) | 设计 npm/yarn/pnpm 项目依赖流程 | P3 | M | 无 | DONE |
 | [010](010-design-diagnostic-navigation.md) | 设计诊断结果到设置的导航 | P3 | S–M | 无 | DONE |
 
@@ -64,7 +64,7 @@ S 为数小时，M 约一天，L 为多天，均包含测试。估算不是交�
 - 005：APPROVE。主代理读完整diff并独立运行NodeShell/SelectNode相关race测试通过；有效链接保留、无效目标拒绝、外部变化保护。
 - 006：APPROVE。主代理复核流式命令及测试，独立MySQL恢复race测试通过；32MiB惰性输入、输出丢弃、错误和子进程取消回收。
 - 007：APPROVE。主代理复核完整观察与聚合变更，独立相关race测试三轮通过；4 worker上限、预算、公平性、取消清理和已完成结果保留。
-- 008：代码APPROVE，原生验收BLOCKED。18项专项Python测试及最终29项脚本测试通过。主代理实际运行 --run --local-existing-kegs，返回结构化错误 exact existing keg is missing: php 8.5.12。元数据revision0，本机只有8.5.12_1等版本；未安装或修改共享Homebrew。安装确认已发出，尚未获答。完整六软件门槛未记作通过。
+- 008：代码APPROVE，原生验收BLOCKED。18项专项Python测试及最终29项脚本测试通过。主代理实际运行 --run --local-existing-kegs，返回结构化错误 exact existing keg is missing: php 8.5.12。元数据revision0，本机只有8.5.12_1等版本；未安装或修改共享Homebrew。安装已获授权；后续dry-run发现同名core→tap冲突，额外卸载替换确认待答。完整六软件门槛未记作通过。
 - 009：APPROVE（设计计划）。设计含官方资料与后续Go实施拆分；23个场景、3个unittest方法通过。只交付设计与纯离线原型，没有生产包管理器安装功能。
 - 010：APPROVE（设计计划）。18个导航场景、5个unittest方法通过；额外修正畸形action kind输入，稳定复合ID、草稿保护和显式脱敏DTO得到离线验证。未增加生产导航按钮。
 
@@ -151,3 +151,11 @@ S 为数小时，M 约一天，L 为多天，均包含测试。估算不是交�
 - TestReadmeShots
 - TestUIRuntimeDeclarationsReviewInstallAndHTTPS
 - TestUIUnlistedExactNodeVersionReview
+
+## 008 授权后验收记录
+
+用户已授权精确PHP keg及必要依赖安装。Homebrew dry-run在普通和force模式均拒绝跨tap同名共存，要求先卸载现有core PHP；未执行卸载、安装、重链或服务变更。008仍BLOCKED，原因更新为卸载替换等待确认。
+
+已实际下载并核验Node22.14.0、20.19.0和Redis7.4.7；子代理与主代理各独立运行精确CORE两用例（含Redis明暗子用例），race+严格JSON均PASS、零SKIP。完整六软件矩阵没有执行。sandbox继承曾导致TCP_NODELAY/launchd错误；本机模式已修正为准备阶段sandbox，原生测试直接运行，各阶段前重验keg。
+
+主代理重新运行30项脚本unittest，全部通过（其中008为19项）；Go源码未变，保留上次全量/race通过结果，不重复声称本次跑过完整矩阵。原型8项测试未受影响。独立CORE结果位于执行worktree build/native-qa/core-review.jsonl；脱敏概要为core-results.json。3份验证归档保留于build/native-qa/downloads，旧失败根和生成凭据已清理。

@@ -762,8 +762,11 @@ PYTHONDONTWRITEBYTECODE=1 python3 scripts/verify-native-release.py --run
 经本轮范围调整，新增 `--run --local-existing-kegs`。该模式不伪造 hosted 环境，
 在构建或下载前先读取当前 Homebrew metadata，检查其精确版本、revision、receipt tap、
 源版本和可执行文件。缺少或不匹配即失败；准备步骤不运行 brew tap/install/upgrade。
-之后所有 harness 和 Go 测试子进程由 sandbox-exec 禁止写入 `/opt/homebrew`，
-防止检查后 keg 消失时安装逻辑回退修改共享软件。测试 TMPDIR 仅使用此次私有根，
+之后构建和 harness 准备子进程由 sandbox-exec 禁止写入 `/opt/homebrew`，
+防止准备时 keg 消失导致安装逻辑回退修改共享软件。实际 Go UI 测试使用正常原生进程，
+不继承 sandbox，以免阻断 launchd 和 Redis 的必要操作；每个原生测试阶段前再次严格检查
+精确 metadata、receipt 和二进制，缺失或变化仍失败。此隔离边界不承诺原生测试对恶意并发
+删除 keg 的完整事务保护。测试 TMPDIR 仅使用此次私有根，
 清理仅检查该根中的任务；无法确认归属或解除注册时保留目录并报错。
 
 ```sh
@@ -775,3 +778,41 @@ PYTHONDONTWRITEBYTECODE=1 python3 scripts/verify-native-release.py --run --local
 8.5.12_1，缺少 metadata 要求的精确 8.5.12 keg。PostgreSQL 17.11_1 与 metadata 匹配。
 因此未执行软件安装、下载和 native 用例，未对 Homebrew 做更改。不能把本次预检失败记作
 完整矩阵 PASS；需要一致的精确 keg 或一次性 hosted runner 后重跑。
+
+### 精确 PHP 安装的授权后预检
+
+用户随后明确授权为完成原生矩阵安装精确 PHP keg 和必要依赖。原计划保留既有软件、
+数据及服务的边界，尚未被明确的跨 tap 替换/卸载授权覆盖。2026-11-07 重新读取 metadata 后，目标仍为 shivammathur/php 的 8.5.12。
+现有 8.5.12_1 的 INSTALL_RECEIPT.json 标记来源为 homebrew/core。
+
+在禁用自动更新、安装清理及已安装依赖项检查的环境中，执行普通与 `--force` 两次
+`brew install --dry-run --formula --force-bottle --skip-link shivammathur/php/php@8.5`。
+Homebrew 均拒绝同名 formula 的跨 tap 共存，并要求先卸载现有 core PHP。
+`--force` 不绕过此检查。未执行实际安装、重装、卸载、链接替换或服务操作。
+
+因此这不只是缺少 revision 0 的问题；在尚未授权卸载既有软件的范围内，受支持的
+Homebrew 安装流程无法添加该同名 tap 包。继续六软件完整验收需要独立的一次性 runner，
+或另行明确决定替换 core PHP；不能篡改 receipt 或手动解包来冒充通过。
+
+### 核心 Node/Redis 的独立原生执行结果
+
+完整矩阵仍受 PHP tap 冲突阻塞。在单独授权的范围内，使用此次私有根下载并校验的
+Node 22.14.0、20.19.0 与 Redis 7.4.7 归档，实际执行两个 CORE 用例。
+先在 sandbox-exec 下执行时，Redis CLI 的 TCP_NODELAY 调用返回 Invalid argument，
+Node 单次命令的 launchctl bootstrap 返回错误 5；该轮严格检查判定失败。
+
+随后在核对两个用例及调用链只使用私有 Node/Redis（不选择 PHP/PostgreSQL/Homebrew）后，
+经明确授权，复用已验证归档，在新的私有 MSM_DEV_HOME/TMPDIR 下取消该轮进程 sandbox，
+其余精确测试筛选、race 检测、JSON 结果检查、隔离 CA 和任务清理保持不变。
+实际结果：
+
+- `TestUIDatabaseBackgroundInitializationAllowsConfigurationAndKeepsDrafts`：PASS；900×520 明暗两种子用例均 PASS。
+- `TestUIRuntimeDeclarationsReviewInstallAndHTTPS`：PASS；包含指定 Node 版本执行、HTTPS 响应与停止后端口释放断言。
+- `go test -json -race -count=1` 包级 PASS，严格 checker 拒绝任何 SKIP；本轮零 SKIP。
+- 平台 macOS 27.3、Go 1.27.3 darwin/arm64；实际耗时 54.21 秒。此轮私有根与所属任务已清理。
+
+脱敏核心结果位于忽略的 `build/native-qa/core-results.json`，明确标记 scope=core-only；
+它不能替代完整六软件矩阵，也没有把失败的 sandbox 运行改写为通过。
+根据上述实测，随后仅调整本机模式的隔离边界：构建/准备仍受 sandbox 保护，实际原生
+Go 测试直接执行，每个阶段前重新验证精确 keg。新增单测固定此调用顺序和拒绝变化行为。
+完整矩阵仍须满足 PHP 前置条件；本轮未更改 Homebrew、hosts 或钥匙串。

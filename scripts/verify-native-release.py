@@ -225,9 +225,13 @@ def run_native(local_existing=False):
         packages = package_summary(state['packages'])
         env.update(MSM_UI_E2E_PACKAGE_CACHE=str(root / 'downloads'), MSM_UI_E2E_HOMEBREW='1')
         if local_existing:
-            results = test_phase(root, env, CORE, sandbox) + test_phase(root, env, MATRIX, sandbox)
-        else:
-            results = test_phase(root, env, CORE) + test_phase(root, env, MATRIX)
+            validate_existing_kegs()
+        # launchd and Redis require normal native process semantics. Sandbox only
+        # preparation; revalidate the read-only keg contract before each phase.
+        results = test_phase(root, env, CORE)
+        if local_existing:
+            validate_existing_kegs()
+        results += test_phase(root, env, MATRIX)
         summary = {'schemaVersion': 1, 'macOS': checked(['sw_vers', '-productVersion']).strip(),
                    'arch': 'arm64', 'go': checked(['go', 'version']).strip(), 'packages': packages,
                    'tests': results, 'elapsedSeconds': round(time.monotonic() - started, 2)}

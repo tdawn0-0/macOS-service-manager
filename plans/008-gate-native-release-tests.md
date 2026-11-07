@@ -12,7 +12,7 @@
 - **Depends on**: 002 完成；其专用 harness 约定用于原生 QA，六软件测试与修复代码独立
 - **Category**: tests
 - **Planned at**: commit `0cbf7e9`, 2026-11-07
-- **Status**: BLOCKED — 精确PHP keg缺失，原生验收待授权/CI
+- **Status**: BLOCKED — core PHP跨tap冲突，卸载替换待确认/独立CI
 - **Confidence**: HIGH（源码证据；本计划指定的新增测试尚未实现）
 
 ## Why this matters
@@ -240,3 +240,13 @@ checker 的纯单测至少包括完整 pass、缺失目标、skip、fail、包�
 ## 执行时修订（2026-11-07）
 
 用户要求完成全部实施与全量验证。008 允许显式 --local-existing-kegs 模式：在独立私有测试根中下载经校验的归档；只复用已存在且精确匹配来源、版本、receipt 和 binary 的 Homebrew keg，不执行 tap/install/upgrade。local 模式用 sandbox-exec 禁止对 /opt/homebrew 写入（含测试子进程），不得伪造 hosted runner 环境变量。缺失精确 keg 时仍失败，不降级来源。该模式实际运行原有核心与六软件矩阵且严格零 SKIP，等价满足软件闭环门槛；不代表干净机器或系统授权已验收。CI 默认仍使用一次性 hosted runner。允许修改文件保持原 Scope。
+
+## 用户授权补充（2026-11-07）
+
+用户已明确允许安装所需精确 PHP keg 及必要依赖，以完成真实六软件验收。该例外只用于预先准备缺失的精确软件；保留既有 keg、数据和服务，不执行无关升级或清理。验收 runner 自身继续使用 --local-existing-kegs 的只读 Homebrew 沙箱。完成后记录实际安装版本及完整测试结果。
+
+## 授权后真实验收补充
+
+Homebrew安装dry-run确认：现有8.5.12_1来自homebrew/core，不能与同名shivammathur/php包通过受支持安装路径并存；必须先卸载core PHP。安装授权不视为卸载授权，替换确认仍待答。本轮没有修改共享Homebrew。
+
+实际Node/Redis CORE在sandbox下失败；核对精确用例只使用私有归档后，经协调允许直接运行。子代理与主代理各独立执行一次race+JSON检查，均为两项CORE和包级PASS、零SKIP。本机runner仅构建/准备继续sandbox，Go原生阶段直接执行，并在每阶段前重验精确keg；19项相关Python测试通过。完整矩阵仍阻塞，不记为DONE。归档缓存保留在执行worktree build/native-qa/downloads；旧失败私有根及生成凭据已清理。

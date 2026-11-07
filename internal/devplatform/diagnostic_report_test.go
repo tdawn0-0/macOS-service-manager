@@ -137,3 +137,23 @@ func TestDiagnosticToleratesSlowLocalResolverAndReportsTimeoutSeparately(t *test
 		})
 	}
 }
+
+func TestResourceDiagnosticExport(t *testing.T) {
+	for _, secret := range []string{"private-domain.test", "/Users/private/path", "Bearer-secret", "private-user"} {
+		r := DiagnosticReport{SchemaVersion: 1, Checks: []DiagnosticCheck{{Layer: secret, Resource: secret, Status: secret, Summary: secret, Remedy: secret, Target: DiagnosticTarget{Kind: "proxy", ID: secret}}}}
+		b, err := r.RedactedJSON()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), secret) || strings.Contains(string(b), "target") || strings.Contains(string(b), "ID") {
+			t.Fatal("export leaked private value", string(b))
+		}
+	}
+	a := DiagnosticReport{SchemaVersion: 1, Checks: []DiagnosticCheck{{Layer: "DNS", Resource: "one.test", Status: "Failed", Summary: "private-one"}}}
+	b := DiagnosticReport{SchemaVersion: 1, Checks: []DiagnosticCheck{{Layer: "DNS", Resource: "two.test", Status: "Failed", Summary: "private-two"}}}
+	left, _ := a.RedactedJSON()
+	right, _ := b.RedactedJSON()
+	if string(left) != string(right) {
+		t.Fatal("identity changed anonymous export")
+	}
+}

@@ -17,18 +17,23 @@ import (
 // DiagnosticCheck deliberately contains no command output, environment, request
 // headers, log data or raw errors. Resource is the only identifying field.
 type DiagnosticCheck struct {
-	Layer    string `json:"layer"`
-	Resource string `json:"resource"`
-	Status   string `json:"status"` // OK, Warning, Failed, Stopped, Disabled
-	Summary  string `json:"summary"`
-	Remedy   string `json:"remedy,omitempty"`
+	Layer    string           `json:"layer"`
+	Resource string           `json:"resource"`
+	Status   string           `json:"status"` // OK, Warning, Failed, Stopped, Disabled
+	Summary  string           `json:"summary"`
+	Remedy   string           `json:"remedy,omitempty"`
+	Target   DiagnosticTarget `json:"-"`
 }
+
+// DiagnosticTarget is UI-only; export uses a separate allowlisted structure.
+type DiagnosticTarget struct{ Kind, ID string }
 
 type DiagnosticReport struct {
 	SchemaVersion int               `json:"schemaVersion"`
 	GeneratedAt   time.Time         `json:"generatedAt"`
 	Redacted      bool              `json:"redacted"`
 	Checks        []DiagnosticCheck `json:"checks"`
+	ProxyRevision uint64            `json:"-"`
 }
 
 func (r DiagnosticReport) Text() string {
@@ -47,18 +52,47 @@ func (r DiagnosticReport) Text() string {
 // Fixed summaries preserve the failing layer and repair instruction. No state or
 // filesystem traversal is part of export; even private keys are never read.
 func (r DiagnosticReport) RedactedJSON() ([]byte, error) {
-	r.Checks = append([]DiagnosticCheck{}, r.Checks...)
+	type exportedCheck struct {
+		Layer    string `json:"layer"`
+		Resource string `json:"resource"`
+		Status   string `json:"status"`
+		Summary  string `json:"summary"`
+		Remedy   string `json:"remedy"`
+	}
+	type exportedReport struct {
+		SchemaVersion int             `json:"schemaVersion"`
+		GeneratedAt   time.Time       `json:"generatedAt"`
+		Redacted      bool            `json:"redacted"`
+		Checks        []exportedCheck `json:"checks"`
+	}
 	aliases := map[string]string{}
-	for i := range r.Checks {
-		resource := r.Checks[i].Resource
+	out := exportedReport{SchemaVersion: r.SchemaVersion, GeneratedAt: r.GeneratedAt, Redacted: true, Checks: make([]exportedCheck, 0, len(r.Checks))}
+	for _, check := range r.Checks {
+		resource := check.Resource
 		if aliases[resource] == "" {
 			aliases[resource] = fmt.Sprintf("resource-%d", len(aliases)+1)
 		}
-		r.Checks[i].Resource = aliases[resource]
+		layer := safeDiagnosticLayer(check.Layer)
+		status := safeDiagnosticStatus(check.Status)
+		out.Checks = append(out.Checks, exportedCheck{Layer: layer, Resource: aliases[resource], Status: status, Summary: layer + " check: " + status, Remedy: "Review the related setting in the app."})
 	}
-	r.Redacted = true
-	b, err := json.MarshalIndent(r, "", "  ")
+	b, err := json.MarshalIndent(out, "", "  ")
 	return append(b, '\n'), err
+}
+
+func safeDiagnosticLayer(layer string) string {
+	switch layer {
+	case "Package", "Database", "CA", "Trust", "DNS", "Upstream", "Proxy TLS", "HTTP":
+		return layer
+	}
+	return "Other"
+}
+func safeDiagnosticStatus(status string) string {
+	switch status {
+	case "OK", "Warning", "Failed", "Stopped", "Disabled", "Unknown":
+		return status
+	}
+	return "Unknown"
 }
 
 func (m *Manager) ExportDiagnostics(ctx context.Context, r DiagnosticReport) (string, error) {
@@ -136,9 +170,20 @@ func diagnosticKeys[T any](m map[string]T) []string {
 func (m *Manager) diagnose(ctx context.Context, s State, p diagnosticProbes) (DiagnosticReport, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	r := DiagnosticReport{SchemaVersion: 1, GeneratedAt: time.Now().UTC(), Checks: []DiagnosticCheck{}}
+	r := DiagnosticReport{SchemaVersion: 1, GeneratedAt: time.Now().UTC(), Checks: []DiagnosticCheck{}, ProxyRevision: s.ProxyRulesRevision}
 	add := func(layer, resource, status, summary, remedy string) {
-		r.Checks = append(r.Checks, DiagnosticCheck{layer, resource, status, summary, remedy})
+		check := DiagnosticCheck{Layer: layer, Resource: resource, Status: status, Summary: summary, Remedy: remedy}
+		switch layer {
+		case "Package":
+			check.Target = DiagnosticTarget{Kind: "software", ID: resource}
+		case "Database":
+			check.Target = DiagnosticTarget{Kind: "database", ID: strings.TrimPrefix(resource, "Database ")}
+		case "CA", "Trust":
+			check.Target = DiagnosticTarget{Kind: "ca"}
+		case "DNS", "Upstream", "Proxy TLS", "HTTP":
+			check.Target = DiagnosticTarget{Kind: "proxy", ID: resource}
+		}
+		r.Checks = append(r.Checks, check)
 	}
 	for _, id := range diagnosticKeys(s.Packages) {
 		result, err := m.VerifyPackage(ctx, id)

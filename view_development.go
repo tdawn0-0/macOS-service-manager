@@ -50,6 +50,7 @@ type developmentState struct {
 	diagnosticReport                                                        *devplatform.DiagnosticReport
 	diagnosticScroll                                                        ui.ScrollState
 	diagnosticJSON                                                          string
+	diagnosticPendingTarget                                                 *devplatform.DiagnosticTarget
 	packagePreview                                                          *devplatform.PackageDetails
 	packageDetailsText                                                      string
 	packageChecks                                                           map[string]devplatform.PackageIntegrityResult
@@ -72,6 +73,9 @@ type developmentState struct {
 	proxyListenerPort                                                       string
 	proxyDraftRevision                                                      uint64
 	proxyDraftLoaded                                                        bool
+	proxyChecks                                                             map[string]devplatform.ProxyHTTPResult
+	proxyChecking                                                           map[string]bool
+	proxyCheckGeneration                                                    uint64
 	nodeReleases                                                            []devplatform.NodeRelease
 	nodeReleasesTried, nodeReleasesRefresh, nodeReleasesStale               bool
 	nodeReleasesError                                                       string

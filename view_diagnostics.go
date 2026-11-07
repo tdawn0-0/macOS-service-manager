@@ -87,6 +87,19 @@ func (a *app) devDiagnostics(c *ui.Context) {
 				d.diagnosticsOpen = false
 			}
 		})
+		if d.diagnosticPendingTarget != nil {
+			ui.Text(c, "Unsaved database changes. Discard them to open the selected setting?").TextColor(c.Theme().Warning)
+			ui.Row(c).Gap(8).Children(func() {
+				if ui.Button(c, "Cancel navigation").Clicked() {
+					d.diagnosticPendingTarget = nil
+				}
+				if ui.Button(c, "Discard draft and open").Clicked() {
+					target := *d.diagnosticPendingTarget
+					d.diagnosticPendingTarget = nil
+					a.openDiagnosticTarget(target, true)
+				}
+			})
+		}
 		if report == nil {
 			return
 		}
@@ -109,7 +122,73 @@ func (a *app) devDiagnostics(c *ui.Context) {
 				if check.Remedy != "" {
 					ui.Text(c, check.Remedy).FontSize(textSmall).TextColor(c.Theme().TextMuted)
 				}
+				if check.Target.Kind != "" && ui.Button(c, "Open related setting").Disabled(d.busy).Clicked() {
+					a.openDiagnosticTarget(check.Target, false)
+				}
 			})
 		}
 	})
+}
+
+// openDiagnosticTarget resolves a private, typed target against current state.
+func (a *app) openDiagnosticTarget(target devplatform.DiagnosticTarget, discard bool) {
+	d := &a.dev
+	switch target.Kind {
+	case "proxy":
+		if target.ID != "" {
+			found := false
+			for _, rule := range d.state.ProxyRules {
+				if rule.Domain == target.ID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				d.output = "That proxy rule is no longer saved. Run diagnostics again."
+				return
+			}
+		}
+		d.tab = devTabHTTPS
+	case "ca":
+		d.tab = devTabHTTPS
+		d.authorityOpen = true
+	case "ports":
+		d.tab = devTabHTTPS
+	case "software":
+		pkg, ok := d.state.Packages[target.ID]
+		if !ok {
+			d.output = "That software version is no longer installed. Run diagnostics again."
+			return
+		}
+		d.tab = devTabSoftware
+		d.software = pkg.Name
+		d.version = pkg.Version
+	case "database":
+		instance, ok := d.state.Instances[target.ID]
+		if !ok {
+			d.output = "That database instance is no longer saved. Run diagnostics again."
+			return
+		}
+		if d.dbID != target.ID && !discard && (d.dbNewDraft || d.dbName != "" || d.dbUser != "" || d.dbPassword != "") {
+			copy := target
+			d.diagnosticPendingTarget = &copy
+			return
+		}
+		d.tab = devTabDatabases
+		if d.dbID != target.ID {
+			d.dbID = instance.ID
+			d.dbKind = instance.Kind
+			d.dbPackage = instance.Package
+			d.dbPort = fmt.Sprint(instance.Port)
+			d.persistent = instance.Persistent
+			d.dbName = ""
+			d.dbUser = ""
+			d.dbPassword = ""
+			d.dbNewDraft = false
+		}
+	default:
+		d.output = "The requested setting is unavailable."
+		return
+	}
+	d.diagnosticsOpen = false
 }

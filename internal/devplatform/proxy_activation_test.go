@@ -1,0 +1,116 @@
+package devplatform
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strconv"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+func TestProxyActivationStates(t *testing.T) {
+	m := testManager(t)
+	if state, err := m.ProxyPublicationState(); err != nil || state != "Unknown" {
+		t.Fatal(state, err)
+	}
+	if err := m.ReplaceProxyRules(context.Background(), 0, 8443, []ProxyRule{{Domain: "state.test", LocalPort: 3000}}); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := m.Read()
+	if err := writeJSON(filepath.Join(m.Root, "proxy", "rules.json"), proxyConfigFromState(&s)); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := m.ProxyPublicationState(); err != nil || state != "Published" {
+		t.Fatal(state, err)
+	}
+	if err := m.ReplaceProxyRules(context.Background(), 1, 8443, []ProxyRule{}); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := m.ProxyPublicationState(); err != nil || state != "Pending" {
+		t.Fatal(state, err)
+	}
+	now := time.Now()
+	r := ProxyHTTPResult{Revision: 3, Fingerprint: "a", CheckedAt: now, StatusCode: 404}
+	if !r.Current(now, 3, "a") || r.Current(now.Add(31*time.Second), 3, "a") || r.Current(now, 4, "a") || r.Current(now, 3, "b") {
+		t.Fatal("stale observation reused")
+	}
+	for _, code := range []int{200, 204, 301, 401, 404, 500, 502} {
+		r.StatusCode = code
+		if !r.Current(now, 3, "a") {
+			t.Fatal(code)
+		}
+	}
+}
+
+func TestProxyRuleHTTPCheck(t *testing.T) {
+	m := testManager(t)
+	cert, err := m.leaf("check.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, _, err := m.ca()
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	var redirected atomic.Int32
+	receiver := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { redirected.Add(1) }))
+	defer receiver.Close()
+	code := 404
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/" || r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" {
+			t.Error("unexpected request", r.Method, r.URL.Path)
+		}
+		if code == 301 {
+			w.Header().Set("Location", receiver.URL)
+		}
+		w.WriteHeader(code)
+		_, _ = w.Write([]byte("secret-response-body"))
+	}))
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
+	server.StartTLS()
+	defer server.Close()
+	_, portText, _ := net.SplitHostPort(server.Listener.Addr().String())
+	port, _ := strconv.Atoi(portText)
+	if err := m.ReplaceProxyRules(context.Background(), 0, port, []ProxyRule{{Domain: "check.test", LocalPort: 3000}}); err != nil {
+		t.Fatal(err)
+	}
+	fp, revision, err := m.ProxyRuleFingerprint("check.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []int{200, 204, 301, 401, 404, 500, 502} {
+		code = status
+		r, e := m.checkProxyRuleHTTP(context.Background(), "check.test", revision, fp, roots)
+		if e != nil || r.StatusCode != status || r.Failure != "" {
+			t.Fatal(r, e)
+		}
+	}
+	if redirected.Load() != 0 {
+		t.Fatal("followed redirect")
+	}
+	r, e := m.checkProxyRuleHTTP(context.Background(), "check.test", revision, fp, x509.NewCertPool())
+	if e != nil || r.Failure != "TLS" {
+		t.Fatal(r, e)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r, e = m.checkProxyRuleHTTP(ctx, "check.test", revision, fp, roots)
+	if e != nil || r.Failure == "" {
+		t.Fatal(r, e)
+	}
+	if _, e = m.checkProxyRuleHTTP(context.Background(), "check.test", revision+1, fp, roots); e == nil {
+		t.Fatal("stale revision accepted")
+	}
+	s, _ := m.Read()
+	if s.ProxyRulesRevision != revision || len(s.ProxyRules) != 1 {
+		t.Fatal("check modified state")
+	}
+}

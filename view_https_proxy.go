@@ -29,6 +29,14 @@ func (a *app) devHTTPS(c *ui.Context) {
 		state = "Unknown"
 	}
 	ui.Text(c, "Configuration: "+state).FontSize(textSmall).TextColor(c.Theme().TextMuted)
+	switch state {
+	case "Pending":
+		ui.Text(c, "Saved changes are waiting for Apply proxy.").FontSize(textCaption)
+	case "Unknown":
+		ui.Text(c, "Publication is unknown. Review and apply the saved configuration.").FontSize(textCaption)
+	case "Published":
+		ui.Text(c, "Configuration published. Check DNS, certificates and upstream separately.").FontSize(textCaption)
+	}
 	devField(c, "HTTPS listener port", &d.proxyListenerPort, "443")
 	a.devPortControls(c, &d.proxyListenerPort, "HTTPS")
 	removeRule := -1
@@ -51,6 +59,9 @@ func (a *app) devHTTPS(c *ui.Context) {
 				removeRule = i
 			}
 		})
+		if !d.proxyDraftDirty() {
+			a.devProxyActivation(c, row.Domain)
+		}
 	}
 	if removeRule >= 0 {
 		d.proxyDraft = append(d.proxyDraft[:removeRule], d.proxyDraft[removeRule+1:]...)

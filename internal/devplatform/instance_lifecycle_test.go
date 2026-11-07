@@ -73,8 +73,7 @@ func TestInstanceLifecycleReadinessRunsConcurrentlyAndKeepsConfigurationAvailabl
 	waitLifecycleEntry(t, m, b.ID)
 	short, stop := context.WithTimeout(ctx, 3*time.Second)
 	defer stop()
-	project := Project{SchemaVersion: Schema, ID: "unrelated", Name: "Saved during readiness", Directory: t.TempDir()}
-	if e := m.SaveProject(short, project); e != nil {
+	if e := m.ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "during-readiness.test", LocalPort: 3000}}); e != nil {
 		t.Fatal("readiness blocked unrelated configuration", e)
 	}
 	var busy *ResourceBusyError
@@ -82,11 +81,6 @@ func TestInstanceLifecycleReadinessRunsConcurrentlyAndKeepsConfigurationAvailabl
 		if e := m.InstanceAction(short, a.ID, action); !errors.As(e, &busy) || busy.ID != a.ID {
 			t.Fatal(action, e)
 		}
-	}
-	project.ID = "new-reference"
-	project.Instances = []string{a.ID}
-	if e := m.SaveProject(short, project); !errors.As(e, &busy) {
-		t.Fatal("configuration attached a busy database", e)
 	}
 	var packageBusy *PackageBusyError
 	if e := m.RepairPackage(short, p.ID()); !errors.As(e, &packageBusy) {
@@ -113,7 +107,7 @@ func TestInstanceLifecycleReadinessRunsConcurrentlyAndKeepsConfigurationAvailabl
 		t.Fatal("cancelling the other startup stopped a ready instance")
 	}
 	s, e := m.Read()
-	if e != nil || s.Projects["unrelated"].Name != "Saved during readiness" {
+	if e != nil || len(s.ProxyRules) != 1 || s.ProxyRules[0].Domain != "during-readiness.test" {
 		t.Fatal("lifecycle overwrote newly saved configuration", e)
 	}
 }
@@ -162,7 +156,7 @@ func TestInstanceLifecycleStopWaitDoesNotHoldWorkspaceLock(t *testing.T) {
 	}
 	short, stop := context.WithTimeout(ctx, 2*time.Second)
 	defer stop()
-	if e := m.SaveProject(short, Project{SchemaVersion: Schema, ID: "during-stop", Name: "Saved", Directory: t.TempDir()}); e != nil {
+	if e := m.ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "during-stop.test", LocalPort: 3000}}); e != nil {
 		t.Fatal("stop held the workspace lock", e)
 	}
 	if !m.loaded(ctx, "db-"+a.ID) || !m.loaded(ctx, "db-"+b.ID) {
@@ -183,13 +177,9 @@ func TestInstanceLifecycleStopWaitDoesNotHoldWorkspaceLock(t *testing.T) {
 }
 func TestInstanceLifecycleUnknownObservationDoesNotStopOrRemove(t *testing.T) {
 	m, _, i, _ := lifecycleFixture(t)
-	projectUnknown := false
 	m.Run = func(_ context.Context, name string, args ...string) (string, error) {
 		if name != "launchctl" || len(args) == 0 || args[0] != "print" {
 			t.Fatal("acted on an unknown job", name, args)
-		}
-		if projectUnknown && strings.HasSuffix(args[1], m.label("db-"+i.ID)) {
-			t.Fatal("touched a database before confirming its project was stopped")
 		}
 		return "", errors.New("launchctl observation denied")
 	}
@@ -202,17 +192,7 @@ func TestInstanceLifecycleUnknownObservationDoesNotStopOrRemove(t *testing.T) {
 	if _, ok := s.Instances[i.ID]; !ok {
 		t.Fatal("unknown stop removed the instance record")
 	}
-	if e := m.SaveProject(context.Background(), Project{SchemaVersion: Schema, ID: "unknown-project", Name: "Unknown project", Directory: t.TempDir(), Instances: []string{i.ID}}); e != nil {
-		t.Fatal(e)
-	}
-	projectUnknown = true
-	for _, action := range []string{"stop", "restart"} {
-		if e := m.InstanceAction(context.Background(), i.ID, action); e == nil {
-			t.Fatal("an unobservable project was treated as stopped", action)
-		}
-	}
-	// Cleanup uses the same fake observer; no fixture jobs were started.
-	projectUnknown = false
+
 }
 func TestInstanceLifecycleRemovalWriteFailureKeepsRecordAndData(t *testing.T) {
 	m, p := initializationFixture(t, "#!/bin/sh\nexit 0\n")

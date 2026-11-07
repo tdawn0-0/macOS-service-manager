@@ -39,9 +39,6 @@ func (a *app) pollDevStatus() {
 			}
 			a.dev.statuses = result.States
 			a.applyDatabaseTaskPhases()
-			a.applyProjectTaskPhases()
-			a.dev.serviceStatuses = result.Services
-			a.dev.folderErrors = result.FolderErrors
 		})
 	})
 }

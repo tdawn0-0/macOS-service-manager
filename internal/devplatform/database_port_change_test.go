@@ -72,23 +72,17 @@ func TestDatabasePortChangeKeepsEveryEngineDataAndCredentials(t *testing.T) {
 		})
 	}
 }
-func TestDatabasePortChangeRefusesRunningLinkedProjectAndUnknownObservation(t *testing.T) {
-	for _, kind := range []string{"database", "project", "unknown"} {
+func TestDatabasePortChangeRefusesRunningInstanceAndUnknownObservation(t *testing.T) {
+	for _, kind := range []string{"database", "unknown"} {
 		t.Run(kind, func(t *testing.T) {
 			m, i, dir := databasePortFixture(t, "redis")
-			if err := m.withState(context.Background(), func(s *State) error {
-				s.Projects["linked"] = Project{ID: "linked", Instances: []string{i.ID}}
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
 			before, _ := os.ReadFile(filepath.Join(dir, "valkey.conf"))
 			m.Run = func(_ context.Context, _ string, args ...string) (string, error) {
 				if kind == "unknown" {
 					return "", errors.New("observation failed")
 				}
 				target := args[len(args)-1]
-				if kind == "database" && strings.Contains(target, "db-") || kind == "project" && strings.Contains(target, "project-") {
+				if kind == "database" && strings.Contains(target, "db-") {
 					return "state = running", nil
 				}
 				return "", errors.New("Could not find service")
@@ -146,7 +140,7 @@ func TestManagedRedisPortRejectsAmbiguousOrAlteredConfiguration(t *testing.T) {
 	}
 }
 
-func TestDatabasePortChangeUpdatesImportedLockAndCancellationRestoresFiles(t *testing.T) {
+func TestDatabasePortChangeCancellationRestoresFiles(t *testing.T) {
 	for _, cancelled := range []bool{false, true} {
 		t.Run(strconv.FormatBool(cancelled), func(t *testing.T) {
 			m, i, dir := databasePortFixture(t, "redis")
@@ -158,17 +152,11 @@ func TestDatabasePortChangeUpdatesImportedLockAndCancellationRestoresFiles(t *te
 			if err = m.withState(context.Background(), func(s *State) error {
 				s.Instances[i.ID] = i
 				s.Packages[pkg.ID()] = pkg
-				s.Projects["linked"] = Project{ID: "linked", Instances: []string{i.ID}}
 				return nil
 			}); err != nil {
 				t.Fatal(err)
 			}
-			lock := EnvironmentLock{Schema: 1, Packages: map[string]Package{pkg.ID(): pkg}, Instances: map[string]Instance{i.ID: i}}
-			if err = writeJSON(m.projectLockPath("linked"), lock); err != nil {
-				t.Fatal(err)
-			}
 			before, _ := os.ReadFile(filepath.Join(dir, "valkey.conf"))
-			beforeLock, _ := os.ReadFile(m.projectLockPath("linked"))
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			if cancelled {
@@ -185,17 +173,16 @@ func TestDatabasePortChangeUpdatesImportedLockAndCancellationRestoresFiles(t *te
 					t.Fatal(err)
 				}
 				after, _ := os.ReadFile(filepath.Join(dir, "valkey.conf"))
-				afterLock, _ := os.ReadFile(m.projectLockPath("linked"))
-				if !bytes.Equal(before, after) || !bytes.Equal(beforeLock, afterLock) {
+				if !bytes.Equal(before, after) {
 					t.Fatal("cancelled port change left modified endpoint files")
 				}
 			} else {
 				if err != nil {
 					t.Fatal(err)
 				}
-				got, err := readEnvironmentLock(m.projectLockPath("linked"))
-				if err != nil || got.Instances[i.ID].Port != port {
-					t.Fatal("private lock kept old port", err)
+				state, err := m.Read()
+				if err != nil || state.Instances[i.ID].Port != port {
+					t.Fatal("saved port mismatch", err)
 				}
 			}
 		})

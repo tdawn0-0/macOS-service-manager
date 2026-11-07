@@ -3,15 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"macos-service-manager/internal/devplatform"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestUICheckRepairRealNodeAndRefuseRunningUsers(t *testing.T) {
@@ -68,45 +65,6 @@ func TestUICheckRepairRealNodeAndRefuseRunningUsers(t *testing.T) {
 	h.click("Reveal package folder node 20.19.0")
 	if revealed != packageDir {
 		t.Fatal("revealed a different workspace package", revealed)
-	}
-	dir := t.TempDir()
-	port := freeUIPort(t)
-	for name, value := range map[string]string{"package.json": `{"scripts":{"dev":"node server.js"}}`, "server.js": fmt.Sprintf(`require("http").createServer((q,s)=>s.end("node-repair-ok")).listen(%d,"127.0.0.1")`, port)} {
-		if err = os.WriteFile(filepath.Join(dir, name), []byte(value), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	h.click("Projects")
-	h.click("Import a project")
-	h.fill("Project folder", dir)
-	h.click("Import project")
-	projectID := h.a.dev.id
-	m := devplatform.New(h.root)
-	defer func() { _ = m.Down(context.Background(), projectID) }()
-	h.click("Services")
-	h.choose("Runtime version", "Node.js · 20.19.0")
-	h.fill("Readiness check", fmt.Sprintf("tcp://127.0.0.1:%d", port))
-	h.click("Save project")
-	h.click("Start project")
-	if h.a.dev.statuses["project:"+projectID] != "Healthy" {
-		t.Fatal("repaired Node did not start", h.a.dev.output)
-	}
-	h.click("Software")
-	h.click("Repair node 20.19.0")
-	if !strings.Contains(h.a.dev.output, "stop project") {
-		t.Fatal("UI replaced a running project's runtime", h.a.dev.output)
-	}
-	c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
-	if err != nil {
-		t.Fatal("refused repair interrupted the project", err)
-	}
-	c.Close()
-	h.click("Projects")
-	h.click("Stop project")
-	h.click("Software")
-	h.click("Repair node 20.19.0")
-	if r := h.a.dev.packageChecks[id]; r.Status != "Verified" {
-		t.Fatal("stopped project still blocked repair", r, h.a.dev.output)
 	}
 	if out, err := exec.Command(filepath.Join(packageDir, "bin/node"), "--version").Output(); err != nil || strings.TrimSpace(string(out)) != "v20.19.0" {
 		t.Fatal("repair changed runtime version", string(out), err)

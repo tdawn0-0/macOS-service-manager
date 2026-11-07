@@ -58,7 +58,7 @@ func configureUIInitialization(t *testing.T, h *devUIHarness, id string, port in
 	h.choose("Database engine", "redis")
 	h.fill("Local port", fmt.Sprint(port))
 }
-func TestUIDatabaseBackgroundInitializationAllowsConfigurationAndKeepsDrafts(t *testing.T) {
+func TestUIDatabaseInitializationKeepsIndependentDrafts(t *testing.T) {
 	if os.Getenv("MSM_UI_E2E_PACKAGE_CACHE") == "" {
 		t.Skip("set MSM_UI_E2E_PACKAGE_CACHE to verified Redis archive")
 	}
@@ -92,25 +92,24 @@ func TestUIDatabaseBackgroundInitializationAllowsConfigurationAndKeepsDrafts(t *
 			if !h.a.dev.databaseTasks["first-bg"].Running {
 				t.Fatal("independent initialization did not overlap")
 			}
-			h.click("Projects")
-			dir := t.TempDir()
-			h.fill("Project folder", dir)
-			h.click("Import project")
-			id := h.a.dev.id
-			h.fill("Project name", "Saved during initialization")
+			h.click("HTTPS")
+			h.fill("HTTPS listener port", fmt.Sprint(freeUIPort(t)))
+			h.click("Add rule")
+			h.fill("Domain", "during-initialization.test")
+			h.fill("Local port", "3000")
 			timer := time.AfterFunc(4*time.Second, release)
-			h.click("Save project")
+			h.click("Save HTTPS rules")
 			timer.Stop()
 			state, e := m.Read()
-			if e != nil || state.Projects[id].Name != "Saved during initialization" || !h.a.dev.databaseTasks["first-bg"].Running {
+			if e != nil || len(state.ProxyRules) != 1 || !h.a.dev.databaseTasks["first-bg"].Running {
 				t.Fatal(state, e)
 			}
-			h.fill("Project name", "Unsaved initialization draft")
+			h.fill("Domain", "unsaved-initialization.test")
 			release()
 			h.foregroundOnly = false
 			h.waitIdle()
-			if h.a.dev.draft.Name != "Unsaved initialization draft" || len(h.a.dev.state.Instances) != 2 {
-				t.Fatal("completion replaced draft or state", h.a.dev.draft.Name, h.a.dev.state.Instances)
+			if h.a.dev.proxyDraft[0].Domain != "unsaved-initialization.test" || len(h.a.dev.state.Instances) != 2 {
+				t.Fatal("completion replaced draft or state")
 			}
 			h.click("Databases")
 			h.click("Instance first-bg")

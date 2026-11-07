@@ -32,7 +32,7 @@ func TestDevelopmentSectionsAreSidebarItems(t *testing.T) {
 	if a.nav == navDevelopment {
 		t.Fatal("a source left the workspace open")
 	}
-	if err := tt.Click("Projects"); err != nil {
+	if err := tt.Click("Software"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
@@ -52,20 +52,20 @@ func TestDevelopmentScreensCarryNoCopyOfTheirOwn(t *testing.T) {
 		"Importing never runs", "Save project stores", "Use process, TCP or HTTP",
 	}
 	for tab := range devSections {
-		for _, projectTab := range []int{0, 1, 2, 3} {
+		{
 			a := designFixture(t)
-			a.dev.tab, a.dev.projectTab = tab, projectTab
+			a.dev.tab = tab
 			tt := ui.NewTester(a.view, 1120, 1400)
 			tt.Frame()
 			text := strings.Join(tt.Texts(), "\n")
 			for _, phrase := range banned {
 				if strings.Contains(text, phrase) {
-					t.Errorf("tab %d/%d shows %q", tab, projectTab, phrase)
+					t.Errorf("tab %d/%d shows %q", tab, 0, phrase)
 				}
 			}
 			for _, line := range tt.Texts() {
 				if len(line) > 140 && !strings.Contains(line, "a-long-project-name") && !strings.Contains(line, "/") && !strings.Contains(line, "\n") {
-					t.Errorf("tab %d/%d shows a paragraph: %q", tab, projectTab, line)
+					t.Errorf("tab %d/%d shows a paragraph: %q", tab, 0, line)
 				}
 			}
 		}

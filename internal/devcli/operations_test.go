@@ -23,8 +23,8 @@ func TestCLITasksExposeReviewedRevisionAndDismissKeepsResources(t *testing.T) {
 		t.Fatal("read-only task inspection created storage")
 	}
 	m := devplatform.New(root)
-	if e := m.Up(ctx, "missing"); e == nil {
-		t.Fatal("expected missing project")
+	if e := m.InstanceAction(ctx, "missing", "start"); e == nil {
+		t.Fatal("expected missing instance")
 	}
 	out.Reset()
 	if e := Run(ctx, []string{"tasks"}, &out); e != nil {

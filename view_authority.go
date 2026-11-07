@@ -56,7 +56,7 @@ func (a *app) devAuthority(c *ui.Context) {
 		if ui.Button(c, "Refresh certificate status").Disabled(d.busy).Clicked() {
 			a.authorityTask(nil)
 		}
-		if ui.Button(c, "Back to HTTPS sites").Clicked() {
+		if ui.Button(c, "Back to HTTPS rules").Clicked() {
 			d.authorityOpen = false
 		}
 	})

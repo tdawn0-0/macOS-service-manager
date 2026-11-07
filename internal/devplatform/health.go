@@ -12,18 +12,12 @@ import (
 	"time"
 )
 
-func (s Service) readinessTimeout() time.Duration {
+func (s processProbe) readinessTimeout() time.Duration {
 	n := s.ReadinessTimeoutSeconds
 	if n == 0 {
 		n = 30
 	}
 	return time.Duration(n) * time.Second
-}
-func (s Service) restartThrottle() int {
-	if s.RestartThrottleSeconds == 0 {
-		return 10
-	}
-	return s.RestartThrottleSeconds
 }
 func validateHealth(address string) error {
 	if address == "" || address == "process" {
@@ -186,7 +180,7 @@ func (m *Manager) readJobState(ctx context.Context, id string) (jobState, error)
 // Launch registration alone is not readiness. Wait for a stable main process
 // and the configured check. Fast-exiting commands must fail even when another
 // process happens to answer the readiness port.
-func (m *Manager) waitService(ctx context.Context, job string, svc Service) error {
+func (m *Manager) waitService(ctx context.Context, job string, svc processProbe) error {
 	ctx, cancel := context.WithTimeout(ctx, svc.readinessTimeout())
 	defer cancel()
 	var since time.Time
@@ -208,10 +202,10 @@ func (m *Manager) waitService(ctx context.Context, job string, svc Service) erro
 			}
 		} else {
 			pid, since = 0, time.Time{}
-			if err == nil && !svc.Restart && state.LastExitCode != nil {
+			if err == nil && state.LastExitCode != nil {
 				return fmt.Errorf("service %s exited with code %d before becoming ready; read its logs", svc.ID, *state.LastExitCode)
 			}
-			if err == nil && !svc.Restart && state.LastSignal != "" {
+			if err == nil && state.LastSignal != "" {
 				return fmt.Errorf("service %s terminated by signal %s before becoming ready; read its logs", svc.ID, state.LastSignal)
 			}
 		}

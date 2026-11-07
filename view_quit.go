@@ -113,7 +113,7 @@ func (a *app) quitDialog(c *ui.Context) {
 			ui.Text(c, "Quit Service Manager?").FontSize(18).FontWeight(650)
 			ui.Scroll(c).MaxHeight(height - 200).Children(func() {
 				ui.Column(c).Gap(8).Children(func() {
-					if a.dev.projectDirty() || a.editor.open {
+					if a.dev.proxyDraftDirty() || a.editor.open {
 						ui.Text(c, "Unsaved edits will be discarded when the app exits.").FontSize(textSmall).TextColor(c.Theme().Warning)
 					}
 					if q.loading {

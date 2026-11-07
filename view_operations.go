@@ -16,61 +16,44 @@ func (a *app) openOperations() {
 }
 func (a *app) reviewOperation(r devplatform.OperationRecord) {
 	d := &a.dev
-	d.commandWorkOpen = false
 	req := r.Request
 	switch req.Kind {
-	case "reconcile-project-command":
-		d.tab = 0
-		a.openProjectCommands()
-	case "exec":
-		d.tab = 0
-		if p, ok := d.state.Projects[req.Resource]; ok {
-			d.selectProject(p)
-		}
-		if r.Status != "Succeeded" {
-			a.openProjectCommands()
-		}
 	case "install":
-		d.tab = 1
+		d.tab = devTabSoftware
 		d.software = req.Name
 		d.version = req.Version
 		d.packagePreview = nil
 	case "repair":
-		d.tab = 1
+		d.tab = devTabSoftware
 		if p, ok := d.state.Packages[req.Resource]; ok {
 			d.software = p.Name
 			d.version = p.Version
 		}
 	case "delete-instance", "finish-deletion", "restore-deletion":
-		d.tab = 2
+		d.tab = devTabDatabases
 		a.openInstanceDeletions()
 	case "reconcile-database-work":
-		d.tab = 2
+		d.tab = devTabDatabases
 		a.openDatabaseWork()
 	case "reconcile-initialization":
-		d.tab = 2
+		d.tab = devTabDatabases
 		a.openInitializations()
 	case "initialize":
-		d.tab = 2
+		d.tab = devTabDatabases
 		d.dbNewDraft = true
 		d.dbID = ""
 		d.dbKind = req.Name
 		d.dbPackage = req.Version
 		d.dbPort = ""
 		d.initializationsOpen = true
-		d.detailScroll[2].Y = 0
+		d.detailScroll[devTabDatabases].Y = 0
 		a.initializationTaskThen(nil, func(err error) {
 			if err == nil && len(a.dev.initializations) == 0 {
 				a.dev.initializationsOpen = false
 			}
 		})
-	case "up", "down", "restart", "remove-project":
-		d.tab = 0
-		if p, ok := d.state.Projects[req.Resource]; ok && d.id != req.Resource {
-			d.selectProject(p)
-		}
 	default:
-		d.tab = 2
+		d.tab = devTabDatabases
 		d.dbID = req.Resource
 		if i, ok := d.state.Instances[req.Resource]; ok {
 			d.dbNewDraft = false

@@ -174,7 +174,7 @@ func (m *Manager) checkNewInstance(ctx context.Context, s State, i Instance) err
 			return errors.New("instance port already assigned")
 		}
 	}
-	for _, site := range allSites(&s) {
+	for _, site := range proxyRoutesFromState(&s) {
 		if site.Port == i.Port {
 			return errors.New("database port is assigned to an enabled HTTPS site")
 		}

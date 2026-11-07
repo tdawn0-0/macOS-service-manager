@@ -81,10 +81,9 @@ func TestPackageDownloadsRunConcurrentlyAndMergeCurrentState(t *testing.T) {
 	}
 	short, stop := context.WithTimeout(ctx, 2*time.Second)
 	defer stop()
-	project := Project{SchemaVersion: 1, ID: "concurrent-config", Name: "Saved during download", Directory: t.TempDir()}
-	if e := New(m.Root).SaveProject(short, project); e != nil {
+	if e := New(m.Root).ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "during-download.test", LocalPort: 3000}}); e != nil {
 		unblock()
-		t.Fatal("download blocked unrelated project save", e)
+		t.Fatal("download blocked unrelated configuration save", e)
 	}
 	var busy *PackageBusyError
 	if e := New(m.Root).Install(short, p1); !errors.As(e, &busy) || busy.PackageID != p1.ID() {
@@ -111,7 +110,7 @@ func TestPackageDownloadsRunConcurrentlyAndMergeCurrentState(t *testing.T) {
 		}
 	}
 	state, e := m.Read()
-	if e != nil || len(state.Packages) != 2 || state.Projects[project.ID].Name != project.Name {
+	if e != nil || len(state.Packages) != 2 || len(state.ProxyRules) != 1 {
 		t.Fatal(state, e)
 	}
 	assertIntegrity(t, m, p1, "Verified")
@@ -164,8 +163,7 @@ func TestPackageCancellingOneDownloadKeepsOtherDownloadAndConfiguration(t *testi
 	if e := <-done1; !errors.Is(e, context.Canceled) {
 		t.Fatal(e)
 	}
-	project := Project{SchemaVersion: 1, ID: "keep", Name: "Keep config", Directory: t.TempDir()}
-	if e := m.SaveProject(second, project); e != nil {
+	if e := m.ReplaceProxyRules(second, 0, 8443, []ProxyRule{{Domain: "keep.test", LocalPort: 3000}}); e != nil {
 		t.Fatal(e)
 	}
 	unblock()
@@ -173,7 +171,7 @@ func TestPackageCancellingOneDownloadKeepsOtherDownloadAndConfiguration(t *testi
 		t.Fatal(e)
 	}
 	state, e := m.Read()
-	if e != nil || len(state.Packages) != 1 || state.Projects[project.ID].Name != project.Name {
+	if e != nil || len(state.Packages) != 1 || len(state.ProxyRules) != 1 {
 		t.Fatal(state, e)
 	}
 	if _, ok := state.Packages[p1.ID()]; ok {
@@ -183,60 +181,6 @@ func TestPackageCancellingOneDownloadKeepsOtherDownloadAndConfiguration(t *testi
 	entries, _ := filepath.Glob(filepath.Join(m.Root, "packages", ".install-*"))
 	if len(entries) > 0 {
 		t.Fatal("cancelled staging files remain", entries)
-	}
-}
-func TestPackageRepairRechecksNewlyStartedProjectBeforePublication(t *testing.T) {
-	m, p := integrityFixture(t)
-	ctx := context.Background()
-	project := Project{SchemaVersion: 1, ID: "late-user", Name: "Started during repair", Directory: t.TempDir(), Services: []Service{{ID: "worker", Package: p.ID(), Command: []string{"fixture", "hold", filepath.Join(t.TempDir(), "ready")}}}}
-	if e := m.SaveProject(ctx, project); e != nil {
-		t.Fatal(e)
-	}
-	defer m.Down(context.Background(), project.ID)
-	damaged := filepath.Join(m.packageDir(p), "lib/data")
-	os.WriteFile(damaged, []byte("old damaged bytes"), 0755)
-	var started bool
-	var pid int
-	m.Event = func(s string) {
-		if s == "Downloading "+p.ID() && !started {
-			started = true
-			// Simulate a legacy caller that starts a registered job without the
-			// package lease. Current Up waits for repair's exclusive lease.
-			state, e := m.Read()
-			if e != nil {
-				t.Fatal(e)
-			}
-			args, env, e := m.serviceArgs(&state, project, project.Services[0])
-			if e != nil {
-				t.Fatal(e)
-			}
-			job := "p-" + project.ID + "-worker"
-			if _, e = m.startJob(ctx, job, args, project.Directory, env, false); e != nil {
-				t.Fatal(e)
-			}
-			if e = m.waitService(ctx, job, project.Services[0]); e != nil {
-				t.Fatal(e)
-			}
-			pid = m.Snapshot(ctx, state).Services[ServiceStatusKey(project.ID, "worker")].PID
-		}
-	}
-	if e := m.RepairPackage(ctx, p.ID()); e == nil || !strings.Contains(e.Error(), "stop project") {
-		t.Fatal("repair replaced a newly running user", e)
-	}
-	m.Event = nil
-	if !started || pid == 0 {
-		t.Fatal("fixture did not start during preparation")
-	}
-	state, _ := m.Read()
-	if current := m.Snapshot(ctx, state).Services[ServiceStatusKey(project.ID, "worker")].PID; current != pid {
-		t.Fatal("repair stopped another operation's job", pid, current)
-	}
-	if b, e := os.ReadFile(damaged); e != nil || string(b) != "old damaged bytes" {
-		t.Fatal("repair overwrote the active version", string(b), e)
-	}
-	stages, _ := filepath.Glob(filepath.Join(m.Root, "packages", ".install-*"))
-	if len(stages) > 0 {
-		t.Fatal("refused repair leaked prepared tree", stages)
 	}
 }
 func TestPackageRepairRollbackFailureRetainsOriginalTree(t *testing.T) {
@@ -323,7 +267,7 @@ func TestPackageSharedLeaseWaitReportsResourceAndCanCancelWithoutStateLock(t *te
 	}
 	short, stop := context.WithTimeout(context.Background(), 2*time.Second)
 	defer stop()
-	if e = m.SaveProject(short, Project{SchemaVersion: 1, ID: "while-leased", Name: "Unrelated change", Directory: t.TempDir()}); e != nil {
+	if e = m.ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "while-leased.test", LocalPort: 3000}}); e != nil {
 		t.Fatal("shared wait held global state", e)
 	}
 	cancel()
@@ -386,69 +330,5 @@ func TestPackageLeaseRejectsLinkedStoreAndSpecialLockWithoutTouchingOutside(t *t
 		}
 	case <-time.After(time.Second):
 		t.Fatal("blocked opening special lease")
-	}
-}
-
-func TestProjectStartupWaitingForPackageRepairCanCancelAndKeepsConfigurationAvailable(t *testing.T) {
-	m, p := integrityFixture(t)
-	ctx := context.Background()
-	project := Project{SchemaVersion: Schema, ID: "waiting-start", Name: "Waiting start", Directory: t.TempDir(), Services: []Service{{ID: "worker", Package: p.ID(), Command: []string{"fixture", "hold", filepath.Join(t.TempDir(), "ready")}}}}
-	if e := m.SaveProject(ctx, project); e != nil {
-		t.Fatal(e)
-	}
-	invoked := false
-	m.Event = func(message string) {
-		if message != "Downloading "+p.ID() || invoked {
-			return
-		}
-		invoked = true
-		childCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		worker := New(m.Root)
-		waited := make(chan struct{})
-		var signal sync.Once
-		worker.Event = func(s string) {
-			if s == "Waiting for package "+p.ID() {
-				signal.Do(func() { close(waited) })
-			}
-		}
-		done := make(chan error, 1)
-		go func() { done <- worker.Up(childCtx, project.ID) }()
-		defer func() {
-			cancel()
-			select {
-			case <-done:
-			case <-time.After(5 * time.Second):
-			}
-		}()
-		select {
-		case <-waited:
-		case <-time.After(3 * time.Second):
-			t.Fatal("startup did not report the exclusive repair lease")
-		}
-		short, stop := context.WithTimeout(ctx, 2*time.Second)
-		defer stop()
-		if e := m.SaveProject(short, Project{SchemaVersion: Schema, ID: "during-package-wait", Name: "Saved", Directory: t.TempDir()}); e != nil {
-			t.Fatal("package wait blocked independent configuration", e)
-		}
-		cancel()
-		e := <-done
-		done <- e
-		if !errors.Is(e, context.Canceled) {
-			t.Fatal("startup package wait could not cancel", e)
-		}
-		if m.loaded(ctx, "p-"+project.ID+"-worker") {
-			t.Fatal("cancelled package wait started a process")
-		}
-	}
-	if e := m.RepairPackage(ctx, p.ID()); e != nil {
-		t.Fatal(e)
-	}
-	if !invoked {
-		t.Fatal("repair did not exercise the lease wait")
-	}
-	s, e := m.Read()
-	if e != nil || s.Projects["during-package-wait"].Name != "Saved" {
-		t.Fatal("repair replaced newer configuration", e)
 	}
 }

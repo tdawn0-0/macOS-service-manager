@@ -72,22 +72,22 @@ func TestUIBackgroundInstanceStartupKeepsPhaseConfigurationAndIndependentInstanc
 			if !h.a.databaseTaskRunning(id) || h.a.dev.statuses["instance:"+id] != "Starting" {
 				t.Fatal("independent completion replaced the active startup")
 			}
-			h.click("Projects")
-			h.fill("Project folder", t.TempDir())
-			h.click("Import project")
-			pid := h.a.dev.id
-			h.fill("Project name", "Saved during startup")
+			h.click("HTTPS")
+			h.fill("HTTPS listener port", fmt.Sprint(freeUIPort(t)))
+			h.click("Add rule")
+			h.fill("Domain", "during-startup.test")
+			h.fill("Local port", "3000")
 			timer := time.AfterFunc(4*time.Second, unblock)
-			h.click("Save project")
+			h.click("Save HTTPS rules")
 			timer.Stop()
 			state, e := m.Read()
-			if e != nil || state.Projects[pid].Name != "Saved during startup" || !h.a.databaseTaskRunning(id) {
+			if e != nil || len(state.ProxyRules) != 1 || !h.a.databaseTaskRunning(id) {
 				t.Fatal("startup blocked configuration", e)
 			}
 			if h.a.dev.statuses["instance:"+id] != "Starting" {
-				t.Fatal("configuration refresh replaced the startup phase")
+				t.Fatal("configuration refresh replaced startup phase")
 			}
-			h.fill("Project name", "Unsaved startup draft")
+			h.fill("Domain", "unsaved-startup.test")
 			if cancelled {
 				h.click("Database tasks")
 				h.click("Cancel database operation " + id)
@@ -96,8 +96,8 @@ func TestUIBackgroundInstanceStartupKeepsPhaseConfigurationAndIndependentInstanc
 			}
 			h.foregroundOnly = false
 			h.waitIdle()
-			if h.a.dev.draft.Name != "Unsaved startup draft" {
-				t.Fatal("startup completion replaced the draft")
+			if h.a.dev.proxyDraft[0].Domain != "unsaved-startup.test" {
+				t.Fatal("startup completion replaced draft")
 			}
 			h.click("Databases")
 			h.click("Instance " + id)

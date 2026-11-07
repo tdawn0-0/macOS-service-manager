@@ -12,7 +12,7 @@ func TestSocketJobBindsLoopbackAndDropsPrivileges(t *testing.T) {
 		t.Skip("normal-user job")
 	}
 	m := testManager(t)
-	sites := []Site{{ID: "web", Domain: "web.test", Upstream: "http://127.0.0.1:3000", Port: 443}}
+	sites := []proxyRoute{{Domain: "web.test", LocalPort: 3000, Port: 443}}
 	data, e := m.socketJob(sites, "/Applications/Service Manager.app/Contents/MacOS/Service Manager", "developer")
 	if e != nil {
 		t.Fatal(e)
@@ -59,11 +59,11 @@ func TestEquivalentSocketConfigurationIgnoresFormatting(t *testing.T) {
 	}
 }
 func TestUnprivilegedPortSets(t *testing.T) {
-	sites := []Site{{Port: 8443}, {Port: 8443}, {Port: 9443}}
-	if privilegedPorts(sites) || len(sitePorts(sites)) != 2 {
+	sites := []proxyRoute{{Port: 8443}, {Port: 8443}, {Port: 9443}}
+	if privilegedPorts(sites) || len(proxyListenerPorts(sites)) != 2 {
 		t.Fatal("incorrect port set")
 	}
-	if !privilegedPorts(append(sites, Site{Port: 443})) {
+	if !privilegedPorts(append(sites, proxyRoute{Port: 443})) {
 		t.Fatal("missed privileged port")
 	}
 }

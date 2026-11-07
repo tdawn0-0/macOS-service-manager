@@ -16,15 +16,15 @@ import time
 from urllib.parse import urlsplit
 
 PACKAGE = 'macos-service-manager'
-CORE = ('TestUIRuntimeDeclarationsReviewInstallAndHTTPS',
-        'TestUIDatabaseBackgroundInitializationAllowsConfigurationAndKeepsDrafts')
-CATALOG = 'TestUISoftwareCatalogAllSix'
-MATRIX = (CATALOG,) + tuple(CATALOG + '/' + x for x in ('php', 'node', 'mysql', 'postgresql', 'redis', 'mongodb'))
+CORE = ('TestUIStandaloneRuntimeAndHTTPS',
+        'TestUIDatabaseInitializationKeepsIndependentDrafts')
+CATALOG = 'TestUISoftwareCatalogAllFive'
+MATRIX = (CATALOG,) + tuple(CATALOG + '/' + x for x in ('node', 'mysql', 'postgresql', 'redis', 'mongodb'))
 REQUIRED = CORE + MATRIX
 SANDBOX = ('sandbox-exec', '-p', '(version 1)(allow default)(deny file-write* (subpath "/opt/homebrew"))')
 
 VERSIONS = (('node', '22.14.0'), ('node', '20.19.0'), ('mysql', '8.4.4'),
-            ('redis', '7.4.7'), ('mongodb', '8.0.5'), ('php', '8.5'), ('postgresql', '17'))
+            ('redis', '7.4.7'), ('mongodb', '8.0.5'), ('postgresql', '17'))
 
 
 def check_events(lines, required=REQUIRED):
@@ -102,8 +102,6 @@ def package_summary(packages):
             raise ValueError('invalid package source')
         # Source domain identifies provenance without leaking URL query/path values.
         formula = value.get('formula', '')
-        if name == 'php' and not formula.startswith('shivammathur/php/'):
-            raise ValueError('unexpected PHP tap')
         if name == 'postgresql' and formula != 'postgresql@17':
             raise ValueError('unexpected PostgreSQL formula')
         rows.append({'name': name, 'version': version, 'arch': arch, 'sha256': digest, 'source': url.hostname})
@@ -141,7 +139,7 @@ def parse_formula_metadata(raw, name):
         rack = formula['name']
         stable = formula['versions']['stable']
         revision = formula.get('revision', 0)
-        racks = {'php', 'php@8.5'} if name == 'php' else {'postgresql@17'}
+        racks = {'postgresql@17'}
         if (not isinstance(full_name, str) or not isinstance(rack, str) or rack not in racks
                 or not isinstance(stable, str) or not re.fullmatch(r'[0-9]+\.[0-9]+(?:\.[0-9]+)?', stable)
                 or type(revision) is not int or revision < 0):
@@ -153,10 +151,10 @@ def parse_formula_metadata(raw, name):
 
 def validate_existing_kegs():
     env = dict(os.environ, HOMEBREW_NO_AUTO_UPDATE='1')
-    for name, requested, tap, binaries in [('php', 'shivammathur/php/php@8.5', 'shivammathur/php', ['php','php-fpm']), ('postgresql', 'postgresql@17', 'homebrew/core', ['postgres','initdb','pg_dump','pg_restore','psql','createdb'])]:
+    for name, requested, tap, binaries in [('postgresql', 'postgresql@17', 'homebrew/core', ['postgres','initdb','pg_dump','pg_restore','psql','createdb'])]:
         raw = checked(list(SANDBOX) + ['/opt/homebrew/bin/brew','info','--json=v2','--formula',requested], env=env)
         formula = parse_formula_metadata(raw, name)
-        if formula['full_name'] != requested and not (name == 'php' and formula['full_name'] == 'shivammathur/php/php'):
+        if formula['full_name'] != requested:
             raise RuntimeError('existing formula source differs: ' + name)
         version = formula['versions']['stable']
         if formula.get('revision',0): version += '_' + str(formula['revision'])
@@ -173,7 +171,7 @@ def validate_existing_kegs():
         if not receipt_matches:
             raise RuntimeError('existing keg receipt differs: ' + name)
         for binary in binaries:
-            relative = ('sbin/' if binary=='php-fpm' else 'bin/') + binary
+            relative = 'bin/' + binary
             path = keg / relative
             if not path.is_file() or not os.access(path,os.X_OK) or not path.resolve().is_relative_to(keg.resolve()):
                 raise RuntimeError('existing keg executable missing: ' + name)
@@ -217,8 +215,6 @@ def run_native(local_existing=False):
         run(['go', 'build', '-o', str(harness), './cmd/devmgr'])
         built = True
         run([str(harness), 'log-rotation', 'off'], env=env)
-        if not local_existing:
-            checked(['brew', 'tap', 'shivammathur/php'], env=env)
         for name, version in VERSIONS:
             run([str(harness), 'install', name, version], env=env, timeout=1200)
         state = json.loads(run([str(harness), 'status'], env=env))

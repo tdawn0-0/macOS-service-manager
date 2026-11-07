@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-func sitePorts(sites []Site) []int {
+func proxyListenerPorts(sites []proxyRoute) []int {
 	seen := map[int]bool{}
 	var out []int
 	for _, s := range sites {
@@ -34,7 +34,7 @@ func sitePorts(sites []Site) []int {
 	sort.Ints(out)
 	return out
 }
-func privilegedPorts(sites []Site) bool {
+func privilegedPorts(sites []proxyRoute) bool {
 	for _, s := range sites {
 		if s.Port < 1024 {
 			return true
@@ -50,7 +50,7 @@ func (m *Manager) socketLoaded(ctx context.Context) bool {
 	_, e := m.Run(ctx, "/bin/launchctl", "print", m.socketTarget())
 	return e == nil
 }
-func (m *Manager) socketJob(sites []Site, exe, username string) ([]byte, error) {
+func (m *Manager) socketJob(sites []proxyRoute, exe, username string) ([]byte, error) {
 	if username == "" || username == "root" || os.Getuid() == 0 {
 		return nil, errors.New("the development proxy must run as a normal user")
 	}
@@ -58,7 +58,7 @@ func (m *Manager) socketJob(sites []Site, exe, username string) ([]byte, error) 
 		return nil, errors.New("proxy executable must be absolute")
 	}
 	sockets := map[string]any{}
-	for _, port := range sitePorts(sites) {
+	for _, port := range proxyListenerPorts(sites) {
 		sockets["HTTPS-"+strconv.Itoa(port)] = map[string]any{"SockServiceName": strconv.Itoa(port), "SockNodeName": "127.0.0.1", "SockFamily": "IPv4", "SockType": "stream", "SockProtocol": "TCP", "SockPassive": true}
 	}
 	job := map[string]any{"Label": m.label("proxy-sockets"), "UserName": username, "ProgramArguments": []string{exe, "--dev", "serve", m.Root}, "WorkingDirectory": m.Root, "EnvironmentVariables": map[string]string{"MSM_DEV_SOCKET_ACTIVATION": "1", "HOME": os.Getenv("HOME")}, "Sockets": sockets, "RunAtLoad": true, "ProcessType": "Background", "StandardOutPath": "/dev/null", "StandardErrorPath": "/dev/null"}
@@ -80,7 +80,7 @@ func socketInstallScript(data []byte, path, target string) string {
 	encoded := base64.StdEncoding.EncodeToString(data)
 	return "set -eu; tmp=$(/usr/bin/mktemp /Library/LaunchDaemons/.msm-socket.XXXXXX); trap '/bin/rm -f \"$tmp\"' EXIT; /usr/bin/printf '%s' " + system.ShellQuote(encoded) + " | /usr/bin/base64 -D > \"$tmp\"; /usr/bin/plutil -lint \"$tmp\" >/dev/null; /usr/sbin/chown root:wheel \"$tmp\"; /bin/chmod 644 \"$tmp\"; if /bin/launchctl print " + system.ShellQuote(target) + " >/dev/null 2>&1; then /bin/launchctl bootout " + system.ShellQuote(target) + "; fi; /bin/mv -f \"$tmp\" " + system.ShellQuote(path) + "; /bin/launchctl bootstrap system " + system.ShellQuote(path)
 }
-func (m *Manager) installSocketJob(ctx context.Context, sites []Site) error {
+func (m *Manager) installSocketJob(ctx context.Context, sites []proxyRoute) error {
 	exe, e := m.proxyExecutable()
 	if e != nil {
 		return e
@@ -125,7 +125,7 @@ func (m *Manager) stopProxy(ctx context.Context) error {
 	}
 	return m.stopSocketJob(ctx)
 }
-func (m *Manager) startSocketProxy(ctx context.Context, sites, old []Site) (err error) {
+func (m *Manager) startSocketProxy(ctx context.Context, sites, old []proxyRoute) (err error) {
 	userWasLoaded, systemWasLoaded := m.loaded(ctx, "proxy"), m.socketLoaded(ctx)
 	if err = preflightProxyPorts(sites, old, userWasLoaded || systemWasLoaded); err != nil {
 		return err
@@ -134,15 +134,15 @@ func (m *Manager) startSocketProxy(ctx context.Context, sites, old []Site) (err 
 	if err = m.stopJob(ctx, "proxy"); err != nil {
 		return err
 	}
-	path := filepath.Join(m.Root, "proxy", "sites.json")
-	if err = writeJSON(path, sites); err != nil {
+	path := filepath.Join(m.Root, "proxy", "rules.json")
+	if err = writeJSON(path, proxyConfigFromRoutes(sites)); err != nil {
 		return err
 	}
 	defer func() {
 		if err == nil {
 			return
 		}
-		_ = writeJSON(path, old)
+		_ = writeJSON(path, proxyConfigFromRoutes(old))
 		if systemWasLoaded && len(oldJob) > 0 {
 			current, _ := os.ReadFile(m.socketJobPath())
 			if equivalentPlists(current, oldJob) && m.socketLoaded(context.Background()) {
@@ -168,13 +168,13 @@ func (m *Manager) startSocketProxy(ctx context.Context, sites, old []Site) (err 
 		return err
 	}
 	for _, site := range sites {
-		if err = m.verifySiteTLS(ctx, site); err != nil {
+		if err = m.verifyProxyTLS(ctx, site); err != nil {
 			return err
 		}
 	}
 	return nil
 }
-func (m *Manager) verifySiteTLS(ctx context.Context, site Site) error {
+func (m *Manager) verifyProxyTLS(ctx context.Context, site proxyRoute) error {
 	ca, _, e := m.ca()
 	if e != nil {
 		return e
@@ -202,16 +202,16 @@ func (m *Manager) verifySiteTLS(ctx context.Context, site Site) error {
 
 func (m *Manager) RestartProxy(ctx context.Context) error {
 	return m.withState(ctx, func(s *State) error {
-		sites := allSites(s)
+		sites := proxyRoutesFromState(s)
 		if len(sites) == 0 {
-			return errors.New("no HTTPS sites configured")
+			return errors.New("no HTTPS proxy rules configured")
 		}
 		if m.socketLoaded(ctx) {
 			if _, e := system.RunAdmin("/bin/launchctl", "kickstart", "-k", m.socketTarget()); e != nil {
 				return e
 			}
 			for _, site := range sites {
-				if e := m.verifySiteTLS(ctx, site); e != nil {
+				if e := m.verifyProxyTLS(ctx, site); e != nil {
 					return e
 				}
 			}
@@ -273,13 +273,13 @@ func (m *Manager) helperExecutable(name string) (string, error) {
 // authorization. Its trap restores the existing job even if a check fails.
 func (m *Manager) VerifySocketLifecycle(ctx context.Context) error {
 	return m.withState(ctx, func(s *State) error {
-		sites := allSites(s)
+		sites := proxyRoutesFromState(s)
 		if !m.socketLoaded(ctx) || len(sites) == 0 {
 			return errors.New("start the socket-activated HTTPS proxy before running this test")
 		}
 		target, path := system.ShellQuote(m.socketTarget()), system.ShellQuote(m.socketJobPath())
 		script := "set -eu; restore(){ /bin/launchctl print " + target + " >/dev/null 2>&1 || /bin/launchctl bootstrap system " + path + "; }; trap restore EXIT; pid=$(/bin/launchctl print " + target + " | /usr/bin/awk '$1 == \"pid\" && $2 == \"=\" {print $3; exit}'); /bin/launchctl bootout " + target + "; count=0; if [ -n \"$pid\" ]; then while /bin/kill -0 \"$pid\" 2>/dev/null; do count=$((count+1)); if [ \"$count\" -gt 100 ]; then echo 'proxy did not stop' >&2; exit 1; fi; /bin/sleep 0.1; done; fi; "
-		for _, port := range sitePorts(sites) {
+		for _, port := range proxyListenerPorts(sites) {
 			script += fmt.Sprintf("if /usr/bin/nc -z -G 1 127.0.0.1 %d >/dev/null 2>&1; then echo 'HTTPS port was not released' >&2; exit 1; fi; ", port)
 		}
 		script += "/bin/launchctl bootstrap system " + path + "; /bin/launchctl kickstart -k " + target
@@ -287,7 +287,7 @@ func (m *Manager) VerifySocketLifecycle(ctx context.Context) error {
 			return e
 		}
 		for _, site := range sites {
-			if e := m.verifySiteTLS(ctx, site); e != nil {
+			if e := m.verifyProxyTLS(ctx, site); e != nil {
 				return e
 			}
 		}

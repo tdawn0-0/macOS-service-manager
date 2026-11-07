@@ -31,7 +31,7 @@ func (a *app) openInstanceDeletions() {
 	a.dev.deletionsOpen = true
 	a.dev.instanceDeletionPreview = nil
 	a.dev.deleteConfirmation = ""
-	a.dev.detailScroll[2].Y = 0
+	a.dev.detailScroll[devTabDatabases].Y = 0
 	a.deletionTask(nil, nil)
 }
 func (a *app) previewInstanceDeletion(id string) {
@@ -42,7 +42,7 @@ func (a *app) previewInstanceDeletion(id string) {
 				if a.dev.dbID == id {
 					a.dev.instanceDeletionPreview = &p
 					a.dev.deleteConfirmation = ""
-					a.dev.detailScroll[2].Y = 0
+					a.dev.detailScroll[devTabDatabases].Y = 0
 				}
 			})
 		}
@@ -62,7 +62,7 @@ func (a *app) devInstanceDeletionPreview(c *ui.Context) {
 		if ui.Button(c, "Cancel deletion preview").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 			d.instanceDeletionPreview = nil
 			d.deleteConfirmation = ""
-			d.detailScroll[2].Y = 0
+			d.detailScroll[devTabDatabases].Y = 0
 		}
 	})
 	ui.Text(c, softwareTitle(p.Kind)).FontSize(textSmall).TextColor(c.Theme().TextMuted)
@@ -88,7 +88,7 @@ func (a *app) devInstanceDeletionPreview(c *ui.Context) {
 			if !exists || len(a.dev.instanceDeletions) > 0 {
 				a.dev.instanceDeletionPreview = nil
 				a.dev.deletionsOpen = len(a.dev.instanceDeletions) > 0
-				a.dev.detailScroll[2].Y = 0
+				a.dev.detailScroll[devTabDatabases].Y = 0
 				if !exists {
 					a.dev.dbID = ""
 				}
@@ -105,7 +105,7 @@ func (a *app) devInstanceDeletions(c *ui.Context) {
 		if ui.Button(c, "Back to database settings").Disabled(d.busy).Clicked() {
 			d.deletionsOpen = false
 			d.deleteConfirmation = ""
-			d.detailScroll[2].Y = 0
+			d.detailScroll[devTabDatabases].Y = 0
 		}
 	})
 	if len(d.instanceDeletions) == 0 {

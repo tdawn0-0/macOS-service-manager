@@ -20,7 +20,7 @@ func TestCLIInstanceDeletionRequiresReviewedPathAndExactConfirmation(t *testing.
 		t.Fatal(e)
 	}
 	os.WriteFile(filepath.Join(dir, "value"), []byte("42"), 0600)
-	s := devplatform.State{SchemaVersion: devplatform.Schema, Projects: map[string]devplatform.Project{}, Packages: map[string]devplatform.Package{}, Sites: map[string]devplatform.Site{}, Instances: map[string]devplatform.Instance{id: {ID: id, Kind: "redis", Package: "redis@test-universal", Port: 56379}}}
+	s := devplatform.State{SchemaVersion: devplatform.Schema, ProxyRules: []devplatform.ProxyRule{}, ProxyListenerPort: 443, Packages: map[string]devplatform.Package{}, Instances: map[string]devplatform.Instance{id: {ID: id, Kind: "redis", Package: "redis@test-universal", Port: 56379}}}
 	b, _ := json.Marshal(s)
 	if e := os.WriteFile(filepath.Join(root, "state.json"), b, 0600); e != nil {
 		t.Fatal(e)

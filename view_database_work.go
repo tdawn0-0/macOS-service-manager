@@ -27,7 +27,7 @@ func (a *app) databaseWorkTask(fn func(*devplatform.Manager) error) {
 }
 func (a *app) openDatabaseWork() {
 	a.dev.databaseWorkOpen = true
-	a.dev.detailScroll[2].Y = 0
+	a.dev.detailScroll[devTabDatabases].Y = 0
 	a.databaseWorkTask(nil)
 }
 func (a *app) devDatabaseWork(c *ui.Context) {
@@ -38,7 +38,7 @@ func (a *app) devDatabaseWork(c *ui.Context) {
 		}
 		if ui.Button(c, "Back to database settings").Disabled(d.busy).Clicked() {
 			d.databaseWorkOpen = false
-			d.detailScroll[2].Y = 0
+			d.detailScroll[devTabDatabases].Y = 0
 		}
 	})
 	if len(d.databaseWork) == 0 {

@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-func TestUIHTTPSPortConflictKeepsLastGoodSiteAndRepairsByChangingPort(t *testing.T) {
+func TestUIHTTPSPortConflictKeepsLastGoodRulesAndRepairsByChangingPort(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		t.Run(fmt.Sprintf("minimum-dark-%t", dark), func(t *testing.T) {
 			h := newDevUIHarnessSize(t, 900, 520, dark)
@@ -27,11 +27,11 @@ func TestUIHTTPSPortConflictKeepsLastGoodSiteAndRepairsByChangingPort(t *testing
 			defer upstream.Close()
 			h.click("HTTPS")
 			goodPort := freeUIPort(t)
-			h.fill("Site name", "good")
-			h.fill("Local domain", "good-port.test")
-			h.fill("Upstream address", upstream.URL)
-			h.fill("HTTPS port", fmt.Sprint(goodPort))
-			h.click("Save HTTPS site")
+			h.fill("HTTPS listener port", fmt.Sprint(goodPort))
+			h.click("Add rule")
+			h.fill("Domain", "good-port.test")
+			h.fill("Local port", fmt.Sprint(upstream.Listener.Addr().(*net.TCPAddr).Port))
+			h.click("Save HTTPS rules")
 			h.click("Apply proxy")
 			if strings.Contains(h.a.dev.output, "Error:") {
 				t.Fatal(h.a.dev.output)
@@ -70,12 +70,8 @@ func TestUIHTTPSPortConflictKeepsLastGoodSiteAndRepairsByChangingPort(t *testing
 			}
 			defer occupied.Close()
 			oldPort := occupied.Addr().(*net.TCPAddr).Port
-			h.click("New HTTPS site")
-			h.fill("Site name", "repair")
-			h.fill("Local domain", "repair-port.test")
-			h.fill("Upstream address", upstream.URL)
-			h.fill("HTTPS port", fmt.Sprint(oldPort))
-			h.click("Save HTTPS site")
+			h.fill("HTTPS listener port", fmt.Sprint(oldPort))
+			h.click("Save HTTPS rules")
 			h.click("Apply proxy")
 			if !strings.Contains(h.a.dev.output, "unavailable") || h.a.dev.portChecks[oldPort].Status != "In use" {
 				t.Fatal("port failure not shown", h.a.dev.output)
@@ -90,17 +86,16 @@ func TestUIHTTPSPortConflictKeepsLastGoodSiteAndRepairsByChangingPort(t *testing
 				t.Fatal("UI did not show the actual occupying process", h.ui.Texts())
 			}
 			h.click("Find available HTTPS port")
-			newPort, err := strconv.Atoi(h.a.dev.sitePort)
+			newPort, err := strconv.Atoi(h.a.dev.proxyListenerPort)
 			if err != nil || newPort == oldPort || newPort < 1024 {
-				t.Fatal("invalid port suggestion", h.a.dev.sitePort)
+				t.Fatal("invalid port suggestion", h.a.dev.proxyListenerPort)
 			}
-			h.click("Save HTTPS site")
+			h.click("Save HTTPS rules")
 			h.click("Apply proxy")
 			if strings.Contains(h.a.dev.output, "Error:") {
 				t.Fatal("GUI port repair failed", h.a.dev.output)
 			}
-			check("repair-port.test", newPort)
-			check("good-port.test", goodPort)
+			check("good-port.test", newPort)
 			conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", oldPort), time.Second)
 			if err != nil {
 				t.Fatal("port repair stopped an external listener", err)

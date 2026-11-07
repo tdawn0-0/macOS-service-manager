@@ -48,7 +48,6 @@ func databaseToolFixture(t *testing.T) (*Manager, Package) {
 		for _, id := range []string{"first", "second"} {
 			s.Instances[id] = Instance{ID: id, Kind: "postgresql", Package: p.ID(), Port: integrationPort(t)}
 		}
-		s.Projects["linked"] = Project{ID: "linked", SchemaVersion: Schema, Name: "Linked", Directory: t.TempDir(), Instances: []string{"first"}}
 		return nil
 	}); e != nil {
 		t.Fatal(e)
@@ -94,8 +93,7 @@ func TestDatabaseToolsOverlapWithoutBlockingConfigurationAndReserveLifecycle(t *
 	waitDatabaseTool(t, m, "second")
 	short, stop := context.WithTimeout(ctx, 2*time.Second)
 	defer stop()
-	saved := Project{SchemaVersion: Schema, ID: "unrelated", Name: "Saved during backups", Directory: t.TempDir()}
-	if e := New(m.Root).SaveProject(short, saved); e != nil {
+	if e := New(m.Root).ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "during-backup.test", LocalPort: 3000}}); e != nil {
 		t.Fatal("backup blocked workspace configuration", e)
 	}
 	assertBusy := func(name string, e error) {
@@ -114,9 +112,6 @@ func TestDatabaseToolsOverlapWithoutBlockingConfigurationAndReserveLifecycle(t *
 	s, _ := m.Read()
 	assertBusy("change port", m.ChangeInstancePort(short, s.Instances["first"], integrationPort(t)))
 	assertBusy("delete data", m.DeleteInstanceData(short, "first", "unused", "first"))
-	for name, action := range map[string]func(context.Context, string) error{"up": m.Up, "down": m.Down, "restart": m.RestartProject} {
-		assertBusy(name, action(short, "linked"))
-	}
 	plan, e := m.PreviewShutdown(short)
 	if e != nil {
 		t.Fatal(e)
@@ -143,7 +138,7 @@ func TestDatabaseToolsOverlapWithoutBlockingConfigurationAndReserveLifecycle(t *
 		}
 	}
 	s, e = m.Read()
-	if e != nil || s.Projects[saved.ID].Name != saved.Name {
+	if e != nil || len(s.ProxyRules) != 1 || s.ProxyRules[0].Domain != "during-backup.test" {
 		t.Fatal("tool completion replaced a newer configuration", e)
 	}
 }
@@ -188,8 +183,7 @@ func TestDatabaseToolCancellationDoesNotCancelIndependentBackup(t *testing.T) {
 		t.Fatal("independent backup completed before release", r)
 	default:
 	}
-	saved := Project{SchemaVersion: Schema, ID: "during-cancel", Name: "Saved", Directory: t.TempDir()}
-	if e := m.SaveProject(ctx, saved); e != nil {
+	if e := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{{Domain: "during-cancel.test", LocalPort: 3000}}); e != nil {
 		t.Fatal(e)
 	}
 	if e := os.WriteFile(filepath.Join(m.Root, "release"), nil, 0600); e != nil {

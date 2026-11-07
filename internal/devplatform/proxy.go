@@ -11,7 +11,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"macos-service-manager/internal/system"
@@ -25,24 +24,15 @@ import (
 	"time"
 )
 
-func allSites(s *State) []Site {
-	var sites []Site
-	for _, site := range s.Sites {
-		if !site.Disabled && !site.NeedsReview {
-			sites = append(sites, site)
-		}
-	}
-	for _, p := range s.Projects {
-		for _, site := range p.Sites {
-			if !site.Disabled && !site.NeedsReview {
-				sites = append(sites, site)
-			}
-		}
+func proxyRoutesFromState(s *State) []proxyRoute {
+	sites := make([]proxyRoute, 0, len(s.ProxyRules))
+	for _, rule := range s.ProxyRules {
+		sites = append(sites, proxyRoute{Domain: rule.Domain, LocalPort: rule.LocalPort, Port: s.ProxyListenerPort})
 	}
 	sort.Slice(sites, func(i, j int) bool { return sites[i].Domain < sites[j].Domain })
 	return sites
 }
-func validateSites(sites []Site) error {
+func validateProxyRoutes(sites []proxyRoute) error {
 	seen := map[string]bool{}
 	for _, s := range sites {
 		if e := s.Validate(); e != nil {
@@ -50,7 +40,7 @@ func validateSites(sites []Site) error {
 		}
 		key := fmt.Sprintf("%s:%d", s.Domain, s.Port)
 		if seen[key] {
-			return fmt.Errorf("duplicate site %s", key)
+			return fmt.Errorf("duplicate proxy route %s", key)
 		}
 		seen[key] = true
 	}
@@ -83,21 +73,9 @@ func (m *Manager) leaf(domain string) (tls.Certificate, error) {
 	}
 	return tls.Certificate{Certificate: [][]byte{der, ca.Raw}, PrivateKey: k, Leaf: t}, nil
 }
-func (m *Manager) SaveSite(ctx context.Context, site Site) error {
-	if e := site.Validate(); e != nil {
-		return e
-	}
-	return m.withState(ctx, func(s *State) error {
-		s.Sites[site.ID] = site
-		if e := validateSites(allSites(s)); e != nil {
-			return e
-		}
-		return nil
-	})
-}
 func (m *Manager) startProxy(ctx context.Context, s *State) error {
 	var keys []resourceKey
-	for _, port := range sitePorts(allSites(s)) {
+	for _, port := range proxyListenerPorts(proxyRoutesFromState(s)) {
 		keys = append(keys, resourceKey{"TCP port", fmt.Sprint(port)})
 	}
 	release, leaseErr := m.resourceLeases(ctx, keys...)
@@ -105,8 +83,8 @@ func (m *Manager) startProxy(ctx context.Context, s *State) error {
 		return leaseErr
 	}
 	defer release()
-	sites := allSites(s)
-	if e := validateSites(sites); e != nil {
+	sites := proxyRoutesFromState(s)
+	if e := validateProxyRoutes(sites); e != nil {
 		return e
 	}
 	if len(sites) == 0 {
@@ -115,7 +93,7 @@ func (m *Manager) startProxy(ctx context.Context, s *State) error {
 	if _, _, e := m.ca(); e != nil {
 		return e
 	}
-	old, _ := m.proxySites()
+	old, _ := m.publishedProxyRoutes()
 	if privilegedPorts(sites) {
 		return m.startSocketProxy(ctx, sites, old)
 	}
@@ -126,7 +104,7 @@ func (m *Manager) startProxy(ctx context.Context, s *State) error {
 	if e := m.stopSocketJob(ctx); e != nil {
 		return e
 	}
-	ports := func(ss []Site) map[int]bool {
+	ports := func(ss []proxyRoute) map[int]bool {
 		out := map[int]bool{}
 		for _, site := range ss {
 			out[site.Port] = true
@@ -157,8 +135,8 @@ func (m *Manager) startProxy(ctx context.Context, s *State) error {
 			return e
 		}
 	}
-	path := filepath.Join(m.Root, "proxy", "sites.json")
-	if e = writeJSON(path, sites); e != nil {
+	path := filepath.Join(m.Root, "proxy", "rules.json")
+	if e = writeJSON(path, proxyConfigFromState(s)); e != nil {
 		return e
 	}
 	fresh, e := m.startJob(ctx, "proxy", args, m.Root, nil, false)
@@ -171,14 +149,14 @@ func (m *Manager) startProxy(ctx context.Context, s *State) error {
 	}
 	if e == nil {
 		for _, site := range sites {
-			if e = m.verifySiteTLS(ctx, site); e != nil {
+			if e = m.verifyProxyTLS(ctx, site); e != nil {
 				break
 			}
 		}
 	}
 	if e != nil {
 		_ = m.stopJob(context.Background(), "proxy")
-		_ = writeJSON(path, old)
+		_ = writeJSON(path, proxyConfigFromRoutes(old))
 		if loaded {
 			_, _ = m.startJob(context.Background(), "proxy", args, m.Root, nil, false)
 		}
@@ -195,11 +173,11 @@ func (m *Manager) ServeProxy(ctx context.Context) error {
 	if e := m.init(); e != nil {
 		return e
 	}
-	sites, e := m.proxySites()
+	sites, e := m.publishedProxyRoutes()
 	if e != nil {
 		return e
 	}
-	if e = validateSites(sites); e != nil {
+	if e = validateProxyRoutes(sites); e != nil {
 		return e
 	}
 	routes := newLiveProxyRoutes(m, sites)
@@ -209,7 +187,7 @@ func (m *Manager) ServeProxy(ctx context.Context) error {
 		ports[site.Port] = true
 	}
 	if len(ports) == 0 {
-		return errors.New("no sites configured")
+		return errors.New("no HTTPS proxy rules configured")
 	}
 	var servers []*http.Server
 	var listeners []net.Listener
@@ -268,8 +246,8 @@ func (m *Manager) ServeProxy(ctx context.Context) error {
 const hostsBegin = "# BEGIN Service Manager Development"
 const hostsEnd = "# END Service Manager Development"
 
-func HostsContent(old string, sites []Site) (string, error) {
-	if e := validateSites(sites); e != nil {
+func HostsContent(old string, sites []proxyRoute) (string, error) {
+	if e := validateProxyRoutes(sites); e != nil {
 		return "", e
 	}
 	start, end := strings.Index(old, hostsBegin), strings.Index(old, hostsEnd)
@@ -334,7 +312,7 @@ func (m *Manager) ConfigureHosts(ctx context.Context) error {
 		if e != nil {
 			return e
 		}
-		updated, e := HostsContent(string(old), allSites(s))
+		updated, e := HostsContent(string(old), proxyRoutesFromState(s))
 		if e != nil {
 			return e
 		}
@@ -363,14 +341,12 @@ func hostsInstallScript(old, updated []byte) (string, error) {
 	return check + " && tmp=$(/usr/bin/mktemp /etc/.msm-hosts.XXXXXX) && trap '/bin/rm -f \"$tmp\"' EXIT && /usr/bin/printf '%s' " + system.ShellQuote(base64.StdEncoding.EncodeToString(updated)) + " | /usr/bin/base64 -D > \"$tmp\" && set -- $(/usr/bin/stat -f '%u %g %Lp' /etc/hosts) && /usr/sbin/chown \"$1:$2\" \"$tmp\" && /bin/chmod \"$3\" \"$tmp\" && " + check + " && /bin/mv -f \"$tmp\" /etc/hosts && /usr/bin/dscacheutil -flushcache", nil
 }
 
-func (m *Manager) proxySites() ([]Site, error) {
-	var sites []Site
-	b, e := os.ReadFile(filepath.Join(m.Root, "proxy", "sites.json"))
-	if e != nil {
-		return nil, e
+func (m *Manager) publishedProxyRoutes() ([]proxyRoute, error) {
+	config, err := readPublishedProxyConfig(m.Root)
+	if err != nil {
+		return nil, err
 	}
-	if e = json.Unmarshal(b, &sites); e != nil {
-		return nil, e
-	}
-	return sites, validateSites(sites)
+	s := State{ProxyListenerPort: config.ListenerPort, ProxyRules: config.Rules}
+	sites := proxyRoutesFromState(&s)
+	return sites, validateProxyRoutes(sites)
 }

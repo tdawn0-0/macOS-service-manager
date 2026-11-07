@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -63,128 +62,6 @@ func seedUIPackage(t *testing.T, h *devUIHarness, name, version string) devplatf
 	}
 	seedRuntimeCache(t, h.root, p)
 	return p
-}
-func importUIPackageProject(t *testing.T, h *devUIHarness) string {
-	t.Helper()
-	dir := t.TempDir()
-	for name, value := range map[string]string{".nvmrc": "20.19.0\n", "package.json": `{"scripts":{"dev":"node app.js"}}`} {
-		if e := os.WriteFile(filepath.Join(dir, name), []byte(value), 0600); e != nil {
-			t.Fatal(e)
-		}
-	}
-	h.click("Projects")
-	h.fill("Project folder", dir)
-	h.click("Import project")
-	return h.a.dev.id
-}
-func TestUIBackgroundPackagesAllowConfigurationAndKeepDrafts(t *testing.T) {
-	if os.Getenv("MSM_UI_E2E_PACKAGE_CACHE") == "" {
-		t.Skip("set MSM_UI_E2E_PACKAGE_CACHE to verified Node and Redis archives")
-	}
-	for _, dark := range []bool{false, true} {
-		t.Run(fmt.Sprintf("minimum-dark-%t", dark), func(t *testing.T) {
-			h := newDevUIHarnessSize(t, 900, 520, dark)
-			node := seedUIPackage(t, h, "node", "20.19.0")
-			redis := seedUIPackage(t, h, "redis", "7.4.7")
-			id := importUIPackageProject(t, h)
-			entered, release := pauseUIPackage(t, h, node.ID())
-			h.click("Choose Node.js 20.19.0 from .nvmrc")
-			h.click("Review package")
-			h.foregroundOnly = true
-			h.click("Download and install")
-			select {
-			case <-entered:
-			case <-time.After(5 * time.Second):
-				t.Fatal("background package task did not start")
-			}
-			if h.a.dev.busy || !h.a.packageTaskRunning(node.ID()) {
-				t.Fatal("download still occupies the foreground")
-			}
-			h.click("Software redis")
-			h.click("Review package")
-			h.click("Download and install")
-			if !h.a.packageTaskRunning(node.ID()) || !h.a.packageTaskRunning(redis.ID()) {
-				t.Fatal("independent package tasks did not overlap")
-			}
-			h.click("Projects")
-			h.click("Overview")
-			h.fill("Project name", "Saved during downloads")
-			// A short watchdog releases the simulated slow transfer if a save regresses
-			// to holding the global lock; the test can then fail without hanging cleanup.
-			unblockTimeout := time.AfterFunc(4*time.Second, release)
-			h.click("Save project")
-			unblockTimeout.Stop()
-			state, e := h.a.dev.managerFactory().Read()
-			if e != nil || state.Projects[id].Name != "Saved during downloads" || !h.a.packageTaskRunning(node.ID()) {
-				t.Fatal("save waited for or lost the running download", state, e)
-			}
-			h.fill("Project name", "Unsaved draft survives")
-			external := state.Projects[id].Clone()
-			external.Name = "Saved in another caller"
-			if e := h.a.dev.managerFactory().SaveProject(context.Background(), external); e != nil {
-				t.Fatal(e)
-			}
-			release()
-			h.foregroundOnly = false
-			h.waitIdle()
-			if h.a.dev.draft.Name != "Unsaved draft survives" || h.a.dev.state.Projects[id].Name != external.Name {
-				t.Fatal("background refresh replaced the draft or lost external state", h.a.dev.draft.Name, h.a.dev.state.Projects[id].Name)
-			}
-			if len(h.a.dev.state.Packages) != 2 || h.a.dev.servicePackage != node.ID() {
-				t.Fatal("completion did not reconcile both versions and the unchanged runtime choice", h.a.dev.servicePackage)
-			}
-			h.click("Save project")
-			state, e = h.a.dev.managerFactory().Read()
-			if e != nil || state.Projects[id].Name != "Unsaved draft survives" || state.Projects[id].Services[0].Package != node.ID() || len(state.Packages) != 2 {
-				t.Fatal("final save lost concurrent changes", state, e)
-			}
-		})
-	}
-}
-func TestUIBackgroundCompletionDoesNotOverrideLaterRuntimeChoice(t *testing.T) {
-	if os.Getenv("MSM_UI_E2E_PACKAGE_CACHE") == "" {
-		t.Skip("set MSM_UI_E2E_PACKAGE_CACHE to verified Node archives")
-	}
-	h := newDevUIHarnessSize(t, 900, 520, true)
-	node20 := seedUIPackage(t, h, "node", "20.19.0")
-	node22 := seedUIPackage(t, h, "node", "22.14.0")
-	h.click("Software")
-	h.fill("Exact version", "22.14.0")
-	h.click("Review package")
-	h.click("Download and install")
-	id := importUIPackageProject(t, h)
-	entered, release := pauseUIPackage(t, h, node20.ID())
-	h.click("Choose Node.js 20.19.0 from .nvmrc")
-	h.click("Review package")
-	h.foregroundOnly = true
-	h.click("Download and install")
-	select {
-	case <-entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("first runtime download did not start")
-	}
-	// Explicitly choose an already installed version after the first request.
-	h.fill("Exact version", "22.14.0")
-	h.click("Review package")
-	h.click("Use installed version")
-	waitUIPackageCondition(t, h, func() bool {
-		return !h.a.packageTaskRunning(node22.ID()) && !h.a.dev.busy && !h.a.dev.packageNeedsRefresh
-	})
-	h.click("Projects")
-	h.click("Save project")
-	if h.a.dev.state.Projects[id].Services[0].Package != node22.ID() {
-		t.Fatal("later selected version was not saved")
-	}
-	release()
-	h.foregroundOnly = false
-	h.waitIdle()
-	if h.a.dev.servicePackage != node22.ID() || h.a.dev.draft.Services[0].Package != node22.ID() || h.a.dev.state.Projects[id].Services[0].Package != node22.ID() {
-		t.Fatal("old background completion replaced a later runtime choice", h.a.dev.servicePackage)
-	}
-	out, e := h.a.dev.managerFactory().Exec(context.Background(), id, []string{"node", "--version"})
-	if e != nil || out != "v22.14.0\n" {
-		t.Fatal("saved project executed a different runtime", out, e)
-	}
 }
 func TestUIQuitCanCancelBackgroundPackageBeforeLeaving(t *testing.T) {
 	if os.Getenv("MSM_UI_E2E_PACKAGE_CACHE") == "" {

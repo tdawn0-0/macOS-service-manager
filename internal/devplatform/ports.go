@@ -38,9 +38,6 @@ type PortInspection struct {
 	Detail    string
 }
 
-// Exposed for the service form; this is observation, not a listen declaration.
-func ReadinessPort(address string) int { return addressPort(address) }
-
 func visiblePortText(value string) string {
 	var b strings.Builder
 	for _, r := range value {
@@ -171,12 +168,12 @@ func (m *Manager) AvailableLocalPort(ctx context.Context) (int, error) {
 
 // Check only newly requested ports, keeping an existing app listener intact.
 // launchd can bind privileged ports even when this process lacks that privilege.
-func preflightProxyPorts(sites, old []Site, loaded bool) error {
+func preflightProxyPorts(sites, old []proxyRoute, loaded bool) error {
 	before := map[int]bool{}
 	for _, site := range old {
 		before[site.Port] = true
 	}
-	for _, port := range sitePorts(sites) {
+	for _, port := range proxyListenerPorts(sites) {
 		if loaded && before[port] {
 			continue
 		}
@@ -191,4 +188,28 @@ func preflightProxyPorts(sites, old []Site, loaded bool) error {
 		return &PortUnavailableError{Port: port, Role: "HTTPS", Err: err}
 	}
 	return nil
+}
+
+func freeInstancePort(preferred int, reserved map[int]bool) (int, error) {
+	if preferred != 0 && (preferred < 1024 || preferred > 65535) {
+		return 0, errors.New("locked database port must be 1024–65535")
+	}
+	if preferred != 0 && !reserved[preferred] {
+		if l, e := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", preferred)); e == nil {
+			l.Close()
+			return preferred, nil
+		}
+	}
+	for n := 0; n < 32; n++ {
+		l, e := net.Listen("tcp4", "127.0.0.1:0")
+		if e != nil {
+			return 0, e
+		}
+		port := l.Addr().(*net.TCPAddr).Port
+		l.Close()
+		if !reserved[port] {
+			return port, nil
+		}
+	}
+	return 0, errors.New("could not select a free database port")
 }

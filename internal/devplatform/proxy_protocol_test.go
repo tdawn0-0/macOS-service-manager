@@ -65,8 +65,9 @@ func TestHTTPSProxyWebSocketStreamingAndUpload(t *testing.T) {
 	defer upstream.Close()
 	m := testManager(t)
 	port := integrationPort(t)
-	site := Site{ID: "protocols", Domain: "protocols.test", Upstream: upstream.URL, Port: port, Proxy: &ProxyOptions{ConnectTimeoutSeconds: 2, ResponseHeaderTimeoutSeconds: 1}}
-	if e := writeJSON(filepath.Join(m.Root, "proxy", "sites.json"), []Site{site}); e != nil {
+	site := proxyRoute{Domain: "protocols.test", LocalPort: upstream.Listener.Addr().(*net.TCPAddr).Port, Port: port}
+	localPort := upstream.Listener.Addr().(*net.TCPAddr).Port
+	if e := writeJSON(filepath.Join(m.Root, "proxy", "rules.json"), proxyPublishedConfig{SchemaVersion: 1, ListenerPort: port, Rules: []ProxyRule{{Domain: site.Domain, LocalPort: localPort}}}); e != nil {
 		t.Fatal(e)
 	}
 	ca, _, e := m.ca()
@@ -77,7 +78,7 @@ func TestHTTPSProxyWebSocketStreamingAndUpload(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- m.ServeProxy(ctx) }()
-	if e = m.verifySiteTLS(ctx, site); e != nil {
+	if e = m.verifyProxyTLS(ctx, site); e != nil {
 		t.Fatal(e)
 	}
 	roots := x509.NewCertPool()

@@ -16,9 +16,6 @@ import (
 )
 
 func (m *Manager) requirePackageIdle(ctx context.Context, s *State, p Package) error {
-	if e := m.requirePackageCommandIdle(p.ID()); e != nil {
-		return e
-	}
 	if e := m.requirePackageDatabaseWorkIdle(p.ID()); e != nil {
 		return e
 	}

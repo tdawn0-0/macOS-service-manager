@@ -173,27 +173,4 @@ func TestAdditionalEnginesIntegration(t *testing.T) {
 			}
 		})
 	}
-	t.Run("php", func(t *testing.T) {
-		p := Project{SchemaVersion: 1, ID: "verify-php-" + randomID(), Name: "PHP verification", Directory: t.TempDir()}
-		os.WriteFile(filepath.Join(p.Directory, "index.php"), []byte("<?php echo 'php-managed-ok';"), 0600)
-		port := integrationPort(t)
-		phpID := ""
-		for id, pkg := range state.Packages {
-			if pkg.Name == "php" && strings.HasPrefix(pkg.Formula, "shivammathur/php/") {
-				phpID = id
-				break
-			}
-		}
-		if phpID == "" {
-			t.Fatal("install a shivammathur/php package in the integration root first")
-		}
-		p.Services = []Service{{ID: "web", Package: phpID, Command: []string{"php", "-S", fmt.Sprintf("127.0.0.1:%d", port)}, Health: fmt.Sprintf("http://127.0.0.1:%d", port)}}
-		if e = m.SaveProject(ctx, p); e != nil {
-			t.Fatal(e)
-		}
-		defer m.RemoveProject(context.Background(), p.ID)
-		if e = m.Up(ctx, p.ID); e != nil {
-			t.Fatal(e)
-		}
-	})
 }

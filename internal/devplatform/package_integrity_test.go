@@ -194,53 +194,6 @@ func TestPackageRepairRollsBackCancellationAndStateCommitFailure(t *testing.T) {
 	}
 }
 
-func TestPackageRepairRefusesActiveCLIAndRestoresMissingTree(t *testing.T) {
-	m, p := integrityFixture(t)
-	ctx := context.Background()
-	project := Project{SchemaVersion: Schema, ID: "cli", Name: "CLI", Directory: t.TempDir(), Services: []Service{{ID: "cli", Package: p.ID(), Command: []string{"fixture"}}}}
-	if err := m.SaveProject(ctx, project); err != nil {
-		t.Fatal(err)
-	}
-	commandCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	ready := filepath.Join(t.TempDir(), "ready")
-	done := make(chan error, 1)
-	go func() { _, err := m.Exec(commandCtx, project.ID, []string{"fixture", "hold", ready}); done <- err }()
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		if _, err := os.Stat(ready); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("CLI fixture did not start")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if err := m.RepairPackage(ctx, p.ID()); err == nil || !strings.Contains(err.Error(), "in use") {
-		t.Fatal("replaced a runtime used by CLI", err)
-	}
-	cancel()
-	if err := <-done; err == nil {
-		t.Fatal("CLI cancellation was ignored")
-	}
-	if err := os.RemoveAll(m.packageDir(p)); err != nil {
-		t.Fatal(err)
-	}
-	assertIntegrity(t, m, p, "Needs repair")
-	if err := m.RepairPackage(ctx, p.ID()); err != nil {
-		t.Fatal(err)
-	}
-	assertIntegrity(t, m, p, "Verified")
-	if out, err := m.Exec(ctx, project.ID, []string{"fixture"}); err != nil || out != "fixture-ok" {
-		t.Fatal("repaired binary is not executable", out, err)
-	}
-	cancelled, cancel := context.WithCancel(ctx)
-	cancel()
-	if _, err := m.VerifyPackage(cancelled, p.ID()); !errors.Is(err, context.Canceled) {
-		t.Fatal(err)
-	}
-}
-
 func TestRepairDownloadFailureKeepsOriginalAndCanRetry(t *testing.T) {
 	m, p := integrityFixture(t)
 	cache := filepath.Join(m.Root, "downloads", p.SHA256)

@@ -77,12 +77,6 @@ func (m *Manager) resourceLeases(ctx context.Context, keys ...resourceKey) (func
 			return nil, e
 		}
 		files = append(files, f)
-		if key.Kind == "project" || key.Kind == "database instance" {
-			if e := m.requireCommandResourceIdle(key); e != nil {
-				release()
-				return nil, e
-			}
-		}
 		if key.Kind == "database instance" {
 			if e := m.requireDatabaseWorkIdle(key.ID); e != nil {
 				release()

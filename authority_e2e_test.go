@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -179,13 +180,13 @@ func TestUIAuthorityRepairTrustCancellationActivationRollbackAndTLS(t *testing.T
 			if r.Active.Fingerprint != repairedFingerprint || !r.Active.Usable || r.Prepared != nil {
 				t.Fatal("replacement not activated", h.a.dev.output)
 			}
-			h.click("Back to HTTPS sites")
+			h.click("Back to HTTPS rules")
 			port := freeUIPort(t)
-			h.fill("Site name", "ca-repair")
-			h.fill("Local domain", "ca-repair.test")
-			h.fill("Upstream address", upstream.URL)
-			h.fill("HTTPS port", fmt.Sprint(port))
-			h.click("Save HTTPS site")
+			h.fill("HTTPS listener port", fmt.Sprint(port))
+			h.click("Add rule")
+			h.fill("Domain", "ca-repair.test")
+			h.fill("Local port", fmt.Sprint(upstream.Listener.Addr().(*net.TCPAddr).Port))
+			h.click("Save HTTPS rules")
 			h.click("Apply proxy")
 			if strings.Contains(h.a.dev.output, "Error:") {
 				t.Fatal(h.a.dev.output)

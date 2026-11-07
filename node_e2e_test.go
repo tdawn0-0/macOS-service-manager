@@ -15,7 +15,7 @@ import (
 // nodejs.org's release list, so that nothing here needs the network.
 func seedNodeWorkspace(t *testing.T, h *devUIHarness, versions ...string) {
 	t.Helper()
-	state := devplatform.State{SchemaVersion: devplatform.Schema, Packages: map[string]devplatform.Package{}, Projects: map[string]devplatform.Project{}, Instances: map[string]devplatform.Instance{}, Sites: map[string]devplatform.Site{}}
+	state := devplatform.State{SchemaVersion: devplatform.Schema, Packages: map[string]devplatform.Package{}, Instances: map[string]devplatform.Instance{}, ProxyRules: []devplatform.ProxyRule{}, ProxyListenerPort: 443}
 	for _, v := range versions {
 		p := devplatform.Package{Name: "node", Version: v, Arch: "arm64", Format: "tar.gz", URL: "https://nodejs.org/dist/v" + v + "/node-v" + v + "-darwin-arm64.tar.gz", SHA256: strings.Repeat("ab", 32), Strip: 1, Binaries: map[string]string{"node": "bin/node"}}
 		state.Packages[p.ID()] = p

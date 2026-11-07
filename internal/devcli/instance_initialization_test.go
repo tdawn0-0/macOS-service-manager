@@ -25,7 +25,7 @@ func TestCLIInitializationReviewAndArchivePreservesPreparedFiles(t *testing.T) {
 		t.Fatal("inspection created storage", e)
 	}
 	p := devplatform.Package{Name: "redis", Version: "fixture", Arch: "universal", URL: "https://unused.invalid/fixture.zip", SHA256: strings.Repeat("0", 64), Format: "zip", Binaries: map[string]string{"redis-server": "missing"}}
-	s := devplatform.State{SchemaVersion: devplatform.Schema, Projects: map[string]devplatform.Project{}, Packages: map[string]devplatform.Package{p.ID(): p}, Instances: map[string]devplatform.Instance{}, Sites: map[string]devplatform.Site{}}
+	s := devplatform.State{SchemaVersion: devplatform.Schema, ProxyRules: []devplatform.ProxyRule{}, ProxyListenerPort: 443, Packages: map[string]devplatform.Package{p.ID(): p}, Instances: map[string]devplatform.Instance{}}
 	if e := os.MkdirAll(root, 0700); e != nil {
 		t.Fatal(e)
 	}

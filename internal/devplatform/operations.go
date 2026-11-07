@@ -77,8 +77,6 @@ func (m *Manager) operationArtifact(path string) {
 }
 func operationWorkPhase(kind string) string {
 	switch kind {
-	case "exec":
-		return "Executing"
 	case "install", "repair":
 		return "Preparing"
 	case "initialize":
@@ -87,11 +85,11 @@ func operationWorkPhase(kind string) string {
 		return "Backing up"
 	case "restore":
 		return "Restoring"
-	case "up", "db-start":
+	case "db-start":
 		return "Starting"
-	case "down", "db-stop", "remove-project":
+	case "db-stop":
 		return "Stopping"
-	case "restart", "db-restart":
+	case "db-restart":
 		return "Restarting"
 	}
 	return "Working"
@@ -177,7 +175,7 @@ func (m *Manager) runOperation(ctx context.Context, req OperationRequest, retryO
 			m.Event(message)
 		}
 	}
-	if m.Event != nil && req.Kind != "exec" {
+	if m.Event != nil {
 		m.Event("Operation " + id + " · " + req.Kind)
 	}
 	var err error
@@ -372,7 +370,7 @@ func OperationCanRetry(r OperationRecord) bool {
 		return false
 	}
 	switch r.Request.Kind {
-	case "install", "repair", "up", "down", "restart", "db-start", "db-stop", "db-restart", "backup":
+	case "install", "repair", "db-start", "db-stop", "db-restart", "backup":
 		return true
 	}
 	return false
@@ -400,12 +398,6 @@ func (m *Manager) RetryOperation(ctx context.Context, id, revision string) error
 				return w.install(ctx, p)
 			case "repair":
 				return w.repairPackage(ctx, req.Resource)
-			case "up":
-				return w.up(ctx, req.Resource)
-			case "down":
-				return w.down(ctx, req.Resource)
-			case "restart":
-				return w.restartProject(ctx, req.Resource)
 			case "db-start", "db-stop", "db-restart":
 				return w.instanceAction(ctx, req.Resource, strings.TrimPrefix(req.Kind, "db-"))
 			case "backup":
@@ -451,31 +443,11 @@ func (m *Manager) Restore(ctx context.Context, id, name, path string) error {
 		return e
 	})
 }
-func (m *Manager) Up(ctx context.Context, id string) error {
-	return m.runOperation(ctx, OperationRequest{Kind: "up", Resource: id}, "", func(w *Manager) error { return w.up(ctx, id) })
-}
-func (m *Manager) Down(ctx context.Context, id string) error {
-	return m.runOperation(ctx, OperationRequest{Kind: "down", Resource: id}, "", func(w *Manager) error { return w.down(ctx, id) })
-}
-func (m *Manager) RestartProject(ctx context.Context, id string) error {
-	return m.runOperation(ctx, OperationRequest{Kind: "restart", Resource: id}, "", func(w *Manager) error { return w.restartProject(ctx, id) })
-}
 func (m *Manager) InstanceAction(ctx context.Context, id, action string) error {
 	if action != "start" && action != "stop" && action != "restart" {
 		return m.instanceAction(ctx, id, action)
 	}
 	return m.runOperation(ctx, OperationRequest{Kind: "db-" + action, Resource: id}, "", func(w *Manager) error { return w.instanceAction(ctx, id, action) })
-}
-
-func (m *Manager) Exec(ctx context.Context, id string, args []string) (string, error) {
-	var out string
-	err := m.runOperation(ctx, OperationRequest{Kind: "exec", Resource: id}, "", func(w *Manager) error {
-		w.operation.phase("Executing")
-		var e error
-		out, e = w.runCommandWork(ctx, id, args)
-		return e
-	})
-	return out, err
 }
 
 func (m *Manager) CreateDatabase(ctx context.Context, id, name string) error {

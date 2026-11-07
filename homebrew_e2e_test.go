@@ -12,17 +12,14 @@ import (
 	"testing"
 )
 
-func TestUIHomebrewReviewRepositoryAndFailedInstall(t *testing.T) {
+func TestUIHomebrewReviewAndFailedInstall(t *testing.T) {
 	for _, dark := range []bool{false, true} {
-		for _, name := range []string{"php", "postgresql"} {
+		for _, name := range []string{"postgresql"} {
 			t.Run(fmt.Sprintf("%s-dark-%t", name, dark), func(t *testing.T) {
 				h := newDevUIHarnessSize(t, 900, 520, dark)
 				base := h.a.dev.managerFactory
-				formula, version, rack := "shivammathur/php/php", "8.5.99", "php"
-				if name == "postgresql" {
-					formula, version, rack = "postgresql@17", "17.99", "postgresql@17"
-				}
-				tapped, attempted, failInstallation := false, false, false
+				formula, version, rack := "postgresql@17", "17.99", "postgresql@17"
+				attempted, failInstallation := false, false
 				h.a.dev.managerFactory = func() *devplatform.Manager {
 					m := base()
 					realRun := m.Run
@@ -39,7 +36,6 @@ func TestUIHomebrewReviewRepositoryAndFailedInstall(t *testing.T) {
 								}
 								return fmt.Sprintf(`{"formulae":[{"name":%q,"full_name":%q,"versions":{"stable":%q},"ruby_source_checksum":{"sha256":%q},"license":"test license"}]}`, rack, formula, version, strings.Repeat("a", 64)), nil
 							case "tap":
-								tapped = true
 								return "", nil
 							case "install":
 								return "", errors.New("unexpected shared Homebrew install in UI fixture")
@@ -52,12 +48,6 @@ func TestUIHomebrewReviewRepositoryAndFailedInstall(t *testing.T) {
 				}
 				h.click("Software")
 				h.click("Software " + name)
-				if name == "php" {
-					h.click("Add shivammathur/php repository")
-					if !tapped {
-						t.Fatal("repository action did not add the requested tap")
-					}
-				}
 				h.click("Review package")
 				if !h.a.dev.previewMatches() || h.a.dev.version != version || h.a.dev.packagePreview.Package.Formula != formula {
 					t.Fatal("review failed to resolve the series to an exact Homebrew keg", h.a.dev.output)

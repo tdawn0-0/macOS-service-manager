@@ -78,19 +78,19 @@ func TestUIBackgroundDatabaseBackupKeepsConfigurationAndIndependentInstance(t *t
 			if !h.a.databaseTaskRunning(id) {
 				t.Fatal("database backups did not overlap")
 			}
-			h.click("Projects")
-			h.fill("Project folder", t.TempDir())
-			h.click("Import project")
-			pid := h.a.dev.id
-			h.fill("Project name", "Saved while backing up")
+			h.click("HTTPS")
+			h.fill("HTTPS listener port", fmt.Sprint(freeUIPort(t)))
+			h.click("Add rule")
+			h.fill("Domain", "during-backup.test")
+			h.fill("Local port", "3000")
 			timer := time.AfterFunc(4*time.Second, unblock)
-			h.click("Save project")
+			h.click("Save HTTPS rules")
 			timer.Stop()
 			state, e := m.Read()
-			if e != nil || state.Projects[pid].Name != "Saved while backing up" || !h.a.databaseTaskRunning(id) {
+			if e != nil || len(state.ProxyRules) != 1 || !h.a.databaseTaskRunning(id) {
 				t.Fatal("backup blocked configuration", state, e)
 			}
-			h.fill("Project name", "Unsaved backup draft")
+			h.fill("Domain", "unsaved-backup.test")
 			if cancelled {
 				h.click("Database tasks")
 				h.click("Cancel database operation " + id)
@@ -99,7 +99,7 @@ func TestUIBackgroundDatabaseBackupKeepsConfigurationAndIndependentInstance(t *t
 			}
 			h.foregroundOnly = false
 			h.waitIdle()
-			if h.a.dev.draft.Name != "Unsaved backup draft" {
+			if h.a.dev.proxyDraft[0].Domain != "unsaved-backup.test" {
 				t.Fatal("background refresh replaced draft")
 			}
 			if redis("GET", "value") != "42" {

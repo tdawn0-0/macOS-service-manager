@@ -19,4 +19,13 @@ func TestInternalResourceOnlyCommands(t *testing.T) {
 			}
 		})
 	}
+	for _, command := range []string{"serve", "maintain", "database-worker", "node"} {
+		t.Run("dispatch-"+command, func(t *testing.T) {
+			var out bytes.Buffer
+			err := RunInternal(context.Background(), []string{command}, &out)
+			if err != nil && strings.Contains(err.Error(), "no command line") {
+				t.Fatal("allowed internal command rejected", err)
+			}
+		})
+	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/egoist/mygo/ui"
@@ -126,7 +125,7 @@ func (h *devUIHarness) click(label string) {
 		if ok && r.Y < 100 {
 			dy = -230
 		}
-		if label == "Save project" || label == "Details" || label == "Refresh" || label == "Cancel operation" || label == "Diagnostics" || label == "Tasks" || label == "Package tasks" || label == "Database tasks" || label == "Project tasks" {
+		if label == "Details" || label == "Refresh" || label == "Cancel operation" || label == "Diagnostics" || label == "Tasks" || label == "Package tasks" || label == "Database tasks" {
 			if e := h.ui.Click(label); e == nil {
 				h.ui.Frame()
 				h.waitIdle()
@@ -156,167 +155,6 @@ func freeUIPort(t *testing.T) int {
 	l.Close()
 	return port
 }
-func TestUIEndToEndImportConfigureRunHTTPS(t *testing.T) {
-	for _, size := range [][2]int{{1120, 720}, {900, 520}} {
-		for _, dark := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%dx%d-dark-%t", size[0], size[1], dark), func(t *testing.T) {
-				runUIProjectLifecycle(t, newDevUIHarnessSize(t, size[0], size[1], dark))
-			})
-		}
-	}
-}
-func runUIProjectLifecycle(t *testing.T, h *devUIHarness) {
-	dir := t.TempDir()
-	if e := os.WriteFile(filepath.Join(dir, "index.html"), []byte("UI end-to-end served through managed HTTPS"), 0600); e != nil {
-		t.Fatal(e)
-	}
-	h.fill("Project folder", dir)
-	h.click("Import project")
-	if len(h.a.dev.state.Projects) != 1 {
-		t.Fatalf("UI import failed: %s", h.a.dev.output)
-	}
-	id := h.a.dev.id
-	manager := devplatform.New(h.root)
-	defer func() { _ = manager.Down(context.Background(), id); _ = manager.StopProxy(context.Background()) }()
-	h.fill("Project name", "UI E2E project")
-	h.click("Services")
-	h.click("Add service")
-	h.fill("Service name", "web")
-	port := freeUIPort(t)
-	python, e := exec.LookPath("python3")
-	if e != nil {
-		t.Fatal(e)
-	}
-	h.fill("Program and arguments", fmt.Sprintf("%s\n-m\nhttp.server\n%d\n--bind\n127.0.0.1", python, port))
-	h.fill("Readiness check", fmt.Sprintf("http://127.0.0.1:%d", port))
-	h.fill("Readiness timeout (seconds)", "5")
-	h.click("Save project")
-	saved, e := manager.Read()
-	if e != nil {
-		t.Fatal(e)
-	}
-	p := saved.Projects[id]
-	if p.Name != "UI E2E project" || len(p.Services) != 1 || p.Services[0].ID != "web" || p.Services[0].ReadinessTimeoutSeconds != 5 {
-		t.Fatalf("form did not persist: %+v; %s", p, h.a.dev.output)
-	}
-	h.click("HTTPS")
-	httpsPort := freeUIPort(t)
-	h.fill("Site name", "ui-e2e")
-	h.fill("Local domain", "ui-e2e.test")
-	h.fill("Upstream address", fmt.Sprintf("http://127.0.0.1:%d", port))
-	h.fill("HTTPS port", fmt.Sprint(httpsPort))
-	h.click("Save HTTPS site")
-	h.click("Projects")
-	h.click("Start project")
-	if strings.Contains(h.a.dev.output, "Error:") {
-		t.Fatal(h.a.dev.output)
-	}
-	ca, e := os.ReadFile(filepath.Join(h.root, "proxy", "ca.pem"))
-	if e != nil {
-		t.Fatal(e)
-	}
-	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(ca)
-	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: "ui-e2e.test"}}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
-	request, _ := http.NewRequest("GET", fmt.Sprintf("https://127.0.0.1:%d/", httpsPort), nil)
-	request.Host = "ui-e2e.test"
-	response, e := client.Do(request)
-	if e != nil {
-		t.Fatal(e)
-	}
-	body, _ := io.ReadAll(response.Body)
-	response.Body.Close()
-	if !strings.Contains(string(body), "UI end-to-end served") {
-		t.Fatal(string(body))
-	}
-	h.click("Restart project")
-	response, e = client.Do(request.Clone(context.Background()))
-	if e != nil {
-		t.Fatal("UI restart did not restore HTTPS access", e)
-	}
-	body, _ = io.ReadAll(response.Body)
-	response.Body.Close()
-	if response.StatusCode != 200 || !strings.Contains(string(body), "UI end-to-end served") {
-		t.Fatal("UI restart left the service unavailable", string(body))
-	}
-	h.click("HTTPS")
-	h.click("Site ui-e2e.test")
-	h.click(fmt.Sprintf("Open https://ui-e2e.test:%d", httpsPort))
-	if len(h.opened) != 1 || h.opened[0] != fmt.Sprintf("https://ui-e2e.test:%d", httpsPort) {
-		t.Fatal("open website did not hand off correct URL", h.opened)
-	}
-	h.click("Diagnostics")
-	if h.a.dev.diagnosticReport == nil || !h.a.dev.diagnosticsOpen {
-		t.Fatal("UI did not display the diagnostic report", h.a.dev.output)
-	}
-	processReady, systemTrustFailed := false, false
-	for _, check := range h.a.dev.diagnosticReport.Checks {
-		if check.Layer == "Readiness" && check.Status == "OK" {
-			processReady = true
-		}
-		if check.Layer == "Proxy TLS" && check.Status == "Failed" {
-			systemTrustFailed = true
-		}
-	}
-	// This isolated CA is deliberately absent from system trust. A positive
-	// private-root request above must not make the OS-trust diagnostic pass.
-	if !processReady || !systemTrustFailed {
-		t.Fatal("diagnostics confused application readiness and system TLS trust", h.a.dev.diagnosticReport.Text())
-	}
-	h.click("Copy redacted report")
-	if len(h.copied) != 1 {
-		t.Fatal("UI did not copy the report")
-	}
-	var redacted devplatform.DiagnosticReport
-	if e = json.Unmarshal([]byte(h.copied[0]), &redacted); e != nil || !redacted.Redacted || strings.Contains(h.copied[0], "UI E2E project") || strings.Contains(h.copied[0], "ui-e2e.test") || strings.Contains(h.copied[0], dir) {
-		t.Fatal("UI copied identifying data", e, h.copied)
-	}
-	var revealed string
-	h.a.reveal = func(path string) { revealed = path }
-	h.click("Export redacted report")
-	exported, e := os.ReadFile(revealed)
-	if e != nil || string(exported) != h.copied[0] {
-		t.Fatal("UI export differs from the reviewed report", e, string(exported))
-	}
-	h.click("Back to workspace")
-	h.click("Projects")
-	h.click("Logs")
-	h.click("Read service logs")
-	if !strings.Contains(h.a.dev.logText, "GET /") {
-		t.Fatal("service output is missing from the log viewer", h.a.dev.logText)
-	}
-	if h.width == 1120 {
-		panel := ui.NewTester(func(c *ui.Context) { h.a.menubarView(c, func() {}) }, 320, h.a.panelHeight())
-		panel.Frame()
-		if e = panel.Click("Run project UI E2E project"); e != nil {
-			t.Fatal(e)
-		}
-		panel.Frame()
-		h.waitIdle()
-		if status := h.a.dev.statuses["project:"+id]; status != "Stopped" {
-			t.Fatal("menu bar did not stop the project", status)
-		}
-		panel.Frame()
-		if e = panel.Click("Run project UI E2E project"); e != nil {
-			t.Fatal(e)
-		}
-		panel.Frame()
-		h.waitIdle()
-		if status := h.a.dev.statuses["project:"+id]; status != "Healthy" {
-			t.Fatal("menu bar did not start the project", status)
-		}
-	}
-	h.click("Stop project")
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if c, e := (&net.Dialer{}).DialContext(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", port)); e == nil {
-		c.Close()
-		t.Fatal("UI stop left the project running")
-	}
-}
-
 func (h *devUIHarness) choose(label, value string) {
 	h.t.Helper()
 	h.click(label)
@@ -344,21 +182,21 @@ func TestUIValidationDoesNotPersistInvalidInput(t *testing.T) {
 		t.Fatal(h.a.dev.output)
 	}
 	manager := devplatform.New(h.root)
-	s, e := manager.Read()
-	if e != nil || len(s.Instances) != 0 {
-		t.Fatal("invalid form persisted an instance", e)
+	state, e := manager.Read()
+	if e != nil || len(state.Instances) != 0 {
+		t.Fatal(e)
 	}
 	h.click("HTTPS")
-	h.fill("Site name", "invalid-site")
-	h.fill("Local domain", "public-domain.com")
-	h.fill("Upstream address", "http://127.0.0.1:3000")
-	h.click("Save HTTPS site")
+	h.click("Add rule")
+	h.fill("Domain", "public-domain.com")
+	h.fill("Local port", "3000")
+	h.click("Save HTTPS rules")
 	if !strings.Contains(h.a.dev.output, ".test") {
 		t.Fatal(h.a.dev.output)
 	}
-	s, e = manager.Read()
-	if e != nil || len(s.Sites) != 0 {
-		t.Fatal("invalid site persisted", e)
+	state, e = manager.Read()
+	if e != nil || len(state.ProxyRules) != 0 {
+		t.Fatal("invalid rule persisted", e)
 	}
 }
 
@@ -451,95 +289,9 @@ func TestUISoftwareInstallAndDatabaseWorkflow(t *testing.T) {
 	}
 	h.click("Stop instance")
 
-	// Share through the UI, then import a second working copy and prepare it.
-	// Setup copies the exported files exactly; users never edit declarations.
-	h.click("Projects")
-	originalDir := t.TempDir()
-	h.fill("Project folder", originalDir)
-	h.click("Import project")
-	originalID := h.a.dev.id
-	h.click("ui-redis")
-	h.click("Save project")
-	h.click("Export environment")
-	if strings.Contains(h.a.dev.output, "Error:") {
-		t.Fatal(h.a.dev.output)
-	}
-	cloneDir := t.TempDir()
-	for _, name := range []string{"devmanager.json", "devmanager.lock.json"} {
-		b, err := os.ReadFile(filepath.Join(originalDir, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err = os.WriteFile(filepath.Join(cloneDir, name), b, 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	h.click("Import a project")
-	h.fill("Project folder", cloneDir)
-	h.click("Import project")
-	cloneID := h.a.dev.id
-	h.click("Prepare imported environment")
-	if strings.Contains(h.a.dev.output, "Error:") {
-		t.Fatal(h.a.dev.output)
-	}
-	clone := h.a.dev.state.Projects[cloneID]
-	if len(clone.Instances) != 1 || clone.Instances[0] == "ui-redis" {
-		t.Fatal("import shared the original database")
-	}
-	instance, ok := h.a.dev.state.Instances[clone.Instances[0]]
-	if !ok || instance.Port == h.a.dev.state.Instances["ui-redis"].Port {
-		t.Fatal("prepared environment did not create a separate database and port")
-	}
-	pw1, err := os.ReadFile(filepath.Join(h.root, "instances", "ui-redis", "password"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	pw2, err := os.ReadFile(filepath.Join(h.root, "instances", instance.ID, "password"))
-	if err != nil || string(pw1) == string(pw2) {
-		t.Fatal("prepared database did not get new credentials", err)
-	}
-	h.click("Databases")
-	h.click("Instance " + instance.ID)
-	h.fill("Database port", fmt.Sprint(freeUIPort(t)))
-	h.click("Save database port")
-	changedPort := h.a.dev.state.Instances[instance.ID].Port
-	if changedPort == instance.Port || strings.Contains(h.a.dev.output, "Error:") {
-		t.Fatal("could not change imported instance port", h.a.dev.output)
-	}
-	// Simulate endpoint configuration saved just before a process interruption.
-	configPath := filepath.Join(h.root, "instances", instance.ID, "valkey.conf")
-	config, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	damaged := strings.Replace(string(config), fmt.Sprintf("port %d\n", changedPort), fmt.Sprintf("port %d\n", freeUIPort(t)), 1)
-	if err = os.WriteFile(configPath, []byte(damaged), 0600); err != nil {
-		t.Fatal(err)
-	}
-	h.click("Repair saved port settings")
-	if strings.Contains(h.a.dev.output, "Error:") {
-		t.Fatal("GUI could not repair saved endpoint", h.a.dev.output)
-	}
-	repaired, err := os.ReadFile(configPath)
-	if err != nil || string(repaired) != string(config) {
-		t.Fatal("GUI endpoint repair changed unrelated settings", err)
-	}
-	h.click("Projects")
-	h.click("Prepare imported environment")
-	if h.a.dev.state.Instances[instance.ID].Port != changedPort {
-		t.Fatal("prepare undid the local port change")
-	}
-	if strings.Contains(h.a.dev.output, "Error:") {
-		t.Fatal("prepare was not repeatable after changing the database port", h.a.dev.output)
-	}
-	defer func() {
-		_ = manager.RemoveProject(context.Background(), cloneID)
-		_ = manager.RemoveProject(context.Background(), originalID)
-		_ = manager.InstanceAction(context.Background(), instance.ID, "remove")
-	}()
 }
 
-func TestUISoftwareCatalogAllSix(t *testing.T) {
+func TestUISoftwareCatalogAllFive(t *testing.T) {
 	cache := os.Getenv("MSM_UI_E2E_PACKAGE_CACHE")
 	if cache == "" {
 		t.Skip("set MSM_UI_E2E_PACKAGE_CACHE to verified package cache directories")
@@ -547,9 +299,9 @@ func TestUISoftwareCatalogAllSix(t *testing.T) {
 	h := newDevUIHarnessSize(t, 900, 520, true)
 	t.Log("UI viewport: 900×520, dark theme")
 	h.click("Software")
-	for _, name := range []string{"php", "node", "mysql", "postgresql", "redis", "mongodb"} {
+	for _, name := range []string{"node", "mysql", "postgresql", "redis", "mongodb"} {
 		t.Run(name, func(t *testing.T) {
-			if (name == "php" || name == "postgresql") && os.Getenv("MSM_UI_E2E_HOMEBREW") != "1" {
+			if name == "postgresql" && os.Getenv("MSM_UI_E2E_HOMEBREW") != "1" {
 				t.Skip("set MSM_UI_E2E_HOMEBREW=1 with the required Homebrew keg preinstalled")
 			}
 			previousT := h.t
@@ -571,7 +323,7 @@ func TestUISoftwareCatalogAllSix(t *testing.T) {
 			if _, ok := h.a.dev.state.Packages[pkg.ID()]; !ok {
 				t.Fatal("software was not installed through the UI", h.a.dev.output)
 			}
-			if name != "php" && name != "node" {
+			if name != "node" {
 				exerciseUIDatabase(t, h, pkg)
 				h.click("Software")
 				h.click("Software " + name)
@@ -809,7 +561,7 @@ func (h *devUIHarness) waitIdle() {
 	h.t.Helper()
 	deadline := time.NewTimer(2 * time.Minute)
 	defer deadline.Stop()
-	for h.a.dev.busy || (!h.foregroundOnly && (h.a.backgroundTasksRunning() || h.a.dev.packageNeedsRefresh || h.a.dev.databaseNeedsRefresh || h.a.dev.projectNeedsRefresh)) || h.a.dev.statusPolling || h.a.quit.loading {
+	for h.a.dev.busy || (!h.foregroundOnly && (h.a.backgroundTasksRunning() || h.a.dev.packageNeedsRefresh || h.a.dev.databaseNeedsRefresh)) || h.a.dev.statusPolling || h.a.quit.loading {
 		select {
 		case f := <-h.posted:
 			f()
@@ -817,57 +569,6 @@ func (h *devUIHarness) waitIdle() {
 		case <-deadline.C:
 			h.t.Fatal("UI operation did not complete", h.a.dev.output)
 		}
-	}
-}
-
-func TestUIBusyCancellationAndDraftIsolation(t *testing.T) {
-	h := newDevUIHarness(t)
-	m := devplatform.New(h.root)
-	p, e := m.Import(context.Background(), t.TempDir())
-	if e != nil {
-		t.Fatal(e)
-	}
-	p.Services = []devplatform.Service{{ID: "web", Command: []string{"/usr/bin/true"}}}
-	if e = m.SaveProject(context.Background(), p); e != nil {
-		t.Fatal(e)
-	}
-	h.click("Refresh")
-	h.click("Project " + p.Name)
-	h.fill("Project name", "Unsaved draft")
-	started := make(chan struct{}, 1)
-	h.a.dev.managerFactory = func() *devplatform.Manager {
-		m := devplatform.New(h.root)
-		m.Run = func(ctx context.Context, name string, args ...string) (string, error) {
-			started <- struct{}{}
-			<-ctx.Done()
-			return "", ctx.Err()
-		}
-		return m
-	}
-	if e = h.ui.Click("Refresh"); e != nil {
-		t.Fatal(e)
-	}
-	h.ui.Frame()
-	select {
-	case <-started:
-	case <-time.After(3 * time.Second):
-		t.Fatal("background operation did not start")
-	}
-	if !h.a.dev.busy {
-		t.Fatal("UI did not expose operation in progress")
-	}
-	if e = h.ui.Click("Save project"); e != nil {
-		t.Fatal(e)
-	}
-	h.ui.Frame()
-	if e = h.ui.Click("Cancel operation"); e != nil {
-		t.Fatal(e)
-	}
-	h.ui.Frame()
-	h.waitIdle()
-	state, e := m.Read()
-	if e != nil || state.Projects[p.ID].Name != p.Name || h.a.dev.draft.Name != "Unsaved draft" {
-		t.Fatal("refresh or disabled save lost draft isolation", e)
 	}
 }
 
@@ -886,117 +587,107 @@ func TestUIDevelopmentRefreshDoesNotReadLoginItems(t *testing.T) {
 	}
 }
 
-func TestUISiteCanMoveRenameAndDelete(t *testing.T) {
-	h := newDevUIHarness(t)
-	h.fill("Project folder", t.TempDir())
-	h.click("Import project")
-	h.fill("Project name", "Site owner")
-	h.click("Save project")
-	project := h.a.dev.id
-	h.click("HTTPS")
-	h.fill("Site name", "web")
-	h.fill("Local domain", "move.test")
-	h.fill("Upstream address", "http://127.0.0.1:3000")
-	h.fill("HTTPS port", fmt.Sprint(freeUIPort(t)))
-	h.click("Save HTTPS site")
-	if len(h.a.dev.state.Sites) != 1 {
-		t.Fatal("site was not created", h.a.dev.output)
-	}
-	h.choose("Project", "Site owner")
-	h.fill("Site name", "renamed")
-	h.click("Save HTTPS site")
-	p := h.a.dev.state.Projects[project]
-	if len(h.a.dev.state.Sites) != 0 || len(p.Sites) != 1 || p.Sites[0].ID != "renamed" {
-		t.Fatal("site move left an old or duplicate rule", h.a.dev.output)
-	}
-	h.click("Delete HTTPS site")
-	if len(h.a.dev.state.Projects[project].Sites) != 0 || h.a.dev.siteOriginalID != "" {
-		t.Fatal("site was not deleted", h.a.dev.output)
-	}
-}
-
-func TestUIServiceEditsSaveOnceAndRename(t *testing.T) {
-	h := newDevUIHarness(t)
-	h.fill("Project folder", t.TempDir())
-	h.click("Import project")
-	project := h.a.dev.id
-	h.click("Services")
-	h.click("Add service")
-	h.fill("Service name", "web")
-	h.fill("Program and arguments", "/usr/bin/true")
-	previous := h.a.dev.output
-	h.click("Start project")
-	if h.a.dev.output != previous {
-		t.Fatal("start ignored unsaved environment changes")
-	}
-	h.click("Save project")
-	h.fill("Service name", "worker")
-	h.click("Save project")
-	h.click("Environment")
-	h.fill("Environment variables", "GREETING=hello world")
-	h.click("Save project")
-	p := h.a.dev.state.Projects[project]
-	if len(p.Services) != 1 || p.Services[0].ID != "worker" || p.Services[0].Environment["GREETING"] != "hello world" {
-		t.Fatal("saving or renaming the service lost fields", h.a.dev.output)
-	}
-	h.click("Import a project")
-	h.fill("Project folder", t.TempDir())
-	h.click("Import project")
-	h.click("Environment")
-	if h.a.dev.environment != "" || h.a.dev.arguments != "" {
-		t.Fatal("previous project environment leaked into an empty project form")
-	}
-}
-
-func TestUIProxySettingsPersistAndValidate(t *testing.T) {
-	h := newDevUIHarness(t)
-	h.click("HTTPS")
-	h.fill("Site name", "configured")
-	h.fill("Local domain", "configured.test")
-	h.fill("Upstream address", "http://127.0.0.1:3000")
-	h.fill("HTTPS port", fmt.Sprint(freeUIPort(t)))
-	h.click("Customize proxy settings")
-	h.fill("Connection timeout (seconds)", "17")
-	h.fill("Response header timeout (seconds)", "42")
-	h.choose("Upstream Host header", "Use upstream host")
-	h.click("Save HTTPS site")
-	site, ok := h.a.dev.state.Sites["configured"]
-	if !ok || site.Proxy == nil || site.Proxy.HostPolicy != "upstream" || site.Proxy.ConnectTimeoutSeconds != 17 || site.Proxy.ResponseHeaderTimeoutSeconds != 42 {
-		t.Fatalf("proxy settings did not persist: %+v; fields %q / %q / %q; %s", site.Proxy, h.a.dev.siteConnectTimeout, h.a.dev.siteHeaderTimeout, h.a.dev.siteHostPolicy, h.a.dev.output)
-	}
-	h.fill("Response header timeout (seconds)", "-1")
-	h.click("Save HTTPS site")
-	if !strings.Contains(h.a.dev.output, "0–3600") || h.a.dev.state.Sites["configured"].Proxy.ResponseHeaderTimeoutSeconds != 42 {
-		t.Fatal("invalid timeout replaced the saved configuration", h.a.dev.output)
-	}
-	h.click("Site configured.test")
-	if h.a.dev.siteHeaderTimeout != "42" || !h.a.dev.siteAdvanced {
-		t.Fatal("reselecting the site lost proxy settings")
-	}
-	h.click("Customize proxy settings")
-	h.click("Save HTTPS site")
-	if h.a.dev.state.Sites["configured"].Proxy != nil {
-		t.Fatal("site did not return to the default proxy settings")
+func TestUIStandaloneRuntimeAndHTTPS(t *testing.T) {
+	for _, size := range [][2]int{{1120, 720}, {900, 520}} {
+		for _, dark := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%dx%d-dark-%t", size[0], size[1], dark), func(t *testing.T) {
+				h := newDevUIHarnessSize(t, size[0], size[1], dark)
+				python, e := exec.LookPath("python3")
+				if e != nil {
+					t.Fatal(e)
+				}
+				localPort, httpsPort := freeUIPort(t), freeUIPort(t)
+				dir := t.TempDir()
+				if e = os.WriteFile(filepath.Join(dir, "index.html"), []byte("standalone-runtime-ok"), 0600); e != nil {
+					t.Fatal(e)
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				cmd := exec.CommandContext(ctx, python, "-m", "http.server", fmt.Sprint(localPort), "--bind", "127.0.0.1")
+				cmd.Dir = dir
+				if e = cmd.Start(); e != nil {
+					t.Fatal(e)
+				}
+				defer func() { cancel(); _ = cmd.Wait() }()
+				h.click("HTTPS")
+				h.fill("HTTPS listener port", fmt.Sprint(httpsPort))
+				h.click("Add rule")
+				h.fill("Domain", "standalone.test")
+				h.fill("Local port", fmt.Sprint(localPort))
+				h.click("Save HTTPS rules")
+				if strings.Contains(h.a.dev.output, "Error:") {
+					t.Fatal(h.a.dev.output)
+				}
+				manager := devplatform.New(h.root)
+				defer manager.StopProxy(context.Background())
+				h.click("Apply proxy")
+				if strings.Contains(h.a.dev.output, "Error:") {
+					t.Fatal(h.a.dev.output)
+				}
+				ca, e := os.ReadFile(filepath.Join(h.root, "proxy", "ca.pem"))
+				if e != nil {
+					t.Fatal(e)
+				}
+				pool := x509.NewCertPool()
+				pool.AppendCertsFromPEM(ca)
+				client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: "standalone.test"}}, Timeout: 3 * time.Second}
+				req, _ := http.NewRequest("GET", fmt.Sprintf("https://127.0.0.1:%d/", httpsPort), nil)
+				req.Host = "standalone.test"
+				var response *http.Response
+				for n := 0; n < 30; n++ {
+					response, e = client.Do(req)
+					if e == nil {
+						break
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+				if e != nil {
+					t.Fatal(e)
+				}
+				body, _ := io.ReadAll(response.Body)
+				response.Body.Close()
+				if response.StatusCode != 200 || !strings.Contains(string(body), "standalone-runtime-ok") {
+					t.Fatal(response.StatusCode, string(body))
+				}
+			})
+		}
 	}
 }
 
-func TestUIStorageReadFailureRetainsTheCurrentProjectAndDraft(t *testing.T) {
-	h := newDevUIHarness(t)
-	h.fill("Project folder", t.TempDir())
-	h.click("Import project")
-	id := h.a.dev.id
-	h.fill("Project name", "Unsaved project name")
-	path := filepath.Join(h.root, "state.json")
-	previous, e := os.ReadFile(path)
-	if e != nil {
-		t.Fatal(e)
+func seedRuntimeCache(t *testing.T, root string, pkg devplatform.Package) {
+	t.Helper()
+	if pkg.Formula != "" {
+		if os.Getenv("MSM_UI_E2E_HOMEBREW") != "1" {
+			t.Skip("set MSM_UI_E2E_HOMEBREW=1 and preinstall the required Homebrew keg for native UI verification")
+		}
+		m := devplatform.New(root)
+		s := devplatform.State{Packages: map[string]devplatform.Package{pkg.ID(): pkg}}
+		for name := range pkg.Binaries {
+			if _, err := m.Binary(&s, pkg.ID(), name); err != nil {
+				t.Fatal("preinstall the exact Homebrew keg from the required tap; tests do not change shared Homebrew software", err)
+			}
+		}
+		return
 	}
-	t.Cleanup(func() { _ = os.WriteFile(path, previous, 0600) })
-	if e = os.WriteFile(path, []byte("{damaged during read"), 0600); e != nil {
-		t.Fatal(e)
+	for _, dir := range filepath.SplitList(os.Getenv("MSM_UI_E2E_PACKAGE_CACHE")) {
+		source, e := os.Open(filepath.Join(dir, pkg.SHA256))
+		if e != nil {
+			continue
+		}
+		defer source.Close()
+		if e = os.MkdirAll(filepath.Join(root, "downloads"), 0700); e != nil {
+			t.Fatal(e)
+		}
+		dest, e := os.OpenFile(filepath.Join(root, "downloads", pkg.SHA256), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+		if e != nil {
+			t.Fatal(e)
+		}
+		_, e = io.Copy(dest, source)
+		closeError := dest.Close()
+		if e != nil || closeError != nil {
+			t.Fatal(e, closeError)
+		}
+		return
 	}
-	h.click("Refresh")
-	if _, ok := h.a.dev.state.Projects[id]; !ok || h.a.dev.id != id || h.a.dev.draft.Name != "Unsaved project name" || !strings.Contains(h.a.dev.output, "Could not read saved settings") {
-		t.Fatal("failed storage read discarded known settings or the draft", h.a.dev.output)
-	}
+	t.Fatal("verified archive is missing from the configured package cache", pkg.ID())
 }

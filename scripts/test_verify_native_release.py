@@ -39,17 +39,17 @@ class NativeReleaseTests(unittest.TestCase):
 
     def test_malformed_formula_metadata_has_sanitized_error(self):
         m=module()
-        valid={'name':'php','full_name':'shivammathur/php/php','versions':{'stable':'8.5.12'},'revision':0}
+        valid={'name':'postgresql@17','full_name':'postgresql@17','versions':{'stable':'17.11'},'revision':1}
         bad=[{},None,[],{'formulae':None},{'formulae':{}},{'formulae':[]},{'formulae':[{}]}, {'formulae':[None]}, {'formulae':[valid,valid]}]
         for changes in [{'versions':None},{'versions':[]},{'versions':{'stable':[]}},{'name':'../../private-sentinel'},{'name':{}},{'revision':True},{'revision':-1},{'revision':{}},{'full_name':[]}]:
             bad.append({'formulae':[dict(valid,**changes)]})
         for value in bad:
             with self.subTest(value=value), mock.patch.object(m,'checked',return_value=json.dumps(value)):
-                with self.assertRaisesRegex(RuntimeError,'invalid Homebrew formula metadata: php') as error:
+                with self.assertRaisesRegex(RuntimeError,'invalid Homebrew formula metadata: postgresql') as error:
                     m.validate_existing_kegs()
                 self.assertNotIn('sentinel',str(error.exception))
         with mock.patch.object(m,'checked',return_value='{private-sentinel'):
-            with self.assertRaisesRegex(RuntimeError,'invalid Homebrew formula metadata: php') as error:m.validate_existing_kegs()
+            with self.assertRaisesRegex(RuntimeError,'invalid Homebrew formula metadata: postgresql') as error:m.validate_existing_kegs()
             self.assertNotIn('sentinel',str(error.exception))
 
     def test_complete_stream_and_package_events(self):
@@ -57,7 +57,7 @@ class NativeReleaseTests(unittest.TestCase):
         rows = events(m.REQUIRED)
         rows.insert(1, {'Package':m.PACKAGE,'Action':'output','Output':'private output must not be copied'})
         result = m.check_events(lines(rows))
-        self.assertEqual(len(result), 9)
+        self.assertEqual(len(result), 8)
         self.assertNotIn('private', json.dumps(result))
 
     def test_missing_skip_fail_duplicate_and_truncated_rejected(self):
@@ -108,8 +108,8 @@ class NativeReleaseTests(unittest.TestCase):
             base=Path(directory).resolve(); root=base/'private'; root.mkdir()
             packages={}
             for index,(name,version) in enumerate(m.VERSIONS):
-                formula='shivammathur/php/php@8.5' if name=='php' else 'postgresql@17' if name=='postgresql' else ''
-                packages[str(index)]={'name':name,'version':version+'.1' if name=='php' else version,'arch':'arm64','sha256':'a'*64,'url':'https://upstream.example/private?token=fixture','formula':formula,'secret':'not-exported'}
+                formula='postgresql@17' if name=='postgresql' else ''
+                packages[str(index)]={'name':name,'version':version,'arch':'arm64','sha256':'a'*64,'url':'https://upstream.example/private?token=fixture','formula':formula,'secret':'not-exported'}
             def command(argv,**kwargs):
                 if argv[-1]=='status':return json.dumps({'packages':packages,'private':'do-not-export'})
                 return 'fixture-version'
@@ -174,11 +174,11 @@ class NativeReleaseTests(unittest.TestCase):
         m=module()
         row={'name':'node','version':'22.14.0','arch':'arm64','sha256':'a'*64,'url':'https://example.test/archive'}
         with self.assertRaisesRegex(ValueError,'missing'):
-            m.package_summary({str(i):row for i in range(7)})
+            m.package_summary({str(i):row for i in range(6)})
         for source in ['https://user:password@example.test','http://example.test']:
             with self.assertRaisesRegex(ValueError,'source'):
                 m.package_summary({'one':dict(row,url=source)})
-        with self.assertRaisesRegex(ValueError,'PHP'):
+        with self.assertRaisesRegex(ValueError,'identity'):
             m.package_summary({'one':dict(row,name='php',formula='php@8.5')})
 
     def test_matrix_regex_selects_only_top_level_name(self):
@@ -191,7 +191,7 @@ class NativeReleaseTests(unittest.TestCase):
             with mock.patch.object(m.subprocess,'Popen',side_effect=launch) as call:
                 m.test_phase(Path(directory),{},m.MATRIX)
             argv=call.call_args.args[0]
-            self.assertEqual(argv[argv.index('-run')+1],'^(TestUISoftwareCatalogAllSix)$')
+            self.assertEqual(argv[argv.index('-run')+1],'^(TestUISoftwareCatalogAllFive)$')
 
     def test_rejected_preflight_invalidates_old_success(self):
         m=module()
@@ -209,20 +209,19 @@ class NativeReleaseTests(unittest.TestCase):
         m=module()
         with tempfile.TemporaryDirectory() as directory:
             cellar=Path(directory)
-            for rack,version,tap,stable,binaries in [('php','8.5.12','shivammathur/php','8.5.12',['bin/php','sbin/php-fpm']),('postgresql@17','17.11_1','homebrew/core','17.11',['bin/'+x for x in ['postgres','initdb','pg_dump','pg_restore','psql','createdb']])]:
+            for rack,version,tap,stable,binaries in [('postgresql@17','17.11_1','homebrew/core','17.11',['bin/'+x for x in ['postgres','initdb','pg_dump','pg_restore','psql','createdb']])]:
                 keg=cellar/rack/version;keg.mkdir(parents=True)
                 (keg/'INSTALL_RECEIPT.json').write_text(json.dumps({'source':{'tap':tap,'versions':{'stable':stable}}}))
                 for name in binaries:
                     file=keg/name;file.parent.mkdir(exist_ok=True);file.write_text('fixture');file.chmod(0o700)
             def info(argv,**kwargs):
-                php=argv[-1].startswith('shivammathur')
                 self.assertEqual(argv[:3],list(m.SANDBOX))
                 self.assertNotIn('install',argv);self.assertNotIn('tap',argv)
-                return json.dumps({'formulae':[{'name':'php' if php else 'postgresql@17','full_name':'shivammathur/php/php' if php else 'postgresql@17','versions':{'stable':'8.5.12' if php else '17.11'},'revision':0 if php else 1}]})
+                return json.dumps({'formulae':[{'name':'postgresql@17','full_name':'postgresql@17','versions':{'stable':'17.11'},'revision':1}]})
             real_path=Path
             with mock.patch.object(m,'Path',side_effect=lambda value:cellar if value=='/opt/homebrew/Cellar' else real_path(value)), mock.patch.object(m,'checked',side_effect=info):
                 m.validate_existing_kegs()
-                (cellar/'php/8.5.12/INSTALL_RECEIPT.json').unlink()
+                (cellar/'postgresql@17/17.11_1/INSTALL_RECEIPT.json').unlink()
                 with self.assertRaisesRegex(RuntimeError,'missing'):m.validate_existing_kegs()
 
     def test_local_runner_sandboxes_preparation_and_runs_native_phases_directly(self):
@@ -267,11 +266,11 @@ class NativeReleaseTests(unittest.TestCase):
 
     def test_failure_is_machine_readable(self):
         m=module()
-        with mock.patch.object(m,'run_native',side_effect=RuntimeError('exact existing keg is missing: php 8.5.12')), mock.patch('sys.stderr',new_callable=io.StringIO) as errors:
+        with mock.patch.object(m,'run_native',side_effect=RuntimeError('exact existing keg is missing: postgresql 17.11_1')), mock.patch('sys.stderr',new_callable=io.StringIO) as errors:
             with self.assertRaises(SystemExit) as exited:m.main(['--run','--local-existing-kegs'])
         self.assertEqual(exited.exception.code,1)
         value=json.loads(errors.getvalue())
-        self.assertEqual(value,{'schemaVersion':1,'status':'blocked','error':'exact existing keg is missing: php 8.5.12'})
+        self.assertEqual(value,{'schemaVersion':1,'status':'blocked','error':'exact existing keg is missing: postgresql 17.11_1'})
 
     def test_subprocess_failure_output_stays_private(self):
         m=module()

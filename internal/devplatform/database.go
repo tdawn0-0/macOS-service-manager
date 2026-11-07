@@ -95,7 +95,7 @@ func (m *Manager) startInstance(ctx context.Context, s *State, i Instance) error
 	if e != nil {
 		return e
 	}
-	if e = m.waitService(ctx, m.databaseJobID(i.ID), Service{ID: i.ID, Health: fmt.Sprintf("tcp://127.0.0.1:%d", i.Port)}); e != nil {
+	if e = m.waitService(ctx, m.databaseJobID(i.ID), processProbe{ID: i.ID, Health: fmt.Sprintf("tcp://127.0.0.1:%d", i.Port)}); e != nil {
 		if fresh {
 			_ = m.stopJob(context.Background(), m.databaseJobID(i.ID))
 		}

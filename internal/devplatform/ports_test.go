@@ -100,12 +100,12 @@ func TestSocketProxyConflictFailsBeforeStoppingOrAuthorizing(t *testing.T) {
 		return "", nil
 	}
 	before := []byte("last-good-routes")
-	path := filepath.Join(m.Root, "proxy", "sites.json")
+	path := filepath.Join(m.Root, "proxy", "rules.json")
 	if err = os.WriteFile(path, before, 0600); err != nil {
 		t.Fatal(err)
 	}
-	site := Site{ID: "conflict", Domain: "conflict.test", Upstream: "http://127.0.0.1:3000", Port: l.Addr().(*net.TCPAddr).Port}
-	err = m.startSocketProxy(context.Background(), []Site{site}, nil)
+	site := proxyRoute{Domain: "conflict.test", LocalPort: 3000, Port: l.Addr().(*net.TCPAddr).Port}
+	err = m.startSocketProxy(context.Background(), []proxyRoute{site}, nil)
 	var conflict *PortUnavailableError
 	if !errors.As(err, &conflict) || conflict.Port != site.Port {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func TestSocketProxyConflictFailsBeforeStoppingOrAuthorizing(t *testing.T) {
 
 func TestSuggestedPortIsAvailableWithoutChangingStoredState(t *testing.T) {
 	m := testManager(t)
-	if err := m.withState(context.Background(), func(s *State) error { s.Instances["reserved"] = Instance{ID: "reserved", Port: 5432}; return nil }); err != nil {
+	if err := m.withState(context.Background(), func(s *State) error { s.Instances["reserved"] = Instance{Port: 5432}; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(filepath.Join(m.Root, "state.json"))

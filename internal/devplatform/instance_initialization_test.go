@@ -109,8 +109,7 @@ func TestInstanceInitializationParallelReservationsAndUnrelatedConfiguration(t *
 	}
 	short, stop := context.WithTimeout(ctx, 2*time.Second)
 	defer stop()
-	project := Project{SchemaVersion: 1, ID: "during-init", Name: "Saved during initialization", Directory: t.TempDir()}
-	if e := New(m.Root).SaveProject(short, project); e != nil {
+	if e := New(m.Root).ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "during-init.test", LocalPort: 3000}}); e != nil {
 		unblock()
 		t.Fatal(e)
 	}
@@ -141,7 +140,7 @@ func TestInstanceInitializationParallelReservationsAndUnrelatedConfiguration(t *
 		}
 	}
 	state, e := m.Read()
-	if e != nil || len(state.Instances) != 2 || state.Projects[project.ID].Name != project.Name {
+	if e != nil || len(state.Instances) != 2 || len(state.ProxyRules) != 1 || state.ProxyRules[0].Domain != "during-init.test" {
 		t.Fatal(state, e)
 	}
 	for _, i := range []Instance{a, b} {

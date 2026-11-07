@@ -42,9 +42,9 @@ func TestPortCLIInspectsListenerAndSuggestsWithoutChangingData(t *testing.T) {
 	// SQL ports are passed at startup; changing metadata must retain the record.
 	m := devplatform.New(devplatform.DefaultRoot())
 	instance := devplatform.Instance{ID: "cli-port", Kind: "postgresql", Port: 54321}
-	s := devplatform.State{SchemaVersion: 1, Packages: map[string]devplatform.Package{}, Projects: map[string]devplatform.Project{}, Sites: map[string]devplatform.Site{}, Instances: map[string]devplatform.Instance{instance.ID: instance}}
+	s := devplatform.State{SchemaVersion: devplatform.Schema, ProxyRules: []devplatform.ProxyRule{}, ProxyListenerPort: 443, Packages: map[string]devplatform.Package{}, Instances: map[string]devplatform.Instance{instance.ID: instance}}
 	// Persist an isolated, stopped record; no database binary is executed.
-	if err := m.SaveProject(context.Background(), devplatform.Project{SchemaVersion: 1, ID: "placeholder", Name: "Placeholder", Directory: t.TempDir()}); err != nil {
+	if err := os.MkdirAll(m.Root, 0700); err != nil {
 		t.Fatal(err)
 	}
 	b, err := json.Marshal(s)

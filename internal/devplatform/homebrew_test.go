@@ -98,14 +98,10 @@ func TestHomebrewInstallSelectsTapAndExactKegWithoutGlobalServiceChanges(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
-			binName := map[string]string{"php": "php", "postgresql": "postgres"}[name]
+			binName := "postgres"
 			bin, err := m.Binary(&s, p.ID(), binName)
 			if err != nil || bin != filepath.Join(m.packageDir(p), p.Binaries[binName]) || strings.Contains(bin, "/opt/") {
 				t.Fatal("runtime did not bind to the exact keg", bin, err)
-			}
-			args, env, err := m.serviceArgs(&s, Project{}, Service{ID: "worker", Package: p.ID(), Command: []string{binName, "--version"}})
-			if err != nil || args[0] != bin || !strings.HasPrefix(env["PATH"], filepath.Dir(bin)) {
-				t.Fatal("service escaped its chosen keg", args, env, err)
 			}
 			check, err := m.VerifyPackage(ctx, p.ID())
 			if err != nil || check.Status != "Homebrew managed" || check.Files != len(p.Binaries) {

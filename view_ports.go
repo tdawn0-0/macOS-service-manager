@@ -54,7 +54,7 @@ func (a *app) devPortControls(c *ui.Context, value *string, scope string) {
 			a.checkDevPort(port)
 		}
 		if ui.Button(c, "Find available "+scope+" port").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
-			original, tab, dbID, siteID, siteOwner := *value, d.tab, d.dbID, d.siteID, d.siteProject
+			original, tab, dbID := *value, d.tab, d.dbID
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				suggestion, err := m.AvailableLocalPort(m.Context)
 				if err == nil {
@@ -63,9 +63,6 @@ func (a *app) devPortControls(c *ui.Context, value *string, scope string) {
 							return
 						}
 						if scope == "database" && a.dev.dbID != dbID {
-							return
-						}
-						if scope == "HTTPS" && (a.dev.siteID != siteID || a.dev.siteProject != siteOwner) {
 							return
 						}
 						*value = strconv.Itoa(suggestion)

@@ -104,13 +104,12 @@ func (a *app) startPackageTask(pkg devplatform.Package, kind string, work func(*
 }
 func (a *app) refreshFinishedPackages() {
 	d := &a.dev
-	if (!d.packageNeedsRefresh && !d.databaseNeedsRefresh && !d.projectNeedsRefresh) || d.busy {
+	if (!d.packageNeedsRefresh && !d.databaseNeedsRefresh) || d.busy {
 		return
 	}
 	d.packageNeedsRefresh = false
 	d.databaseNeedsRefresh = false
-	d.projectNeedsRefresh = false
-	last, lastDatabase, lastProject, previousOutput := d.lastPackageTask, d.lastDatabaseTask, d.lastProjectTask, d.output
+	last, lastDatabase, previousOutput := d.lastPackageTask, d.lastDatabaseTask, d.output
 	var databases []*databaseTask
 	for _, task := range d.databaseTasks {
 		if !task.Running && task.syncPending {
@@ -143,11 +142,9 @@ func (a *app) refreshFinishedPackages() {
 				a.dev.dbNewDraft = false
 			}
 		}
-		if a.dev.tab == 0 && lastProject != nil && a.dev.projectTasks[lastProject.Project.ID] == lastProject && (a.dev.id == lastProject.Project.ID || lastProject.Kind == "remove" && a.dev.id == "") {
-			a.dev.output = lastProject.Result
-		} else if a.dev.tab == 2 && lastDatabase != nil && a.dev.databaseTasks[lastDatabase.Instance.ID] == lastDatabase && a.dev.dbID == lastDatabase.Instance.ID {
+		if a.dev.tab == devTabDatabases && lastDatabase != nil && a.dev.databaseTasks[lastDatabase.Instance.ID] == lastDatabase && a.dev.dbID == lastDatabase.Instance.ID {
 			a.dev.output = lastDatabase.Result
-		} else if last != nil && a.dev.packageTasks[last.Package.ID()] == last && a.dev.tab == 1 && a.dev.software == last.Package.Name && strings.TrimPrefix(strings.TrimSpace(a.dev.version), "v") == last.Package.Version {
+		} else if last != nil && a.dev.packageTasks[last.Package.ID()] == last && a.dev.tab == devTabSoftware && a.dev.software == last.Package.Name && strings.TrimPrefix(strings.TrimSpace(a.dev.version), "v") == last.Package.Version {
 			a.dev.output = last.Result
 		} else {
 			a.dev.output = previousOutput
@@ -156,10 +153,10 @@ func (a *app) refreshFinishedPackages() {
 }
 func (a *app) showPackageTasks() {
 	d := &a.dev
-	d.tab = 1
+	d.tab = devTabSoftware
 	d.diagnosticsOpen = false
 	d.operationsOpen = false
-	d.detailScroll[1].Y = 0
+	d.detailScroll[devTabSoftware].Y = 0
 	if last := d.lastPackageTask; last != nil && d.packageTasks[last.Package.ID()] == last {
 		d.software = last.Package.Name
 		d.version = last.Package.Version

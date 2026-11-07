@@ -1,9 +1,14 @@
 package devplatform
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -13,6 +18,22 @@ import (
 type ProxyRule struct {
 	Domain    string `json:"domain"`
 	LocalPort int    `json:"localPort"`
+}
+
+// proxyRoute is a derived transport entry, never a saved resource.
+type proxyRoute struct {
+	Domain    string
+	LocalPort int
+	Port      int
+}
+
+func (r proxyRoute) upstream() string { return fmt.Sprintf("http://127.0.0.1:%d", r.LocalPort) }
+func (r proxyRoute) Validate() error {
+	if r.Port < 1 || r.Port > 65535 {
+		return errors.New("HTTPS port must be 1–65535")
+	}
+	_, err := normalizeProxyRules(r.Port, []ProxyRule{{Domain: r.Domain, LocalPort: r.LocalPort}})
+	return err
 }
 
 var proxyDomainPart = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -63,4 +84,51 @@ func (m *Manager) ReplaceProxyRules(ctx context.Context, expectedRevision uint64
 		s.ProxyRulesRevision++
 		return nil
 	})
+}
+
+// proxyPublishedConfig is the complete on-disk routing snapshot. Revision is
+// intentionally a state-only concurrency token, not routing content.
+type proxyPublishedConfig struct {
+	SchemaVersion int         `json:"schemaVersion"`
+	ListenerPort  int         `json:"listenerPort"`
+	Rules         []ProxyRule `json:"rules"`
+}
+
+func proxyConfigFromState(s *State) proxyPublishedConfig {
+	return proxyPublishedConfig{SchemaVersion: 1, ListenerPort: s.ProxyListenerPort, Rules: append([]ProxyRule{}, s.ProxyRules...)}
+}
+func proxyConfigFromRoutes(sites []proxyRoute) proxyPublishedConfig {
+	config := proxyPublishedConfig{SchemaVersion: 1, ListenerPort: 443, Rules: []ProxyRule{}}
+	if len(sites) > 0 {
+		config.ListenerPort = sites[0].Port
+	}
+	for _, site := range sites {
+		config.Rules = append(config.Rules, ProxyRule{Domain: site.Domain, LocalPort: site.LocalPort})
+	}
+	return config
+}
+func readPublishedProxyConfig(root string) (proxyPublishedConfig, error) {
+	b, err := os.ReadFile(filepath.Join(root, "proxy", "rules.json"))
+	if err != nil {
+		return proxyPublishedConfig{}, err
+	}
+	var config proxyPublishedConfig
+	decoder := json.NewDecoder(bytes.NewReader(b))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&config); err != nil {
+		return config, err
+	}
+	var extra any
+	if err = decoder.Decode(&extra); err != io.EOF {
+		return config, errors.New("proxy routing snapshot has trailing data")
+	}
+	if config.SchemaVersion != 1 {
+		return config, errors.New("unsupported proxy routing schema")
+	}
+	rules, err := normalizeProxyRules(config.ListenerPort, config.Rules)
+	if err != nil {
+		return config, err
+	}
+	config.Rules = rules
+	return config, nil
 }

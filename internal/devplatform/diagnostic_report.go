@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -215,22 +214,10 @@ func (m *Manager) diagnose(ctx context.Context, s State, p diagnosticProbes) (Di
 			}
 		}
 	}
-	var sites []Site
-	for _, site := range s.Sites {
-		sites = append(sites, site)
-	}
-	sort.Slice(sites, func(i, j int) bool { return sites[i].Domain < sites[j].Domain })
+	sites := proxyRoutesFromState(&s)
 	for _, site := range sites {
 		if err := ctx.Err(); err != nil {
 			return r, err
-		}
-		if site.NeedsReview && !site.Disabled {
-			add("Site", site.Domain, "Warning", "Imported upstream needs local review and was not probed.", "Review the upstream in HTTPS, then save the site.")
-			continue
-		}
-		if site.Disabled {
-			add("Site", site.Domain, "Disabled", "Site is disabled and was not probed.", "")
-			continue
 		}
 		// macOS can take roughly five seconds to return a local hosts result
 		// while it finishes another address-family query. Do not turn that
@@ -253,19 +240,7 @@ func (m *Manager) diagnose(ctx context.Context, s State, p diagnosticProbes) (Di
 		} else {
 			add("DNS", site.Domain, "Failed", "Domain is unresolved or includes an address other than 127.0.0.1.", "Use Configure local domains; remove conflicting DNS or hosts entries, then retry.")
 		}
-		u, err := url.Parse(site.Upstream)
-		if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
-			add("Upstream", site.Domain, "Failed", "Upstream address is invalid.", "Save a valid HTTP or HTTPS upstream address.")
-			continue
-		}
-		port := u.Port()
-		if port == "" {
-			port = "80"
-			if u.Scheme == "https" {
-				port = "443"
-			}
-		}
-		address := net.JoinHostPort(u.Hostname(), port)
+		address := net.JoinHostPort("127.0.0.1", fmt.Sprint(site.LocalPort))
 		probeCtx, done := context.WithTimeout(ctx, 2*time.Second)
 		conn, err := p.dial(probeCtx, "tcp", address)
 		if conn != nil {
@@ -274,15 +249,6 @@ func (m *Manager) diagnose(ctx context.Context, s State, p diagnosticProbes) (Di
 		done()
 		if err != nil {
 			add("Upstream", site.Domain, "Failed", "Upstream TCP port is unavailable.", "Start the application and verify its host and port.")
-		} else if u.Scheme == "https" {
-			probeCtx, done := context.WithTimeout(ctx, 2*time.Second)
-			err := p.tls(probeCtx, address, u.Hostname())
-			done()
-			if err != nil {
-				add("Upstream TLS", site.Domain, "Failed", "Upstream TLS certificate or handshake could not be verified.", "Correct the upstream certificate and hostname; keep certificate verification enabled.")
-			} else {
-				add("Upstream TLS", site.Domain, "OK", "Upstream port and TLS certificate verified; HTTP response was not tested.", "")
-			}
 		} else {
 			add("Upstream", site.Domain, "OK", "Upstream TCP port is reachable; HTTP response was not tested.", "")
 		}

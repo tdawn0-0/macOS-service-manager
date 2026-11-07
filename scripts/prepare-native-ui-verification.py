@@ -15,6 +15,7 @@ import socket
 import subprocess
 import tempfile
 import uuid
+import time
 
 def validate_harness(value):
     path = value.resolve(strict=True)
@@ -53,6 +54,38 @@ def cleanup_fixture(base, root, devmgr):
         raise RuntimeError('Fixture cleanup incomplete; retained private directory: ' + str(base)) from error
 
 
+
+def stop_external_app(process):
+    if process is None or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def start_external_app(binary, directory, environment, port, log_path):
+    with log_path.open('ab') as log:
+        process = subprocess.Popen([str(binary), 'server.js'], cwd=directory,
+                                   env=environment, stdout=log, stderr=subprocess.STDOUT,
+                                   start_new_session=True)
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError('External Node fixture exited before readiness')
+            try:
+                with socket.create_connection(('127.0.0.1', port), timeout=0.2):
+                    return process
+            except OSError:
+                time.sleep(0.1)
+        raise RuntimeError('External Node fixture did not become ready')
+    except BaseException:
+        stop_external_app(process)
+        raise
+
 def _main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--devmgr', type=Path, required=True, help='Test harness built from cmd/devmgr')
@@ -68,6 +101,7 @@ def _main(argv=None):
     os.umask(0o077)
     source = args.app.resolve(strict=True)
     base = Path(tempfile.mkdtemp(prefix='msm-native-ui-', dir='/tmp')).resolve()
+    external_process = None
     try:
         root = base / 'development'
         root.mkdir(mode=0o700)
@@ -103,6 +137,7 @@ def _main(argv=None):
 
         cli('log-rotation', 'off')
         packages = {}
+        manifests = {}
         for name, version, cache in [('node', '22.14.0', args.node_root), ('redis', '7.4.7', args.redis_root)]:
             identity = name + '@' + version + '-arm64'
             manifest = json.loads((cache / 'packages' / identity / '.package.json').read_text())
@@ -111,6 +146,7 @@ def _main(argv=None):
             shutil.copyfile(archive, root / 'downloads' / manifest['sha256'])
             cli('install-manifest', configuration(name + '-package', manifest))
             packages[name] = identity
+            manifests[name] = manifest
         proxy = root / 'proxy'
         for name in ['ca.pem', 'ca-key.pem']:
             origin = args.reuse_ca.resolve(strict=True) / 'proxy' / name
@@ -121,9 +157,9 @@ def _main(argv=None):
         redis_port, web_port, https_port = free_port(), free_port(), free_port()
         instance = dict(id='native-cache', kind='redis', package=packages['redis'], port=redis_port, persistent=True)
         cli('instance', configuration('instance', instance))
-        project_dir = base / 'project'
-        project_dir.mkdir(mode=0o700)
-        (project_dir / 'server.js').write_text(r'''const http = require('node:http');
+        app_dir = base / 'app'
+        app_dir.mkdir(mode=0o700)
+        (app_dir / 'server.js').write_text(r'''const http = require('node:http');
         const net = require('node:net');
         const fs = require('node:fs');
         const password = fs.readFileSync(process.env.REDIS_PASSWORD_FILE, 'utf8');
@@ -142,17 +178,30 @@ def _main(argv=None):
          http.createServer(async(req,res) => {try {const value=await command(['GET','native-value']);res.setHeader('Content-Type','text/html');res.end('<h1>Native UI verification</h1><p>Redis value: '+value+'</p><p>Node '+process.version+'</p>');}catch(e){res.writeHead(503);res.end('Database unavailable');}}).listen(Number(process.env.PORT),'127.0.0.1');
         }).catch(() => {console.error('Database preparation failed');process.exit(1);});
         ''')
-        project = dict(schemaVersion=1, id='native-project', name='Native UI verification', directory=str(project_dir),
-                       services=[dict(id='web', package=packages['node'], command=['node','server.js'], health=f'http://127.0.0.1:{web_port}/',
-                                      environment={'PORT':str(web_port),'REDIS_PORT':str(redis_port),'REDIS_PASSWORD_FILE':str(root/'instances/native-cache/password')})],
-                       instances=['native-cache'], sites=[dict(id='native-site', domain='service-manager-verify.test', upstream=f'http://127.0.0.1:{web_port}', port=https_port)])
-        cli('project', project['id'], configuration('project', project))
-        record = dict(harness=str(devmgr),base=str(base),root=str(root),app=str(app),executable=str(exe),project=project['id'],instance=instance['id'],
+        # The private fixture saves one complete proxy ruleset.
+        state = json.loads(cli('status'))
+        state['proxyRules'] = [{'domain':'service-manager-verify.test','localPort':web_port}]
+        state['proxyListenerPort'] = https_port
+        state['proxyRulesRevision'] = state.get('proxyRulesRevision',0) + 1
+        state_path = root / 'state.json'
+        staged = root / '.state-native-ui.json'
+        staged.write_text(json.dumps(state))
+        staged.chmod(0o600)
+        staged.replace(state_path)
+        cli('db','start',instance['id'])
+        node_binary = root / 'packages' / packages['node'] / manifests['node'].get('binaries',{}).get('node','bin/node')
+        app_env = dict(os.environ, PORT=str(web_port), REDIS_PORT=str(redis_port),
+                       REDIS_PASSWORD_FILE=str(root/'instances/native-cache/password'))
+        external_process = start_external_app(node_binary, app_dir, app_env, web_port,
+                                              root/'logs/verification-app.log')
+        record = dict(harness=str(devmgr),base=str(base),root=str(root),app=str(app),executable=str(exe),instance=instance['id'],
+                      externalPID=external_process.pid, externalBinary=str(node_binary), appDirectory=str(app_dir),
                       webPort=web_port,redisPort=redis_port,httpsPort=https_port,url=f'https://service-manager-verify.test:{https_port}/',
                       labelPrefix='xyz.jyeu.msm.dev.'+hashlib.sha256(str(root).encode()).hexdigest()[:8]+'.',identifier=info['CFBundleIdentifier'])
         (base/'native-ui.json').write_text(json.dumps(record,indent=2)+'\n')
         print(json.dumps(record,indent=2))
     except BaseException:
+        stop_external_app(external_process)
         cleanup_fixture(base, base / 'development', devmgr)
         raise
 

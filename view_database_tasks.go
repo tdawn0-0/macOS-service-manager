@@ -55,15 +55,10 @@ func (a *app) databaseTasksRunning() bool {
 	return false
 }
 func (a *app) backgroundTasksRunning() bool {
-	return a.packageTasksRunning() || a.databaseTasksRunning() || a.projectTasksRunning()
+	return a.packageTasksRunning() || a.databaseTasksRunning()
 }
 func (a *app) cancelBackgroundTasks() {
 	a.cancelPackageTasks()
-	for _, task := range a.dev.projectTasks {
-		if task.Running && task.cancel != nil {
-			task.cancel()
-		}
-	}
 	for _, task := range a.dev.databaseTasks {
 		if task.Running && task.cancel != nil {
 			task.cancel()
@@ -147,14 +142,14 @@ func (a *app) startDatabaseOperation(i devplatform.Instance, kind string, work f
 }
 func (a *app) showDatabaseTasks() {
 	d := &a.dev
-	d.tab = 2
+	d.tab = devTabDatabases
 	d.diagnosticsOpen = false
 	d.operationsOpen = false
 	d.databaseWorkOpen = false
 	d.initializationsOpen = false
 	d.instanceDeletionPreview = nil
 	d.deletionsOpen = false
-	d.detailScroll[2].Y = 0
+	d.detailScroll[devTabDatabases].Y = 0
 }
 func (a *app) devDatabaseTasks(c *ui.Context) {
 	d := &a.dev
@@ -202,7 +197,7 @@ func (a *app) initializationTaskThen(fn func(*devplatform.Manager) (string, erro
 }
 func (a *app) openInitializations() {
 	a.dev.initializationsOpen = true
-	a.dev.detailScroll[2].Y = 0
+	a.dev.detailScroll[devTabDatabases].Y = 0
 	a.initializationTask(nil)
 }
 func (a *app) devInitializations(c *ui.Context) {
@@ -214,7 +209,7 @@ func (a *app) devInitializations(c *ui.Context) {
 		if ui.Button(c, "Back to database settings").Disabled(d.busy).Clicked() {
 			d.databaseWorkOpen = false
 			d.initializationsOpen = false
-			d.detailScroll[2].Y = 0
+			d.detailScroll[devTabDatabases].Y = 0
 		}
 	})
 	if len(d.initializations) == 0 {

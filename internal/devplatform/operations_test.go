@@ -11,7 +11,6 @@ import (
 	"sync"
 	"syscall"
 	"testing"
-	"time"
 )
 
 func TestOperationLiveLeaseResultsAndRedaction(t *testing.T) {
@@ -107,7 +106,7 @@ func TestOperationCrashHelper(t *testing.T) {
 		_, _ = m.Backup(context.Background(), id, "source")
 		os.Exit(24)
 	}
-	_ = m.runOperation(context.Background(), OperationRequest{Kind: "up", Resource: "missing"}, "", func(w *Manager) error { w.emit("Starting api"); os.Exit(23); return nil })
+	_ = m.runOperation(context.Background(), OperationRequest{Kind: "db-start", Resource: "missing"}, "", func(w *Manager) error { w.emit("Starting api"); os.Exit(23); return nil })
 	os.Exit(25)
 }
 func TestOperationActualProcessCrashAndRetryLineage(t *testing.T) {
@@ -126,7 +125,7 @@ func TestOperationActualProcessCrashAndRetryLineage(t *testing.T) {
 	}
 	r := records[0]
 	if e = m.RetryOperation(ctx, r.ID, r.Revision); e == nil {
-		t.Fatal("missing project retry must fail")
+		t.Fatal("missing instance retry must fail")
 	}
 	records, e = m.Operations(ctx)
 	if e != nil || len(records) != 2 {
@@ -153,7 +152,7 @@ func TestOperationSpecialRecordsNeverBlockOrFollowLinks(t *testing.T) {
 	if e := os.Symlink(outside, m.operationRoot()); e != nil {
 		t.Fatal(e)
 	}
-	if e := m.Up(context.Background(), "missing"); e == nil {
+	if e := m.InstanceAction(context.Background(), "missing", "start"); e == nil {
 		t.Fatal("followed linked operation store")
 	}
 	entries, _ := os.ReadDir(outside)
@@ -167,96 +166,5 @@ func TestOperationSpecialRecordsNeverBlockOrFollowLinks(t *testing.T) {
 	syscall.Mkfifo(filepath.Join(dir, "record.json"), 0600)
 	if _, e := m.Operations(context.Background()); e == nil {
 		t.Fatal("accepted FIFO")
-	}
-}
-
-func TestOperationQueuedMutationCancellationReportsWaitAndPreservesState(t *testing.T) {
-	m := testManager(t)
-	ctx := context.Background()
-	p := Project{SchemaVersion: Schema, ID: "queued-removal", Name: "Retained project", Directory: t.TempDir()}
-	if e := m.SaveProject(ctx, p); e != nil {
-		t.Fatal(e)
-	}
-	entered, release := make(chan struct{}), make(chan struct{})
-	held := make(chan error, 1)
-	var releaseOnce sync.Once
-	unhold := func() { releaseOnce.Do(func() { close(release) }) }
-	heldFinished := false
-	defer func() {
-		unhold()
-		if !heldFinished {
-			select {
-			case <-held:
-			case <-time.After(5 * time.Second):
-			}
-		}
-	}()
-	go func() { held <- m.withState(ctx, func(s *State) error { close(entered); <-release; return nil }) }()
-	<-entered
-	worker := New(m.Root)
-	waited := make(chan struct{})
-	var once sync.Once
-	worker.Event = func(s string) {
-		if strings.HasPrefix(s, "Waiting ") {
-			once.Do(func() { close(waited) })
-		}
-	}
-	waitCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	done := make(chan error, 1)
-	// Project startup no longer queues on the workspace lock. Removal still
-	// publishes a configuration mutation and must support a cancellable wait.
-	go func() { done <- worker.RemoveProject(waitCtx, p.ID) }()
-	select {
-	case <-waited:
-	case <-time.After(5 * time.Second):
-		t.Fatal("no resource-wait reason")
-	}
-	records, e := m.Operations(ctx)
-	if e != nil || len(records) != 1 || records[0].Phase != "Waiting" || !records[0].Busy {
-		t.Fatal(records, e)
-	}
-	cancel()
-	if e = <-done; !errors.Is(e, context.Canceled) {
-		t.Fatal(e)
-	}
-	unhold()
-	if e = <-held; e != nil {
-		t.Fatal(e)
-	}
-	heldFinished = true
-	records, e = m.Operations(ctx)
-	if e != nil || records[0].Status != "Cancelled" {
-		t.Fatal(records, e)
-	}
-	if s, e := m.Read(); e != nil || len(s.Projects) != 1 || s.Projects[p.ID].Name != p.Name {
-		t.Fatal(s, e)
-	}
-}
-
-func TestOperationExecKeepsArgumentsAndOutputOutOfHistoryAndStdoutClean(t *testing.T) {
-	m := testManager(t)
-	ctx := context.Background()
-	p := Project{SchemaVersion: 1, ID: "exec-project", Name: "Exec project", Directory: t.TempDir(), Services: []Service{{ID: "one", Command: []string{"/bin/true"}}}}
-	if e := m.SaveProject(ctx, p); e != nil {
-		t.Fatal(e)
-	}
-	var events strings.Builder
-	m.Event = func(s string) { events.WriteString(s) }
-	out, e := m.Exec(ctx, p.ID, []string{"/bin/echo", "secret-command-argument"})
-	if e != nil || out != "secret-command-argument\n" || events.Len() != 0 {
-		t.Fatal(out, e, events.String())
-	}
-	records, e := m.Operations(ctx)
-	if e != nil || len(records) != 1 || records[0].Status != "Succeeded" || records[0].Request.Kind != "exec" {
-		t.Fatal(records, e)
-	}
-	path, _, _ := m.operationFiles(records[0].ID)
-	b, _ := os.ReadFile(path)
-	if strings.Contains(string(b), "secret-command") {
-		t.Fatal("command leaked into history")
-	}
-	if OperationCanRetry(records[0]) {
-		t.Fatal("arbitrary command can be replayed")
 	}
 }

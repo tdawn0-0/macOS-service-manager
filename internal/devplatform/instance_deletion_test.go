@@ -135,20 +135,6 @@ func TestInstanceDeletionRejectsReferencesRunningUnknownAndChangedData(t *testin
 	if e := m.DeleteInstanceData(ctx, i.ID, p.Fingerprint, i.ID); e == nil {
 		t.Fatal("accepted changed tree")
 	}
-	if e := m.withState(ctx, func(s *State) error {
-		s.Projects["p"] = Project{ID: "p", Name: "Linked project", Instances: []string{i.ID}}
-		return nil
-	}); e != nil {
-		t.Fatal(e)
-	}
-	p = deletionPreview(t, m, i.ID)
-	if p.CanDelete || len(p.References) != 1 {
-		t.Fatal(p)
-	}
-	if e := m.DeleteInstanceData(ctx, i.ID, p.Fingerprint, i.ID); e == nil {
-		t.Fatal("deleted referenced data")
-	}
-	m.withState(ctx, func(s *State) error { delete(s.Projects, "p"); return nil })
 	m.Run = func(context.Context, string, ...string) (string, error) { return "state = running", nil }
 	p = deletionPreview(t, m, i.ID)
 	if p.CanDelete {

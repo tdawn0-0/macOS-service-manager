@@ -68,15 +68,15 @@ func (a *app) showToasts(c *ui.Context) {
 const navDevelopment = "development"
 
 var (
-	devSections     = [4]string{"Projects", "Software", "Databases", "HTTPS"}
-	devSectionIcons = [4]*ui.SVG{iconFolder, iconPackage, iconDatabase, iconGlobe}
+	devSections     = [3]string{"Software", "Databases", "HTTPS"}
+	devSectionIcons = [3]*ui.SVG{iconPackage, iconDatabase, iconGlobe}
 )
 
 func devNavID(tab int) string { return fmt.Sprintf("%s:%d", navDevelopment, tab) }
 
 func devNavTab(id string) (int, bool) {
 	var tab int
-	if _, err := fmt.Sscanf(id, navDevelopment+":%d", &tab); err != nil || tab < 0 || tab > 3 {
+	if _, err := fmt.Sscanf(id, navDevelopment+":%d", &tab); err != nil || tab < 0 || tab > 2 {
 		return 0, false
 	}
 	return tab, true
@@ -118,11 +118,7 @@ func (a *app) sidebar(c *ui.Context) {
 	if a.nav == navDevelopment {
 		sel = devNavID(a.dev.tab)
 	}
-	devCounts := [4]int{len(a.dev.state.Projects), 0, len(a.dev.state.Instances), 0}
-	for _, p := range a.dev.state.Projects {
-		devCounts[3] += len(p.Sites)
-	}
-	devCounts[3] += len(a.dev.state.Sites)
+	devCounts := [3]int{0, len(a.dev.state.Instances), len(a.dev.state.ProxyRules)}
 	column := ui.Column(c).Width(216).Shrink(0)
 	if !c.Vibrancy() {
 		column.Background(t.Surface)

@@ -42,7 +42,7 @@ class NativePreparationTests(unittest.TestCase):
     def test_commands_use_only_harness_and_private_root(self):
         module = load_module()
         with mock.patch.object(module.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'ok', '')) as run:
-            for values in [('log-rotation', 'off'), ('install-manifest', 'fixture.json'), ('instance', 'fixture.json'), ('project', 'p', 'fixture.json')]:
+            for values in [('log-rotation', 'off'), ('install-manifest', 'fixture.json'), ('instance', 'fixture.json'), ('db', 'start', 'fixture')]:
                 self.assertEqual(module.run_fixture_command(Path('/fixture/harness'), Path('/fixture/root'), *values), 'ok')
                 self.assertEqual(run.call_args.args[0], ['/fixture/harness', *values])
                 self.assertEqual(run.call_args.kwargs['env']['MSM_DEV_HOME'], '/fixture/root')
@@ -51,7 +51,7 @@ class NativePreparationTests(unittest.TestCase):
         module = load_module()
         with mock.patch.object(module.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, '', 'fixture failure')):
             with self.assertRaisesRegex(RuntimeError, 'Fixture command failed'):
-                module.run_fixture_command(Path('/fixture/harness'), Path('/fixture/root'), 'project')
+                module.run_fixture_command(Path('/fixture/harness'), Path('/fixture/root'), 'db')
 
     def test_cleanup_restricts_jobs_and_retains_uncertain_resources(self):
         module = load_module()
@@ -118,14 +118,29 @@ class NativePreparationTests(unittest.TestCase):
                     root = Path(kwargs['env']['MSM_DEV_HOME'])
                     (root / 'downloads').mkdir(exist_ok=True)
                     (root / 'proxy').mkdir(exist_ok=True)
+                if argv[0] == str(harness) and len(argv)>1 and argv[1]=='status':
+                    return subprocess.CompletedProcess(argv,0,json.dumps({'schemaVersion':2,'packages':{},'instances':{},'proxyRules':[],'proxyListenerPort':443}), '')
                 return subprocess.CompletedProcess(argv, 0, '', '')
-            with mock.patch.object(module.tempfile, 'mkdtemp', return_value=str(private)), mock.patch.object(module.subprocess, 'run', side_effect=run) as calls, mock.patch('sys.stdout', new_callable=io.StringIO):
+            with mock.patch.object(module.tempfile, 'mkdtemp', return_value=str(private)), mock.patch.object(module.subprocess, 'run', side_effect=run) as calls, mock.patch.object(module,'start_external_app',return_value=mock.Mock(pid=12345)), mock.patch('sys.stdout', new_callable=io.StringIO):
                 module.main(['--devmgr',str(harness),'--app',str(app),'--reuse-ca',str(ca.parent),'--node-root',str(cache),'--redis-root',str(cache)])
             record = json.loads((private / 'native-ui.json').read_text())
             self.assertEqual(record['harness'],str(harness))
             self.assertEqual(record['executable'],str(private / 'Service Manager Native Verification.app/Contents/MacOS/NativeApp'))
+            self.assertEqual(record['externalPID'],12345)
+            self.assertNotIn('project',record)
             commands = [x.args[0][1] for x in calls.call_args_list if x.args[0][0] == str(harness)]
-            self.assertEqual(commands,['log-rotation','install-manifest','install-manifest','instance','project'])
+            self.assertEqual(commands,['log-rotation','install-manifest','install-manifest','instance','status','db'])
+
+    def test_external_app_failure_and_cancellation_stop_only_owned_process(self):
+        module=load_module()
+        for failure in [RuntimeError('exited'), KeyboardInterrupt()]:
+            process=mock.Mock(pid=12345)
+            process.poll.return_value=None
+            with tempfile.TemporaryDirectory() as directory, mock.patch.object(module.subprocess,'Popen',return_value=process), mock.patch.object(module.socket,'create_connection',side_effect=failure), mock.patch.object(module.time,'monotonic',side_effect=[0,0]):
+                with self.assertRaises(type(failure)):
+                    module.start_external_app(Path('/fixture/node'),Path(directory),{},3000,Path(directory)/'app.log')
+            process.terminate.assert_called_once()
+            process.wait.assert_called_once_with(timeout=5)
 
 
 if __name__ == '__main__':

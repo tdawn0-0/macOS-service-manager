@@ -50,11 +50,6 @@ func (a *app) panelItems(src service.Source) []service.Item {
 // panelRunning counts what runs among the items the panel shows.
 func (a *app) panelRunning() int {
 	running := 0
-	for id := range a.dev.state.Projects {
-		if status := a.dev.statuses["project:"+id]; devProjectStarted(status) && status != "Failed" {
-			running++
-		}
-	}
 	for _, src := range panelSources {
 		for _, it := range a.panelItems(src) {
 			if it.Up() {
@@ -94,37 +89,7 @@ func (a *app) menubarView(c *ui.Context, openWindow func()) {
 			})
 		})
 		ui.Scroll(c).Grow(1).MinHeight(0).Padding(0, 8, 8).Gap(2).Children(func() {
-			empty := len(a.dev.state.Projects) == 0
-			if !empty {
-				ui.Text(c, "Projects").FontSize(textCaption).FontWeight(650).TextColor(t.TextMuted).Padding(8, 8, 4)
-				for _, id := range sortedKeys(a.dev.state.Projects) {
-					p := a.dev.state.Projects[id]
-					on := devProjectStarted(a.dev.statuses["project:"+id])
-					ui.Row(c.Key("project-"+id)).Height(34).AlignItems(ui.Center).Gap(8).Padding(0, 8).Children(func() {
-						state := service.StateStopped
-						if on {
-							state = service.StateRunning
-						}
-						statusDot(c, state, false)
-						ui.Text(c, p.Name).SingleLine().Grow(1).MinWidth(0).Tooltip(p.Name)
-						if ui.Switch(c, &on).Label("Run project " + p.Name).Disabled(a.dev.busy || a.projectTaskRunning(id)).Changed() {
-							kind := "down"
-							if on {
-								kind = "up"
-							}
-							a.runProjectAction(p, kind)
-						}
-					})
-					for _, site := range p.Sites {
-						if ui.Button(c, "Open "+site.Domain).Disabled(a.dev.busy || site.Disabled).Clicked() {
-							a.devTask(func(m *devplatform.Manager) (string, error) {
-								_, e := m.Run(m.Context, "/usr/bin/open", site.URL())
-								return "Opening " + site.URL(), e
-							})
-						}
-					}
-				}
-			}
+			empty := true
 			for _, src := range panelSources {
 				items := a.panelItems(src)
 				if st := a.sources[src]; st != nil && st.err != "" {
@@ -216,12 +181,6 @@ func (m *menubar) showWindow() {
 func (a *app) panelHeight() int {
 	const header, footer, row, heading = 54, 50, 34, 30
 	height := header + footer + 16
-	if n := len(a.dev.state.Projects); n > 0 {
-		height += heading + n*row
-		for _, p := range a.dev.state.Projects {
-			height += len(p.Sites) * row
-		}
-	}
 	for _, src := range panelSources {
 		if n := len(a.panelItems(src)); n > 0 {
 			height += heading + n*row

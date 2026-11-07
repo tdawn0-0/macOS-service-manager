@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -131,4 +132,37 @@ func readPublishedProxyConfig(root string) (proxyPublishedConfig, error) {
 	}
 	config.Rules = rules
 	return config, nil
+}
+
+// ProxyPublicationState compares saved intent with the persisted routing
+// snapshot. It makes no claim about a running listener or browser trust.
+func (m *Manager) ProxyPublicationState() (string, error) {
+	s, err := m.Read()
+	if err != nil {
+		return "Unknown", err
+	}
+	published, err := readPublishedProxyConfig(m.Root)
+	if err != nil {
+		return "Unknown", nil
+	}
+	if published.ListenerPort != s.ProxyListenerPort || !sameProxyRules(published.Rules, s.ProxyRules) {
+		return "Pending", nil
+	}
+	return "Published", nil
+}
+
+func sameProxyRules(a, b []ProxyRule) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	a = append([]ProxyRule(nil), a...)
+	b = append([]ProxyRule(nil), b...)
+	sort.Slice(a, func(i, j int) bool { return a[i].Domain < a[j].Domain })
+	sort.Slice(b, func(i, j int) bool { return b[i].Domain < b[j].Domain })
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

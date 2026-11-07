@@ -88,7 +88,15 @@ func (m *Manager) startProxy(ctx context.Context, s *State) error {
 		return e
 	}
 	if len(sites) == 0 {
-		return m.stopProxy(ctx)
+		if err := m.stopProxy(ctx); err != nil {
+			return err
+		}
+		for _, target := range []string{domain() + "/" + m.label("proxy"), m.socketTarget()} {
+			if err := m.verifyShutdownTarget(ctx, target); err != nil {
+				return err
+			}
+		}
+		return writeJSON(filepath.Join(m.Root, "proxy", "rules.json"), proxyConfigFromState(s))
 	}
 	if _, _, e := m.ca(); e != nil {
 		return e

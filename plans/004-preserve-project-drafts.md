@@ -211,3 +211,7 @@ func TestStatusPollCannotOverwriteAnOperationOrUnsavedDraft(t *testing.T) {
 ## Maintenance notes
 
 后续诊断跳转、搜索结果、菜单栏导航若会切换项目，应走同一用户导航边界。保留低层 selectProject 用于明确已经保存/确认的流程。不要用自动保存掩盖丢弃问题，尤其是尚未校验的环境字段。
+
+## 最终集成修订（2026-11-07）
+
+主代理全量测试发现两处既有 E2E 会从未保存项目切换目标后立即继续操作。允许额外修改 project_commands_e2e_test.go 和 project_lifecycle_e2e_test.go：保留原来的草稿保留断言，在有意丢弃后继续测试的切换点明确断言确认框并点击 Discard changes。禁止放宽产品 guard 或移除原断言。聚焦验证：go test -race . -run 'Test(UIBackgroundDependencyCommandKeepsIndependentConfigurationAndDraft|UIIndependentProjectsStartConcurrentlyKeepDraftsAndLatestHTTPS)' -count=1。修订随004原子提交一并交付。

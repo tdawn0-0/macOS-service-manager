@@ -112,6 +112,10 @@ func TestUIBackgroundDependencyCommandKeepsIndependentConfigurationAndDraft(t *t
 			}
 			h.foregroundOnly = false
 			h.click("Project " + p.Name)
+			if !h.a.ask.open || h.a.ask.button != "Discard changes" || h.a.dev.draft.Name != "Unsaved dependency draft" {
+				t.Fatal("dirty navigation did not preserve draft pending confirmation")
+			}
+			h.click("Discard changes")
 			if e = os.WriteFile(filepath.Join(p.Directory, "release"), nil, 0600); e != nil {
 				t.Fatal(e)
 			}

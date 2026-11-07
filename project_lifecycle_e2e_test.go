@@ -150,6 +150,10 @@ func TestUIIndependentProjectsStartConcurrentlyKeepDraftsAndLatestHTTPS(t *testi
 			if quitCancel {
 				h.click("Projects")
 				h.click("Project Beta")
+				if !h.a.ask.open || h.a.ask.button != "Discard changes" || h.a.dev.draft.Name != "Unsaved concurrent draft" {
+					t.Fatal("dirty navigation did not preserve draft pending confirmation")
+				}
+				h.click("Discard changes")
 				h.click("Start project")
 			} else {
 				h.waitIdle()

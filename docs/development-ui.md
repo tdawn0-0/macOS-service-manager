@@ -266,3 +266,8 @@ python3 scripts/prepare-native-ui-verification.py \
 替换示例路径，确认包缓存和 CA 来源后再执行。准备命令通过未分发的 cmd/devmgr 完成；返回记录中的 executable 始终是复制后的原生 App，由 Launch Services 打开。App 的 --dev 不提供对外 CLI。--help 不复制、签名或安装。普通 unittest 使用模拟调用，不等同于真实夹具准备和桌面验收。
 
 失败时只清理新建私有根对应的任务；不能确认清理完成则保留目录并报错，不删除仍可能被任务使用的文件。
+
+
+## 项目导航与草稿
+
+再次点击当前项目保留未保存字段、服务编辑器与详情页。切换其他项目时，存在未保存修改则显示 Cancel / Discard changes；Cancel 和 Escape 保留输入，确认后才切换。导航不会自动保存。确认期间项目被删除、工作区来源改变或前台任务开始时，保持当前草稿并提示重新选择。

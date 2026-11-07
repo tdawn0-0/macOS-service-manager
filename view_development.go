@@ -233,6 +233,44 @@ func (d *developmentState) packages(kind string) []string {
 	sort.Strings(ids)
 	return ids
 }
+
+// requestProjectSelection protects user navigation without changing programmatic refreshes.
+func (a *app) requestProjectSelection(id string) {
+	d := &a.dev
+	if d.busy {
+		return
+	}
+	if _, ok := d.state.Projects[id]; !ok {
+		a.toast("Project is no longer available; refresh and try again")
+		return
+	}
+	if d.id == id {
+		d.importing = false
+		d.commandWorkOpen = false
+		return
+	}
+	source := d.id
+	selectLatest := func() {
+		if a.dev.busy || a.dev.id != source {
+			a.toast("Workspace changed; select the project again")
+			return
+		}
+		p, ok := a.dev.state.Projects[id]
+		if !ok {
+			a.toast("Project is no longer available; refresh and try again")
+			return
+		}
+		a.dev.selectProject(p)
+		a.dev.commandWorkOpen = false
+		a.dev.importing = false
+	}
+	if d.projectDirty() {
+		a.ask = askState{open: true, title: "Discard unsaved changes?", message: "Switching projects discards the current project's unsaved edits.", button: "Discard changes", run: selectLatest}
+		return
+	}
+	selectLatest()
+}
+
 func (d *developmentState) selectProject(p devplatform.Project) {
 	if d.runtimeTargetProject != "" && d.runtimeTargetProject != p.ID {
 		d.runtimeTargetProject = ""
@@ -613,9 +651,7 @@ func (a *app) devMaster(c *ui.Context) {
 			p := d.state.Projects[id]
 			status := d.statuses["project:"+id]
 			if devListEntry(c, "Project "+p.Name, p.Name, status, devNews(status), d.id == id && !d.importing) {
-				d.selectProject(p)
-				d.commandWorkOpen = false
-				d.importing = false
+				a.requestProjectSelection(id)
 			}
 		}
 	case 1:

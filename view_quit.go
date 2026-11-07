@@ -129,10 +129,7 @@ func (a *app) quitDialog(c *ui.Context) {
 						}
 					}
 					if q.plan != nil {
-						ui.Text(c, fmt.Sprintf("Stop scope: %d managed projects · %d managed databases", len(q.plan.Projects), len(q.plan.Instances))).FontSize(textSmall).FontWeight(600)
-						for _, p := range q.plan.Projects {
-							ui.Text(c, "Project · "+p.Name).FontSize(textSmall)
-						}
+						ui.Text(c, fmt.Sprintf("Stop scope: %d managed databases", len(q.plan.Instances))).FontSize(textSmall).FontWeight(600)
 						for _, i := range q.plan.Instances {
 							ui.Text(c, "Database · "+i.ID+" · "+softwareTitle(i.Name)).FontSize(textSmall)
 						}

@@ -10,37 +10,21 @@ import (
 	"testing"
 )
 
-func TestShutdownScopeSharedDependenciesAndDataRetention(t *testing.T) {
+func TestShutdownScopeIndependentResourcesAndDataRetention(t *testing.T) {
 	for _, stopProxy := range []bool{false, true} {
 		t.Run(map[bool]string{false: "retain-proxy", true: "stop-proxy"}[stopProxy], func(t *testing.T) {
 			m := testManager(t)
-			m.LoginDir = t.TempDir()
 			ctx := context.Background()
 			s := emptyState()
-			s.Projects["a"] = Project{ID: "a", Name: "A", Directory: t.TempDir(), Autostart: true, Services: []Service{{ID: "base", Command: []string{"/usr/bin/true"}}, {ID: "api", Command: []string{"/usr/bin/true"}, DependsOn: []string{"base"}}}, Instances: []string{"shared"}}
-			s.Projects["b"] = Project{ID: "b", Name: "B", Directory: t.TempDir(), Instances: []string{"shared"}}
-			s.Instances["shared"] = Instance{ID: "shared", Kind: "redis"}
-			s.Instances["standalone"] = Instance{ID: "standalone", Kind: "redis"}
+			s.Instances["db"] = Instance{ID: "db", Kind: "redis"}
 			if err := writeJSON(filepath.Join(m.Root, "state.json"), s); err != nil {
 				t.Fatal(err)
 			}
-			data := filepath.Join(m.Root, "instances", "shared", "data", "sentinel")
+			data := filepath.Join(m.Root, "instances", "db", "data", "sentinel")
 			if err := atomicWrite(data, []byte("retained data"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if err := atomicWrite(m.loginPath("a"), []byte("login preference"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			if err := atomicWrite(m.maintenancePath(), []byte("scheduled helper"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			loaded := map[string]bool{}
-			for _, id := range []string{"project-a", "project-b", "p-a-base", "p-a-api", "db-shared", "db-standalone", "proxy", "maintenance", "login-a"} {
-				loaded[m.label(id)] = true
-			}
-			external := "external.unmanaged.server"
-			loaded[external] = true
-			var stopped []string
+			loaded := map[string]bool{m.label("db-db"): true, m.label("proxy"): true, m.label("maintenance"): true, "external.unmanaged.server": true}
 			m.Run = func(ctx context.Context, name string, args ...string) (string, error) {
 				if err := ctx.Err(); err != nil {
 					return "", err
@@ -53,10 +37,6 @@ func TestShutdownScopeSharedDependenciesAndDataRetention(t *testing.T) {
 					return "", errors.New("Could not find service")
 				}
 				if args[0] == "bootout" {
-					if id == m.label("db-shared") && loaded[m.label("project-a")] && loaded[m.label("project-b")] {
-						t.Fatal("stopped shared database before its last project")
-					}
-					stopped = append(stopped, id)
 					delete(loaded, id)
 					return "", nil
 				}
@@ -64,25 +44,14 @@ func TestShutdownScopeSharedDependenciesAndDataRetention(t *testing.T) {
 				return "", nil
 			}
 			plan, err := m.PreviewShutdown(ctx)
-			if err != nil {
+			if err != nil || len(plan.Instances) != 1 {
+				t.Fatal(plan, err)
+			}
+			if err := m.Shutdown(ctx, plan, ShutdownOptions{StopProxy: stopProxy}); err != nil {
 				t.Fatal(err)
 			}
-			if len(plan.Projects) != 2 || len(plan.Instances) != 2 || plan.PrivilegedProxy {
-				t.Fatal(plan)
-			}
-			if err = m.Shutdown(ctx, plan, ShutdownOptions{StopProxy: stopProxy}); err != nil {
-				t.Fatal(err)
-			}
-			if !loaded[external] || loaded[m.label("proxy")] == stopProxy {
-				t.Fatal("stopped outside the chosen scope", loaded)
-			}
-			for id := range loaded {
-				if id != external && id != m.label("proxy") {
-					t.Fatal("owned job was not stopped", id)
-				}
-			}
-			if len(stopped) < 3 || stopped[1] != m.label("p-a-api") || stopped[2] != m.label("p-a-base") {
-				t.Fatal("did not stop in reverse dependency order", stopped)
+			if !loaded["external.unmanaged.server"] || loaded[m.label("proxy")] == stopProxy || loaded[m.label("db-db")] || loaded[m.label("maintenance")] {
+				t.Fatal("stopped outside chosen scope or missed owned job", loaded)
 			}
 			after, err := m.Read()
 			if err != nil || !reflect.DeepEqual(s, after) {
@@ -90,9 +59,6 @@ func TestShutdownScopeSharedDependenciesAndDataRetention(t *testing.T) {
 			}
 			if b, err := os.ReadFile(data); err != nil || string(b) != "retained data" {
 				t.Fatal("shutdown deleted data", err)
-			}
-			if _, err = os.Stat(m.loginPath("a")); err != nil {
-				t.Fatal("shutdown removed login preference", err)
 			}
 		})
 	}
@@ -105,7 +71,7 @@ func TestShutdownRejectsChangedScopeAndCancellationBeforeMutation(t *testing.T) 
 		t.Fatal(err)
 	}
 	if err = m.withState(context.Background(), func(s *State) error {
-		s.Projects["added"] = Project{ID: "added", Name: "New project", Directory: t.TempDir()}
+		s.Instances["added"] = Instance{ID: "added", Kind: "redis"}
 		return nil
 	}); err != nil {
 		t.Fatal(err)

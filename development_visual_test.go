@@ -347,7 +347,7 @@ func TestDevelopmentDesignLayouts(t *testing.T) {
 					if page.name == "quit-scope" || page.name == "quit-failure" {
 						a.quit.open = true
 						a.quit.stopProxy = true
-						a.quit.plan = &devplatform.ShutdownPlan{Fingerprint: "example", Projects: []devplatform.ShutdownResource{{ID: "atlas", Name: "Atlas API"}, {ID: "storefront", Name: "Storefront"}}, Instances: []devplatform.ShutdownResource{{ID: "atlas-postgres", Name: "postgresql"}, {ID: "cache", Name: "redis"}}, PrivilegedProxy: true}
+						a.quit.plan = &devplatform.ShutdownPlan{Fingerprint: "example", Instances: []devplatform.ShutdownResource{{ID: "atlas-postgres", Name: "postgresql"}, {ID: "cache", Name: "redis"}}, PrivilegedProxy: true}
 						if page.name == "quit-failure" {
 							a.quit.plan = nil
 							a.quit.err = "Could not stop Atlas API. Some services may already have stopped. Review the scope to retry, or quit keeping what remains."

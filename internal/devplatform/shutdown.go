@@ -14,7 +14,6 @@ import (
 
 type ShutdownResource struct{ ID, Name string }
 type ShutdownPlan struct {
-	Projects        []ShutdownResource
 	Instances       []ShutdownResource
 	Fingerprint     string
 	PrivilegedProxy bool
@@ -37,10 +36,7 @@ func (m *Manager) PreviewShutdown(ctx context.Context) (ShutdownPlan, error) {
 	if err != nil {
 		return ShutdownPlan{}, err
 	}
-	p := ShutdownPlan{Fingerprint: m.shutdownFingerprint(s), Projects: []ShutdownResource{}, Instances: []ShutdownResource{}, PrivilegedProxy: privilegedPorts(allSites(&s))}
-	for _, id := range diagnosticKeys(s.Projects) {
-		p.Projects = append(p.Projects, ShutdownResource{id, s.Projects[id].Name})
-	}
+	p := ShutdownPlan{Fingerprint: m.shutdownFingerprint(s), Instances: []ShutdownResource{}, PrivilegedProxy: len(s.ProxyRules) > 0 && s.ProxyListenerPort < 1024}
 	for _, id := range diagnosticKeys(s.Instances) {
 		p.Instances = append(p.Instances, ShutdownResource{id, s.Instances[id].Kind})
 	}
@@ -60,30 +56,12 @@ func (m *Manager) Shutdown(ctx context.Context, plan ShutdownPlan, options Shutd
 		if plan.Fingerprint == "" || plan.Fingerprint != m.shutdownFingerprint(*s) {
 			return errors.New("workspace changed after the quit preview; review the updated scope and retry")
 		}
-		ids := diagnosticKeys(s.Instances)
-		for _, p := range s.Projects {
-			ids = append(ids, p.Instances...)
-		}
-		keys := append(projectResourceKeys(diagnosticKeys(s.Projects)...), instanceResourceKeys(ids)...)
+		keys := instanceResourceKeys(diagnosticKeys(s.Instances))
 		release, e := m.resourceLeases(ctx, keys...)
 		if e != nil {
 			return e
 		}
 		defer release()
-		// A finite login launcher must not start a project after this shutdown.
-		for _, id := range diagnosticKeys(s.Projects) {
-			if err := m.stopJob(ctx, "login-"+id); err != nil {
-				return fmt.Errorf("stop login launcher for %s: %w", id, err)
-			}
-		}
-		for _, id := range diagnosticKeys(s.Projects) {
-			m.emit("Stopping project " + s.Projects[id].Name)
-			if err := m.downProject(ctx, s, id); err != nil {
-				return fmt.Errorf("stop project %s: %w", id, err)
-			}
-		}
-		// downProject preserves a shared database until its last project stops.
-		// Also stop standalone managed instances after all projects are down.
 		for _, id := range diagnosticKeys(s.Instances) {
 			m.emit("Stopping database " + id)
 			if err := m.stopJob(ctx, "db-"+id); err != nil {
@@ -103,12 +81,6 @@ func (m *Manager) Shutdown(ctx context.Context, plan ShutdownPlan, options Shutd
 		// A failed launchctl read is not proof that a job is absent. Verify the
 		// full chosen scope before allowing the GUI to finish quitting.
 		var targets []string
-		for _, id := range diagnosticKeys(s.Projects) {
-			targets = append(targets, domain()+"/"+m.label("project-"+id), domain()+"/"+m.label("login-"+id))
-			for _, svc := range s.Projects[id].Services {
-				targets = append(targets, domain()+"/"+m.label("p-"+id+"-"+svc.ID))
-			}
-		}
 		for _, id := range diagnosticKeys(s.Instances) {
 			targets = append(targets, domain()+"/"+m.label("db-"+id))
 		}

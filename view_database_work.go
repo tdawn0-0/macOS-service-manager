@@ -32,18 +32,17 @@ func (a *app) openDatabaseWork() {
 }
 func (a *app) devDatabaseWork(c *ui.Context) {
 	d := &a.dev
-	devHeading(c, "Unfinished database tasks", "Review work left by an exited caller. Writes are never replayed automatically.")
-	ui.Row(c).Gap(8).Wrap().Children(func() {
+	devPaneHeader(c, "Unfinished database tasks", func() {
+		if ui.Button(c, "Refresh database tasks").Disabled(d.busy).Clicked() {
+			a.databaseWorkTask(nil)
+		}
 		if ui.Button(c, "Back to database settings").Disabled(d.busy).Clicked() {
 			d.databaseWorkOpen = false
 			d.detailScroll[2].Y = 0
 		}
-		if ui.Button(c, "Refresh database tasks").Disabled(d.busy).Clicked() {
-			a.databaseWorkTask(nil)
-		}
 	})
 	if len(d.databaseWork) == 0 {
-		ui.Text(c, "No unfinished database tasks.").FontSize(textSmall)
+		ui.Text(c, "None").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		return
 	}
 	for _, r := range d.databaseWork {
@@ -58,13 +57,12 @@ func (a *app) devDatabaseWork(c *ui.Context) {
 		if r.Output != "" {
 			deletionPath(c, "Output "+r.ID, r.Output)
 		}
-		ui.Text(c, "Stopping a task does not undo changes already written to its target. Database files and any backup output are kept. Finish releases only this task's reservation.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		prefix := r.ID[:min(8, len(r.ID))]
 		label := "Finish database task " + prefix
 		if r.Running {
 			label = "Stop database task " + prefix
 		}
-		if ui.Button(c, label).Disabled(d.busy || !r.CanResolve).Clicked() {
+		if ui.Button(c, label).AlignSelf(ui.Start).Tooltip("Does not undo changes already written. Database files and backup output are kept.").Disabled(d.busy || !r.CanResolve).Clicked() {
 			a.databaseWorkTask(func(m *devplatform.Manager) error { return m.ResolveDatabaseWork(m.Context, r.ID, r.Revision) })
 		}
 	}

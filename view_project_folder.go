@@ -39,7 +39,7 @@ func (a *app) reviewProjectFolder(p devplatform.Project) {
 func (a *app) devProjectFolder(c *ui.Context) {
 	d := &a.dev
 	devField(c, "Working folder", &d.draft.Directory, "")
-	if ui.Button(c, "Choose working folder…").Disabled(d.busy).Clicked() {
+	if ui.Button(c, "Choose working folder…").AlignSelf(ui.Start).Tooltip("After moving the source folder, select its new location and save to review path updates. The project ID, databases and HTTPS domains are kept.").Disabled(d.busy).Clicked() {
 		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "Locate project folder", Directory: true})
 		if err != nil {
 			d.output = "Error: " + err.Error()
@@ -47,7 +47,6 @@ func (a *app) devProjectFolder(c *ui.Context) {
 			d.draft.Directory = paths[0]
 		}
 	}
-	ui.Text(c, "Moved the source folder? Select its new location and save to review local path updates. The app keeps the project ID, databases and HTTPS domains.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 	r := d.folderPreview
 	if r == nil || r.ProjectID != d.id {
 		return
@@ -64,9 +63,9 @@ func (a *app) devProjectFolder(c *ui.Context) {
 	}
 	current := d.folderReviewCurrent()
 	if !current {
-		ui.Text(c, "Settings changed after this preview. Save project again to refresh the review.").FontSize(textSmall).TextColor(c.Theme().Warning)
+		ui.Text(c, "Settings changed after this preview. Save again to refresh it.").FontSize(textSmall).TextColor(c.Theme().Warning)
 	}
-	if ui.Button(c, "Apply folder change").Disabled(d.busy || !current).Clicked() {
+	if ui.Button(c, "Apply folder change").AlignSelf(ui.Start).Disabled(d.busy || !current).Clicked() {
 		p, fingerprint := d.folderDraft.Clone(), r.Fingerprint
 		a.devTaskThen(func(m *devplatform.Manager) (string, error) {
 			return "Project folder updated. Start the project to verify its new location.", m.ApplyProjectFolder(m.Context, p, fingerprint)
@@ -77,7 +76,7 @@ func (a *app) devProjectFolder(c *ui.Context) {
 			}
 		})
 	}
-	if ui.Button(c, "Cancel folder change").Disabled(d.busy).Clicked() {
+	if ui.Button(c, "Cancel folder change").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 		d.draft.Directory = d.state.Projects[d.id].Directory
 		d.folderPreview = nil
 		d.folderDraft = nil

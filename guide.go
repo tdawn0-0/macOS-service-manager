@@ -20,7 +20,7 @@ import (
 
 const (
 	// The page as it opens, and beside System Settings.
-	guideWidth, guideHeight     = 420, 412
+	guideWidth, guideHeight     = 420, 340
 	sidecarWidth, sidecarHeight = 288, 330
 	sidecarGap                  = 14
 	guideTitleBar               = 40
@@ -103,7 +103,7 @@ func (g *guideWindow) show() {
 		return
 	}
 	g.win = mygo.NewWindow(mygo.WindowOptions{
-		Title:             "Welcome to Service Manager",
+		Title:             "Full Disk Access",
 		Width:             guideWidth,
 		Height:            guideHeight,
 		DisableResize:     true,
@@ -353,32 +353,19 @@ func (a *app) guideView(c *ui.Context) {
 	})
 }
 
-// guideWelcome says what the app is, and offers the one thing it may need.
+// guideWelcome offers the one permission the app may need.
 func (a *app) guideWelcome(c *ui.Context) {
 	t := c.Theme()
-	title, subtitle := "See Every Login Item", "One permission, and the list is complete."
 	skip := "Close"
 	if a.guide.welcome {
-		title, subtitle = "Welcome to Service Manager", "Everything that starts on your Mac, in one place."
 		skip = "Skip for Now"
 	}
 	ui.Column(c).Grow(1).MinHeight(0).Padding(0, 28, 24).AlignItems(ui.Center).Children(func() {
 		ui.Image(c, guideIcon()).Size(84, 84).Shrink(0)
-		ui.Text(c, title).FontSize(20).FontWeight(700).Margin(10, 0, 4).TextAlign(ui.Center)
-		ui.Text(c, subtitle).TextColor(t.TextMuted).TextAlign(ui.Center)
-		ui.Row(c).Shrink(0).AlignSelf(ui.Stretch).Margin(22, 0, 0).Padding(12).Gap(12).AlignItems(ui.Center).Radius(12).Background(t.Text.Alpha(0.045)).Children(func() {
-			ui.Row(c).Size(40, 40).Shrink(0).Center().Radius(10).Background(t.Accent).Children(func() {
-				ui.Icon(c, iconDisk).FontSize(22).TextColor(t.AccentText)
-			})
-			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-				ui.Text(c, "Full Disk Access").FontWeight(600)
-				ui.Text(c, "Only to read the list of login items.").FontSize(textSmall).TextColor(t.TextMuted)
-			})
-			ui.PrimaryButton(c, "Allow…").Shrink(0).OnClick(func() { a.openRestrictionSettings(a.guide.src) })
-		})
-		ui.Text(c, "Without it, some login items may not show. Everything else works, and you can do this later from Login Items.").
-			FontSize(textSmall).TextColor(t.TextMuted).TextAlign(ui.Center).Margin(12, 8, 0)
+		ui.Text(c, "Allow Full Disk Access").FontSize(20).FontWeight(700).Margin(10, 0, 4).TextAlign(ui.Center)
+		ui.Text(c, "Needed to list every login item").TextColor(t.TextMuted).TextAlign(ui.Center)
 		ui.Column(c).Grow(1)
+		ui.PrimaryButton(c, "Allow…").Margin(0, 0, 10).OnClick(func() { a.openRestrictionSettings(a.guide.src) })
 		ui.Button(c, skip).OnClick(a.closeGuide)
 	})
 }
@@ -390,11 +377,9 @@ func (a *app) guideSidecar(c *ui.Context) {
 		if a.appPath != "" {
 			a.dragTile(c)
 			ui.Text(c, "Drag into the list").FontSize(15).FontWeight(650).Margin(14, 0, 4).TextAlign(ui.Center)
-			ui.Text(c, "Then confirm with Touch ID or password.").FontSize(textSmall).TextColor(t.TextMuted).TextAlign(ui.Center)
 		} else {
 			ui.Image(c, guideIcon()).Size(84, 84).Shrink(0)
-			ui.Text(c, "Add this app to the list").FontSize(15).FontWeight(650).Margin(14, 0, 4).TextAlign(ui.Center)
-			ui.Text(c, "With the + button under the list.").FontSize(textSmall).TextColor(t.TextMuted).TextAlign(ui.Center)
+			ui.Text(c, "Add this app with the + button").FontSize(15).FontWeight(650).Margin(14, 0, 4).TextAlign(ui.Center)
 		}
 		ui.Column(c).Grow(1)
 		if a.guide.settingsOpen {
@@ -428,7 +413,6 @@ func (a *app) guideDone(c *ui.Context) {
 			ui.Icon(c, iconCheck).FontSize(30).TextColor(white)
 		})
 		ui.Text(c, "Full Disk Access is on").FontSize(15).FontWeight(650).Margin(14, 0, 4)
-		ui.Text(c, "Every login item is listed.").FontSize(textSmall).TextColor(t.TextMuted)
 	})
 }
 

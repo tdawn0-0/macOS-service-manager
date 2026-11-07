@@ -64,8 +64,8 @@ func (d *developmentState) bindRuntime(project, service, packageID string) bool 
 
 func (a *app) devRuntimeHints(c *ui.Context) {
 	d := &a.dev
-	devDivider(c, "Runtime declarations")
-	if ui.Button(c, "Rescan project files").Disabled(d.busy).Clicked() {
+	devDivider(c, "Runtimes")
+	if ui.Button(c, "Rescan project files").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 		dir, id := d.draft.Directory, d.id
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			inspection, e := devplatform.InspectProject(dir)
@@ -88,9 +88,6 @@ func (a *app) devRuntimeHints(c *ui.Context) {
 	for _, runtime := range devplatform.RuntimeConflicts(d.draft.RuntimeHints) {
 		ui.Text(c, "Exact "+softwareTitle(runtime)+" declarations disagree. Choose which version to use.").FontSize(textSmall).TextColor(c.Theme().Danger)
 	}
-	if len(d.draft.RuntimeHints) == 0 {
-		ui.Text(c, "No version declaration found. Choose a runtime in Services after installing it in Software.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-	}
 	for _, hint := range d.draft.RuntimeHints {
 		ui.Text(c, softwareTitle(hint.Name)+" "+hint.Version+" · "+hint.Source).FontSize(textSmall).SingleLine().Tooltip(hint.Source + ": " + hint.Version)
 		version := hint.ExactVersion()
@@ -98,7 +95,7 @@ func (a *app) devRuntimeHints(c *ui.Context) {
 			pkg := d.state.Packages[id]
 			if version != "" && pkg.Name == hint.Name && pkg.Version == version {
 				label := "Use installed " + softwareTitle(pkg.Name) + " " + pkg.Version + " from " + hint.Source
-				if ui.Button(c, label).Disabled(d.busy).Clicked() && d.flushService() {
+				if ui.Button(c, label).AlignSelf(ui.Start).Disabled(d.busy).Clicked() && d.flushService() {
 					d.noteRuntimeEdit(d.id, d.runtimeService(hint.Name))
 					if d.bindRuntime(d.id, d.runtimeService(hint.Name), id) {
 						d.output = "Runtime selected. Save the project to use it."
@@ -115,7 +112,7 @@ func (a *app) devRuntimeHints(c *ui.Context) {
 		if version != "" {
 			label = "Choose " + softwareTitle(hint.Name) + " " + version + " from " + hint.Source
 		}
-		if ui.Button(c, label).Disabled(d.busy).Clicked() && d.flushService() {
+		if ui.Button(c, label).AlignSelf(ui.Start).Disabled(d.busy).Clicked() && d.flushService() {
 			d.runtimeTargetProject = d.id
 			d.runtimeTargetService = d.runtimeService(hint.Name)
 			d.software = hint.Name
@@ -123,7 +120,7 @@ func (a *app) devRuntimeHints(c *ui.Context) {
 			if version == "" {
 				d.version = devplatform.AvailableVersions(hint.Name)[0]
 			}
-			d.softwareContext = fmt.Sprintf("%s declares %s %s. Choose an exact version before installing.", hint.Source, softwareTitle(hint.Name), hint.Version)
+			d.softwareContext = fmt.Sprintf("%s declares %s %s.", hint.Source, softwareTitle(hint.Name), hint.Version)
 			d.tab = 1
 			d.detailScroll[1].Y = 0
 		}
@@ -148,7 +145,7 @@ func (a *app) devPackageReview(c *ui.Context) {
 	if d.softwareContext != "" {
 		ui.Text(c, d.softwareContext).FontSize(textSmall).TextColor(c.Theme().TextMuted)
 	}
-	if ui.Button(c, "Review package").Disabled(d.busy || d.software == "" || strings.TrimSpace(d.version) == "").Clicked() {
+	if ui.Button(c, "Review package").AlignSelf(ui.Start).Disabled(d.busy || d.software == "" || strings.TrimSpace(d.version) == "").Clicked() {
 		name, version := d.software, strings.TrimSpace(d.version)
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			pkg, e := m.ResolveInstalledOrCatalog(m.Context, name, version)
@@ -165,13 +162,13 @@ func (a *app) devPackageReview(c *ui.Context) {
 					}
 				})
 			}
-			return "Package details ready. Review the source and system requirements before installing.", e
+			return "Package details ready.", e
 		})
 	}
 	valid := d.previewMatches()
 	if valid {
 		info := d.packagePreview
-		devDivider(c, "Before you install")
+		devDivider(c, "Package")
 		size := "Download size is unavailable until transfer starts"
 		if info.ArchiveBytes > 0 {
 			size = fmt.Sprintf("Archive size: %.1f MiB", float64(info.ArchiveBytes)/(1<<20))
@@ -196,10 +193,10 @@ func (a *app) devPackageReview(c *ui.Context) {
 			ui.Text(c, d.packageDetailsText).FontSize(textSmall).Selectable().Label("Package details")
 		})
 		ui.Row(c).Gap(8).Children(func() {
-			if ui.Button(c, "Copy package source").Clicked() && a.copy != nil {
+			if ui.Button(c, "Copy package source").AlignSelf(ui.Start).Clicked() && a.copy != nil {
 				a.copy(info.Package.URL)
 			}
-			if ui.Button(c, "Copy package checksum").Clicked() && a.copy != nil {
+			if ui.Button(c, "Copy package checksum").AlignSelf(ui.Start).Clicked() && a.copy != nil {
 				a.copy(info.Package.SHA256)
 			}
 		})
@@ -217,7 +214,7 @@ func (a *app) devPackageReview(c *ui.Context) {
 	if valid && d.packagePreview.Installed {
 		installLabel = "Use installed version"
 	}
-	if ui.PrimaryButton(c, installLabel).Disabled(d.busy || !valid || !d.packagePreview.Compatible || (d.packagePreview.Integrity == "Needs repair" && d.packagePreview.Package.Formula == "") || a.packageTaskRunning(d.packagePreview.Package.ID())).Clicked() {
+	if ui.PrimaryButton(c, installLabel).AlignSelf(ui.Start).Disabled(d.busy || !valid || !d.packagePreview.Compatible || (d.packagePreview.Integrity == "Needs repair" && d.packagePreview.Package.Formula == "") || a.packageTaskRunning(d.packagePreview.Package.ID())).Clicked() {
 		pkg := d.packagePreview.Package
 		project, service := d.runtimeTargetProject, d.runtimeTargetService
 		d.noteRuntimeEdit(project, service)

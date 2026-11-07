@@ -62,8 +62,7 @@ func (a *app) devLocalArguments(c *ui.Context) {
 	if len(d.localArguments) == 0 {
 		return
 	}
-	devDivider(c, "Values on this Mac")
-	ui.Text(c, "These values stay in private app settings. Saving fills the corresponding command items; exported environments keep placeholders.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
+	devDivider(c, "On this Mac")
 	for n := range d.localArguments {
 		arg := &d.localArguments[n]
 		label := fmt.Sprintf("Local argument %d · %s", arg.Index+1, arg.Label)
@@ -77,7 +76,7 @@ func (a *app) devLocalArguments(c *ui.Context) {
 			ui.Text(c, "Command prefix: "+arg.Prefix).FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		}
 		if arg.Kind == "executable" || arg.Kind == "path" {
-			if ui.Button(c, fmt.Sprintf("Choose file for argument %d", arg.Index+1)).Clicked() {
+			if ui.Button(c, fmt.Sprintf("Choose file for argument %d", arg.Index+1)).AlignSelf(ui.Start).Clicked() {
 				paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "Choose a local file"})
 				if err != nil {
 					d.output = "Error: " + err.Error()

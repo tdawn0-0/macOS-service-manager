@@ -13,16 +13,15 @@ import (
 func (a *app) editorDialog(c *ui.Context) {
 	e := &a.editor
 	t := c.Theme()
-	title, subtitle := "New Job", map[service.Source]string{
-		service.UserAgent:   "Runs for you when you log in, in ~/Library/LaunchAgents.",
-		service.SystemAgent: "Runs for every user who logs in, in /Library/LaunchAgents. Saving asks for your password.",
-		service.Daemon:      "Runs from startup, with nobody logged in, in /Library/LaunchDaemons. Saving asks for your password.",
-	}[e.source()]
+	title, subtitle := "New Job", ""
 	if e.existing != "" {
 		title, subtitle = "Edit Job", e.existing
-		if e.source() != service.UserAgent {
-			subtitle += ". Saving asks for your password."
+	}
+	if e.source() != service.UserAgent {
+		if subtitle != "" {
+			subtitle += " · "
 		}
+		subtitle += "Saving asks for your password"
 	}
 	// The form scrolls, leaving room for the title and the buttons.
 	_, windowHeight := c.Size()
@@ -30,7 +29,9 @@ func (a *app) editorDialog(c *ui.Context) {
 		ui.Column(c).Width(600).Gap(14).Children(func() {
 			ui.Column(c).Gap(2).Children(func() {
 				ui.Text(c, title).FontSize(16).FontWeight(650)
-				ui.Text(c, subtitle).FontSize(textSmall).TextColor(t.TextMuted).SingleLine()
+				if subtitle != "" {
+					ui.Text(c, subtitle).FontSize(textSmall).TextColor(t.TextMuted).SingleLine()
+				}
 			})
 			if e.existing == "" {
 				ui.Segmented(c, &e.kind, "User Agent", "System Agent", "Daemon").Label("Kind of job").AlignSelf(ui.Start)
@@ -43,13 +44,13 @@ func (a *app) editorDialog(c *ui.Context) {
 						ui.Fieldset(c, "Runs as", func() {
 							ui.Field(c, "User", func() {
 								ui.TextInput(c, &e.user).Placeholder("root")
-							}).Description("Without one, the job runs as root.")
+							}).Tooltip("Without one, the job runs as root.")
 							ui.Field(c, "Group", func() {
 								ui.TextInput(c, &e.group).Placeholder("Optional, with a user")
 							})
 							ui.Field(c, "Root directory", func() {
 								ui.TextInput(c, &e.rootDir).Placeholder("Optional absolute path")
-							}).Description("Runs the job chrooted into it, where the command must be found too.")
+							}).Tooltip("Runs the job chrooted into it, where the command must be found too.")
 						})
 					}
 					ui.Fieldset(c, "Logs", func() {
@@ -94,7 +95,7 @@ func (a *app) editorProgram(c *ui.Context) {
 	ui.Fieldset(c, "Program", func() {
 		ui.Field(c, "Label", func() {
 			ui.TextInput(c, &e.label).Placeholder("com.example.my-job").ReadOnly(e.existing != "")
-		}).Description(map[bool]string{
+		}).Tooltip(map[bool]string{
 			true:  "The label of an existing job does not change.",
 			false: "A reverse-domain name that is unique among your jobs.",
 		}[e.existing != ""])
@@ -104,11 +105,11 @@ func (a *app) editorProgram(c *ui.Context) {
 		if e.command == commandShell {
 			ui.Field(c, "Command", func() {
 				ui.TextArea(c, &e.args).Lines(2, 5).Placeholder("/opt/homebrew/bin/redis-cli ping")
-			}).Description("Runs with /bin/sh -c. launchd's PATH lacks Homebrew: give full paths, or set PATH below.")
+			}).Tooltip("Runs with /bin/sh -c. launchd's PATH lacks Homebrew: give full paths, or set PATH below.")
 		} else {
 			ui.Field(c, "Command", func() {
 				ui.TextArea(c, &e.args).Lines(2, 5).Placeholder("/opt/homebrew/bin/node\n/Users/me/server.js")
-			}).Description("One item per line: the program with its absolute path, then its arguments.")
+			}).Tooltip("One item per line: the program with its absolute path, then its arguments.")
 		}
 		ui.Field(c, "Working directory", func() {
 			ui.TextInput(c, &e.workDir).Placeholder("Optional, as /Users/me/project")
@@ -148,7 +149,7 @@ func (a *app) editorWhen(c *ui.Context) {
 					return
 				}
 				ui.Segmented(c, &e.restart, "Never", "After a crash", "Always").Label("Restarts").AlignSelf(ui.Start)
-			}).Description(map[int]string{
+			}).Tooltip(map[int]string{
 				restartNever:   "launchd leaves the job stopped once it exits.",
 				restartOnCrash: "Starts it again if it exits with a failure, and so also starts it at load.",
 				restartAlways:  "Starts it again whenever it exits.",
@@ -156,7 +157,7 @@ func (a *app) editorWhen(c *ui.Context) {
 			ui.Field(c, "Starts when a disk mounts", func() { ui.Switch(c, &e.mount) })
 			ui.Field(c, "Queue directories", func() {
 				ui.TextInput(c, &e.queue).Placeholder("Optional, as /Users/me/inbox, /Users/me/outbox")
-			}).Description("Runs the job while any of these is not empty. Separate them with commas.")
+			}).Tooltip("Runs the job while any of these is not empty. Separate them with commas.")
 		case whenInterval:
 			ui.Field(c, "Run every (seconds)", func() {
 				ui.TextInput(c, &e.interval).Placeholder("3600")
@@ -169,7 +170,7 @@ func (a *app) editorWhen(c *ui.Context) {
 				})
 			} else {
 				ui.Field(c, "Calendar", func() { a.calendarFields(c) }).
-					Description("A number, a list (1,15), a range (1-5) or an interval (*/10). An empty field is any value.")
+					Tooltip("A number, a list (1,15), a range (1-5) or an interval (*/10). An empty field is any value.")
 			}
 			ui.Field(c, "Also "+strings.ToLower(atLoad), func() { ui.Switch(c, &e.runAtLoad) })
 		}
@@ -192,8 +193,7 @@ func (a *app) calendarFields(c *ui.Context) {
 		} {
 			ui.Column(c.Key(f.label)).Grow(1).Basis(0).MinWidth(0).Gap(3).Children(func() {
 				ui.Text(c, f.label).FontSize(textCaption).TextColor(t.TextMuted).SingleLine()
-				ui.TextInput(c, f.text).Placeholder("*").Label(f.label)
-				ui.Text(c, f.hint).FontSize(textCaption).TextColor(t.TextMuted).Opacity(0.8).SingleLine()
+				ui.TextInput(c, f.text).Placeholder("*").Label(f.label).Tooltip(f.hint)
 			})
 		}
 	})

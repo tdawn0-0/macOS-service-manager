@@ -111,7 +111,6 @@ func (a *app) quitDialog(c *ui.Context) {
 	if ui.Modal(c, &q.open, func() {
 		ui.Column(c).Width(min(float32(620), width-48)).Gap(12).Children(func() {
 			ui.Text(c, "Quit Service Manager?").FontSize(18).FontWeight(650)
-			ui.Text(c, "Closing the window keeps services running. Choose what happens when the app exits.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 			ui.Scroll(c).MaxHeight(height - 200).Children(func() {
 				ui.Column(c).Gap(8).Children(func() {
 					if a.dev.projectDirty() || a.editor.open {
@@ -141,10 +140,6 @@ func (a *app) quitDialog(c *ui.Context) {
 						if q.plan.PrivilegedProxy && q.stopProxy {
 							ui.Text(c, "Stopping the system HTTPS listener may require macOS administrator authorization.").FontSize(textSmall).TextColor(c.Theme().Warning)
 						}
-						if !q.stopProxy {
-							ui.Text(c, "The HTTPS listener will remain available for any upstreams that keep running.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-						}
-						ui.Text(c, "Stopping also ends scheduled log maintenance. Data, settings, CA trust, domain mappings and login preferences are kept. External processes and system services are outside this scope.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 					}
 					if q.stopping {
 						ui.Text(c, a.dev.output).FontSize(textSmall)
@@ -169,7 +164,7 @@ func (a *app) quitDialog(c *ui.Context) {
 				if ui.Button(c, "Keep services and quit").Disabled(a.quitOperationBusy()).Clicked() {
 					a.finishQuit()
 				}
-				if ui.PrimaryButton(c, "Stop services and quit").Disabled(a.quitOperationBusy() || q.loading || q.plan == nil).Clicked() {
+				if ui.PrimaryButton(c, "Stop services and quit").Tooltip("Also ends scheduled log maintenance. Data, settings, CA trust, domain mappings and login preferences are kept. External processes and system services are untouched.").Disabled(a.quitOperationBusy() || q.loading || q.plan == nil).Clicked() {
 					a.stopForQuit()
 				}
 			})

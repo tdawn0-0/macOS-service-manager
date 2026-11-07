@@ -32,18 +32,17 @@ func (a *app) openProjectCommands() {
 }
 func (a *app) devProjectCommands(c *ui.Context) {
 	d := &a.dev
-	devHeading(c, "Unfinished project commands", "Review commands left by an exited caller. Commands are never replayed automatically.")
-	ui.Row(c).Wrap().Gap(8).Children(func() {
+	devPaneHeader(c, "Unfinished project commands", func() {
+		if ui.Button(c, "Refresh project commands").Disabled(d.busy).Clicked() {
+			a.projectCommandTask(nil)
+		}
 		if ui.Button(c, "Back to project settings").Disabled(d.busy).Clicked() {
 			d.commandWorkOpen = false
 			d.detailScroll[0].Y = 0
 		}
-		if ui.Button(c, "Refresh project commands").Disabled(d.busy).Clicked() {
-			a.projectCommandTask(nil)
-		}
 	})
 	if len(d.commandWork) == 0 {
-		ui.Text(c, "No unfinished project commands.").FontSize(textSmall)
+		ui.Text(c, "None").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		return
 	}
 	for _, r := range d.commandWork {
@@ -55,16 +54,15 @@ func (a *app) devProjectCommands(c *ui.Context) {
 		ui.Text(c, r.Status).FontWeight(600).TextColor(color)
 		ui.Text(c, r.Detail).FontSize(textSmall)
 		ui.Text(c, "Task "+r.ID).FontSize(textSmall).TextColor(c.Theme().TextMuted)
-		ui.Text(c, "Private inputs and output may contain secrets. Finish clears those task files. Source, installed dependencies and files written by the command are retained; stopping does not undo its changes.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		prefix := r.ID[:min(8, len(r.ID))]
 		label := "Finish project command " + prefix
 		if r.Running {
 			label = "Stop project command " + prefix
 		}
-		if ui.Button(c, label).Disabled(d.busy || !r.CanResolve).Clicked() {
+		if ui.Button(c, label).AlignSelf(ui.Start).Tooltip("Clears the private task files. Source, dependencies and files the command wrote are kept; nothing is undone.").Disabled(d.busy || !r.CanResolve).Clicked() {
 			a.projectCommandTask(func(m *devplatform.Manager) error { return m.ResolveProjectCommand(m.Context, r.ID, r.Revision) })
 		}
-		if ui.Button(c, "Reveal private command files "+prefix).Disabled(d.busy || a.reveal == nil).Clicked() {
+		if ui.Button(c, "Reveal private command files "+prefix).AlignSelf(ui.Start).Tooltip("Inputs and output may contain secrets.").Disabled(d.busy || a.reveal == nil).Clicked() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				path, e := m.ProjectCommandFiles(r.ID)
 				if e == nil {

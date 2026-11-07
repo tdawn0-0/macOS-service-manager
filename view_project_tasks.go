@@ -159,10 +159,9 @@ func (a *app) devProjectTasks(c *ui.Context) {
 		devDivider(c, "Project · "+id+" · "+label)
 		if task.Running {
 			ui.Text(c, task.Progress).FontSize(textSmall)
-			if ui.Button(c, "Cancel project operation "+id).Clicked() && task.cancel != nil {
+			if ui.Button(c, "Cancel project operation "+id).AlignSelf(ui.Start).Clicked() && task.cancel != nil {
 				task.cancel()
 			}
-			ui.Text(c, "Independent projects remain configurable. A shared database may be reserved by this operation.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		} else {
 			if task.Kind == "dependencies" {
 				value := task.Result
@@ -170,7 +169,7 @@ func (a *app) devProjectTasks(c *ui.Context) {
 			} else {
 				ui.Text(c, task.Result).FontSize(textSmall)
 			}
-			if ui.Button(c, "Dismiss project result "+id).Clicked() {
+			if ui.Button(c, "Dismiss project result "+id).AlignSelf(ui.Start).Clicked() {
 				delete(a.dev.projectTasks, id)
 			}
 		}

@@ -55,11 +55,20 @@ func deletionPath(c *ui.Context, label, path string) {
 func (a *app) devInstanceDeletionPreview(c *ui.Context) {
 	d := &a.dev
 	p := d.instanceDeletionPreview
-	devHeading(c, "Delete database data", "Permanent deletion is separate from removing a management record. Stop and unlink the instance first.")
-	ui.Text(c, p.InstanceID+" · "+softwareTitle(p.Kind)).FontWeight(600)
+	devPaneHeader(c, "Delete "+p.InstanceID, func() {
+		if ui.Button(c, "Refresh deletion preview").Disabled(d.busy).Clicked() {
+			a.previewInstanceDeletion(p.InstanceID)
+		}
+		if ui.Button(c, "Cancel deletion preview").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
+			d.instanceDeletionPreview = nil
+			d.deleteConfirmation = ""
+			d.detailScroll[2].Y = 0
+		}
+	})
+	ui.Text(c, softwareTitle(p.Kind)).FontSize(textSmall).TextColor(c.Theme().TextMuted)
 	deletionPath(c, "Data path to delete", p.Path)
 	ui.Text(c, fmt.Sprintf("%d entries · %.2f MiB logical file size", p.Entries, float64(p.Bytes)/(1<<20))).FontSize(textSmall)
-	ui.Text(c, "Includes every database in this instance, local configuration and credentials. Source projects, installed software and backups outside this path are retained. This does not create a backup.").FontSize(textSmall)
+	ui.Text(c, "Covers every database, configuration and credential in this instance. No backup is made; backups elsewhere are kept.").FontSize(textSmall)
 	color := c.Theme().Warning
 	if p.CanDelete {
 		color = c.Theme().Danger
@@ -68,12 +77,8 @@ func (a *app) devInstanceDeletionPreview(c *ui.Context) {
 	for _, ref := range p.References {
 		ui.Text(c, "Linked project: "+ref).FontSize(textSmall)
 	}
-	if ui.Button(c, "Refresh deletion preview").Disabled(d.busy).Clicked() {
-		a.previewInstanceDeletion(p.InstanceID)
-	}
 	devField(c, "Confirm instance ID", &d.deleteConfirmation, p.InstanceID)
-	ui.Text(c, "Type the exact instance ID. Once erasure begins, cancelling can leave a pending deletion; it cannot restore already erased files.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-	if ui.Button(c, "Permanently delete instance data").Disabled(d.busy || !p.CanDelete || d.deleteConfirmation != p.InstanceID).Clicked() {
+	if ui.Button(c, "Permanently delete instance data").AlignSelf(ui.Start).Tooltip("Once erasure begins, cancelling can leave a pending deletion. Erased files cannot be restored.").Disabled(d.busy || !p.CanDelete || d.deleteConfirmation != p.InstanceID).Clicked() {
 		id, fingerprint, confirmation := p.InstanceID, p.Fingerprint, d.deleteConfirmation
 		a.deletionTask(func(m *devplatform.Manager) error {
 			return m.DeleteInstanceData(m.Context, id, fingerprint, confirmation)
@@ -90,25 +95,21 @@ func (a *app) devInstanceDeletionPreview(c *ui.Context) {
 			}
 		})
 	}
-	if ui.Button(c, "Cancel deletion preview").Disabled(d.busy).Clicked() {
-		d.instanceDeletionPreview = nil
-		d.deleteConfirmation = ""
-		d.detailScroll[2].Y = 0
-	}
 }
 func (a *app) devInstanceDeletions(c *ui.Context) {
 	d := &a.dev
-	devHeading(c, "Pending data deletions", "Review interrupted deletions here. No data is erased automatically when the app opens.")
-	if ui.Button(c, "Back to database settings").Disabled(d.busy).Clicked() {
-		d.deletionsOpen = false
-		d.deleteConfirmation = ""
-		d.detailScroll[2].Y = 0
-	}
-	if ui.Button(c, "Refresh pending deletions").Disabled(d.busy).Clicked() {
-		a.deletionTask(nil, nil)
-	}
+	devPaneHeader(c, "Pending data deletions", func() {
+		if ui.Button(c, "Refresh pending deletions").Disabled(d.busy).Clicked() {
+			a.deletionTask(nil, nil)
+		}
+		if ui.Button(c, "Back to database settings").Disabled(d.busy).Clicked() {
+			d.deletionsOpen = false
+			d.deleteConfirmation = ""
+			d.detailScroll[2].Y = 0
+		}
+	})
 	if len(d.instanceDeletions) == 0 {
-		ui.Text(c, "No pending data deletions.").FontSize(textSmall)
+		ui.Text(c, "None").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		return
 	}
 	for _, r := range d.instanceDeletions {
@@ -121,15 +122,14 @@ func (a *app) devInstanceDeletions(c *ui.Context) {
 			ui.Text(c, fmt.Sprintf("Remaining: %d entries · %.2f MiB", r.Entries, float64(r.Bytes)/(1<<20))).FontSize(textSmall)
 		}
 		if r.Busy {
-			ui.Text(c, "Another caller still owns this deletion. Wait or cancel it there, then refresh.").FontSize(textSmall).TextColor(c.Theme().Warning)
+			ui.Text(c, "Another caller owns this deletion.").FontSize(textSmall).TextColor(c.Theme().Warning)
 		}
 		prefix := r.ID[:min(8, len(r.ID))]
-		if ui.Button(c, "Restore original data "+prefix).Disabled(d.busy || r.Busy || !r.CanRestore).Clicked() {
+		if ui.Button(c, "Restore original data "+prefix).AlignSelf(ui.Start).Tooltip("Before removal commits, keeps the original data and clears the pending record. After commit, finish erases the staged data.").Disabled(d.busy || r.Busy || !r.CanRestore).Clicked() {
 			a.deletionTask(func(m *devplatform.Manager) error { return m.RestoreInstanceDeletion(m.Context, r.ID, r.Revision) }, nil)
 		}
-		ui.Text(c, "Before removal commits, restore keeps the original data and clears the pending record. After commit, finish erases the staged data.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		devField(c, "Confirm deletion of "+r.InstanceID, &d.deleteConfirmation, r.InstanceID)
-		if ui.Button(c, "Finish permanent deletion "+prefix).Disabled(d.busy || r.Busy || !r.CanErase || d.deleteConfirmation != r.InstanceID).Clicked() {
+		if ui.Button(c, "Finish permanent deletion "+prefix).AlignSelf(ui.Start).Disabled(d.busy || r.Busy || !r.CanErase || d.deleteConfirmation != r.InstanceID).Clicked() {
 			confirmation := d.deleteConfirmation
 			a.deletionTask(func(m *devplatform.Manager) error {
 				return m.FinishInstanceDeletion(m.Context, r.ID, r.Revision, confirmation)

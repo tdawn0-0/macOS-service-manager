@@ -89,20 +89,21 @@ func newDevUIHarnessSize(t *testing.T, width, height int, dark bool) *devUIHarne
 }
 func (h *devUIHarness) click(label string) {
 	h.t.Helper()
-	nav := map[string]int{"Projects": 0, "Software": 1, "Databases": 2, "HTTPS": 3}
-	if index, ok := nav[label]; ok {
-		r, found := h.ui.Find("Development section")
-		if !found {
-			h.t.Fatal("navigation missing")
+	for _, section := range devSections {
+		if section == label {
+			r, found := h.ui.Find(label)
+			if !found {
+				h.t.Fatal("navigation missing")
+			}
+			h.ui.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+			h.ui.Frame()
+			h.waitIdle()
+			return
 		}
-		h.ui.ClickAt(r.X+r.W*(float32(index)+.5)/4, r.Y+r.H/2)
-		h.ui.Frame()
-		h.waitIdle()
-		return
 	}
 	for n := 0; n < 18; n++ {
 		r, ok := h.ui.Find(label)
-		if ok && r.W > 0 && r.H > 0 && r.Y >= 90 && r.Y+r.H < float32(h.height-45) {
+		if ok && r.W > 0 && r.H > 0 && r.Y >= barHeight && r.Y+r.H < float32(h.height-45) {
 			if e := h.ui.Click(label); e != nil {
 				h.t.Fatal(e)
 			}

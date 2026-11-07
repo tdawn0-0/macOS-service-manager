@@ -380,12 +380,12 @@ func (a *app) developmentView(c *ui.Context) {
 	if !d.loaded && !d.busy {
 		a.devTask(func(m *devplatform.Manager) (string, error) { return "Ready to build locally.", nil })
 	}
-	titles := []string{"Projects", "Software", "Databases", "Local HTTPS"}
+	titles := devSections[:]
 	if d.tab < 0 || d.tab > 3 {
 		d.tab = 0
 	}
 	ui.Column(c).Grow(1).MinWidth(0).Background(c.Theme().Background).Children(func() {
-		ui.Row(c).Height(barHeight).Padding(0, 20).AlignItems(ui.Center).Gap(8).DragWindow().Children(func() {
+		ui.Row(c).Height(barHeight).Shrink(0).Padding(0, 14, 0, 20).AlignItems(ui.Center).Gap(6).DragWindow().Children(func() {
 			title := titles[d.tab]
 			if d.operationsOpen {
 				title = "Task history"
@@ -393,8 +393,7 @@ func (a *app) developmentView(c *ui.Context) {
 			if d.diagnosticsOpen {
 				title = "Diagnostics"
 			}
-			ui.Text(c, title).FontSize(16).FontWeight(650)
-			ui.Spacer(c)
+			ui.Text(c, title).FontSize(15).FontWeight(650).SingleLine().Grow(1).MinWidth(0)
 			if d.busy || a.backgroundTasksRunning() {
 				ui.Spinner(c).Size(14, 14)
 			}
@@ -416,22 +415,16 @@ func (a *app) developmentView(c *ui.Context) {
 					d.cancel()
 				}
 			}
-			if ui.Button(c, "Refresh").Disabled(d.busy).Clicked() {
+			muted := c.Theme().TextMuted
+			if iconButton(c, iconRestart, "Refresh", muted).Disabled(d.busy).Clicked() {
 				a.devTask(func(m *devplatform.Manager) (string, error) { return "Workspace refreshed.", nil })
 			}
-			if ui.Button(c, "Tasks").Disabled(d.busy).Clicked() {
+			if iconButton(c, iconTasks, "Tasks", muted).Disabled(d.busy).Clicked() {
 				a.openOperations()
 			}
-			if ui.Button(c, "Diagnostics").Disabled(d.busy).Clicked() {
+			if iconButton(c, iconPulse, "Diagnostics", muted).Disabled(d.busy).Clicked() {
 				d.operationsOpen = false
 				a.runDevDiagnostics()
-			}
-		})
-		ui.Row(c).Padding(0, 20, 12).Children(func() {
-			if ui.Segmented(c, &d.tab, "Projects", "Software", "Databases", "HTTPS").Label("Development section").Changed() {
-				d.detailScroll[d.tab].Y = 0
-				d.diagnosticsOpen = false
-				d.operationsOpen = false
 			}
 		})
 		ui.Column(c).Height(1).Background(hairline(c.Theme()))
@@ -441,8 +434,8 @@ func (a *app) developmentView(c *ui.Context) {
 			ui.Scroll(c.Key("development-diagnostics")).TrackScroll(&d.diagnosticScroll).Grow(1).MinHeight(0).Padding(20, 24).Children(func() { a.devDiagnostics(c) })
 		} else {
 			ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
-				ui.Column(c).Width(238).Shrink(0).Background(c.Theme().Surface).Children(func() {
-					ui.Scroll(c.Key("dev-master-" + strconv.Itoa(d.tab))).Grow(1).MinHeight(0).Padding(12).Children(func() { ui.Column(c).Gap(8).Children(func() { a.devMaster(c) }) })
+				ui.Column(c).Width(224).Shrink(0).Background(c.Theme().Surface).Children(func() {
+					ui.Scroll(c.Key("dev-master-" + strconv.Itoa(d.tab))).Grow(1).MinHeight(0).Padding(10).Children(func() { ui.Column(c).Gap(4).Children(func() { a.devMaster(c) }) })
 				})
 				ui.Column(c).Width(1).Background(hairline(c.Theme()))
 				ui.Scroll(c.Key(fmt.Sprintf("dev-detail-%d-%d", d.tab, d.projectTab))).TrackScroll(&d.detailScroll[d.tab]).Grow(1).MinWidth(0).MinHeight(0).Padding(20, 24).Children(func() {
@@ -464,7 +457,7 @@ func (a *app) developmentView(c *ui.Context) {
 		ui.Column(c).Height(1).Background(hairline(c.Theme()))
 		ui.Row(c).Padding(9, 18).Gap(10).AlignItems(ui.Center).Children(func() {
 			if !d.operationsOpen && !d.diagnosticsOpen && !d.commandWorkOpen && d.tab == 0 && d.id != "" && !d.importing {
-				if ui.PrimaryButton(c, "Save project").Disabled(d.busy || a.projectTaskRunning(d.id)).Clicked() {
+				if ui.PrimaryButton(c, "Save project").AlignSelf(ui.Start).Disabled(d.busy || a.projectTaskRunning(d.id)).Clicked() {
 					var e error
 					if d.serviceID != "" {
 						e = d.applyService()
@@ -481,7 +474,7 @@ func (a *app) developmentView(c *ui.Context) {
 					}
 				}
 			}
-			status := "Ready"
+			status := ""
 			if d.tab == 0 && !d.importing && d.folderErrors[d.id] != "" {
 				status = "Folder unavailable"
 			}
@@ -491,7 +484,7 @@ func (a *app) developmentView(c *ui.Context) {
 			if d.tab == 0 && d.projectDirty() {
 				status = "Unsaved changes"
 			}
-			if status == "Ready" && a.backgroundTasksRunning() {
+			if status == "" && a.backgroundTasksRunning() {
 				status = "Background tasks"
 			}
 			if d.busy {
@@ -500,15 +493,17 @@ func (a *app) developmentView(c *ui.Context) {
 			if strings.Contains(d.output, "Error:") {
 				status = "Needs attention"
 			}
-			ui.Text(c, status).FontSize(textCaption).FontWeight(600).TextColor(func() ui.Color {
-				if status == "Needs attention" {
-					return c.Theme().Danger
-				}
-				if status == "Export recovery" || status == "Folder unavailable" {
-					return c.Theme().Warning
-				}
-				return c.Theme().Text
-			}())
+			if status != "" {
+				ui.Text(c, status).FontSize(textCaption).FontWeight(600).TextColor(func() ui.Color {
+					if status == "Needs attention" {
+						return c.Theme().Danger
+					}
+					if status == "Export recovery" || status == "Folder unavailable" {
+						return c.Theme().Warning
+					}
+					return c.Theme().Text
+				}())
+			}
 			ui.Text(c, strings.ReplaceAll(d.output, "\n", " · ")).FontSize(textSmall).TextColor(c.Theme().TextMuted).SingleLine().Grow(1).MinWidth(0)
 			if ui.Button(c, "Details").Clicked() {
 				d.showResult = !d.showResult
@@ -519,27 +514,81 @@ func (a *app) developmentView(c *ui.Context) {
 		}
 	})
 }
-func devHeading(c *ui.Context, title, description string) {
-	ui.Text(c, title).FontSize(22).FontWeight(650)
-	ui.Text(c, description).FontSize(textSmall).TextColor(c.Theme().TextMuted).Margin(0, 0, 10)
+
+// devHeading titles a detail. meta is data about the subject, never prose.
+func devHeading(c *ui.Context, title, meta string) {
+	ui.Text(c, title).FontSize(18).FontWeight(650)
+	if meta != "" {
+		ui.Text(c, meta).FontSize(textSmall).TextColor(c.Theme().TextMuted)
+	}
 }
 func devDivider(c *ui.Context, title string) {
-	ui.Column(c).Height(1).Background(hairline(c.Theme())).Margin(10, 0)
-	ui.Text(c, title).FontSize(13).FontWeight(650)
+	ui.Column(c).Height(1).Background(hairline(c.Theme())).Margin(12, 0, 2)
+	ui.Text(c, title).FontSize(textSmall).FontWeight(650).TextColor(c.Theme().TextMuted)
 }
-func devListEntry(c *ui.Context, label, title, subtitle string, selected bool) bool {
-	bg := ui.Transparent
-	if selected {
-		bg = c.Theme().Accent.Alpha(.12)
+
+// devPaneHeader titles a pane that replaces a detail, with the buttons that
+// leave or refresh it at the end of the same row.
+func devPaneHeader(c *ui.Context, title string, buttons func()) {
+	ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, title).FontSize(18).FontWeight(650).Grow(1).MinWidth(0)
+		buttons()
+	})
+}
+
+// devStatusDot is the dot of a status in a list: green runs, red failed,
+// orange needs a look, and a ring is at rest.
+func devStatusDot(c *ui.Context, status string) {
+	t := c.Theme()
+	const size = 8
+	dot := ui.Box(c).Size(size, size).Radius(size / 2).Shrink(0).Tooltip(status)
+	switch status {
+	case "Healthy", "Running":
+		dot.Background(t.Success).Shadow(0, 0, 0, 2.5, t.Success.Alpha(0.18))
+	case "Succeeded":
+		dot.Background(t.Success)
+	case "Failed":
+		dot.Background(t.Danger)
+	case "Not ready", "Partly running", "Restarting", "Unknown", "Interrupted":
+		dot.Background(t.Warning)
+	default:
+		dot.Border(1.5, t.TextMuted.Alpha(0.65))
 	}
-	b := ui.ButtonBase(c).Label(label).Padding(10, 12).Radius(8).Background(bg)
+}
+
+// devListEntry is a row of a list of the workspace: a dot for its status when
+// it has one, its name, and a word at its end only when the word is news.
+func devListEntry(c *ui.Context, label, title, status, trailing string, selected bool) bool {
+	t := c.Theme()
+	b := ui.ButtonBase(c).Label(label).Height(32).Padding(0, 10).Radius(7).AlignItems(ui.Center)
+	switch {
+	case selected:
+		b.Background(t.Accent.Alpha(.14))
+	case b.Hovered():
+		b.Background(t.Text.Alpha(.06))
+	}
 	b.Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).AlignItems(ui.Start).Gap(3).Children(func() {
-			ui.Text(c, title).FontWeight(600).SingleLine().MinWidth(0)
-			ui.Text(c, subtitle).FontSize(textCaption).TextColor(c.Theme().TextMuted).SingleLine().MinWidth(0)
+		ui.Row(c).Grow(1).MinWidth(0).AlignItems(ui.Center).Gap(9).Children(func() {
+			if status != "" {
+				devStatusDot(c, status)
+			}
+			ui.Text(c, title).FontWeight(map[bool]int{true: 600, false: 400}[selected]).SingleLine().Grow(1).MinWidth(0)
+			if trailing != "" {
+				ui.Text(c, trailing).FontSize(textCaption).TextColor(t.TextMuted).SingleLine().Shrink(0)
+			}
 		})
 	})
 	return b.Clicked()
+}
+
+// devNews is the status worth saying in words: what is not plainly running or
+// at rest.
+func devNews(status string) string {
+	switch status {
+	case "", "Healthy", "Running", "Stopped", "Configured":
+		return ""
+	}
+	return status
 }
 func softwareTitle(name string) string {
 	if title, ok := map[string]string{"php": "PHP", "node": "Node.js", "mysql": "MySQL", "postgresql": "PostgreSQL", "redis": "Redis", "mongodb": "MongoDB"}[name]; ok {
@@ -551,35 +600,26 @@ func (a *app) devMaster(c *ui.Context) {
 	d := &a.dev
 	switch d.tab {
 	case 0:
-		ui.Text(c, fmt.Sprintf("%d PROJECTS", len(d.state.Projects))).FontSize(textCaption).TextColor(c.Theme().TextMuted).Margin(4, 4, 8)
 		if ui.PrimaryButton(c, "Import a project").Disabled(d.busy).Clicked() {
 			d.importing = true
 			d.commandWorkOpen = false
 		}
-		if len(d.state.Projects) == 0 {
-			ui.Text(c, "Your projects live here. Add a folder to get started.").FontSize(textSmall).TextColor(c.Theme().TextMuted).Margin(12, 4)
-		}
 		for _, id := range sortedKeys(d.state.Projects) {
 			p := d.state.Projects[id]
 			status := d.statuses["project:"+id]
-			if status == "" {
-				status = "Configured"
-			}
-			if devListEntry(c, "Project "+p.Name, p.Name, fmt.Sprintf("%s · %d services", status, len(p.Services)), d.id == id && !d.importing) {
+			if devListEntry(c, "Project "+p.Name, p.Name, status, devNews(status), d.id == id && !d.importing) {
 				d.selectProject(p)
 				d.commandWorkOpen = false
 				d.importing = false
 			}
 		}
 	case 1:
-		ui.Text(c, "DEVELOPMENT SOFTWARE").FontSize(textCaption).TextColor(c.Theme().TextMuted).Margin(4, 4, 8)
 		for _, name := range []string{"php", "node", "mysql", "postgresql", "redis", "mongodb"} {
-			n := len(d.packages(name))
-			detail := "Available to install"
-			if n > 0 {
-				detail = fmt.Sprintf("%d versions installed", n)
+			count := ""
+			if n := len(d.packages(name)); n > 0 {
+				count = strconv.Itoa(n)
 			}
-			if devListEntry(c, "Software "+name, softwareTitle(name), detail, d.software == name) {
+			if devListEntry(c, "Software "+name, softwareTitle(name), "", count, d.software == name) {
 				d.software = name
 				d.runtimeTargetProject = ""
 				d.runtimeTargetService = ""
@@ -591,7 +631,6 @@ func (a *app) devMaster(c *ui.Context) {
 			}
 		}
 	case 2:
-		ui.Text(c, fmt.Sprintf("%d INSTANCES", len(d.state.Instances))).FontSize(textCaption).TextColor(c.Theme().TextMuted).Margin(4, 4, 8)
 		if ui.PrimaryButton(c, "New database instance").Disabled(d.busy).Clicked() {
 			d.dbNewDraft = true
 			d.databaseWorkOpen = false
@@ -608,10 +647,7 @@ func (a *app) devMaster(c *ui.Context) {
 		for _, id := range sortedKeys(d.state.Instances) {
 			i := d.state.Instances[id]
 			status := d.statuses["instance:"+id]
-			if status == "" {
-				status = "Configured"
-			}
-			if devListEntry(c, "Instance "+id, id, softwareTitle(i.Kind)+" · "+status, d.dbID == id) {
+			if devListEntry(c, "Instance "+id, id, status, devNews(status), d.dbID == id) {
 				d.dbNewDraft = false
 				d.databaseWorkOpen = false
 				d.initializationsOpen = false
@@ -626,25 +662,33 @@ func (a *app) devMaster(c *ui.Context) {
 			}
 		}
 	case 3:
-		ui.Text(c, "LOCAL WEBSITES").FontSize(textCaption).TextColor(c.Theme().TextMuted).Margin(4, 4, 8)
 		if ui.PrimaryButton(c, "New HTTPS site").Disabled(d.busy).Clicked() {
 			d.newSite()
 		}
 		for _, pid := range sortedKeys(d.state.Projects) {
 			p := d.state.Projects[pid]
 			for _, site := range p.Sites {
-				if devListEntry(c, "Site "+site.Domain, site.Domain, p.Name, d.siteID == site.ID && d.siteProject == pid) {
+				if devListEntry(c, "Site "+site.Domain, site.Domain, "", siteNews(site), d.siteID == site.ID && d.siteProject == pid) {
 					d.selectSite(site, pid)
 				}
 			}
 		}
 		for _, id := range sortedKeys(d.state.Sites) {
 			site := d.state.Sites[id]
-			if devListEntry(c, "Site "+site.Domain, site.Domain, "Independent site", d.siteID == id && d.siteProject == "") {
+			if devListEntry(c, "Site "+site.Domain, site.Domain, "", siteNews(site), d.siteID == id && d.siteProject == "") {
 				d.selectSite(site, "")
 			}
 		}
 	}
+}
+func siteNews(site devplatform.Site) string {
+	switch {
+	case site.NeedsReview:
+		return "Review"
+	case site.Disabled:
+		return "Off"
+	}
+	return ""
 }
 func (d *developmentState) selectSite(site devplatform.Site, project string) {
 	d.authorityOpen = false
@@ -689,83 +733,86 @@ func (a *app) devProjects(c *ui.Context) {
 		a.devProjectCommands(c)
 		return
 	}
-	if ui.Button(c, "Unfinished project commands").Disabled(d.busy).Clicked() {
-		a.openProjectCommands()
-		return
-	}
 	a.devProjectTasks(c)
 	if d.id == "" || d.importing {
-		devHeading(c, "Bring your project home", "Choose an existing folder. Importing never runs project scripts.")
-		if ui.Button(c, "Choose project folder…").Disabled(d.busy).Clicked() {
-			paths, e := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "Import project", Directory: true})
-			if e != nil {
-				d.output = e.Error()
-			} else if len(paths) > 0 {
-				d.directory = paths[0]
-			}
-		}
 		devField(c, "Project folder", &d.directory, "/Users/me/project")
-		if ui.Button(c, "Import project").Disabled(d.busy).Clicked() {
-			dir := d.directory
-			a.devTask(func(m *devplatform.Manager) (string, error) {
-				p, e := m.Import(m.Context, dir)
-				if e == nil {
-					a.post(func() { a.dev.selectProject(p); a.dev.importing = false })
-				} else {
-					_, _ = a.inspectDevExport(m, dir)
+		ui.Row(c).Gap(8).Children(func() {
+			if ui.Button(c, "Choose project folder…").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
+				paths, e := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "Import project", Directory: true})
+				if e != nil {
+					d.output = e.Error()
+				} else if len(paths) > 0 {
+					d.directory = paths[0]
 				}
-				return "Imported " + p.Name, e
-			})
-		}
+			}
+			if ui.PrimaryButton(c, "Import project").AlignSelf(ui.Start).Tooltip("Importing never runs project scripts.").Disabled(d.busy).Clicked() {
+				dir := d.directory
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					p, e := m.Import(m.Context, dir)
+					if e == nil {
+						a.post(func() { a.dev.selectProject(p); a.dev.importing = false })
+					} else {
+						_, _ = a.inspectDevExport(m, dir)
+					}
+					return "Imported " + p.Name, e
+				})
+			}
+		})
 		a.devExportRecovery(c, d.directory)
 		return
 	}
-	devHeading(c, d.draft.Name, "Configure, run, and open your local development environment.")
-	if status := d.statuses["project:"+d.id]; status != "" {
-		ui.Text(c, "Project status: "+status).FontSize(textSmall).FontWeight(600).TextColor(devStatusColor(c, status))
-	}
-	ui.Row(c).Gap(8).Children(func() {
+	status := d.statuses["project:"+d.id]
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		devStatusDot(c, status)
+		ui.Text(c, d.draft.Name).FontSize(18).FontWeight(650).Grow(1).MinWidth(0)
+		if news := devNews(status); news != "" {
+			ui.Text(c, news).FontSize(textSmall).FontWeight(600).TextColor(devStatusColor(c, status)).Shrink(0)
+		}
+	})
+	ui.Row(c).Wrap().Gap(8).Children(func() {
 		for _, action := range []string{"Start project", "Restart project", "Stop project"} {
-			if ui.Button(c, action).Disabled(d.busy || a.projectTaskRunning(d.id) || (action != "Stop project" && (d.projectDirty() || len(d.draft.MissingLocalSettings()) > 0 || d.folderErrors[d.id] != ""))).Clicked() {
+			if ui.Button(c, action).AlignSelf(ui.Start).Disabled(d.busy || a.projectTaskRunning(d.id) || (action != "Stop project" && (d.projectDirty() || len(d.draft.MissingLocalSettings()) > 0 || d.folderErrors[d.id] != ""))).Clicked() {
 				kind := map[string]string{"Start project": "up", "Stop project": "down", "Restart project": "restart"}[action]
 				a.runProjectAction(d.state.Projects[d.id], kind)
 			}
 		}
-	})
-	if d.projectDirty() {
-		ui.Text(c, "Save your changes before starting or exporting this environment.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-	}
-	if message := d.folderErrors[d.id]; message != "" {
-		ui.Text(c, message).FontSize(textSmall).TextColor(c.Theme().Warning)
-		if ui.Button(c, "Locate the project folder").Clicked() {
-			d.projectTab = 0
-			d.detailScroll[0].Y = 0
+		for _, site := range d.draft.Sites {
+			a.devOpenSite(c, site)
 		}
+		if ui.Button(c, "Add project HTTPS site").Disabled(d.busy || d.projectDirty()).Clicked() {
+			a.addProjectHTTPS()
+		}
+	})
+	if message := d.folderErrors[d.id]; message != "" {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, message).FontSize(textSmall).TextColor(c.Theme().Warning).Grow(1).MinWidth(0)
+			if ui.Button(c, "Locate the project folder").Clicked() {
+				d.projectTab = 0
+				d.detailScroll[0].Y = 0
+			}
+		})
 	}
 	if missing := d.draft.MissingLocalSettings(); len(missing) > 0 {
-		ui.Text(c, fmt.Sprintf("Local setup required · %d items", len(missing))).FontSize(textSmall).FontWeight(600).TextColor(c.Theme().Warning)
-		ui.Text(c, strings.Join(missing, "\n")).FontSize(textSmall).TextColor(c.Theme().TextMuted)
-		if ui.Button(c, "Complete local setup").Disabled(d.busy).Clicked() && d.flushService() {
-			a.devChooseLocalSetup()
-		}
-	}
-	for _, site := range d.draft.Sites {
-		a.devOpenSite(c, site)
-	}
-	if ui.Button(c, "Add project HTTPS site").Disabled(d.busy || d.projectDirty()).Clicked() {
-		a.addProjectHTTPS()
+		ui.Column(c).Gap(4).Padding(10, 12).Radius(8).Background(c.Theme().Warning.Alpha(0.1)).Children(func() {
+			ui.Text(c, fmt.Sprintf("Local setup required · %d items", len(missing))).FontSize(textSmall).FontWeight(600).TextColor(c.Theme().Warning)
+			ui.Text(c, strings.Join(missing, "\n")).FontSize(textSmall).TextColor(c.Theme().TextMuted)
+			if ui.Button(c, "Complete local setup").AlignSelf(ui.Start).Disabled(d.busy).Clicked() && d.flushService() {
+				a.devChooseLocalSetup()
+			}
+		})
 	}
 	if ui.Segmented(c, &d.projectTab, "Overview", "Services", "Environment", "Logs").Label("Project settings section").Changed() {
 		d.detailScroll[0].Y = 0
 	}
 	switch d.projectTab {
 	case 0:
-		devDivider(c, "Project settings")
 		devField(c, "Project name", &d.draft.Name, "")
 		a.devProjectFolder(c)
 		ui.Checkbox(c, &d.draft.Autostart, "Start this project at login")
 		a.devRuntimeHints(c)
-		devDivider(c, "Connected databases")
+		if len(d.state.Instances) > 0 {
+			devDivider(c, "Databases")
+		}
 		for _, id := range sortedKeys(d.state.Instances) {
 			on := false
 			for _, ref := range d.draft.Instances {
@@ -788,99 +835,108 @@ func (a *app) devProjects(c *ui.Context) {
 		}
 
 		if _, e := os.Stat(filepath.Join(d.draft.Directory, "package.json")); e == nil {
-			if ui.Button(c, "Install project dependencies").Disabled(d.busy || a.projectTaskRunning(d.id) || d.projectDirty()).Clicked() {
+			if ui.Button(c, "Install project dependencies").AlignSelf(ui.Start).Tooltip("Runs npm ci in the saved environment, including repository lifecycle scripts. Source and dependency changes remain after cancellation.").Disabled(d.busy || a.projectTaskRunning(d.id) || d.projectDirty()).Clicked() {
 				id := d.id
 				a.startProjectOperation(d.state.Projects[id], "dependencies", func(m *devplatform.Manager) (string, error) { return m.Exec(m.Context, id, []string{"npm", "ci"}) })
 			}
-			ui.Text(c, "Runs npm ci in the saved project environment, including repository lifecycle scripts. Source and dependency changes remain after cancellation.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		}
-		devDivider(c, "Share this environment")
-		ui.Text(c, "Export software versions and database declarations. Local paths, port numbers, secrets, and database contents stay on this Mac. Import assigns ports and lists values to complete.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-		if ui.Button(c, "Export environment").Disabled(d.busy || d.projectDirty()).Clicked() {
-			id := d.id
-			dir := d.draft.Directory
-			a.devTask(func(m *devplatform.Manager) (string, error) {
-				err := m.ExportProject(m.Context, id)
-				_, _ = a.inspectDevExport(m, dir)
-				if err != nil {
-					return "Environment export stopped.", err
-				}
-				return "Environment exported to the project folder", nil
-			})
-		}
+		devDivider(c, "Environment")
+		ui.Row(c).Wrap().Gap(8).Children(func() {
+			if ui.Button(c, "Export environment").AlignSelf(ui.Start).Tooltip("Exports software versions and database declarations. Local paths, ports, secrets and database contents stay on this Mac.").Disabled(d.busy || d.projectDirty()).Clicked() {
+				id := d.id
+				dir := d.draft.Directory
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					err := m.ExportProject(m.Context, id)
+					_, _ = a.inspectDevExport(m, dir)
+					if err != nil {
+						return "Environment export stopped.", err
+					}
+					return "Environment exported to the project folder", nil
+				})
+			}
+			if ui.Button(c, "Prepare imported environment").AlignSelf(ui.Start).Tooltip("Installs the locked software and initializes separate databases for this working copy. Runs no project scripts.").Disabled(d.busy || a.projectTaskRunning(d.id) || d.projectDirty()).Clicked() {
+				a.runProjectAction(d.state.Projects[d.id], "prepare")
+			}
+		})
 		a.devExportRecovery(c, d.draft.Directory)
-		if ui.Button(c, "Prepare imported environment").Disabled(d.busy || a.projectTaskRunning(d.id) || d.projectDirty()).Clicked() {
-			a.runProjectAction(d.state.Projects[d.id], "prepare")
-		}
-		ui.Text(c, "Preparing installs the locked software and initializes separate databases for this working copy. It does not run project scripts.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-		if ui.Button(c, "Remove project (keep source and database files)").Disabled(d.busy || a.projectTaskRunning(d.id)).Clicked() {
-			a.runProjectAction(d.state.Projects[d.id], "remove")
-		}
+		devDivider(c, "Maintenance")
+		ui.Row(c).Wrap().Gap(8).Children(func() {
+			if ui.Button(c, "Unfinished project commands").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
+				a.openProjectCommands()
+			}
+			if ui.Button(c, "Remove project (keep source and database files)").AlignSelf(ui.Start).Disabled(d.busy || a.projectTaskRunning(d.id)).Clicked() {
+				a.runProjectAction(d.state.Projects[d.id], "remove")
+			}
+		})
 	case 1:
-		devDivider(c, "Application services")
-		for _, svc := range d.draft.Services {
-			if ui.Button(c, "Edit "+svc.ID).Clicked() {
-				if d.flushService() {
-					for _, current := range d.draft.Services {
-						if current.ID == svc.ID {
-							d.selectService(current)
+		ui.Row(c).Wrap().Gap(8).Children(func() {
+			for _, svc := range d.draft.Services {
+				if ui.Button(c, "Edit "+svc.ID).Clicked() {
+					if d.flushService() {
+						for _, current := range d.draft.Services {
+							if current.ID == svc.ID {
+								d.selectService(current)
+							}
 						}
 					}
 				}
 			}
-		}
-		if ui.Button(c, "Add service").Clicked() {
-			if d.flushService() {
-				for n := 1; n <= len(d.draft.Services)+1; n++ {
-					id := fmt.Sprintf("service-%d", n)
-					used := false
-					for _, s := range d.draft.Services {
-						used = used || s.ID == id
+			if ui.Button(c, "Add service").Clicked() {
+				if d.flushService() {
+					for n := 1; n <= len(d.draft.Services)+1; n++ {
+						id := fmt.Sprintf("service-%d", n)
+						used := false
+						for _, s := range d.draft.Services {
+							used = used || s.ID == id
+						}
+						if !used {
+							d.selectService(devplatform.Service{ID: id})
+							break
+						}
 					}
-					if !used {
-						d.selectService(devplatform.Service{ID: id})
-						break
-					}
+					d.projectTab = 1
 				}
-				d.projectTab = 1
 			}
-		}
+		})
 		devField(c, "Service name", &d.serviceID, "web")
 		if devPackageChoice(c, "Runtime version", &d.servicePackage, d.packages(""), d.state.Packages, true) {
 			d.noteRuntimeEdit(d.id, d.serviceOriginalID)
 		}
 		a.devLocalArguments(c)
-		ui.Text(c, "Program and arguments — one item per line").FontSize(textSmall)
-		ui.TextArea(c, &d.arguments).Lines(3, 7).Label("Program and arguments").Placeholder("npm\nrun\ndev")
-		devField(c, "Service subfolder", &d.workdir, "Optional relative folder")
-		devField(c, "Readiness check", &d.health, "tcp://127.0.0.1:3000")
+		ui.Field(c, "Program and arguments", func() {
+			ui.TextArea(c, &d.arguments).Lines(3, 7).Label("Program and arguments").Placeholder("npm\nrun\ndev")
+		})
+		devField(c, "Service subfolder", &d.workdir, "Relative folder")
+		devField(c, "Readiness check", &d.health, "tcp://127.0.0.1:3000 or http(s)://…")
 		if port := devplatform.ReadinessPort(d.health); port > 0 {
-			if ui.Button(c, "Check service readiness port").Disabled(d.busy).Clicked() {
+			if ui.Button(c, "Check service readiness port").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 				a.checkDevPort(port)
 			}
 			a.devPortResult(c, port)
-			ui.Text(c, "A listener alone does not prove this service owns the readiness port. Change its command or environment and readiness address together when choosing a new application port.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		}
-		ui.Text(c, "Use process, TCP or HTTP(S). An empty check verifies only that the process starts, and is shown as Running rather than Healthy.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		devField(c, "Readiness timeout (seconds)", &d.serviceReadinessTimeout, "30")
 		devField(c, "Wait for services", &d.dependencies, "Comma separated service names")
 		ui.Checkbox(c, &d.serviceRestart, "Restart this service after it exits")
 		if d.serviceRestart {
 			devField(c, "Restart throttle (seconds)", &d.serviceRestartThrottle, "10")
-			ui.Text(c, "launchd limits repeated launches with this throttle. This is not a retry-count limit; stopping the project disables restarts.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		}
 		if status, ok := d.serviceStatuses[devplatform.ServiceStatusKey(d.id, d.serviceOriginalID)]; ok {
-			ui.Text(c, "Service status: "+status.Status).FontSize(textSmall).FontWeight(600).TextColor(devStatusColor(c, status.Status))
-			ui.Text(c, status.Message).FontSize(textSmall).TextColor(c.Theme().TextMuted)
+			line := status.Status
 			if status.PID > 0 {
-				ui.Text(c, fmt.Sprintf("PID %d · %d launches", status.PID, status.Launches)).FontSize(textSmall).TextColor(c.Theme().TextMuted)
+				line += fmt.Sprintf(" · PID %d · %d launches", status.PID, status.Launches)
 			}
 			if status.LastExitCode != nil {
-				ui.Text(c, fmt.Sprintf("Last exit code: %d", *status.LastExitCode)).FontSize(textSmall).TextColor(c.Theme().TextMuted)
+				line += fmt.Sprintf(" · exit %d", *status.LastExitCode)
+			}
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				devStatusDot(c, status.Status)
+				ui.Text(c, line).FontSize(textSmall).FontWeight(600).TextColor(devStatusColor(c, status.Status))
+			})
+			if status.Status != "Healthy" && status.Message != "" {
+				ui.Text(c, status.Message).FontSize(textSmall).TextColor(c.Theme().TextMuted)
 			}
 		}
-		ui.Text(c, "Save project stores these fields and the service environment.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-		if ui.Button(c, "Remove service from project").Disabled(d.busy).Clicked() {
+		if ui.Button(c, "Remove service from project").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 			for n, s := range d.draft.Services {
 				if s.ID == d.serviceOriginalID {
 					d.draft.Services = append(d.draft.Services[:n], d.draft.Services[n+1:]...)
@@ -889,9 +945,7 @@ func (a *app) devProjects(c *ui.Context) {
 				}
 			}
 		}
-
 	case 2:
-		devDivider(c, "Environment")
 		var services []string
 		for _, service := range d.draft.Services {
 			services = append(services, service.ID)
@@ -907,7 +961,7 @@ func (a *app) devProjects(c *ui.Context) {
 			}
 		}
 		devField(c, "Environment file (optional)", &d.envFile, ".env.local")
-		if ui.Button(c, "Choose environment file…").Disabled(d.busy).Clicked() {
+		if ui.Button(c, "Choose environment file…").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 			paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "Choose a local environment file"})
 			if err != nil {
 				d.output = "Error: " + err.Error()
@@ -915,34 +969,35 @@ func (a *app) devProjects(c *ui.Context) {
 				d.envFile = paths[0]
 			}
 		}
-		ui.Text(c, "Environment variables — NAME=value per line").FontSize(textSmall)
-		ui.TextArea(c, &d.environment).Lines(2, 5).Label("Environment variables")
+		ui.Field(c, "Environment variables", func() {
+			ui.TextArea(c, &d.environment).Lines(2, 5).Label("Environment variables").Placeholder("NAME=value")
+		})
 		for _, svc := range d.draft.Services {
 			if svc.ID == d.serviceOriginalID && len(svc.RequiredEnvironment) > 0 {
 				ui.Text(c, "Required by this environment: "+strings.Join(svc.RequiredEnvironment, ", ")).FontSize(textSmall).TextColor(c.Theme().TextMuted)
 			}
 		}
 
-		ui.Text(c, "Save project stores the environment for the selected service.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 	case 3:
-		devDivider(c, "Service output")
 		rotation := !d.state.LogRotationDisabled
-		if ui.Checkbox(c, &rotation, "Rotate service logs while the app is closed").Changed() {
-			enabled := rotation
-			a.devTask(func(m *devplatform.Manager) (string, error) {
-				return "Log rotation settings saved", m.SetLogRotation(m.Context, enabled)
-			})
-		}
-		ui.Text(c, "Every minute, a user launch agent keeps two 5 MiB archives per service log. Busy logs can grow between checks.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-		if ui.Button(c, "Rotate logs now").Clicked() {
-			a.devTask(func(m *devplatform.Manager) (string, error) { return "Logs rotated", m.RotateLogs(m.Context) })
-		}
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			if ui.Checkbox(c, &rotation, "Rotate service logs while the app is closed").Tooltip("Every minute, a user launch agent keeps two 5 MiB archives per service log. Busy logs can grow between checks.").Changed() {
+				enabled := rotation
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					return "Log rotation settings saved", m.SetLogRotation(m.Context, enabled)
+				})
+			}
+			ui.Spacer(c)
+			if ui.Button(c, "Rotate logs now").Clicked() {
+				a.devTask(func(m *devplatform.Manager) (string, error) { return "Logs rotated", m.RotateLogs(m.Context) })
+			}
+		})
 		var services []string
 		for _, service := range d.draft.Services {
 			services = append(services, service.ID)
 		}
 		devChoice(c, "Log service", &d.logService, services)
-		if ui.Button(c, "Read service logs").Disabled(d.busy || d.logService == "").Clicked() {
+		if ui.Button(c, "Read service logs").AlignSelf(ui.Start).Disabled(d.busy || d.logService == "").Clicked() {
 			job := "p-" + d.id + "-" + d.logService
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				text, e := m.Logs(job)
@@ -962,37 +1017,19 @@ func (a *app) devSoftware(c *ui.Context) {
 		d.software = "node"
 		d.version = devplatform.AvailableVersions("node")[0]
 	}
-	description := "The app downloads and manages verified binaries. Versions stay separate from your system."
-	if d.software == "php" || d.software == "postgresql" {
-		description = "Homebrew manages the software. Projects and databases keep their own settings and data."
-	}
-	devHeading(c, softwareTitle(d.software), description)
+	devHeading(c, softwareTitle(d.software), "")
 	a.devPackageTasks(c)
-	if devChoice(c, "Software", &d.software, []string{"php", "node", "mysql", "postgresql", "redis", "mongodb"}) {
-		d.runtimeTargetProject = ""
-		d.runtimeTargetService = ""
-		d.softwareContext = ""
-		versions := devplatform.AvailableVersions(d.software)
-		if len(versions) > 0 {
-			d.version = versions[0]
-		}
-	}
 	devChoice(c, "Version", &d.version, devplatform.AvailableVersions(d.software))
 	devField(c, "Exact version", &d.version, "For example 22.14.0")
-	if d.software == "php" || d.software == "postgresql" {
-		ui.Text(c, "Choose a release series or exact Homebrew version. Review resolves the current patch and revision.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-		if d.software == "php" {
-			if ui.Button(c, "Add shivammathur/php repository").Disabled(d.busy || a.packageTasksRunning()).Clicked() {
-				a.devTask(func(m *devplatform.Manager) (string, error) {
-					if err := m.AddPHPRepository(m.Context); err != nil {
-						return "PHP repository setup did not complete.", err
-					}
-					return "PHP repository added. Review the version to install.", nil
-				})
-			}
+	if d.software == "php" {
+		if ui.Button(c, "Add shivammathur/php repository").AlignSelf(ui.Start).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
+			a.devTask(func(m *devplatform.Manager) (string, error) {
+				if err := m.AddPHPRepository(m.Context); err != nil {
+					return "PHP repository setup did not complete.", err
+				}
+				return "PHP repository added. Review the version to install.", nil
+			})
 		}
-	} else {
-		ui.Text(c, "Listed versions have integration tests. Other exact versions use available upstream archives.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 	}
 	a.devPackageReview(c)
 	for _, id := range sortedKeys(d.state.Packages) {
@@ -1000,7 +1037,7 @@ func (a *app) devSoftware(c *ui.Context) {
 		if p.Name != d.software {
 			continue
 		}
-		devDivider(c, "Installed version")
+		devDivider(c, "Installed")
 		ui.Text(c, "License: "+p.License).FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		ui.Row(c).Gap(8).Children(func() {
 			ui.Text(c, softwareTitle(p.Name)+" · "+p.Version).Grow(1).MinWidth(0).SingleLine()
@@ -1009,7 +1046,7 @@ func (a *app) devSoftware(c *ui.Context) {
 			if p.Formula != "" {
 				removeLabel = "Remove from workspace " + p.Name + " " + p.Version
 			}
-			if ui.Button(c, removeLabel).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
+			if ui.Button(c, removeLabel).AlignSelf(ui.Start).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
 				a.devTask(func(m *devplatform.Manager) (string, error) {
 					if p.Formula != "" {
 						return "Removed workspace registration. The shared Homebrew installation is kept.", m.Uninstall(m.Context, id)
@@ -1039,19 +1076,7 @@ func (a *app) devDatabases(c *ui.Context) {
 		a.devInstanceDeletions(c)
 		return
 	}
-	if ui.Button(c, "Unfinished database tasks").Disabled(d.busy).Clicked() {
-		a.openDatabaseWork()
-		return
-	}
-	if ui.Button(c, "Unfinished initializations").Disabled(d.busy).Clicked() {
-		a.openInitializations()
-		return
-	}
 	a.devDatabaseTasks(c)
-	if ui.Button(c, "Review pending data deletions").Disabled(d.busy).Clicked() {
-		a.openInstanceDeletions()
-		return
-	}
 	if d.dbKind == "" {
 		d.dbKind = "postgresql"
 		d.dbPort = "55432"
@@ -1059,9 +1084,9 @@ func (a *app) devDatabases(c *ui.Context) {
 	}
 	if instance, exists := d.state.Instances[d.dbID]; exists && !d.dbNewDraft {
 		devHeading(c, instance.ID, softwareTitle(instance.Kind)+" · 127.0.0.1:"+strconv.Itoa(instance.Port))
-		ui.Row(c).Gap(8).Children(func() {
+		ui.Row(c).Wrap().Gap(8).Children(func() {
 			for _, action := range []string{"Start instance", "Restart instance", "Stop instance"} {
-				if ui.Button(c, action).Disabled(d.busy || a.databaseTaskRunning(instance.ID)).Clicked() {
+				if ui.Button(c, action).AlignSelf(ui.Start).Disabled(d.busy || a.databaseTaskRunning(instance.ID)).Clicked() {
 					id := instance.ID
 					verb := strings.TrimSuffix(strings.ToLower(action), " instance")
 					a.startDatabaseOperation(instance, verb, func(m *devplatform.Manager) (string, error) {
@@ -1071,77 +1096,78 @@ func (a *app) devDatabases(c *ui.Context) {
 				}
 			}
 		})
-		if ui.Button(c, "Show connection details").Disabled(d.busy).Clicked() {
-			id := d.dbID
-			a.devTask(func(m *devplatform.Manager) (string, error) { return m.Connection(id) })
-		}
-		if ui.Button(c, "Copy connection URI").Disabled(d.busy).Clicked() {
-			id := d.dbID
-			a.devTask(func(m *devplatform.Manager) (string, error) {
-				info, e := m.ConnectionInfo(id)
-				if e == nil {
-					a.post(func() {
-						if a.copy != nil {
-							a.copy(info.URI)
-						}
-					})
-				}
-				return "Connection URI copied. Use the password copy button when the client asks.", e
-			})
-		}
-		if ui.Button(c, "Copy database password").Disabled(d.busy).Clicked() {
-			id := d.dbID
-			a.devTask(func(m *devplatform.Manager) (string, error) {
-				password, e := m.DatabasePassword(id)
-				if e == nil {
-					a.post(func() {
-						if a.copy != nil {
-							a.copy(password)
-						}
-					})
-				}
-				return "Database password copied", e
-			})
-		}
-		if ui.Button(c, "Open external database client").Disabled(d.busy).Clicked() {
-			id := d.dbID
-			a.devTask(func(m *devplatform.Manager) (string, error) {
-				info, e := m.ConnectionInfo(id)
-				if e != nil {
-					return "", e
-				}
-				_, e = m.Run(m.Context, "/usr/bin/open", info.URI)
-				return "Opening the default client for " + softwareTitle(instance.Kind), e
-			})
-		}
-		if ui.Button(c, "Read instance logs").Disabled(d.busy).Clicked() {
-			id := "db-" + instance.ID
-			d.showResult = true
-			a.devTask(func(m *devplatform.Manager) (string, error) { return m.Logs(id) })
-		}
+		ui.Row(c).Wrap().Gap(8).Children(func() {
+			if ui.Button(c, "Show connection details").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
+				id := d.dbID
+				a.devTask(func(m *devplatform.Manager) (string, error) { return m.Connection(id) })
+			}
+			if ui.Button(c, "Copy connection URI").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
+				id := d.dbID
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					info, e := m.ConnectionInfo(id)
+					if e == nil {
+						a.post(func() {
+							if a.copy != nil {
+								a.copy(info.URI)
+							}
+						})
+					}
+					return "Connection URI copied", e
+				})
+			}
+			if ui.Button(c, "Copy database password").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
+				id := d.dbID
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					password, e := m.DatabasePassword(id)
+					if e == nil {
+						a.post(func() {
+							if a.copy != nil {
+								a.copy(password)
+							}
+						})
+					}
+					return "Database password copied", e
+				})
+			}
+			if ui.Button(c, "Open external database client").Disabled(d.busy).Clicked() {
+				id := d.dbID
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					info, e := m.ConnectionInfo(id)
+					if e != nil {
+						return "", e
+					}
+					_, e = m.Run(m.Context, "/usr/bin/open", info.URI)
+					return "Opening the default client for " + softwareTitle(instance.Kind), e
+				})
+			}
+			if ui.Button(c, "Read instance logs").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
+				id := "db-" + instance.ID
+				d.showResult = true
+				a.devTask(func(m *devplatform.Manager) (string, error) { return m.Logs(id) })
+			}
+		})
 
-		devDivider(c, "Projects using this instance")
 		linked := false
 		for _, pid := range sortedKeys(d.state.Projects) {
 			p := d.state.Projects[pid]
 			for _, ref := range p.Instances {
 				if ref == instance.ID {
+					if !linked {
+						devDivider(c, "Projects using this instance")
+					}
 					linked = true
 					ui.Text(c, p.Name+" · "+d.statuses["project:"+pid]).FontSize(textSmall).SingleLine().Tooltip(p.Directory)
 					break
 				}
 			}
 		}
-		if !linked {
-			ui.Text(c, "No project uses this instance.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-		}
 		a.devDatabasePort(c, instance)
-		devDivider(c, "Data and backups")
+		devDivider(c, "Data")
 	} else {
 		d.dbNewDraft = true
-		devHeading(c, "Create a database", "A separate version, port, and data folder for every instance.")
+		devHeading(c, "New instance", "")
 		if packages := d.packages(d.dbKind); len(packages) == 0 {
-			ui.Text(c, "Install "+softwareTitle(d.dbKind)+" in Software before creating an instance.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
+			ui.Text(c, "Install "+softwareTitle(d.dbKind)+" first").FontSize(textSmall).TextColor(c.Theme().Warning)
 		} else if d.dbPackage == "" {
 			d.dbPackage = packages[0]
 		}
@@ -1160,9 +1186,8 @@ func (a *app) devDatabases(c *ui.Context) {
 			ui.Checkbox(c, &d.persistent, "Persist database contents")
 		} else {
 			d.persistent = true
-			ui.Text(c, "Database files are kept across restarts and removal of the management record.")
 		}
-		if ui.PrimaryButton(c, "Create instance").Disabled(d.busy || d.databaseTasks[d.dbID] != nil && d.databaseTasks[d.dbID].Running).Clicked() {
+		if ui.PrimaryButton(c, "Create instance").AlignSelf(ui.Start).Disabled(d.busy || d.databaseTasks[d.dbID] != nil && d.databaseTasks[d.dbID].Running).Clicked() {
 			port, e := strconv.Atoi(d.dbPort)
 			if e != nil {
 				d.output = "Error: Enter a valid port"
@@ -1172,6 +1197,7 @@ func (a *app) devDatabases(c *ui.Context) {
 				a.startDatabaseTask(i)
 			}
 		}
+		a.devDatabaseRecovery(c)
 		return
 	}
 	if d.dbKind == "redis" {
@@ -1180,7 +1206,7 @@ func (a *app) devDatabases(c *ui.Context) {
 		devField(c, "Database name", &d.dbName, "app")
 	}
 	if d.dbKind != "redis" {
-		if ui.Button(c, "Create database").Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
+		if ui.Button(c, "Create database").AlignSelf(ui.Start).Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
 			id, name := d.dbID, d.dbName
 			a.startDatabaseOperation(d.state.Instances[id], "create database", func(m *devplatform.Manager) (string, error) {
 				return "Created database " + name, m.CreateDatabase(m.Context, id, name)
@@ -1188,7 +1214,7 @@ func (a *app) devDatabases(c *ui.Context) {
 		}
 		devField(c, "Database user", &d.dbUser, "app_user")
 		ui.Field(c, "New user password", func() { ui.TextInput(c, &d.dbPassword).Password() })
-		if ui.Button(c, "Create database user").Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
+		if ui.Button(c, "Create database user").AlignSelf(ui.Start).Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
 			id, name, password, db := d.dbID, d.dbUser, d.dbPassword, d.dbName
 			d.dbPassword = ""
 			a.startDatabaseOperation(d.state.Instances[id], "create user", func(m *devplatform.Manager) (string, error) {
@@ -1196,34 +1222,58 @@ func (a *app) devDatabases(c *ui.Context) {
 			})
 		}
 	}
-	if ui.Button(c, "Back up database").Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
+	devDivider(c, "Backups")
+	if ui.Button(c, "Back up database").AlignSelf(ui.Start).Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
 		id, name := d.dbID, d.dbName
 		a.startDatabaseOperation(d.state.Instances[id], "backup", func(m *devplatform.Manager) (string, error) { return m.Backup(m.Context, id, name) })
 	}
 	devField(c, "Backup file", &d.backupPath, "Select a backup file")
-	if ui.Button(c, "Choose backup file…").Clicked() {
-		paths, e := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "Restore database backup"})
-		if e != nil {
-			d.output = e.Error()
-		} else if len(paths) > 0 {
-			d.backupPath = paths[0]
+	ui.Row(c).Wrap().Gap(8).Children(func() {
+		if ui.Button(c, "Choose backup file…").AlignSelf(ui.Start).Clicked() {
+			paths, e := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "Restore database backup"})
+			if e != nil {
+				d.output = e.Error()
+			} else if len(paths) > 0 {
+				d.backupPath = paths[0]
+			}
 		}
-	}
-	if ui.Button(c, "Restore into new database").Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
-		id, name, path := d.dbID, d.dbName, d.backupPath
-		a.startDatabaseOperation(d.state.Instances[id], "restore", func(m *devplatform.Manager) (string, error) {
-			return "Restored into " + name, m.Restore(m.Context, id, name, path)
-		})
-	}
-	if ui.Button(c, "Review permanent data deletion").Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
-		a.previewInstanceDeletion(d.dbID)
-	}
-	if ui.Button(c, "Remove instance (keep data files)").Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
-		id := d.dbID
-		a.startDatabaseOperation(d.state.Instances[id], "remove", func(m *devplatform.Manager) (string, error) {
-			return "Removed instance", m.InstanceAction(m.Context, id, "remove")
-		})
-	}
+		if ui.Button(c, "Restore into new database").AlignSelf(ui.Start).Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
+			id, name, path := d.dbID, d.dbName, d.backupPath
+			a.startDatabaseOperation(d.state.Instances[id], "restore", func(m *devplatform.Manager) (string, error) {
+				return "Restored into " + name, m.Restore(m.Context, id, name, path)
+			})
+		}
+	})
+	devDivider(c, "Remove")
+	ui.Row(c).Wrap().Gap(8).Children(func() {
+		if ui.Button(c, "Remove instance (keep data files)").AlignSelf(ui.Start).Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
+			id := d.dbID
+			a.startDatabaseOperation(d.state.Instances[id], "remove", func(m *devplatform.Manager) (string, error) {
+				return "Removed instance", m.InstanceAction(m.Context, id, "remove")
+			})
+		}
+		if ui.Button(c, "Review permanent data deletion").AlignSelf(ui.Start).Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
+			a.previewInstanceDeletion(d.dbID)
+		}
+	})
+	a.devDatabaseRecovery(c)
+}
+
+// devDatabaseRecovery offers the reviews of work an exited caller left.
+func (a *app) devDatabaseRecovery(c *ui.Context) {
+	d := &a.dev
+	devDivider(c, "Recovery")
+	ui.Row(c).Wrap().Gap(8).Children(func() {
+		if ui.Button(c, "Unfinished database tasks").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
+			a.openDatabaseWork()
+		}
+		if ui.Button(c, "Unfinished initializations").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
+			a.openInitializations()
+		}
+		if ui.Button(c, "Review pending data deletions").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
+			a.openInstanceDeletions()
+		}
+	})
 }
 func (a *app) devHTTPS(c *ui.Context) {
 	d := &a.dev
@@ -1231,12 +1281,18 @@ func (a *app) devHTTPS(c *ui.Context) {
 		a.devAuthority(c)
 		return
 	}
-	devHeading(c, "A real address for localhost", "Use a memorable .test domain with trusted HTTPS.")
-	if ui.Button(c, "Local certificates").Disabled(d.busy).Clicked() {
-		d.authorityOpen = true
-		d.detailScroll[3].Y = 0
-		a.authorityTask(nil)
+	title := "New site"
+	if d.siteOriginalID != "" {
+		title = d.siteDomain
 	}
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, title).FontSize(18).FontWeight(650).Grow(1).MinWidth(0)
+		if ui.Button(c, "Local certificates").Disabled(d.busy).Clicked() {
+			d.authorityOpen = true
+			d.detailScroll[3].Y = 0
+			a.authorityTask(nil)
+		}
+	})
 	if d.sitePort == "" {
 		d.sitePort = "443"
 	}
@@ -1268,10 +1324,8 @@ func (a *app) devHTTPS(c *ui.Context) {
 		devField(c, "Connection timeout (seconds)", &d.siteConnectTimeout, "10")
 		devField(c, "Response header timeout (seconds)", &d.siteHeaderTimeout, "30")
 		devChoice(c, "Upstream Host header", &d.siteHostPolicy, []string{"Keep local domain", "Use upstream host"})
-		ui.Text(c, "Zero disables that timeout. Streaming bodies and WebSockets are not limited by the response header timeout. Forwarded headers describe the original HTTPS request.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 	}
-	ui.Text(c, "If your dev server checks allowed hosts or HMR origins, allow this local HTTPS domain in its settings.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-	if ui.PrimaryButton(c, "Save HTTPS site").Disabled(d.busy).Clicked() {
+	if ui.PrimaryButton(c, "Save HTTPS site").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 		port, e := strconv.Atoi(d.sitePort)
 		var options *devplatform.ProxyOptions
 		if d.siteAdvanced {
@@ -1303,7 +1357,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 		}
 	}
 	if d.siteOriginalID != "" {
-		if ui.Button(c, "Delete HTTPS site").Disabled(d.busy).Clicked() {
+		if ui.Button(c, "Delete HTTPS site").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 			owner, id := d.siteOriginalProject, d.siteOriginalID
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				e := m.RemoveSite(m.Context, owner, id)
@@ -1314,42 +1368,54 @@ func (a *app) devHTTPS(c *ui.Context) {
 			})
 		}
 	}
-	ui.Text(c, "Local CA trust allows this app to issue certificates trusted by this Mac. Hosts and system trust changes show the macOS authorization dialog.")
-	for _, action := range []string{"Apply proxy", "Restart HTTPS proxy", "Stop HTTPS proxy", "Configure local domains", "Trust local CA", "Remove CA trust", "Diagnose HTTPS"} {
-		if ui.Button(c, action).Disabled(d.busy).Clicked() {
-			a.devTask(func(m *devplatform.Manager) (string, error) {
-				var e error
-				switch action {
-				case "Apply proxy":
-					e = m.ApplyProxy(m.Context)
-				case "Restart HTTPS proxy":
-					e = m.RestartProxy(m.Context)
-				case "Stop HTTPS proxy":
-					e = m.StopProxy(m.Context)
-				case "Configure local domains":
-					e = m.ConfigureHosts(m.Context)
-				case "Trust local CA":
-					e = m.ConfigureTrust(m.Context, false)
-				case "Remove CA trust":
-					e = m.ConfigureTrust(m.Context, true)
-				case "Diagnose HTTPS":
-					report, err := m.Diagnose(m.Context)
-					if err == nil {
-						a.post(func() { a.showDevDiagnostics(report) })
-					}
-					return "Diagnostics finished. Review checks by layer.", err
+	groups := []struct {
+		title   string
+		tip     string
+		actions []string
+	}{
+		{"Proxy", "", []string{"Apply proxy", "Restart HTTPS proxy", "Stop HTTPS proxy"}},
+		{"This Mac", "Hosts and system trust changes show the macOS authorization dialog.", []string{"Configure local domains", "Trust local CA", "Remove CA trust", "Diagnose HTTPS"}},
+	}
+	for _, group := range groups {
+		devDivider(c, group.title)
+		ui.Row(c).Wrap().Gap(8).Children(func() {
+			for _, action := range group.actions {
+				if ui.Button(c, action).AlignSelf(ui.Start).Tooltip(group.tip).Disabled(d.busy).Clicked() {
+					a.devTask(func(m *devplatform.Manager) (string, error) {
+						var e error
+						switch action {
+						case "Apply proxy":
+							e = m.ApplyProxy(m.Context)
+						case "Restart HTTPS proxy":
+							e = m.RestartProxy(m.Context)
+						case "Stop HTTPS proxy":
+							e = m.StopProxy(m.Context)
+						case "Configure local domains":
+							e = m.ConfigureHosts(m.Context)
+						case "Trust local CA":
+							e = m.ConfigureTrust(m.Context, false)
+						case "Remove CA trust":
+							e = m.ConfigureTrust(m.Context, true)
+						case "Diagnose HTTPS":
+							report, err := m.Diagnose(m.Context)
+							if err == nil {
+								a.post(func() { a.showDevDiagnostics(report) })
+							}
+							return "Diagnostics finished. Review checks by layer.", err
+						}
+						return action, e
+					})
 				}
-				return action, e
-			})
-		}
+			}
+		})
 	}
 }
 
 func (a *app) devOpenSite(c *ui.Context, site devplatform.Site) {
 	if site.NeedsReview {
-		ui.Text(c, "Review the upstream address and save this site before applying HTTPS.").FontSize(textSmall).TextColor(c.Theme().Warning)
+		ui.Text(c, "Review and save this site before applying HTTPS.").FontSize(textSmall).TextColor(c.Theme().Warning)
 	}
-	if ui.Button(c, "Open "+site.URL()).Disabled(a.dev.busy || site.Disabled || site.NeedsReview).Clicked() {
+	if ui.Button(c, "Open "+site.URL()).AlignSelf(ui.Start).Disabled(a.dev.busy || site.Disabled || site.NeedsReview).Clicked() {
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			_, e := m.Run(m.Context, "/usr/bin/open", site.URL())
 			return "Opening " + site.URL(), e

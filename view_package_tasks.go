@@ -183,20 +183,19 @@ func (a *app) devPackageTasks(c *ui.Context) {
 		devDivider(c, strings.ToUpper(task.Kind[:1])+task.Kind[1:]+" · "+task.Package.Version)
 		if task.Running {
 			ui.Text(c, task.Progress).FontSize(textSmall).Selectable()
-			if ui.Button(c, "Cancel package "+id).Clicked() && task.cancel != nil {
+			if ui.Button(c, "Cancel package "+id).AlignSelf(ui.Start).Clicked() && task.cancel != nil {
 				task.cancel()
 			}
-			ui.Text(c, "This task runs in the background. You can configure other projects while it prepares this version.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		} else {
 			ui.Text(c, task.Result).FontSize(textSmall)
-			if ui.Button(c, "Dismiss package result "+id).Clicked() {
+			if ui.Button(c, "Dismiss package result "+id).AlignSelf(ui.Start).Clicked() {
 				delete(d.packageTasks, id)
 			}
 		}
 	}
 	if r := d.packageContention; r != nil && strings.HasPrefix(r.PackageID, d.software+"@") {
-		ui.Text(c, fmt.Sprintf("Last attempt: %s is busy in another caller. Finish or cancel that task there, then retry.", r.PackageID)).FontSize(textSmall).TextColor(c.Theme().Warning)
-		if ui.Button(c, "Review package tasks").Disabled(d.busy).Clicked() {
+		ui.Text(c, fmt.Sprintf("%s is busy in another caller. Finish or cancel that task there, then retry.", r.PackageID)).FontSize(textSmall).TextColor(c.Theme().Warning)
+		if ui.Button(c, "Review package tasks").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 			a.openOperations()
 		}
 	}

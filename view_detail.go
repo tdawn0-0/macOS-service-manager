@@ -25,13 +25,9 @@ func (a *app) inspector(c *ui.Context) {
 }
 
 func (a *app) bulkPane(c *ui.Context, n int) {
-	t := c.Theme()
 	start, stop := a.bulkCounts()
 	ui.Column(c).Padding(0, 16).Gap(12).Children(func() {
-		ui.Column(c).Gap(3).Children(func() {
-			ui.Text(c, fmt.Sprintf("%d items selected", n)).FontSize(16).FontWeight(650)
-			ui.Text(c, "Start and stop act on the items they apply to.").TextColor(t.TextMuted).FontSize(textSmall)
-		})
+		ui.Text(c, fmt.Sprintf("%d items selected", n)).FontSize(16).FontWeight(650)
 		ui.Row(c).Gap(8).Children(func() {
 			labeledButton(c, iconPlay, fmt.Sprintf("Start %d", start), true).Grow(1).Disabled(start == 0).OnClick(func() { a.bulk(true) })
 			labeledButton(c, iconStop, fmt.Sprintf("Stop %d", stop), false).Grow(1).Disabled(stop == 0).OnClick(func() { a.bulk(false) })
@@ -80,21 +76,18 @@ func (a *app) itemPane(c *ui.Context, it service.Item) {
 
 	ui.Column(c).Shrink(0).Padding(0, 16, 12).Gap(12).Children(func() {
 		// What it is.
-		ui.Row(c).Gap(11).AlignItems(ui.Center).Children(func() {
-			ui.Box(c).Size(38, 38).Shrink(0).Center().Radius(10).Background(t.Accent.Alpha(0.12)).Children(func() {
-				ui.Icon(c, sourceIcon(it.Source)).FontSize(18).TextColor(t.Accent)
-			})
-			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-				ui.Text(c, it.Name).FontSize(14).FontWeight(650).MaxLines(2).Selectable().Tooltip(it.Name)
-				subtitle := it.Source.Title()
-				if it.Kind != "" {
-					subtitle = it.Kind
+		ui.Column(c).MinWidth(0).Gap(2).Children(func() {
+			ui.Text(c, it.Name).FontSize(15).FontWeight(650).MaxLines(2).Selectable().Tooltip(it.Name)
+			subtitle := it.Kind
+			if it.Owner != "" && it.Source == service.LoginItem {
+				if subtitle != "" {
+					subtitle += " · "
 				}
-				if it.Owner != "" && it.Source == service.LoginItem {
-					subtitle += " · " + it.Owner
-				}
+				subtitle += it.Owner
+			}
+			if subtitle != "" {
 				ui.Text(c, subtitle).FontSize(textCaption).TextColor(t.TextMuted).SingleLine()
-			})
+			}
 		})
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 			stateChip(c, it)
@@ -204,12 +197,11 @@ func (a *app) autostartCard(c *ui.Context, it service.Item, actions []service.Ac
 		if it.Autostart == service.AutostartOn {
 			on = "On"
 		}
-		card(c).Padding(9, 12).Gap(2).Children(func() {
+		card(c).Padding(9, 12).Tooltip("Its app or System Settings turns this on or off.").Children(func() {
 			ui.Row(c).Children(func() {
 				ui.Text(c, "Run in the background").Grow(1)
 				ui.Text(c, on).TextColor(t.TextMuted)
 			})
-			ui.Text(c, "Its app or System Settings turns this on or off.").FontSize(textCaption).TextColor(t.TextMuted)
 		})
 		return
 	}
@@ -228,12 +220,12 @@ func (a *app) autostartCard(c *ui.Context, it service.Item, actions []service.Ac
 	card(c).Padding(9, 12).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
 			// A click on the words does what a click on the switch does.
-			words := ui.Column(c).Grow(1).MinWidth(0).Gap(1).Disabled(busy)
+			words := ui.Row(c).Grow(1).MinWidth(0).Gap(6).AlignItems(ui.Center).Disabled(busy)
 			words.OnClick(func() { set(!on) })
 			words.Children(func() {
 				ui.Text(c, label)
 				if it.Admin {
-					ui.Text(c, "Changing it asks for your password.").FontSize(textCaption).TextColor(t.TextMuted)
+					ui.Icon(c, iconLock).FontSize(11).TextColor(t.TextMuted).Shrink(0).Tooltip("Changing it asks for your password")
 				}
 			})
 			if ui.Switch(c.Key("autostart"), &on).Label(label).Disabled(busy).Changed() {
@@ -282,7 +274,6 @@ func (a *app) infoTab(c *ui.Context) {
 	case len(d.rows) == 0 && d.loading:
 		ui.Row(c).Padding(12, 16).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Spinner(c).Label("Loading").Size(14, 14)
-			ui.Text(c, "Loading…").TextColor(t.TextMuted)
 		})
 	case len(d.rows) > 0:
 		ui.Scroll(c).Grow(1).MinHeight(0).Padding(8, 16, 16).Gap(14).Selectable().Children(func() {

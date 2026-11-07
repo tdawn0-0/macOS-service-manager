@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -168,16 +167,12 @@ func (a *app) devDatabaseTasks(c *ui.Context) {
 		devDivider(c, label+" · "+id)
 		if task.Running {
 			ui.Text(c, task.Progress).FontSize(textSmall)
-			if ui.Button(c, cancelLabel+id).Clicked() && task.cancel != nil {
+			if ui.Button(c, cancelLabel+id).AlignSelf(ui.Start).Tooltip("Canceling does not undo data already written. Review the target before retrying.").Clicked() && task.cancel != nil {
 				task.cancel()
-			}
-			ui.Text(c, "Other projects and independent instances remain configurable while this operation runs.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-			if task.Kind == "restore" {
-				ui.Text(c, "Canceling does not undo data already written to the new database. Review the target before retrying.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 			}
 		} else {
 			ui.Text(c, task.Result).FontSize(textSmall)
-			if ui.Button(c, dismissLabel+id).Clicked() {
+			if ui.Button(c, dismissLabel+id).AlignSelf(ui.Start).Clicked() {
 				delete(d.databaseTasks, id)
 			}
 		}
@@ -212,17 +207,18 @@ func (a *app) openInitializations() {
 }
 func (a *app) devInitializations(c *ui.Context) {
 	d := &a.dev
-	devHeading(c, "Unfinished initializations", "Review live or interrupted database preparations. Prepared data is kept until you explicitly reconcile it.")
-	if ui.Button(c, "Back to database settings").Disabled(d.busy).Clicked() {
-		d.databaseWorkOpen = false
-		d.initializationsOpen = false
-		d.detailScroll[2].Y = 0
-	}
-	if ui.Button(c, "Refresh initializations").Disabled(d.busy).Clicked() {
-		a.initializationTask(nil)
-	}
+	devPaneHeader(c, "Unfinished initializations", func() {
+		if ui.Button(c, "Refresh initializations").Disabled(d.busy).Clicked() {
+			a.initializationTask(nil)
+		}
+		if ui.Button(c, "Back to database settings").Disabled(d.busy).Clicked() {
+			d.databaseWorkOpen = false
+			d.initializationsOpen = false
+			d.detailScroll[2].Y = 0
+		}
+	})
 	if len(d.initializations) == 0 {
-		ui.Text(c, "No unfinished initializations.").FontSize(textSmall)
+		ui.Text(c, "None").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		return
 	}
 	for _, r := range d.initializations {
@@ -236,7 +232,7 @@ func (a *app) devInitializations(c *ui.Context) {
 		} else if r.Status == "Archived" {
 			label = "Finish archive " + r.ID[:min(8, len(r.ID))]
 		}
-		if ui.Button(c, label).Disabled(d.busy || r.Busy || !r.CanResolve).Clicked() {
+		if ui.Button(c, label).AlignSelf(ui.Start).Disabled(d.busy || r.Busy || !r.CanResolve).Clicked() {
 			a.initializationTask(func(m *devplatform.Manager) (string, error) {
 				archive, e := m.ResolveInstanceInitialization(m.Context, r.ID, r.Revision)
 				if archive != "" {
@@ -245,6 +241,5 @@ func (a *app) devInitializations(c *ui.Context) {
 				return "Initialization record reconciled. Registered data was kept.", e
 			})
 		}
-		ui.Text(c, fmt.Sprintf("Preparation %s. Reconciliation stops only its recorded jobs and keeps the files; it does not replay initialization or replace another directory.", r.ID)).FontSize(textSmall).TextColor(c.Theme().TextMuted)
 	}
 }

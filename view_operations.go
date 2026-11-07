@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -95,12 +94,18 @@ func (a *app) reviewOperation(r devplatform.OperationRecord) {
 func (a *app) devOperations(c *ui.Context) {
 	d := &a.dev
 	ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
-		ui.Column(c).Width(238).Shrink(0).Background(c.Theme().Surface).Children(func() {
-			ui.Scroll(c.Key("operations-list")).Grow(1).MinHeight(0).Padding(12).Children(func() {
-				ui.Column(c).Gap(8).Children(func() {
-					ui.Text(c, fmt.Sprintf("%d LOCAL TASKS", len(d.operations))).FontSize(textCaption).TextColor(c.Theme().TextMuted)
+		if d.operationID == "" && len(d.operations) > 0 {
+			d.operationID = d.operations[0].ID
+		}
+		ui.Column(c).Width(224).Shrink(0).Background(c.Theme().Surface).Children(func() {
+			ui.Scroll(c.Key("operations-list")).Grow(1).MinHeight(0).Padding(10).Children(func() {
+				ui.Column(c).Gap(4).Children(func() {
 					for _, r := range d.operations {
-						if devListEntry(c, "Task "+r.ID, r.Request.Kind+" · "+r.Request.Resource, r.Status+" · "+r.Phase, d.operationID == r.ID) {
+						trailing := r.Status
+						if r.Status == "Succeeded" || r.Status == "Running" {
+							trailing = ""
+						}
+						if devListEntry(c, "Task "+r.ID, r.Request.Kind+" · "+r.Request.Resource, r.Status, trailing, d.operationID == r.ID) {
 							d.operationID = r.ID
 							d.operationScroll.Y = 0
 						}
@@ -111,7 +116,6 @@ func (a *app) devOperations(c *ui.Context) {
 		ui.Column(c).Width(1).Background(hairline(c.Theme()))
 		ui.Scroll(c.Key("operation-detail")).TrackScroll(&d.operationScroll).Grow(1).MinWidth(0).MinHeight(0).Padding(20, 24).Children(func() {
 			ui.Column(c).Gap(10).Children(func() {
-				devHeading(c, "Task history", "App and CLI operations share this private history. Interrupted work is never reported as successful.")
 				if ui.Button(c, "Back to workspace").Clicked() {
 					d.operationsOpen = false
 				}
@@ -126,7 +130,7 @@ func (a *app) devOperations(c *ui.Context) {
 					}
 				}
 				if selected == nil {
-					ui.Text(c, "Choose a task to inspect its phase, result and recovery options.").FontSize(textSmall)
+					ui.Text(c, "No tasks").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 					return
 				}
 				r := *selected
@@ -142,7 +146,7 @@ func (a *app) devOperations(c *ui.Context) {
 				ui.Text(c, "Started "+r.StartedAt.Local().Format("2006-01-02 15:04:05")+"\nUpdated "+r.UpdatedAt.Local().Format("2006-01-02 15:04:05")).FontSize(textSmall).TextColor(c.Theme().TextMuted)
 				ui.Text(c, r.Result).FontSize(textSmall)
 				if r.Busy {
-					ui.Text(c, "A caller still owns this operation. Cancel it in that caller or wait, then refresh.").FontSize(textSmall)
+					ui.Text(c, "Another caller owns this task.").FontSize(textSmall)
 				}
 				if r.Followup != "" {
 					ui.Text(c, "Follow-up operation: "+r.Followup).FontSize(textSmall)
@@ -156,41 +160,31 @@ func (a *app) devOperations(c *ui.Context) {
 				if r.Artifact != "" && r.Request.Kind == "backup" {
 					if strings.HasSuffix(r.Artifact, ".dump") || strings.HasSuffix(r.Artifact, ".partial") {
 						ui.Text(c, "Output: "+filepath.Base(r.Artifact)).FontSize(textSmall)
-					} else {
-						ui.Text(c, "Review unfinished database tasks for this worker’s current output and result.").FontSize(textSmall)
 					}
 					if r.Status != "Succeeded" {
 						ui.Text(c, "This output may be incomplete. Do not use it as a verified backup.").FontSize(textSmall).TextColor(c.Theme().Warning)
 					}
 				}
-				ui.Text(c, "Retry rechecks current saved settings and live launchd jobs. It does not assume ownership from a historical PID.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-				if ui.Button(c, "Retry operation").Disabled(d.busy || !devplatform.OperationCanRetry(r)).Clicked() {
+				if ui.Button(c, "Retry operation").AlignSelf(ui.Start).Tooltip("Rechecks saved settings and live launchd jobs. Ownership is never assumed from a historical PID.").Disabled(d.busy || !devplatform.OperationCanRetry(r)).Clicked() {
 					a.devTask(func(m *devplatform.Manager) (string, error) {
 						return "Follow-up task finished. Review its result.", m.RetryOperation(m.Context, r.ID, r.Revision)
 					})
 				}
-				if ui.Button(c, "Review resource settings").Disabled(d.busy || r.Busy).Clicked() {
+				if ui.Button(c, "Review resource settings").AlignSelf(ui.Start).Tooltip("Initialization, restore and commands are never replayed. Existing data is kept.").Disabled(d.busy || r.Busy).Clicked() {
 					a.reviewOperation(r)
 				}
-				if r.Request.Kind == "exec" {
-					ui.Text(c, "Command inputs and output stay in private task files while pending; they are excluded from history and never replayed. Review unfinished project commands after a caller exits.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-				}
-				if r.Request.Kind == "initialize" || r.Request.Kind == "restore" {
-					ui.Text(c, "Initialization and restore require review and a new target. Existing data is retained; these operations are never replayed automatically.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-				}
-				if ui.Button(c, "Reveal task files").Disabled(d.busy || a.reveal == nil).Clicked() {
+				if ui.Button(c, "Reveal task files").AlignSelf(ui.Start).Disabled(d.busy || a.reveal == nil).Clicked() {
 					a.devTask(func(m *devplatform.Manager) (string, error) {
 						path := filepath.Join(m.Root, "operations", r.ID)
 						a.post(func() { a.reveal(path) })
 						return "Task folder revealed.", nil
 					})
 				}
-				if ui.Button(c, "Dismiss record (keep all files)").Disabled(d.busy || r.Busy).Clicked() {
+				if ui.Button(c, "Dismiss record (keep all files)").AlignSelf(ui.Start).Disabled(d.busy || r.Busy).Clicked() {
 					a.devTask(func(m *devplatform.Manager) (string, error) {
 						return "Task record dismissed; resource and output files retained.", m.DismissOperation(m.Context, r.ID, r.Revision)
 					})
 				}
-				ui.Text(c, strings.Join([]string{"Dismissing removes only this history record.", "Package, instance, backup and project files are kept."}, " ")).FontSize(textSmall).TextColor(c.Theme().TextMuted)
 			})
 		})
 	})

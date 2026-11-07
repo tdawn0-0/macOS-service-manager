@@ -4,18 +4,13 @@
 
 # macOS Service Manager
 
-**Import a project. Configure its environment. Open it over local HTTPS.**
-
-A native macOS workspace for PHP, Node.js, MySQL, PostgreSQL, Redis and MongoDB.
-The app manages development software; launchd runs the services.
-PHP and PostgreSQL use Homebrew. Other software uses verified downloads in app-owned storage.
-Homebrew services, launch agents, daemons and login items remain available.
+Local development environments and launchd services on macOS.
 
 ![macOS 13 or later](https://img.shields.io/badge/macOS-13%2B-000000?logo=apple&logoColor=white)
 ![Go 1.27.3 or later](https://img.shields.io/badge/Go-1.27.3%2B-00ADD8?logo=go&logoColor=white)
 [![Built with MyGo](https://img.shields.io/badge/UI-MyGo-5B5BD6)](https://github.com/egoist/mygo)
 
-[Features](#features) · [What it manages](#what-it-manages) · [Jobs](#create-and-edit-jobs) · [Permissions](#passwords-and-permissions) · [Install](#install) · [Development](#development)
+[Features](#features) · [Sources](#sources) · [Jobs](#jobs) · [Permissions](#permissions) · [Install](#install) · [Development](#development)
 
 </div>
 
@@ -23,67 +18,40 @@ Homebrew services, launch agents, daemons and login items remain available.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/development/projects-1120x720-dark-true.png">
-  <img src="docs/images/development/projects-1120x720-dark-false.png" alt="Development workspace: projects, software, databases, local HTTPS and graphical project settings.">
+  <img src="docs/images/development/projects-1120x720-dark-false.png" alt="Projects">
 </picture>
 
 ## Features
 
-- **Project environments.** Import a folder, choose runtime versions, configure
-  services and database dependencies, then start the project. Forms handle all
-  settings; users do not need to edit configuration files. Runtime declarations
-  show their source and conflicting exact versions before you choose one.
-  Dependency installation runs in the background. Review unfinished project
-  commands after a caller exits, without automatically rerunning repository scripts.
-- **Local HTTPS.** Use `.test` domains, a trusted local CA and a loopback reverse
-  proxy, including WebSocket, SSE and uploads. Default 443 uses launchd socket
-  activation while the proxy runs as the current user.
-- **Managed software and databases.** Keep versions separate, initialize private
-  instances, create databases and users, and back up and restore data. Review
-  package sources, checksums, size and system requirements before installing.
-  Check installed files and repair the same exact version after stopping its users.
-  PHP uses the `shivammathur/php` tap and PostgreSQL uses versioned Homebrew core
-  formulae. Review resolves a release series to its exact installed Cellar version.
-  Their instances keep app-owned settings and data. Removing a Homebrew version
-  from the workspace keeps the shared keg; repair uses `brew reinstall`.
-  Installation and repair run in the background, with per-version cancellation;
-  other projects remain configurable while independent packages prepare.
-  Removing an instance keeps its data; permanent data deletion has a separate
-  path/impact preview, typed confirmation and interrupted-deletion recovery.
-- **Diagnostics by layer.** Check processes, readiness, DNS, CA trust and TLS;
-  copy or export an anonymous report from the workspace.
-- **Share environments.** Export locked software and database declarations;
-  import another working copy with separate instances and credentials.
-- **Project controls in the menu bar.** Start or stop a project and open its sites.
-- **Bounded log maintenance.** A scheduled user task rotates development logs
-  while the app is closed. The Projects → Logs page controls it.
-- **One list for everything.** Search every source together, filter by running or
-  stopped, and see each item once: a Homebrew service is not listed again as a
-  launch agent.
-- **Details at a glance.** Status, command, files, a switch for whether the item
-  starts by itself, and its **live logs**, followed as they grow.
-- **Launchd jobs without writing a property list.** Create, edit and remove user
-  agents, system agents and daemons, with schedules in the fields of cron.
-- **Act on several at once.** ⌘-click or Shift-click to start or stop items
-  together. Daemons changed together ask for your password once.
-- **Stays in the menu bar.** Close the window and the app stays. Its icon shows how
-  many Homebrew services and user agents run, and opens a panel with a switch for each.
-  Quit offers to keep services or stop managed projects and databases, with a
-  separate choice for the local HTTPS proxy.
-- **Asks only when macOS requires it.** Reading never asks for a password, and a lock
-  icon marks what changing will.
+**Development**
+
+- **Projects.** Import a folder, pick runtime versions, services and databases, then start it. Everything is a form; no configuration files to edit. Importing runs no project scripts.
+- **Software.** PHP, Node.js, MySQL, PostgreSQL, Redis and MongoDB, each version kept apart. PHP and PostgreSQL come from Homebrew; the rest are verified downloads in app-owned storage. Check and repair installed files.
+- **Databases.** Private instances with their own port and data. Create databases and users, back up and restore. Permanent deletion needs a path preview and a typed confirmation.
+- **HTTPS.** `.test` domains behind a trusted local CA and a loopback reverse proxy, with WebSocket, SSE and uploads. Port 443 uses launchd socket activation.
+- **Tasks and diagnostics.** Background installs and database work with cancellation, a history of interrupted work, and a layered check of processes, DNS, CA trust and TLS. Reports export without paths or secrets.
+- **Sharing.** Export locked software and database declarations; import them elsewhere with separate instances and credentials.
+
+**Services**
+
+- **One list.** Homebrew services, login items, launch agents and daemons, searchable, filterable, each shown once.
+- **Details.** Status, command, files, an autostart switch and live logs.
+- **Jobs.** Create, edit and remove launchd jobs without writing a property list.
+- **Bulk actions.** ⌘-click or Shift-click to start or stop several items; daemons changed together ask for a password once.
+- **Menu bar.** The window can close while the app stays. The panel has a switch per service and project. Quit keeps services or stops managed projects and databases, with a separate choice for the HTTPS proxy.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/menu-bar-dark.png">
-    <img src="docs/images/menu-bar-light.png" height="400" alt="The menu bar panel, with a switch for each Homebrew service and user agent.">
+    <img src="docs/images/menu-bar-light.png" height="400" alt="Menu bar panel">
   </picture>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/welcome-dark.png">
-    <img src="docs/images/welcome-light.png" height="400" alt="The welcome guide, which offers Full Disk Access and can be skipped.">
+    <img src="docs/images/welcome-light.png" height="400" alt="Full Disk Access prompt">
   </picture>
 </p>
 
-## What it manages
+## Sources
 
 | Source | Read from | What you can do |
 |---|---|---|
@@ -93,14 +61,13 @@ Homebrew services, launch agents, daemons and login items remain available.
 | **System agents** | `/Library/LaunchAgents` | The same; creating, editing and removing take your password |
 | **Daemons** | `/Library/LaunchDaemons` | The same; every change takes your password |
 
-## Create and edit jobs
+## Jobs
 
-**New Job…** writes the property list, checks it, and loads the job if you ask, whichever
-kind it is. Its options follow [Launched](https://launched.zerowidth.com/).
+**New Job…** writes and checks the property list, and loads the job on request. Options follow [Launched](https://launched.zerowidth.com/).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/new-job-dark.png">
-  <img src="docs/images/new-job-light.png" alt="The New Job form, for a daemon that runs on a calendar.">
+  <img src="docs/images/new-job-light.png" alt="New Job form">
 </picture>
 
 | Option | What you can set |
@@ -113,10 +80,9 @@ kind it is. Its options follow [Launched](https://launched.zerowidth.com/).
 | **Logs** | Output and error files. New jobs can log to `<label>.log` in `~/Library/Logs`, or in `/Library/Logs` for a daemon that runs as root |
 | **Runs as** | Daemons only: user, group and root directory, which launchd ignores outside the system domain |
 
-Editing keeps what the form cannot show: other keys of the file, `KeepAlive`
-conditions, and calendars that are not all the combinations of their values.
+Editing keeps what the form cannot show: other keys of the file, `KeepAlive` conditions, and calendars that are not all combinations of their values.
 
-## Passwords and permissions
+## Permissions
 
 | When you | macOS asks for | How often |
 |---|---|---|
@@ -129,15 +95,9 @@ conditions, and calendars that are not all the combinations of their values.
 | List login items without that access, or add or remove one | Permission to control System Events | Once |
 | Read the helpers with `sfltool dumpbtm` instead | An administrator | Every time, and only when you ask |
 
-**Before the password,** editing a system agent or daemon lists the keys of its file
-that will change, and asks nothing at all if none do. Removing one says what you will
-lose. Software you installed may depend on these jobs, or undo your edit when it updates.
+Before the password, editing a system agent or daemon lists the file keys that will change, and asks nothing if none do. Removing one lists what you lose. Installed software may depend on these jobs, or undo your edit when it updates.
 
-**Full Disk Access is optional.** The Development workspace does not read login items
-or request their permissions on startup. Login Items offers the original guide when needed.
-Allowing access opens System Settings, where a small
-page follows the window with an icon to drag, shows the way into the list, and darkens
-everything else during the drag.
+Full Disk Access is optional. The Development workspace never reads login items or requests their permissions at startup; Login Items opens the guide when needed.
 
 > [!WARNING]
 > **The Trash is not an undo for system agents and daemons.** Removing one unloads it and
@@ -157,11 +117,7 @@ Build it from source. You need:
 - Go 1.27.3 or later
 - Apple Silicon Homebrew for PHP, PostgreSQL and the Homebrew service source
 
-Individual managed packages have higher macOS requirements; see the
-[current compatibility and verification notes](docs/development-usage.md).
-The current Go 1.27 toolchain requires macOS 13; an earlier macOS 12 label was
-incorrect. This states the binary requirement, not a claim that every supported
-macOS version has been tested on hardware.
+Some managed packages need a newer macOS; see the [compatibility notes](docs/development-usage.md). macOS 13 is the binary requirement, not a tested-on-hardware claim.
 
 ```bash
 git clone https://github.com/tdawn0-0/macOS-service-manager.git
@@ -169,8 +125,7 @@ cd macOS-service-manager
 go tool mygo build -platform darwin/arm64
 ```
 
-The Apple Silicon app and disk image are in `build/darwin-arm64/`. Intel Macs and Intel-only development binaries are outside the supported scope.
-To sign with a Developer ID, see [Packaging](#packaging).
+The app and disk image are in `build/darwin-arm64/`. Intel Macs are not supported. To sign with a Developer ID, see [Packaging](#packaging).
 
 > [!NOTE]
 > The `msm-v0.1.0` release on GitHub is the earlier Tauri app, from before this rewrite.
@@ -186,13 +141,9 @@ To sign with a Developer ID, see [Packaging](#packaging).
 
 ## Development
 
-The new **Development** section adds managed runtimes, projects, database instances,
-and local HTTPS through launchd. See [usage and verification (中文)](docs/development-usage.md)
-for the current implementation, commands, and remaining limitations.
-
-The product requirements and release gates are documented in the
-[local development platform requirements and plan (中文)](docs/local-dev-platform-plan.md).
-It also records remaining validation; see the verification notes for completed work.
+- [Usage and verification (中文)](docs/development-usage.md)
+- [Requirements and plan (中文)](docs/local-dev-platform-plan.md)
+- [Interface rules and UI tests (中文)](docs/development-ui.md)
 
 ```bash
 go tool mygo dev      # run with live reload
@@ -207,7 +158,7 @@ release tag runs the tests again, then signs, notarizes and publishes.
 
 ```
 main.go, menubar.go     the window, and the menu bar icon with its panel
-guide.go                the welcome guide, its window, and the overlay that shows where to drag
+guide.go                the Full Disk Access guide, its window, and the drag overlay
 app.go                  the state, and the background work that changes it
 view*.go                sidebar, list, details, logs, the editor of launchd's jobs
 theme.go, icons.go      the look: colors, status dots, buttons, icons
@@ -220,9 +171,7 @@ internal/system         running commands, as root through macOS' own prompt; whe
 docs/images             the pictures of this page
 ```
 
-Each source is a `service.Provider`; the interface knows nothing of Homebrew or launchd.
-State is read and written on the main thread only; commands run in a goroutine and hand
-their result back with `Window.Update`.
+Each source is a `service.Provider`; the interface knows nothing of Homebrew or launchd. State is read and written on the main thread only; commands run in a goroutine and hand their result back with `Window.Update`.
 
 ### Packaging
 
@@ -273,7 +222,7 @@ scripts/setup-release-secrets.sh --p12 developer-id.p12 --apple-id <you> --team-
 `assets/icons/*.svg` are the sources, and `scripts/icons.sh`, which needs `rsvg-convert`,
 renders them: `resources/icon.png` becomes the app's icon, `resources/icon-dev.png` the icon
 of `mygo dev`, and `assets/icons/menubar.png` the menu bar's, black on transparent for macOS
-to tint. `assets/icons/guide.png` and `drag.png` are the welcome guide's icon, and what
+to tint. `assets/icons/guide.png` and `drag.png` are the guide's icon, and what
 follows the pointer as it is dragged.
 
 ```bash
@@ -281,9 +230,7 @@ MSM_README_SHOTS=docs/images go test -run TestReadmeShots .    # the pictures of
 MSM_SHOTS=<dir> go test -run TestShots .                       # every pane: light, dark, smallest size
 ```
 
-The pictures of this page are drawn from made-up items, so that no machine's own jobs end
-up in them. The test adds the window's corners, shadow and controls, which macOS draws in
-the real app.
+The pictures are drawn from made-up items. The test adds the window corners, shadow and controls that macOS draws in the real app.
 
 ### Testing on a real Mac
 
@@ -348,9 +295,7 @@ They go through `osascript … with administrator privileges`, which shows macOS
 
 ## Credits
 
-Built with [MyGo](https://github.com/egoist/mygo). The options of the job form follow
-[Launched](https://launched.zerowidth.com/).
-
+Built with [MyGo](https://github.com/egoist/mygo). Job options follow [Launched](https://launched.zerowidth.com/).
 
 ## License
 

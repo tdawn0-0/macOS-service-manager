@@ -23,7 +23,7 @@ func (a *app) inspectDevExport(m *devplatform.Manager, dir string) (bool, error)
 
 func (a *app) devExportRecovery(c *ui.Context, dir string) {
 	d := &a.dev
-	if ui.Button(c, "Review export recovery").Disabled(d.busy).Clicked() {
+	if ui.Button(c, "Review export recovery").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			pending, err := a.inspectDevExport(m, dir)
 			if pending {
@@ -47,11 +47,10 @@ func (a *app) devExportRecovery(c *ui.Context, dir string) {
 	for _, file := range r.Files {
 		ui.Text(c, file.Name+" · "+file.Status).FontSize(textSmall).TextColor(c.Theme().TextMuted)
 	}
-	ui.Text(c, "Complete saves the prepared declaration and version lock together. Import stays blocked until this operation is resolved.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 	if !r.CanResume {
-		ui.Text(c, "Files changed after export began. They will be kept. Review again, or discard the record and export again from the registered source project.").FontSize(textSmall).TextColor(c.Theme().Warning)
+		ui.Text(c, "Files changed after export began and are kept. Review again, or discard the record and export again.").FontSize(textSmall).TextColor(c.Theme().Warning)
 	}
-	if ui.Button(c, "Complete interrupted export").Disabled(d.busy || !r.CanResume).Clicked() {
+	if ui.Button(c, "Complete interrupted export").AlignSelf(ui.Start).Tooltip("Saves the prepared declaration and version lock together. Import stays blocked until this is resolved.").Disabled(d.busy || !r.CanResume).Clicked() {
 		fingerprint := r.Fingerprint
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			err := m.RecoverExport(m.Context, dir, fingerprint)
@@ -62,8 +61,7 @@ func (a *app) devExportRecovery(c *ui.Context, dir string) {
 			return "Environment export completed. You can import or export again.", inspectErr
 		})
 	}
-	ui.Text(c, "Discard removes only the operation record. Both files stay as they are; a mismatched pair may still require a fresh export.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-	if ui.Button(c, "Discard export record (keep files)").Disabled(d.busy).Clicked() {
+	if ui.Button(c, "Discard export record (keep files)").AlignSelf(ui.Start).Tooltip("Removes only the operation record. A mismatched pair of files may still need a fresh export.").Disabled(d.busy).Clicked() {
 		fingerprint := r.Fingerprint
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			err := m.DiscardExport(m.Context, dir, fingerprint)

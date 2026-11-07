@@ -180,7 +180,8 @@ func TestAllItemsListsEverySource(t *testing.T) {
 	if total != 4 || running != 1 {
 		t.Errorf("counts = %d, %d", total, running)
 	}
-	h.wantText("4 items · 1 running")
+	h.wantText("1/4")
+	h.wantNoText("4 items · 1 running")
 }
 
 func TestSidebarAndFilter(t *testing.T) {
@@ -912,7 +913,7 @@ func TestTheWelcomeOpensOnceAndCanBeSkipped(t *testing.T) {
 
 	page := ui.NewTester(h.a.guideView, guideWidth, guideHeight)
 	page.Frame()
-	for _, want := range []string{"Welcome to Service Manager", "Full Disk Access", "Allow…", "Skip for Now", "Without it, some login items may not show. Everything else works, and you can do this later from Login Items."} {
+	for _, want := range []string{"Allow Full Disk Access", "Allow…", "Skip for Now"} {
 		if !page.HasText(want) {
 			t.Errorf("missing %q in %q", want, page.Texts())
 		}
@@ -1021,7 +1022,7 @@ func TestTheIconDragsAsTheAppsBundle(t *testing.T) {
 	h.a.appPath = ""
 	page := ui.NewTester(h.a.guideView, sidecarWidth, sidecarHeight)
 	page.Frame()
-	if _, ok := page.Find("Drag Service Manager into the list"); ok || !page.HasText("Add this app to the list") {
+	if _, ok := page.Find("Drag Service Manager into the list"); ok || !page.HasText("Add this app with the + button") {
 		t.Errorf("without a bundle: %q", page.Texts())
 	}
 }

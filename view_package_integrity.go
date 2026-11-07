@@ -44,11 +44,9 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 		for _, issue := range result.Issues {
 			ui.Text(c, issue).FontSize(textSmall).Selectable()
 		}
-	} else if status == "Not recorded" {
-		ui.Text(c, "Repair from the verified archive to record a trusted installation index.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 	}
 	ui.Row(c).Wrap().Gap(8).Children(func() {
-		if ui.Button(c, "Check files "+p.Name+" "+p.Version).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
+		if ui.Button(c, "Check files "+p.Name+" "+p.Version).AlignSelf(ui.Start).Tooltip(checkTip(p)).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				r, e := m.VerifyPackage(m.Context, id)
 				if e == nil {
@@ -57,7 +55,7 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 				return r.Text(), e
 			})
 		}
-		if ui.Button(c, "Repair "+p.Name+" "+p.Version).Disabled(d.busy || a.packageTaskRunning(id) || p.Formula != "").Clicked() {
+		if ui.Button(c, "Repair "+p.Name+" "+p.Version).AlignSelf(ui.Start).Tooltip("Restores this version from its recorded source and checksum. Stop its projects, databases and CLI commands first. Database data stays in separate folders.").Disabled(d.busy || a.packageTaskRunning(id) || p.Formula != "").Clicked() {
 			a.startPackageTask(p, "repair", func(m *devplatform.Manager) (string, error) {
 				if e := m.RepairPackage(m.Context, id); e != nil {
 					return "Repair did not complete.", e
@@ -70,17 +68,21 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 			}, nil)
 		}
 	})
-	if ui.Button(c, "Reveal package folder "+p.Name+" "+p.Version).Disabled(d.busy || a.reveal == nil).Clicked() {
+	if ui.Button(c, "Reveal package folder "+p.Name+" "+p.Version).AlignSelf(ui.Start).Disabled(d.busy || a.reveal == nil).Clicked() {
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			path := m.PackageDirectory(p)
 			a.post(func() { a.reveal(path) })
 			return "Revealed package folder: " + path, nil
 		})
 	}
-	note := "Repair restores this version from its recorded source and checksum. Stop its projects, databases and CLI commands first. Database data stays in separate folders."
 	if p.Formula != "" {
-		note = "Check files validates the keg source and required executables, not every file or dependency. This Homebrew installation is shared: removing it here only removes workspace registration. To repair it, stop its users and run brew reinstall " + p.Formula + "."
-
+		ui.Text(c, "Shared Homebrew install · repair with brew reinstall "+p.Formula).FontSize(textSmall).TextColor(c.Theme().TextMuted).Selectable()
 	}
-	ui.Text(c, note).FontSize(textSmall).TextColor(c.Theme().TextMuted)
+}
+
+func checkTip(p devplatform.Package) string {
+	if p.Formula != "" {
+		return "Validates the keg source and required executables, not every file or dependency."
+	}
+	return ""
 }

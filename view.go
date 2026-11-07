@@ -39,7 +39,7 @@ func (a *app) view(c *ui.Context) {
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
 		a.sidebar(c)
 		ui.Column(c).Grow(1).MinWidth(0).Background(t.Background).Children(func() {
-			if a.nav == "development" {
+			if a.nav == navDevelopment {
 				a.developmentView(c)
 			} else {
 				a.listPane(c)
@@ -61,6 +61,25 @@ func (a *app) showToasts(c *ui.Context) {
 		c.Toast(message)
 	}
 	a.toasts = a.toasts[:0]
+}
+
+// navDevelopment is the navigation of the development workspace, whose four
+// sections are items of the sidebar.
+const navDevelopment = "development"
+
+var (
+	devSections     = [4]string{"Projects", "Software", "Databases", "HTTPS"}
+	devSectionIcons = [4]*ui.SVG{iconFolder, iconPackage, iconDatabase, iconGlobe}
+)
+
+func devNavID(tab int) string { return fmt.Sprintf("%s:%d", navDevelopment, tab) }
+
+func devNavTab(id string) (int, bool) {
+	var tab int
+	if _, err := fmt.Sscanf(id, navDevelopment+":%d", &tab); err != nil || tab < 0 || tab > 3 {
+		return 0, false
+	}
+	return tab, true
 }
 
 // sourceIcon is the icon of a source.
@@ -95,14 +114,31 @@ func (a *app) sidebar(c *ui.Context) {
 			}
 		})
 	}
+	sel := a.nav
+	if a.nav == navDevelopment {
+		sel = devNavID(a.dev.tab)
+	}
+	devCounts := [4]int{len(a.dev.state.Projects), 0, len(a.dev.state.Instances), 0}
+	for _, p := range a.dev.state.Projects {
+		devCounts[3] += len(p.Sites)
+	}
+	devCounts[3] += len(a.dev.state.Sites)
 	column := ui.Column(c).Width(216).Shrink(0)
 	if !c.Vibrancy() {
 		column.Background(t.Surface)
 	}
 	column.Children(func() {
 		ui.Row(c).Height(barHeight).Shrink(0).DragWindow()
-		if ui.Sidebar(c, &a.nav, func() {
-			ui.SidebarItem(c, "development", iconServer, "Development")
+		if ui.Sidebar(c, &sel, func() {
+			ui.SidebarSection(c, "Development", nil, func() {
+				for i, section := range devSections {
+					ui.SidebarItem(c, devNavID(i), devSectionIcons[i], section).Children(func() {
+						if devCounts[i] > 0 {
+							ui.Text(c, fmt.Sprint(devCounts[i])).FontSize(textCaption).Opacity(0.6).SingleLine()
+						}
+					})
+				}
+			})
 			navItem(navAll, iconAll, "All Items")
 			ui.SidebarSection(c, "Apps & Services", nil, func() {
 				for _, src := range []service.Source{service.Brew, service.LoginItem} {
@@ -117,13 +153,24 @@ func (a *app) sidebar(c *ui.Context) {
 		}).Grow(1).MinHeight(0).Background(ui.Transparent).Changed() {
 			a.chosen.Clear()
 			a.list.ScrollTo(0, ui.Start)
+			if tab, ok := devNavTab(sel); ok {
+				a.nav = navDevelopment
+				if a.dev.tab != tab {
+					a.dev.tab = tab
+					a.dev.detailScroll[tab].Y = 0
+				}
+				a.dev.diagnosticsOpen = false
+				a.dev.operationsOpen = false
+			} else {
+				a.nav = sel
+			}
 			if a.nav == navAll {
 				for _, src := range service.Sources {
 					if st := a.sources[src]; st != nil && !st.loaded && !st.loading {
 						a.refresh(src)
 					}
 				}
-			} else if a.nav != "development" {
+			} else if a.nav != navDevelopment {
 				if st := a.sources[service.Source(a.nav)]; st != nil && !st.loaded && !st.loading {
 					a.refresh(service.Source(a.nav))
 				}
@@ -150,12 +197,8 @@ func plural(n int, one string) string {
 
 func (a *app) listPane(c *ui.Context) {
 	t := c.Theme()
-	total, running := a.counts(a.nav)
 	ui.Row(c).Height(barHeight).Shrink(0).Padding(0, 10, 0, 18).AlignItems(ui.Center).Gap(6).DragWindow().Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
-			ui.Text(c, a.navTitle()).FontSize(15).FontWeight(650).SingleLine()
-			ui.Text(c, fmt.Sprintf("%s · %d running", plural(total, "item"), running)).TextColor(t.TextMuted).FontSize(textCaption).SingleLine()
-		})
+		ui.Text(c, a.navTitle()).FontSize(15).FontWeight(650).SingleLine().Grow(1).MinWidth(0)
 		if a.loading() {
 			ui.Spinner(c).Label("Loading").Size(14, 14)
 		}
@@ -252,7 +295,6 @@ func (a *app) emptyList(c *ui.Context) {
 		switch {
 		case a.loading() && a.visibleSources() == 0:
 			ui.Spinner(c).Label("Loading").Size(20, 20)
-			ui.Text(c, "Loading…").TextColor(t.TextMuted)
 		case a.query != "" || a.filter != 0:
 			ui.Icon(c, iconSearch).FontSize(26).TextColor(t.TextMuted).Opacity(0.5)
 			ui.Text(c, "Nothing matches").TextColor(t.TextMuted)

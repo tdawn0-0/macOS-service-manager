@@ -22,30 +22,6 @@ func (m *Manager) requirePackageIdle(ctx context.Context, s *State, p Package) e
 	if e := m.requirePackageDatabaseWorkIdle(p.ID()); e != nil {
 		return e
 	}
-	for _, project := range s.Projects {
-		referenced := false
-		for _, svc := range project.Services {
-			if svc.Package == p.ID() {
-				referenced = true
-			}
-		}
-		if !referenced {
-			continue
-		}
-		labels := []string{m.label("project-" + project.ID)}
-		for _, svc := range project.Services {
-			labels = append(labels, m.label("p-"+project.ID+"-"+svc.ID))
-		}
-		for _, label := range labels {
-			loaded, err := m.packageJobLoaded(ctx, label)
-			if err != nil {
-				return err
-			}
-			if loaded {
-				return fmt.Errorf("stop project %s before repairing its runtime", project.Name)
-			}
-		}
-	}
 	for _, instance := range s.Instances {
 		if instance.Package == p.ID() {
 			loaded, err := m.packageJobLoaded(ctx, m.label("db-"+instance.ID))

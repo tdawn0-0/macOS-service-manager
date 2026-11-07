@@ -96,14 +96,6 @@ func (m *Manager) PackageDetails(ctx context.Context, p Package) (PackageDetails
 			}
 		}
 	}
-	for _, project := range state.Projects {
-		for _, service := range project.Services {
-			if service.Package == p.ID() {
-				info.References = append(info.References, "Project: "+project.Name)
-				break
-			}
-		}
-	}
 	for _, instance := range state.Instances {
 		if instance.Package == p.ID() {
 			info.References = append(info.References, "Instance: "+instance.ID)

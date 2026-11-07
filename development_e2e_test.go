@@ -588,23 +588,37 @@ func TestUIDevelopmentRefreshDoesNotReadLoginItems(t *testing.T) {
 }
 
 func TestUIStandaloneRuntimeAndHTTPS(t *testing.T) {
+	if os.Getenv("MSM_UI_E2E_PACKAGE_CACHE") == "" {
+		t.Skip("set MSM_UI_E2E_PACKAGE_CACHE to verified Node.js archives")
+	}
 	for _, size := range [][2]int{{1120, 720}, {900, 520}} {
 		for _, dark := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%dx%d-dark-%t", size[0], size[1], dark), func(t *testing.T) {
 				h := newDevUIHarnessSize(t, size[0], size[1], dark)
-				python, e := exec.LookPath("python3")
+				pkg, e := devplatform.Resolve(context.Background(), "node", "22.14.0")
 				if e != nil {
 					t.Fatal(e)
 				}
+				seedRuntimeCache(t, h.root, pkg)
+				h.click("Software")
+				h.fill("Exact version", "22.14.0")
+				h.click("Review package")
+				h.click("Download and install")
+				if _, ok := h.a.dev.state.Packages[pkg.ID()]; !ok {
+					t.Fatal("Node was not installed through Software", h.a.dev.output)
+				}
 				localPort, httpsPort := freeUIPort(t), freeUIPort(t)
 				dir := t.TempDir()
-				if e = os.WriteFile(filepath.Join(dir, "index.html"), []byte("standalone-runtime-ok"), 0600); e != nil {
+				script := `require("http").createServer((request,response)=>response.end("standalone-runtime-ok "+process.version)).listen(Number(process.env.PORT),"127.0.0.1");`
+				if e = os.WriteFile(filepath.Join(dir, "server.js"), []byte(script), 0600); e != nil {
 					t.Fatal(e)
 				}
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
-				cmd := exec.CommandContext(ctx, python, "-m", "http.server", fmt.Sprint(localPort), "--bind", "127.0.0.1")
+				node := filepath.Join(h.root, "packages", pkg.ID(), pkg.Binaries["node"])
+				cmd := exec.CommandContext(ctx, node, "server.js")
 				cmd.Dir = dir
+				cmd.Env = append(os.Environ(), "PORT="+fmt.Sprint(localPort))
 				if e = cmd.Start(); e != nil {
 					t.Fatal(e)
 				}
@@ -646,7 +660,7 @@ func TestUIStandaloneRuntimeAndHTTPS(t *testing.T) {
 				}
 				body, _ := io.ReadAll(response.Body)
 				response.Body.Close()
-				if response.StatusCode != 200 || !strings.Contains(string(body), "standalone-runtime-ok") {
+				if response.StatusCode != 200 || !strings.Contains(string(body), "standalone-runtime-ok v22.14.0") {
 					t.Fatal(response.StatusCode, string(body))
 				}
 			})

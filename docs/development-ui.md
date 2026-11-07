@@ -246,3 +246,23 @@ Unfinished database tasks 使用独立详情页，保留实例列表和返回入
 ![命令完成审阅](images/development/project-command-complete-900x520-dark-true.png)
 
 新增五个固定示例视图包含后台安装和四种审阅状态，共新增 20 张截图。UI E2E 验证最小明暗窗口的安装、独立项目保存与草稿保持、取消/重试、真实调用者退出后的停止/完成、归属变更禁用、私有目录交接和大 Unicode 输出。真实 npm 用例使用受管 Node 22.14.0，通过离线 npm ci 执行本地 postinstall，取消后确认实际脚本进程退出，再重试成功。
+
+
+## 原生验收夹具入口
+
+准备隔离夹具前，单独构建测试 harness：
+
+```sh
+mkdir -p build
+go build -o build/qa-devmgr ./cmd/devmgr
+python3 scripts/prepare-native-ui-verification.py \
+  --devmgr build/qa-devmgr \
+  --app 'build/darwin-arm64/MacOS Service Manager.app' \
+  --node-root /path/to/isolated-node-cache \
+  --redis-root /path/to/isolated-redis-cache \
+  --reuse-ca /path/to/approved-isolated-ca-root
+```
+
+替换示例路径，确认包缓存和 CA 来源后再执行。准备命令通过未分发的 cmd/devmgr 完成；返回记录中的 executable 始终是复制后的原生 App，由 Launch Services 打开。App 的 --dev 不提供对外 CLI。--help 不复制、签名或安装。普通 unittest 使用模拟调用，不等同于真实夹具准备和桌面验收。
+
+失败时只清理新建私有根对应的任务；不能确认清理完成则保留目录并报错，不删除仍可能被任务使用的文件。

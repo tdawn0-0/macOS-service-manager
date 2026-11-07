@@ -82,7 +82,7 @@ func (m *Manager) defaultFirstNode(ctx context.Context, p Package) error {
 }
 
 // SetNodeDefault makes an installed version the one a shell uses outside a
-// project that asks for another.
+// directory that asks for another.
 func (m *Manager) SetNodeDefault(ctx context.Context, id string) error {
 	return m.withState(ctx, func(s *State) error {
 		p, ok := s.Packages[id]
@@ -182,7 +182,7 @@ func (m *Manager) selectionOf(n InstalledNode, spec, source string) NodeSelectio
 }
 
 // SelectNode chooses the version for a directory. override, when set, beats
-// the project's files, which beat the default.
+// the directory's files, which beat the default.
 func (m *Manager) SelectNode(dir, override string) (NodeSelection, error) {
 	s, e := m.Read()
 	if e != nil {

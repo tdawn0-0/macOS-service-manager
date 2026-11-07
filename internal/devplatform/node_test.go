@@ -495,3 +495,41 @@ func TestNodeShellRejectsChangedConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestNodeTerminalConfiguration(t *testing.T) {
+	m := New(t.TempDir())
+	m.Home = t.TempDir()
+	m.Program = filepath.Join(t.TempDir(), "app")
+	if err := os.WriteFile(m.Program, []byte("#!/bin/sh\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	rc := filepath.Join(m.Home, ".zshrc")
+	if err := os.WriteFile(rc, []byte("export EDITOR=vim\n"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	if m.NodeShellEnabled() {
+		t.Fatal("shell enabled before request")
+	}
+	for range 2 {
+		if _, err := m.EnableNodeShell(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := os.ReadFile(rc)
+	if err != nil || strings.Count(string(data), nodeBlockBegin) != 1 {
+		t.Fatalf("non-idempotent shell block: %q %v", data, err)
+	}
+	if out, err := exec.Command("zsh", "-n", rc).CombinedOutput(); err != nil {
+		t.Fatalf("invalid zshrc: %v %s", err, out)
+	}
+	if _, err := m.DisableNodeShell(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(rc)
+	if err != nil || string(data) != "export EDITOR=vim\n" {
+		t.Fatalf("original rc changed: %q %v", data, err)
+	}
+	if m.NodeShellEnabled() {
+		t.Fatal("shell remains enabled")
+	}
+}

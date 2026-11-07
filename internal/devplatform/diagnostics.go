@@ -3,6 +3,9 @@ package devplatform
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -50,10 +53,20 @@ func (m *Manager) Snapshot(ctx context.Context, s State) RuntimeSnapshot {
 			return observation{key: key, status: status}
 		}})
 	}
-	if len(s.ProxyRules) > 0 {
+	// Observe an app-owned proxy even after the last rule is removed: an
+	// unapplied configuration can leave the previous listener running.
+	_, proxyJobError := os.Stat(filepath.Join(m.Root, "jobs", m.label("proxy")+".plist"))
+	_, socketJobError := os.Stat(m.socketJobPath())
+	observeProxy := len(s.ProxyRules) > 0 || proxyJobError == nil || socketJobError == nil
+	if observeProxy {
 		tasks = append(tasks, task{"proxy", func(check context.Context) observation {
 			job, err := m.readJobState(check, "proxy")
-			status := "Failed"
+			status := "Unknown"
+			if err == nil {
+				status = "Failed"
+			} else if strings.Contains(err.Error(), "Could not find service") || strings.Contains(err.Error(), "Could not find specified service") {
+				status = "Stopped"
+			}
 			if (err == nil && job.Running) || m.socketLoaded(check) {
 				status = "Running"
 			}
@@ -100,7 +113,7 @@ func (m *Manager) Snapshot(ctx context.Context, s State) RuntimeSnapshot {
 	for _, id := range diagnosticKeys(s.Instances) {
 		out.States["instance:"+id] = observed["instance:"+id].status
 	}
-	if len(s.ProxyRules) > 0 {
+	if observeProxy {
 		out.States["proxy"] = observed["proxy"].status
 	}
 	return out

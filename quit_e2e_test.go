@@ -95,14 +95,14 @@ func TestUIQuitKeepsServicesOrStopsOwnedScopeAndRetriesFailure(t *testing.T) {
 		return m
 	}
 	request()
-	h.click("Stop services and quit")
+	h.click("Stop managed databases and quit")
 	if !h.a.quit.open || quitCalls != 1 || !strings.Contains(h.a.quit.err, "simulated stop refusal") {
 		t.Fatal("failed stop quit anyway", h.a.quit.err, quitCalls)
 	}
 	assertListening(port)
 	h.a.dev.managerFactory = originalFactory
 	h.click("Review updated quit scope")
-	h.click("Stop services and quit")
+	h.click("Stop managed databases and quit")
 	if quitCalls != 2 || h.a.quit.open || showCalls != 3 {
 		t.Fatal("retry did not complete reviewed quit", quitCalls, showCalls, h.a.quit.err)
 	}

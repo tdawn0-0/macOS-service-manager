@@ -74,9 +74,11 @@ func (m *Manager) Shutdown(ctx context.Context, plan ShutdownPlan, options Shutd
 				return fmt.Errorf("stop HTTPS proxy: %w", err)
 			}
 		}
-		m.emit("Stopping scheduled log maintenance")
-		if err := m.stopLogMaintenance(ctx); err != nil {
-			return err
+		if options.StopProxy {
+			m.emit("Stopping scheduled log maintenance")
+			if err := m.stopLogMaintenance(ctx); err != nil {
+				return err
+			}
 		}
 		// A failed launchctl read is not proof that a job is absent. Verify the
 		// full chosen scope before allowing the GUI to finish quitting.
@@ -84,9 +86,8 @@ func (m *Manager) Shutdown(ctx context.Context, plan ShutdownPlan, options Shutd
 		for _, id := range diagnosticKeys(s.Instances) {
 			targets = append(targets, domain()+"/"+m.label("db-"+id))
 		}
-		targets = append(targets, domain()+"/"+m.label("maintenance"))
 		if options.StopProxy {
-			targets = append(targets, domain()+"/"+m.label("proxy"), m.socketTarget())
+			targets = append(targets, domain()+"/"+m.label("maintenance"), domain()+"/"+m.label("proxy"), m.socketTarget())
 		}
 		for _, target := range targets {
 			if err := m.verifyShutdownTarget(ctx, target); err != nil {

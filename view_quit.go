@@ -156,12 +156,13 @@ func (a *app) quitDialog(c *ui.Context) {
 			ui.Row(c).Gap(8).Children(func() {
 				if ui.Button(c, "Cancel quit").Disabled(q.stopping).Clicked() {
 					q.open = false
+					q.sequence++
 				}
 				ui.Spacer(c)
 				if ui.Button(c, "Keep services and quit").Disabled(a.quitOperationBusy()).Clicked() {
 					a.finishQuit()
 				}
-				if ui.PrimaryButton(c, "Stop services and quit").Tooltip("Also ends scheduled log maintenance. Data, settings, CA trust, domain mappings and login preferences are kept. External processes and system services are untouched.").Disabled(a.quitOperationBusy() || q.loading || q.plan == nil).Clicked() {
+				if ui.PrimaryButton(c, "Stop managed databases and quit").Tooltip("Stops the selected app-owned resources. If HTTPS is kept, its log maintenance continues. Data, settings, CA trust and domain mappings are kept.").Disabled(a.quitOperationBusy() || q.loading || q.plan == nil).Clicked() {
 					a.stopForQuit()
 				}
 			})

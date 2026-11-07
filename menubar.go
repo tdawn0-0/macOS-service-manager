@@ -50,6 +50,14 @@ func (a *app) panelItems(src service.Source) []service.Item {
 // panelRunning counts what runs among the items the panel shows.
 func (a *app) panelRunning() int {
 	running := 0
+	for id := range a.dev.state.Instances {
+		if a.dev.statuses["instance:"+id] == "Running" {
+			running++
+		}
+	}
+	if a.dev.statuses["proxy"] == "Running" {
+		running++
+	}
 	for _, src := range panelSources {
 		for _, it := range a.panelItems(src) {
 			if it.Up() {
@@ -90,6 +98,30 @@ func (a *app) menubarView(c *ui.Context, openWindow func()) {
 		})
 		ui.Scroll(c).Grow(1).MinHeight(0).Padding(0, 8, 8).Gap(2).Children(func() {
 			empty := true
+			if len(a.dev.state.Instances) > 0 {
+				empty = false
+				ui.Text(c, "Databases").FontSize(textCaption).FontWeight(650).TextColor(t.TextMuted).Padding(8, 8, 4)
+				for _, id := range sortedKeys(a.dev.state.Instances) {
+					a.menubarDatabase(c, a.dev.state.Instances[id])
+				}
+			}
+			empty = false
+			ui.Text(c, "HTTPS").FontSize(textCaption).FontWeight(650).TextColor(t.TextMuted).Padding(8, 8, 4)
+			proxyStatus := a.dev.statuses["proxy"]
+			if proxyStatus == "" {
+				proxyStatus = "Stopped"
+				if len(a.dev.state.ProxyRules) > 0 {
+					proxyStatus = "Unknown"
+				}
+			}
+			ui.Row(c).Height(32).Shrink(0).AlignItems(ui.Center).Gap(8).Padding(0, 8).Children(func() {
+				ui.Text(c, "Proxy · "+proxyStatus).Grow(1).MinWidth(0).SingleLine()
+				if ui.Button(c, "HTTPS settings").Clicked() {
+					a.nav = "development"
+					a.dev.tab = devTabHTTPS
+					openWindow()
+				}
+			})
 			for _, src := range panelSources {
 				items := a.panelItems(src)
 				if st := a.sources[src]; st != nil && st.err != "" {
@@ -113,6 +145,33 @@ func (a *app) menubarView(c *ui.Context, openWindow func()) {
 			labeledButton(c, iconWindow, "Open Service Manager", false).Grow(1).OnClick(openWindow)
 			iconButton(c, iconQuit, "Quit", t.TextMuted).OnClick(a.requestQuit)
 		})
+	})
+}
+
+func (a *app) menubarDatabase(c *ui.Context, instance devplatform.Instance) {
+	id := instance.ID
+	status := a.dev.statuses["instance:"+id]
+	if status == "" {
+		status = "Unknown"
+	}
+	busy := a.dev.busy || a.databaseTaskRunning(id) || a.quit.open
+	ui.Row(c.Key("menu-db-"+id)).Height(32).Shrink(0).AlignItems(ui.Center).Gap(8).Padding(0, 8).Children(func() {
+		ui.Text(c, id+" · "+status).Grow(1).MinWidth(0).SingleLine().Tooltip(id)
+		action := "Start"
+		verb := "start"
+		icon := iconPlay
+		if status == "Running" {
+			action, verb = "Stop", "stop"
+			icon = iconStop
+		}
+		if status == "Unknown" || status == "Failed" || status == "Starting" || status == "Stopping" {
+			busy = true
+		}
+		if iconButton(c, icon, action+" "+id, c.Theme().TextMuted).Disabled(busy).Clicked() {
+			a.startDatabaseOperation(instance, verb, func(m *devplatform.Manager) (string, error) {
+				return action + " " + id, m.InstanceAction(m.Context, id, verb)
+			})
+		}
 	})
 }
 
@@ -181,6 +240,10 @@ func (m *menubar) showWindow() {
 func (a *app) panelHeight() int {
 	const header, footer, row, heading = 54, 50, 34, 30
 	height := header + footer + 16
+	if n := len(a.dev.state.Instances); n > 0 {
+		height += heading + n*row
+	}
+	height += heading + row // The single HTTPS proxy and settings entry.
 	for _, src := range panelSources {
 		if n := len(a.panelItems(src)); n > 0 {
 			height += heading + n*row

@@ -50,7 +50,7 @@ func TestShutdownScopeIndependentResourcesAndDataRetention(t *testing.T) {
 			if err := m.Shutdown(ctx, plan, ShutdownOptions{StopProxy: stopProxy}); err != nil {
 				t.Fatal(err)
 			}
-			if !loaded["external.unmanaged.server"] || loaded[m.label("proxy")] == stopProxy || loaded[m.label("db-db")] || loaded[m.label("maintenance")] {
+			if !loaded["external.unmanaged.server"] || loaded[m.label("proxy")] == stopProxy || loaded[m.label("db-db")] || loaded[m.label("maintenance")] == stopProxy {
 				t.Fatal("stopped outside chosen scope or missed owned job", loaded)
 			}
 			after, err := m.Read()
@@ -93,6 +93,12 @@ func TestShutdownRejectsChangedScopeAndCancellationBeforeMutation(t *testing.T) 
 func TestShutdownDoesNotTreatFailedObservationAsStopped(t *testing.T) {
 	m := testManager(t)
 	m.LoginDir = t.TempDir()
+	if err := m.withState(context.Background(), func(s *State) error {
+		s.Instances["db"] = Instance{ID: "db", Kind: "redis"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	plan, err := m.PreviewShutdown(context.Background())
 	if err != nil {
 		t.Fatal(err)

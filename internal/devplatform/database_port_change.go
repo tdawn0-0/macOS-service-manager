@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -96,16 +95,6 @@ func (m *Manager) changeInstancePort(ctx context.Context, expected Instance, por
 		if err := m.verifyShutdownTarget(ctx, domain()+"/"+m.label("db-"+i.ID)); err != nil {
 			return nil, nil, fmt.Errorf("stop the database before changing its port: %w", err)
 		}
-		for _, p := range s.Projects {
-			for _, ref := range p.Instances {
-				if ref == i.ID {
-					if err := m.requireProjectStopped(ctx, p); err != nil {
-						return nil, nil, err
-					}
-					break
-				}
-			}
-		}
 		for _, other := range s.Instances {
 			if other.ID != i.ID && other.Port == port {
 				return nil, nil, errors.New("another configured database already uses this port")
@@ -145,50 +134,6 @@ func (m *Manager) changeInstancePort(ctx context.Context, expected Instance, por
 				return nil, nil, err
 			}
 			path := filepath.Join(dir, name)
-			updates = append(updates, fileUpdate{path, previous, updated})
-		}
-		// Imported working copies keep a private lock. Update only this instance's
-		// local port, so preparing the same environment remains idempotent.
-		for _, pid := range diagnosticKeys(s.Projects) {
-			p := s.Projects[pid]
-			linked := false
-			for _, ref := range p.Instances {
-				if ref == i.ID {
-					linked = true
-					break
-				}
-			}
-			if !linked {
-				continue
-			}
-			if err := validID(pid); err != nil {
-				return nil, nil, err
-			}
-			path := m.projectLockPath(pid)
-			previous, err := readExportFile(filepath.Dir(path), filepath.Base(path), 8<<20)
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			if err != nil {
-				return nil, nil, err
-			}
-			lock, err := parseEnvironmentLock(previous)
-			if err != nil {
-				return nil, nil, err
-			}
-			locked, ok := lock.Instances[i.ID]
-			if !ok {
-				continue
-			}
-			if locked.ID != i.ID || locked.Kind != i.Kind || locked.Package != i.Package || locked.Persistent != i.Persistent {
-				return nil, nil, errors.New("private environment lock has different instance settings; existing configuration was kept")
-			}
-			locked.Port = port
-			lock.Instances[i.ID] = locked
-			updated, err := exportJSON(lock)
-			if err != nil {
-				return nil, nil, err
-			}
 			updates = append(updates, fileUpdate{path, previous, updated})
 		}
 		applied := 0

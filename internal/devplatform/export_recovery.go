@@ -2,8 +2,6 @@ package devplatform
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,8 +50,6 @@ type ExportRecovery struct {
 	Fingerprint string
 }
 
-func digestBytes(b []byte) string { sum := sha256.Sum256(b); return hex.EncodeToString(sum[:]) }
-func validDigest(s string) bool   { b, err := hex.DecodeString(s); return err == nil && len(b) == 32 }
 func exportFileDigest(dir, name string) (string, error) {
 	b, err := readExportFile(dir, name, exportFileLimit)
 	if errors.Is(err, os.ErrNotExist) {

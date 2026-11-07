@@ -1,6 +1,8 @@
 package devplatform
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -51,3 +53,7 @@ func syncExportDirectory(dir string) error {
 	defer f.Close()
 	return f.Sync()
 }
+
+func digestBytes(b []byte) string { sum := sha256.Sum256(b); return hex.EncodeToString(sum[:]) }
+
+func validDigest(s string) bool { b, err := hex.DecodeString(s); return err == nil && len(b) == 32 }

@@ -1,13 +1,13 @@
 # 第三方软件与包来源
 
-App 按需下载发行包，不把 Homebrew 当作安装前提。下表来自当前 `internal/devplatform/catalog.go` 的固定目录，实际授权文件以所下载归档内的 LICENSE/NOTICE 为准。此表记录来源，不改变组件许可。
+PHP 与 PostgreSQL 通过 Apple Silicon Homebrew 管理，分别使用 `shivammathur/php` tap 与 core 的版本公式。其他软件由 App 下载并校验，按版本保存在 `~/Library/Application Support/ServiceManager/Development/packages`。Homebrew 软件保留在 Cellar，App 记录精确 keg 版本（含 revision），不跟随 `opt` 软链接切换版本。下表记录当前目录来源；实际授权文件以安装包内的 LICENSE/NOTICE 为准，此表不改变组件许可。
 
 | 软件 | 当前目录版本 | 发行来源 | 目录记录的许可 |
 | --- | --- | --- | --- |
-| PHP | 8.5.12 | [Lerd PHP 发行](https://github.com/lerd-env/php/releases/tag/php-8.5.12) | PHP-3.01 及包内组件许可 |
+| PHP | 8.5、8.4、8.3 系列，可输入精确版本 | [shivammathur/php tap](https://github.com/shivammathur/homebrew-php)；如 `shivammathur/php/php@8.5` | 以 formula 元数据及包内组件许可为准 |
 | Node.js | 22.14.0、20.19.0 等精确版本 | [Node.js 官方归档](https://nodejs.org/dist/) | MIT 及包内组件许可 |
 | MySQL | 8.4.4 | [MySQL 官方归档](https://cdn.mysql.com/archives/mysql-8.4/) | GPL-2.0 及包内组件许可 |
-| PostgreSQL | Postgres.app 17-2.9.6 | [Postgres.app 发行](https://github.com/PostgresApp/PostgresApp/releases/tag/v2.9.6) | PostgreSQL 及包内组件许可 |
+| PostgreSQL | 17、18、16 系列，可输入精确版本 | [Homebrew core](https://formulae.brew.sh/formula/postgresql@17)；如 `postgresql@17` | PostgreSQL 及包内组件许可 |
 | Redis | Redis 7.4.7 / Stack 7.4.0-v8 发行包 | [Redis 官方包目录](https://packages.redis.io/redis-stack/) | RSALv2/SSPLv1 及包内组件许可 |
 | MongoDB | 8.0.5 | [MongoDB 官方下载源](https://fastdl.mongodb.org/osx/) | SSPL-1.0 |
 
@@ -15,7 +15,9 @@ Redis 实例直接使用发行包中的 redis-server，不用 Valkey 替代，�
 
 应用本身直接依赖 MyGo、purego、MongoDB Go Driver 和 howett.net/plist；精确版本及传递依赖见 go.mod/go.sum。项目自有源码已按计划采用顶层 Apache-2.0 LICENSE/NOTICE。标准文本来自 [Apache 官方](https://www.apache.org/licenses/LICENSE-2.0.txt)，原作者在 Git 历史中保留为 J.yeu/Jyeu。外部组件保持原许可；新增源码或资产的来源仍须在发布前审阅。
 
-每个已安装包保存来源描述和摘要。新增版本须更新目录、校验归档摘要、检查动态库与迁移路径，并在目标 Mac 上运行。产品仅支持 Apple Silicon（arm64），不提供 Intel 专用包。上游通用归档须包含 arm64；保留其原始校验和及归属。
+每个已安装包保存来源描述和摘要。Homebrew 包的 SHA-256 是 formula 定义的摘要，不是 bottle 摘要；bottle 与依赖由 Homebrew 校验管理。App 检查安装收据的 tap、版本与必需可执行文件，不声称完成 Homebrew 全文件树校验。工作区移除只删除注册记录，保留共享 keg；修复需停止使用方后执行 `brew reinstall <formula>`。Homebrew 不保证历史补丁版本长期可安装，精确版本不可用或 formula 改变时会报错，不静默改装其他版本。项目尚未发布，已移除旧 Lerd/Postgres.app 安装实现，不保留兼容或数据迁移路径；旧验证安装与测试数据清理后重新建立。
+
+新增归档版本须更新目录、校验摘要、检查动态库与迁移路径，并在目标 Mac 上运行。产品仅支持 Apple Silicon（arm64），不提供 Intel 专用包。上游通用归档须包含 arm64；保留其原始校验和及归属。
 
 
 App 随包包含 LICENSE、NOTICE 和 licenses 目录。`scripts/collect-third-party-notices.py` 从 Go 缓存收集 macOS arm64 的 App/CLI 生产依赖模块提供的许可、归属及 NOTICE 文件，附 Go 工具链许可，写出版本、模块摘要和文件 SHA-256；不会改变组件许可。每个模块内的全部相关文件均保留，部分文件涉及未链接的可选或测试资产，不声称清单中的每项都会进入可执行文件。

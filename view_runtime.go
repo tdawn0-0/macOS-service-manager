@@ -134,6 +134,9 @@ func (d *developmentState) previewMatches() bool {
 	return d.packagePreview != nil && d.packagePreview.Package.Name == d.software && d.packagePreview.Package.Version == strings.TrimPrefix(strings.TrimSpace(d.version), "v")
 }
 func packageDetailsText(info devplatform.PackageDetails) string {
+	if info.Package.Formula != "" {
+		return fmt.Sprintf("Homebrew formula: %s\nVersion: %s\nSource: %s\nFormula SHA-256: %s\nArchitecture: %s\nLicense: %s\nCellar folder: %s", info.Package.Formula, info.Package.Version, info.Package.URL, info.Package.SHA256, info.Package.Arch, info.Package.License, info.Location)
+	}
 	minimum := "See upstream requirements"
 	if info.Package.MinMacOS != "" {
 		minimum = "macOS " + info.Package.MinMacOS + " or newer"
@@ -154,7 +157,13 @@ func (a *app) devPackageReview(c *ui.Context) {
 			}
 			info, e := m.PackageDetails(m.Context, pkg)
 			if e == nil {
-				a.post(func() { a.dev.packagePreview = &info; a.dev.packageDetailsText = packageDetailsText(info) })
+				a.post(func() {
+					a.dev.packagePreview = &info
+					a.dev.packageDetailsText = packageDetailsText(info)
+					if pkg.Formula != "" && a.dev.software == name && strings.TrimSpace(a.dev.version) == version {
+						a.dev.version = pkg.Version
+					}
+				})
 			}
 			return "Package details ready. Review the source and system requirements before installing.", e
 		})
@@ -172,6 +181,9 @@ func (a *app) devPackageReview(c *ui.Context) {
 		}
 		if info.Installed && info.ArchiveBytes == 0 {
 			size = "Installed version · download size unknown"
+		}
+		if info.Package.Formula != "" {
+			size = "Homebrew downloads and verifies the bottle and its dependencies."
 		}
 		ui.Text(c, size).FontSize(textSmall).TextColor(c.Theme().TextMuted)
 		ui.Text(c, info.Compatibility).FontSize(textSmall).TextColor(func() ui.Color {
@@ -199,10 +211,13 @@ func (a *app) devPackageReview(c *ui.Context) {
 		}
 	}
 	installLabel := "Download and install"
+	if valid && d.packagePreview.Package.Formula != "" {
+		installLabel = "Install with Homebrew"
+	}
 	if valid && d.packagePreview.Installed {
 		installLabel = "Use installed version"
 	}
-	if ui.PrimaryButton(c, installLabel).Disabled(d.busy || !valid || !d.packagePreview.Compatible || d.packagePreview.Integrity == "Needs repair" || a.packageTaskRunning(d.packagePreview.Package.ID())).Clicked() {
+	if ui.PrimaryButton(c, installLabel).Disabled(d.busy || !valid || !d.packagePreview.Compatible || (d.packagePreview.Integrity == "Needs repair" && d.packagePreview.Package.Formula == "") || a.packageTaskRunning(d.packagePreview.Package.ID())).Clicked() {
 		pkg := d.packagePreview.Package
 		project, service := d.runtimeTargetProject, d.runtimeTargetService
 		d.noteRuntimeEdit(project, service)

@@ -4,6 +4,8 @@
 
 更新：2026-11-07。按用户补充，仅支持 Apple Silicon（arm64），浏览器验收只使用 Chrome；首版软件范围为 PHP、Node.js、MySQL、PostgreSQL、Redis、MongoDB；配置通过图形界面完成，并纳入 UI E2E。
 
+同日来源调整：按用户最新要求，PHP 改为 `shivammathur/php` Homebrew tap，PostgreSQL 改为 Homebrew core 版本公式。本文后续历史里程碑中“不要求 Homebrew”的条件对这两类软件不再适用。其他软件仍使用 App 校验下载；项目尚未发布，清理旧测试安装和数据，不做旧来源兼容或数据迁移。
+
 ## 1. 产品方向与首版目标
 
 将现有 macOS Service Manager 转型为开源的本地开发环境管理工具。以本地域名、可信 HTTPS 和反向代理为核心，提供运行时版本管理、开发服务管理和数据库管理。
@@ -16,7 +18,7 @@
 
 - 项目是主要入口。用户关心“这个项目能否访问、缺什么、哪里出错”，不必先理解 launchd。
 - 本地 HTTPS 可以独立使用。已有 `localhost:3000` 服务也能直接获得 `https://app.test`。
-- 不依赖 Homebrew。优先下载经过校验的二进制发行包，在应用管理的目录中安装和运行。
+- PHP、PostgreSQL 使用 Homebrew 管理二进制与依赖；其他软件下载经过校验的发行包，在应用管理的目录中安装和运行。
 - App 管理二进制包及实例配置；服务进程统一复用现有 `internal/launchd` 和 `launchctl` 能力，由 macOS launchd 托管生命周期。
 - 版本按项目选择。二进制可共享，配置、端口、日志和数据库数据按实例隔离。
 - 支持任意语言启动的 HTTP 服务。首版直接管理 PHP 和 Node.js，项目模型不绑定单一语言。
@@ -248,9 +250,9 @@ P0 表示首版发布必须完成；P1 表示后续版本。所有 P0 都属于�
 
 ### 8.3 软件包来源
 
-优先级为：上游可验证的二进制发行包 → 已审核的第三方发行包 → 本项目可复现构建的发行包。Homebrew 不是必要条件，也不能成为下载失败后的隐式替代。
+PHP 使用用户指定的 `shivammathur/php` tap，PostgreSQL 使用 Homebrew core 的 `postgresql@<major>`。其他软件优先级为：上游可验证的二进制发行包 → 已审核的第三方发行包 → 本项目可复现构建的发行包。安装失败时不在这两种管理方式之间静默回退。
 
-实施来源：Node.js/MySQL/MongoDB 使用上游归档，PHP 使用 Lerd 的 macOS 二进制发行，PostgreSQL 使用 Postgres.app 发行，Redis 使用官方 Redis Stack 包中的原生 redis-server。安装时校验固定摘要，不要求 Homebrew；许可证仍由各软件包自身决定。
+实施来源：Node.js/MySQL/MongoDB 使用上游归档，PHP 使用 shivammathur/php，PostgreSQL 使用 Homebrew core，Redis 使用官方 Redis Stack 包中的原生 redis-server。Homebrew 选择的系列解析为含 revision 的精确 Cellar 版本，安装收据须匹配 tap。数据、端口、配置与 launchd 实例仍由 App 独立管理，不启动 Homebrew 默认服务。许可证仍由各软件包自身决定。
 
 后续若增加没有合适发行包的软件，应在受控构建环境产出包，不能把编译器和完整依赖链留给最终用户安装。
 

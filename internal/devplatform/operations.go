@@ -390,7 +390,7 @@ func (m *Manager) RetryOperation(ctx context.Context, id, revision string) error
 		return m.runOperation(ctx, req, r.ID, func(w *Manager) error {
 			switch req.Kind {
 			case "install":
-				p, e := Resolve(ctx, req.Name, req.Version)
+				p, e := w.ResolvePackage(ctx, req.Name, req.Version)
 				if e != nil {
 					return e
 				}

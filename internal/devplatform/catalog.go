@@ -55,18 +55,8 @@ func Resolve(ctx context.Context, name, version string) (Package, error) {
 		p.Binaries = map[string]string{"mysqld": "bin/mysqld", "mysql": "bin/mysql", "mysqldump": "bin/mysqldump"}
 		return p, p.Validate()
 
-	case "php":
-		if p.Version != "8.5.12" {
-			return p, errors.New("supported PHP version: 8.5.12")
-		}
-		assetArch := "arm64"
-		p.SHA256 = "6449871596a9f092a03e4a27b01f9b94cde621f3707e228846d10872a34def1a"
-		p.URL = "https://github.com/lerd-env/php/releases/download/php-8.5.12/lerd-php-8.5.12-darwin-" + assetArch + ".tar.gz"
-		p.Strip = 0
-		p.MinMacOS = "15.0"
-		p.License = "PHP-3.01 and bundled component licenses"
-		p.Binaries = map[string]string{"php": "php-native-8.5", "php-fpm": "php-native-fpm-8.5"}
-		return p, p.Validate()
+	case "php", "postgresql":
+		return resolveHomebrew(ctx, name, version, runCommand)
 	case "redis":
 		if p.Version != "7.4.7" {
 			return p, errors.New("supported Redis version: 7.4.7 (Redis Stack 7.4.0-v8 distribution)")
@@ -92,22 +82,6 @@ func Resolve(ctx context.Context, name, version string) (Package, error) {
 		p.Binaries = map[string]string{"mongod": "bin/mongod", "mongos": "bin/mongos"}
 		return p, p.Validate()
 
-	case "postgresql":
-		if p.Version != "17-2.9.6" {
-			return p, errors.New("supported PostgreSQL distribution: 17-2.9.6 (Postgres.app 2.9.6, PostgreSQL 17)")
-		}
-		p.Arch = "universal"
-		p.URL = "https://github.com/PostgresApp/PostgresApp/releases/download/v2.9.6/Postgres-2.9.6-17.dmg"
-		p.SHA256 = "b38bb00b8c8702a568270aab85995c550f7f93d1503b818efdc5ff9a519b7168"
-		p.Format = "dmg.postgres"
-		p.Strip = 0
-		p.License = "PostgreSQL and bundled component licenses"
-		p.MinMacOS = "13.0"
-		p.Binaries = map[string]string{}
-		for _, name := range []string{"postgres", "initdb", "pg_dump", "pg_restore", "psql", "createdb"} {
-			p.Binaries[name] = "Postgres.app/Contents/Versions/17/bin/" + name
-		}
-		return p, p.Validate()
 	case "valkey":
 		if p.Version != "9.1.2" {
 			return p, errors.New("supported Valkey package version: 9.1.2")
@@ -183,13 +157,13 @@ func Resolve(ctx context.Context, name, version string) (Package, error) {
 func AvailableVersions(name string) []string {
 	switch name {
 	case "php":
-		return []string{"8.5.12"}
+		return []string{"8.5", "8.4", "8.3"}
 	case "node":
 		return []string{"22.14.0", "20.19.0"}
 	case "mysql":
 		return []string{"8.4.4"}
 	case "postgresql":
-		return []string{"17-2.9.6"}
+		return []string{"17", "18", "16"}
 	case "redis":
 		return []string{"7.4.7"}
 	case "mongodb":

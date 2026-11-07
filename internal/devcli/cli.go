@@ -458,7 +458,7 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		if e := need(3); e != nil {
 			return e
 		}
-		p, e := devplatform.Resolve(ctx, args[1], args[2])
+		p, e := m.ResolvePackage(ctx, args[1], args[2])
 		if e != nil {
 			return e
 		}

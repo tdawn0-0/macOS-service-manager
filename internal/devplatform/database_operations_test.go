@@ -24,7 +24,7 @@ func databaseToolFixture(t *testing.T) (*Manager, Package) {
 			}
 		}
 	})
-	p := Package{Name: "postgresql", Version: "operation-test", Arch: "universal", Binaries: map[string]string{"pg_dump": "pg_dump", "createdb": "createdb", "pg_restore": "pg_restore", "psql": "psql"}}
+	p := Package{Name: "database-tool-fixture", Version: "operation-test", Arch: "universal", Binaries: map[string]string{"pg_dump": "pg_dump", "createdb": "createdb", "pg_restore": "pg_restore", "psql": "psql"}}
 	script := fmt.Sprintf("#!/usr/bin/python3\nimport pathlib,sys,time,os\nroot=pathlib.Path(%q)\nname=sys.argv[-1]\n(root/('entered-'+name)).write_text('started')\n(root/('pid-'+name)).write_text(str(os.getpid()))\noutput=None\nif '-f' in sys.argv:\n output=pathlib.Path(sys.argv[sys.argv.index('-f')+1]); output.write_bytes(b'partial')\nwhile not (root/'release').exists(): time.sleep(.02)\nif output: output.write_bytes(b'completed dump')\n", m.Root)
 	if e := os.MkdirAll(m.packageDir(p), 0700); e != nil {
 		t.Fatal(e)

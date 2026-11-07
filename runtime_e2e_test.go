@@ -19,6 +19,19 @@ import (
 
 func seedRuntimeCache(t *testing.T, root string, pkg devplatform.Package) {
 	t.Helper()
+	if pkg.Formula != "" {
+		if os.Getenv("MSM_UI_E2E_HOMEBREW") != "1" {
+			t.Skip("set MSM_UI_E2E_HOMEBREW=1 and preinstall the required Homebrew keg for native UI verification")
+		}
+		m := devplatform.New(root)
+		s := devplatform.State{Packages: map[string]devplatform.Package{pkg.ID(): pkg}}
+		for name := range pkg.Binaries {
+			if _, err := m.Binary(&s, pkg.ID(), name); err != nil {
+				t.Fatal("preinstall the exact Homebrew keg from the required tap; tests do not change shared Homebrew software", err)
+			}
+		}
+		return
+	}
 	for _, dir := range filepath.SplitList(os.Getenv("MSM_UI_E2E_PACKAGE_CACHE")) {
 		source, e := os.Open(filepath.Join(dir, pkg.SHA256))
 		if e != nil {

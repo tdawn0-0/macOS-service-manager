@@ -25,7 +25,10 @@ def free():
 
 def config(name,data):
  path=f'{root}/{name}.json';pathlib.Path(path).write_text(json.dumps(data));return path
-for name,version in [('node','22.14.0'),('node','20.19.0'),('go','1.24.1'),('postgresql','17-2.9.6'),('valkey','9.1.2')]:print(run('install',name,version),flush=True)
+for name,version in [('node','22.14.0'),('node','20.19.0'),('go','1.24.1'),('postgresql','17'),('valkey','9.1.2')]:print(run('install',name,version),flush=True)
+packages=json.loads(run('status'))['packages']
+pgid,pgpackage=next((key,value) for key,value in packages.items() if value['name']=='postgresql')
+pgbin=f"/opt/homebrew/Cellar/{pgpackage['formula'].split('/')[-1]}/{pgpackage['version']}/bin"
 port,https,pg,vk=[free() for _ in range(4)]
 projectdir=tempfile.mkdtemp(prefix='msm-project-')
 pathlib.Path(projectdir,'package.json').write_text('{"scripts":{"dev":"node server.js"}}')
@@ -34,7 +37,7 @@ p=json.loads(run('import',projectdir));pid=p['id']
 p['services']=[dict(id='web',package='node@22.14.0-'+arch,command=['node','server.js'],health=f'tcp://127.0.0.1:{port}')]
 p['instances']=['integration-pg','integration-valkey']
 p['sites']=[dict(id='integration-site',domain='integration.test',upstream=f'http://127.0.0.1:{port}',port=https)]
-run('instance',config('pg',dict(id='integration-pg',kind='postgresql',package='postgresql@17-2.9.6-universal',port=pg,persistent=True)))
+run('instance',config('pg',dict(id='integration-pg',kind='postgresql',package=pgid,port=pg,persistent=True)))
 run('instance',config('vk',dict(id='integration-valkey',kind='valkey',package='valkey@9.1.2-universal',port=vk,persistent=True)))
 run('project',pid,config('project',p))
 try:
@@ -60,7 +63,6 @@ try:
  run('project',pid,config('project',p));run('up',pid)
  print('PASS: Node versions coexist; Go selected per project',flush=True)
  run('createdb','integration-pg','source_db')
- pgbin=f'{root}/packages/postgresql@17-2.9.6-universal/Postgres.app/Contents/Versions/17/bin'
  pgenv=dict(env,PGPASSWORD=pathlib.Path(root,'instances/integration-pg/password').read_text())
  def sql(db,query):return subprocess.check_output([pgbin+'/psql','-h','127.0.0.1','-p',str(pg),'-U','devmanager','-d',db,'-Atc',query],env=pgenv,text=True)
  sql('source_db','create table sample (n int); insert into sample values (42);')

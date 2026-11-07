@@ -13,7 +13,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -22,7 +21,18 @@ import (
 const maxDownload int64 = 2 << 30
 const maxExpanded int64 = 8 << 30
 
-func (m *Manager) packageDir(p Package) string { return filepath.Join(m.Root, "packages", p.ID()) }
+func (m *Manager) packageDir(p Package) string {
+	if p.Formula != "" {
+		cellar := m.brewCellar
+		if cellar == "" {
+			cellar = "/opt/homebrew/Cellar"
+		}
+		return filepath.Join(cellar, filepath.Base(p.Formula), p.Version)
+	}
+	return filepath.Join(m.Root, "packages", p.ID())
+}
+
+func (m *Manager) PackageDirectory(p Package) string { return m.packageDir(p) }
 func (m *Manager) Binary(s *State, id, name string) (string, error) {
 	p, ok := s.Packages[id]
 	if !ok {
@@ -33,6 +43,16 @@ func (m *Manager) Binary(s *State, id, name string) (string, error) {
 	}
 	if p.ID() != id {
 		return "", errors.New("installed package identity mismatch")
+	}
+	if p.Formula != "" || p.Name == "php" || p.Name == "postgresql" {
+		if e := p.Validate(); e != nil {
+			return "", e
+		}
+	}
+	if p.Formula != "" {
+		if e := m.checkHomebrewReceipt(p); e != nil {
+			return "", e
+		}
 	}
 	rel, ok := p.Binaries[name]
 	if !ok {
@@ -160,6 +180,10 @@ func (m *Manager) install(ctx context.Context, p Package) error {
 	if e := m.init(); e != nil {
 		return e
 	}
+	if p.Formula != "" {
+		return m.installHomebrew(ctx, p)
+	}
+
 	state, e := m.Read()
 	if e != nil {
 		return e
@@ -277,8 +301,10 @@ func (m *Manager) Uninstall(ctx context.Context, id string) error {
 				return errors.New("package is referenced by a launchd job")
 			}
 		}
-		if e := os.RemoveAll(m.packageDir(p)); e != nil {
-			return e
+		if p.Formula == "" {
+			if e := os.RemoveAll(m.packageDir(p)); e != nil {
+				return e
+			}
 		}
 		delete(s.Packages, id)
 		delete(s.PackageIntegrity, id)
@@ -418,31 +444,6 @@ func extract(src, root, format string, strip int) error {
 func extractContext(ctx context.Context, src, root, format string, strip int) error {
 	if e := ctx.Err(); e != nil {
 		return e
-	}
-	if format == "dmg.postgres" {
-		mount, e := os.MkdirTemp("", "msm-mount-")
-		if e != nil {
-			return e
-		}
-		defer os.RemoveAll(mount)
-		defer exec.Command("/usr/bin/hdiutil", "detach", mount).Run()
-		out, e := exec.CommandContext(ctx, "/usr/bin/hdiutil", "attach", "-readonly", "-nobrowse", "-mountpoint", mount, "-plist", src).CombinedOutput()
-		if e != nil {
-			return fmt.Errorf("mount package: %w: %s", e, out)
-		}
-		var result map[string]any
-		if _, e = plist.Unmarshal(out, &result); e != nil {
-			return e
-		}
-		source := filepath.Join(mount, "Postgres.app")
-		if _, e = os.Stat(source); e != nil {
-			return e
-		}
-		out, e = exec.CommandContext(ctx, "/usr/bin/ditto", "--norsrc", "--noextattr", source, filepath.Join(root, "Postgres.app")).CombinedOutput()
-		if e != nil {
-			return fmt.Errorf("copy package: %w: %s", e, out)
-		}
-		return nil
 	}
 
 	var total int64

@@ -109,7 +109,10 @@ func (m *Manager) runInitializationTool(ctx context.Context, bin string, args ..
 	job := "init-" + c.record.ID + "-tool"
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	if _, e := m.startJob(ctx, job, append([]string{bin}, args...), c.dir, nil, false); e != nil {
+	// launchd may inherit locale names unsupported by Homebrew's libc tools.
+	// Initialization must not depend on the desktop session's language settings.
+	env := map[string]string{"LANG": "C", "LC_ALL": "C"}
+	if _, e := m.startJob(ctx, job, append([]string{bin}, args...), c.dir, env, false); e != nil {
 		return "", e
 	}
 	if _, ok := c.record.Jobs[job]; !ok {

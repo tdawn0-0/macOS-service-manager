@@ -38,7 +38,7 @@ func (m *Manager) ResolveInstalledOrCatalog(ctx context.Context, name, version s
 			return p, p.Validate()
 		}
 	}
-	return Resolve(ctx, name, version)
+	return m.ResolvePackage(ctx, name, version)
 }
 
 func (m *Manager) PackageDetails(ctx context.Context, p Package) (PackageDetails, error) {
@@ -102,6 +102,21 @@ func (m *Manager) PackageDetails(ctx context.Context, p Package) (PackageDetails
 		}
 	}
 	sort.Strings(info.References)
+	if p.Formula != "" {
+		info.Compatibility = "Requires Apple Silicon Homebrew; dependencies and downloads are managed by Homebrew"
+		if info.Installed {
+			info.Integrity = "Homebrew managed"
+			info.IntegrityNote = "Check files validates the recorded keg's source and required executables. Homebrew manages its dependencies."
+			for name := range p.Binaries {
+				if _, err := m.Binary(&state, p.ID(), name); err != nil {
+					info.Integrity = "Needs repair"
+					info.IntegrityNote = err.Error()
+					break
+				}
+			}
+		}
+		return info, ctx.Err()
+	}
 	cache := filepath.Join(m.Root, "downloads", p.SHA256)
 	if hasDigestContext(ctx, cache, p.SHA256) {
 		if stat, e := os.Stat(cache); e == nil {

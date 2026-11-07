@@ -1,5 +1,5 @@
-// Package devplatform manages local development environments. Binaries belong to
-// the app; long-lived processes belong to launchd, never a second supervisor.
+// Package devplatform manages local development environments. Binaries are
+// app-owned archives or Homebrew kegs; long-lived processes belong to launchd.
 package devplatform
 
 import (
@@ -26,12 +26,13 @@ const Schema = 1
 var nameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$`)
 
 type Package struct {
+	Formula  string            `json:"formula,omitempty"` // Homebrew canonical full name; empty for app archives
 	Name     string            `json:"name"`
 	Version  string            `json:"version"`
 	Arch     string            `json:"arch"`
 	URL      string            `json:"url"`
 	SHA256   string            `json:"sha256"`
-	Format   string            `json:"format"` // tar.gz or zip
+	Format   string            `json:"format"` // tar.gz, zip, or homebrew
 	Strip    int               `json:"strip,omitempty"`
 	Binaries map[string]string `json:"binaries"`
 	License  string            `json:"license"`
@@ -46,6 +47,9 @@ func (p Package) Validate() error {
 	if !nameRE.MatchString(p.Name) || !nameRE.MatchString(p.Version) || (p.Arch != "arm64" && p.Arch != "universal") {
 		return errors.New("invalid package identity")
 	}
+	if (p.Name == "php" || p.Name == "postgresql") && p.Formula == "" {
+		return errors.New("PHP and PostgreSQL require Homebrew packages")
+	}
 	u, e := url.Parse(p.URL)
 	if e != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
 		return errors.New("package URL must use HTTPS")
@@ -54,7 +58,13 @@ func (p Package) Validate() error {
 	if e != nil || len(b) != 32 {
 		return errors.New("package requires a SHA-256 checksum")
 	}
-	if p.Format != "tar.gz" && p.Format != "zip" && p.Format != "dmg.postgres" {
+	if p.Format == "homebrew" {
+		if !validHomebrewPackage(p) {
+			return errors.New("invalid Homebrew package source, version or binary layout")
+		}
+	} else if p.Formula != "" {
+		return errors.New("Homebrew formula requires the Homebrew package format")
+	} else if p.Format != "tar.gz" && p.Format != "zip" {
 		return errors.New("unsupported archive format")
 	}
 	if p.Strip < 0 || p.Strip > 8 || len(p.Binaries) == 0 {
@@ -195,6 +205,7 @@ func emptyState() State {
 }
 
 type Manager struct {
+	brewCellar     string // Test fixture override; production uses Apple Silicon Homebrew's Cellar.
 	initialization *initializationContext
 	databaseWork   *databaseWorkContext
 	commandWork    *commandWorkContext

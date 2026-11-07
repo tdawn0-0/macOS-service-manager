@@ -545,6 +545,9 @@ func TestUISoftwareCatalogAllSix(t *testing.T) {
 	h.click("Software")
 	for _, name := range []string{"php", "node", "mysql", "postgresql", "redis", "mongodb"} {
 		t.Run(name, func(t *testing.T) {
+			if (name == "php" || name == "postgresql") && os.Getenv("MSM_UI_E2E_HOMEBREW") != "1" {
+				t.Skip("set MSM_UI_E2E_HOMEBREW=1 with the required Homebrew keg preinstalled")
+			}
 			previousT := h.t
 			h.t = t
 			defer func() { h.t = previousT }()
@@ -553,38 +556,14 @@ func TestUISoftwareCatalogAllSix(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			var source string
-			for _, dir := range filepath.SplitList(cache) {
-				path := filepath.Join(dir, pkg.SHA256)
-				if _, e := os.Stat(path); e == nil {
-					source = path
-					break
-				}
-			}
-			if source == "" {
-				t.Fatalf("verified package fixture not found for %s", pkg.ID())
-			}
-			if e = os.MkdirAll(filepath.Join(h.root, "downloads"), 0700); e != nil {
-				t.Fatal(e)
-			}
-			input, e := os.Open(source)
-			if e != nil {
-				t.Fatal(e)
-			}
-			output, e := os.Create(filepath.Join(h.root, "downloads", pkg.SHA256))
-			if e != nil {
-				input.Close()
-				t.Fatal(e)
-			}
-			_, e = io.Copy(output, input)
-			input.Close()
-			output.Close()
-			if e != nil {
-				t.Fatal(e)
-			}
+			seedRuntimeCache(t, h.root, pkg)
 			h.click("Software " + name)
 			h.click("Review package")
-			h.click("Download and install")
+			if pkg.Formula != "" {
+				h.click("Install with Homebrew")
+			} else {
+				h.click("Download and install")
+			}
 			if _, ok := h.a.dev.state.Packages[pkg.ID()]; !ok {
 				t.Fatal("software was not installed through the UI", h.a.dev.output)
 			}
@@ -593,7 +572,11 @@ func TestUISoftwareCatalogAllSix(t *testing.T) {
 				h.click("Software")
 				h.click("Software " + name)
 			}
-			h.click("Uninstall " + name + " " + version)
+			if pkg.Formula != "" {
+				h.click("Remove from workspace " + name + " " + pkg.Version)
+			} else {
+				h.click("Uninstall " + name + " " + pkg.Version)
+			}
 			if _, ok := h.a.dev.state.Packages[pkg.ID()]; ok {
 				t.Fatal("software was not uninstalled through the UI", h.a.dev.output)
 			}
@@ -648,7 +631,7 @@ func exerciseUIDatabase(t *testing.T, h *devUIHarness, pkg devplatform.Package) 
 		t.Fatal(e)
 	}
 	command := func(binary string, args ...string) *exec.Cmd {
-		return exec.Command(filepath.Join(h.root, "packages", pkg.ID(), pkg.Binaries[binary]), args...)
+		return exec.Command(filepath.Join(manager.PackageDirectory(pkg), pkg.Binaries[binary]), args...)
 	}
 	run := func(c *exec.Cmd) string {
 		t.Helper()

@@ -7,7 +7,8 @@
 **Import a project. Configure its environment. Open it over local HTTPS.**
 
 A native macOS workspace for PHP, Node.js, MySQL, PostgreSQL, Redis and MongoDB.
-The app downloads and manages verified binaries; launchd runs the services.
+The app manages development software; launchd runs the services.
+PHP and PostgreSQL use Homebrew. Other software uses verified downloads in app-owned storage.
 Homebrew services, launch agents, daemons and login items remain available.
 
 ![macOS 13 or later](https://img.shields.io/badge/macOS-13%2B-000000?logo=apple&logoColor=white)
@@ -40,6 +41,10 @@ Homebrew services, launch agents, daemons and login items remain available.
   instances, create databases and users, and back up and restore data. Review
   package sources, checksums, size and system requirements before installing.
   Check installed files and repair the same exact version after stopping its users.
+  PHP uses the `shivammathur/php` tap and PostgreSQL uses versioned Homebrew core
+  formulae. Review resolves a release series to its exact installed Cellar version.
+  Their instances keep app-owned settings and data. Removing a Homebrew version
+  from the workspace keeps the shared keg; repair uses `brew reinstall`.
   Installation and repair run in the background, with per-version cancellation;
   other projects remain configurable while independent packages prepare.
   Removing an instance keeps its data; permanent data deletion has a separate
@@ -150,7 +155,7 @@ Build it from source. You need:
 
 - macOS 13 or later on Apple Silicon (M-series, arm64)
 - Go 1.27.3 or later
-- Homebrew, only for the Homebrew source
+- Apple Silicon Homebrew for PHP, PostgreSQL and the Homebrew service source
 
 Individual managed packages have higher macOS requirements; see the
 [current compatibility and verification notes](docs/development-usage.md).

@@ -20,8 +20,9 @@ downloads; skipped tests must be reported as skipped.
 
 ## Changes to managed services
 
-- Use launchd for long-lived processes. Keep downloaded binaries and instance
-  data in app-owned storage, with credentials in private files.
+- Use launchd for long-lived processes. Keep archive binaries and instance data
+  in app-owned storage, with credentials in private files. Homebrew kegs stay in
+  the Cellar.
 - Use isolated roots and ports in tests. Stop and unregister every test job.
 - Never change the developer's original databases or take over external jobs.
 - Keep destructive data deletion separate from removing management records.
@@ -31,6 +32,22 @@ downloads; skipped tests must be reported as skipped.
   for affected workflows and inspect light/dark layouts at the minimum size.
 
 ## Software catalog
+
+PHP uses the `shivammathur/php` Homebrew tap; PostgreSQL uses Homebrew core's
+versioned `postgresql@<major>` formulae. Other development software uses verified
+upstream archives. The project is unreleased: remove obsolete distribution paths
+and test data rather than adding migration or compatibility logic. A Homebrew
+failure must not fall back to an archive or a host PATH executable.
+
+Resolve Homebrew release series to exact Cellar keg versions including revisions.
+Check receipts for the expected tap, especially PHP aliases that share a rack
+with core PHP. Keep app instances on their own launchd jobs, ports and data paths;
+do not start the formula's default service. Homebrew installations are shared:
+workspace removal unregisters them without deleting the keg. Reinstallation is
+performed through Homebrew after stopping all consumers. Formula SHA-256 values
+identify formula metadata, not the downloaded bottle; Homebrew verifies bottles
+and manages their dependencies. The app's Check files action validates receipts
+and executable availability for Homebrew packages, not their entire file tree.
 
 Descriptors must pin version, architecture, source, SHA-256, layout, executable
 paths, license information and minimum macOS version. Download and validate the

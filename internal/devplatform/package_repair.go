@@ -153,6 +153,9 @@ func (m *Manager) repairPackage(ctx context.Context, id string) error {
 	if e = p.Validate(); e != nil {
 		return e
 	}
+	if p.Formula != "" {
+		return fmt.Errorf("Homebrew owns this shared installation; stop its users and run brew reinstall %s, then check files again", p.Formula)
+	}
 	if e = m.requirePackageIdle(ctx, &state, p); e != nil {
 		return e
 	}

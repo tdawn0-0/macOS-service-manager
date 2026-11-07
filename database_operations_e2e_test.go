@@ -136,15 +136,15 @@ func TestUIBackgroundDatabaseBackupKeepsConfigurationAndIndependentInstance(t *t
 }
 
 func TestUITwoPostgreSQLInstancesKeepSameNamedDatabasesIsolated(t *testing.T) {
-	if os.Getenv("MSM_UI_E2E_PACKAGE_CACHE") == "" {
-		t.Skip("set MSM_UI_E2E_PACKAGE_CACHE to verified PostgreSQL archive")
+	if os.Getenv("MSM_UI_E2E_HOMEBREW") != "1" {
+		t.Skip("set MSM_UI_E2E_HOMEBREW=1 with a preinstalled PostgreSQL Homebrew keg")
 	}
 	h := newDevUIHarnessSize(t, 900, 520, true)
-	pkg := seedUIPackage(t, h, "postgresql", "17-2.9.6")
+	pkg := seedUIPackage(t, h, "postgresql", "17")
 	h.click("Software")
 	h.click("Software postgresql")
 	h.click("Review package")
-	h.click("Download and install")
+	h.click("Install with Homebrew")
 	m := h.a.dev.managerFactory()
 	ids := []string{"first-pg", "second-pg"}
 	t.Cleanup(func() {
@@ -171,6 +171,14 @@ func TestUITwoPostgreSQLInstancesKeepSameNamedDatabasesIsolated(t *testing.T) {
 		h.choose("Database engine", "postgresql")
 		h.fill("Local port", fmt.Sprint(port))
 		h.click("Create instance")
+		if _, ok := h.a.dev.state.Instances[id]; !ok {
+			files, _ := filepath.Glob(filepath.Join(h.root, "logs", "*.log"))
+			for _, path := range files {
+				b, _ := os.ReadFile(path)
+				t.Log(filepath.Base(path), string(b))
+			}
+			t.Fatal("PostgreSQL initialization failed", h.a.dev.output)
+		}
 		h.click("Start instance")
 		h.fill("Database name", "same_db")
 		h.click("Create database")
@@ -188,10 +196,15 @@ func TestUITwoPostgreSQLInstancesKeepSameNamedDatabasesIsolated(t *testing.T) {
 	}
 	query := func(id, db, user, password, sql string) string {
 		t.Helper()
-		c := exec.Command(filepath.Join(h.root, "packages", pkg.ID(), pkg.Binaries["psql"]), "-h", "127.0.0.1", "-p", fmt.Sprint(ports[id]), "-U", user, "-d", db, "--set", "ON_ERROR_STOP=1", "-Atc", sql)
+		c := exec.Command(filepath.Join(m.PackageDirectory(pkg), pkg.Binaries["psql"]), "-h", "127.0.0.1", "-p", fmt.Sprint(ports[id]), "-U", user, "-d", db, "--set", "ON_ERROR_STOP=1", "-Atc", sql)
 		c.Env = append(os.Environ(), "PGPASSWORD="+password)
 		b, e := c.CombinedOutput()
 		if e != nil {
+			files, _ := filepath.Glob(filepath.Join(h.root, "logs", "*.log"))
+			for _, path := range files {
+				b, _ := os.ReadFile(path)
+				t.Log(filepath.Base(path), string(b))
+			}
 			t.Fatal("isolated PostgreSQL query failed", e, string(b))
 		}
 		return strings.TrimSpace(string(b))

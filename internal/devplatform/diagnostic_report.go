@@ -148,6 +148,10 @@ func (m *Manager) diagnose(ctx context.Context, s State, p diagnosticProbes) (Di
 			add("Package", id, "Warning", "Installed-file verification did not complete.", "Retry Check files in Software before using this version.")
 		case result.Status == "Verified":
 			add("Package", id, "OK", "Installed contents, permissions and symlink targets match the recorded installation index.", "")
+		case result.Status == "Homebrew managed":
+			add("Package", id, "OK", "Homebrew keg receipt and required executables match the selected source and version. Full contents and dependencies are managed by Homebrew.", "")
+		case s.Packages[id].Formula != "":
+			add("Package", id, "Failed", "The selected Homebrew keg or a required executable is missing or invalid.", "Stop its users and repair with Homebrew, or select an available version in Software. The app will not switch keg versions automatically.")
 		case result.Status == "Not recorded":
 			add("Package", id, "Warning", "No trusted installation index is recorded for this version.", "Stop its users, then use Repair in Software to restore from the verified archive.")
 		default:

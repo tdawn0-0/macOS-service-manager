@@ -20,10 +20,15 @@ func designFixture(t *testing.T) *app {
 	a.reveal = func(string) {}
 	a.dev.loaded = true
 	state := devplatform.State{SchemaVersion: 1, Projects: map[string]devplatform.Project{}, Packages: map[string]devplatform.Package{}, Instances: map[string]devplatform.Instance{}, Sites: map[string]devplatform.Site{}}
-	for _, pair := range [][2]string{{"php", "8.5.12"}, {"node", "22.14.0"}, {"mysql", "8.4.4"}, {"postgresql", "17-2.9.6"}, {"redis", "7.4.7"}, {"mongodb", "8.0.5"}} {
+	for _, pair := range [][2]string{{"php", "8.5.12"}, {"node", "22.14.0"}, {"mysql", "8.4.4"}, {"postgresql", "17.11_1"}, {"redis", "7.4.7"}, {"mongodb", "8.0.5"}} {
 		p := devplatform.Package{Name: pair[0], Version: pair[1], Arch: "arm64", License: "See the license included with the package"}
 		if p.Name == "postgresql" {
-			p.Arch = "universal"
+			p.Formula = "postgresql@17"
+			p.Format = "homebrew"
+		}
+		if p.Name == "php" {
+			p.Formula = "shivammathur/php/php"
+			p.Format = "homebrew"
 		}
 		state.Packages[p.ID()] = p
 	}
@@ -31,7 +36,7 @@ func designFixture(t *testing.T) *app {
 	state.Projects[p.ID] = p
 	state.Projects["storefront"] = devplatform.Project{ID: "storefront", Name: "Storefront", Directory: "/Users/developer/Projects/storefront"}
 	state.Projects["unicode"] = devplatform.Project{ID: "unicode", Name: "开发环境 · " + strings.Repeat("a-long-project-name-", 8), Directory: "/Users/developer/Projects/worst-case"}
-	state.Instances["atlas-postgres"] = devplatform.Instance{ID: "atlas-postgres", Kind: "postgresql", Package: "postgresql@17-2.9.6-universal", Port: 5432, Persistent: true}
+	state.Instances["atlas-postgres"] = devplatform.Instance{ID: "atlas-postgres", Kind: "postgresql", Package: "postgresql@17.11_1-arm64", Port: 5432, Persistent: true}
 	state.Instances["cache"] = devplatform.Instance{ID: "cache", Kind: "redis", Package: "redis@7.4.7-arm64", Port: 6379, Persistent: true}
 	a.dev.state = state
 	a.dev.statuses = map[string]string{"project:atlas": "Healthy", "project:storefront": "Stopped", "project:unicode": "Stopped", "instance:atlas-postgres": "Running", "instance:cache": "Stopped"}
@@ -41,7 +46,7 @@ func designFixture(t *testing.T) *app {
 	a.dev.version = "22.14.0"
 	a.dev.dbID = "atlas-postgres"
 	a.dev.dbKind = "postgresql"
-	a.dev.dbPackage = "postgresql@17-2.9.6-universal"
+	a.dev.dbPackage = "postgresql@17.11_1-arm64"
 	a.dev.dbPort = "5432"
 	a.dev.selectSite(p.Sites[0], p.ID)
 	a.dev.output = "Workspace ready"
@@ -124,7 +129,7 @@ func TestDevelopmentDesignLayouts(t *testing.T) {
 					}
 					if page.name == "database-delete" || page.name == "database-delete-blocked" {
 						a.dev.statuses["instance:atlas-postgres"] = "Stopped"
-						p := devplatform.InstanceDeletionPreview{InstanceID: "atlas-postgres", Kind: "postgresql", Package: "postgresql@17-2.9.6-universal", Path: "/Users/developer/Library/Application Support/ServiceManager/Development/instances/atlas-postgres", Entries: 1248, Bytes: 32 << 20, CanDelete: true, Detail: "Permanently removes this instance record, data, local configuration and credentials.", Fingerprint: "example"}
+						p := devplatform.InstanceDeletionPreview{InstanceID: "atlas-postgres", Kind: "postgresql", Package: "postgresql@17.11_1-arm64", Path: "/Users/developer/Library/Application Support/ServiceManager/Development/instances/atlas-postgres", Entries: 1248, Bytes: 32 << 20, CanDelete: true, Detail: "Permanently removes this instance record, data, local configuration and credentials.", Fingerprint: "example"}
 						if page.name == "database-delete-blocked" {
 							p.CanDelete = false
 							p.Detail = "Unlink this database from every project before deleting its data."
@@ -193,7 +198,7 @@ func TestDevelopmentDesignLayouts(t *testing.T) {
 						}
 					}
 					if page.name == "database-background" || page.name == "database-background-quit" {
-						i := devplatform.Instance{ID: "new-database", Kind: "postgresql", Package: "postgresql@17-2.9.6-universal", Port: 55432, Persistent: true}
+						i := devplatform.Instance{ID: "new-database", Kind: "postgresql", Package: "postgresql@17.11_1-arm64", Port: 55432, Persistent: true}
 						task := &databaseTask{Instance: i, Running: true, Progress: "Initializing database new-database"}
 						a.dev.databaseTasks = map[string]*databaseTask{i.ID: task}
 						a.dev.lastDatabaseTask = task
@@ -235,7 +240,7 @@ func TestDevelopmentDesignLayouts(t *testing.T) {
 						a.dev.detailScroll[2].Y = 70
 					}
 					if page.name == "initialization-incomplete" || page.name == "initialization-published" || page.name == "initialization-archived" {
-						r := devplatform.InstanceInitializationInfo{ID: "0123456789abcdef", InstanceID: "new-database", Kind: "postgresql", Package: "postgresql@17-2.9.6-universal", Port: 55432, Path: "/Users/developer/Library/Application Support/ServiceManager/Development/initializations/0123456789abcdef/data", Status: "Incomplete", CanResolve: true, Detail: "Stop the recorded initialization jobs and archive the prepared data. Existing files are retained.", Revision: "example"}
+						r := devplatform.InstanceInitializationInfo{ID: "0123456789abcdef", InstanceID: "new-database", Kind: "postgresql", Package: "postgresql@17.11_1-arm64", Port: 55432, Path: "/Users/developer/Library/Application Support/ServiceManager/Development/initializations/0123456789abcdef/data", Status: "Incomplete", CanResolve: true, Detail: "Stop the recorded initialization jobs and archive the prepared data. Existing files are retained.", Revision: "example"}
 						if page.name == "initialization-published" {
 							r.Status = "Published"
 							r.Path = "/Users/developer/Library/Application Support/ServiceManager/Development/instances/new-database"
@@ -365,7 +370,7 @@ func TestDevelopmentDesignLayouts(t *testing.T) {
 						a.dev.importing = true
 						a.dev.directory = a.dev.draft.Directory
 						a.dev.exportRecoveryDirectory = a.dev.directory
-						a.dev.exportRecovery = &devplatform.ExportRecovery{OperationID: "6c2e45bd701a893f", ProjectName: "Atlas API", Services: 1, Databases: 1, Sites: 1, PackageIDs: []string{"node@22.14.0-arm64", "postgresql@17-2.9.6-universal"}, Directory: a.dev.directory, CreatedAt: time.Date(2026, 11, 7, 11, 0, 0, 0, time.UTC), Phase: "Partially saved", CanResume: true, Fingerprint: "preview", Files: []devplatform.ExportFileState{{Name: "devmanager.lock.json", Status: "New file saved"}, {Name: "devmanager.json", Status: "Previous file"}}}
+						a.dev.exportRecovery = &devplatform.ExportRecovery{OperationID: "6c2e45bd701a893f", ProjectName: "Atlas API", Services: 1, Databases: 1, Sites: 1, PackageIDs: []string{"node@22.14.0-arm64", "postgresql@17.11_1-arm64"}, Directory: a.dev.directory, CreatedAt: time.Date(2026, 11, 7, 11, 0, 0, 0, time.UTC), Phase: "Partially saved", CanResume: true, Fingerprint: "preview", Files: []devplatform.ExportFileState{{Name: "devmanager.lock.json", Status: "New file saved"}, {Name: "devmanager.json", Status: "Previous file"}}}
 						if page.name == "export-conflict" {
 							a.dev.exportRecovery.CanResume = false
 							a.dev.exportRecovery.Phase = "Review file changes"

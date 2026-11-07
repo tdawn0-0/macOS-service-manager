@@ -962,7 +962,11 @@ func (a *app) devSoftware(c *ui.Context) {
 		d.software = "node"
 		d.version = devplatform.AvailableVersions("node")[0]
 	}
-	devHeading(c, softwareTitle(d.software), "Install only what you need. Versions stay separate from your system.")
+	description := "The app downloads and manages verified binaries. Versions stay separate from your system."
+	if d.software == "php" || d.software == "postgresql" {
+		description = "Homebrew manages the software. Projects and databases keep their own settings and data."
+	}
+	devHeading(c, softwareTitle(d.software), description)
 	a.devPackageTasks(c)
 	if devChoice(c, "Software", &d.software, []string{"php", "node", "mysql", "postgresql", "redis", "mongodb"}) {
 		d.runtimeTargetProject = ""
@@ -975,7 +979,21 @@ func (a *app) devSoftware(c *ui.Context) {
 	}
 	devChoice(c, "Version", &d.version, devplatform.AvailableVersions(d.software))
 	devField(c, "Exact version", &d.version, "For example 22.14.0")
-	ui.Text(c, "Listed versions have integration tests. Other exact versions use available upstream archives.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
+	if d.software == "php" || d.software == "postgresql" {
+		ui.Text(c, "Choose a release series or exact Homebrew version. Review resolves the current patch and revision.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
+		if d.software == "php" {
+			if ui.Button(c, "Add shivammathur/php repository").Disabled(d.busy || a.packageTasksRunning()).Clicked() {
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					if err := m.AddPHPRepository(m.Context); err != nil {
+						return "PHP repository setup did not complete.", err
+					}
+					return "PHP repository added. Review the version to install.", nil
+				})
+			}
+		}
+	} else {
+		ui.Text(c, "Listed versions have integration tests. Other exact versions use available upstream archives.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
+	}
 	a.devPackageReview(c)
 	for _, id := range sortedKeys(d.state.Packages) {
 		p := d.state.Packages[id]
@@ -987,8 +1005,15 @@ func (a *app) devSoftware(c *ui.Context) {
 		ui.Row(c).Gap(8).Children(func() {
 			ui.Text(c, softwareTitle(p.Name)+" · "+p.Version).Grow(1).MinWidth(0).SingleLine()
 			ui.Spacer(c)
-			if ui.Button(c, "Uninstall "+p.Name+" "+p.Version).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
+			removeLabel := "Uninstall " + p.Name + " " + p.Version
+			if p.Formula != "" {
+				removeLabel = "Remove from workspace " + p.Name + " " + p.Version
+			}
+			if ui.Button(c, removeLabel).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
 				a.devTask(func(m *devplatform.Manager) (string, error) {
+					if p.Formula != "" {
+						return "Removed workspace registration. The shared Homebrew installation is kept.", m.Uninstall(m.Context, id)
+					}
 					return "Uninstalled " + p.Name, m.Uninstall(m.Context, id)
 				})
 			}

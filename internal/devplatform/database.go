@@ -22,7 +22,7 @@ func (m *Manager) initializeInstanceData(ctx context.Context, s *State, i Instan
 		if e != nil {
 			return e
 		}
-		if _, e = m.runInitializationTool(ctx, bin, "-D", filepath.Join(dir, "data"), "-U", "devmanager", "--auth-host=scram-sha-256", "--auth-local=scram-sha-256", "--pwfile="+filepath.Join(dir, "password")); e != nil {
+		if _, e = m.runInitializationTool(ctx, bin, "-D", filepath.Join(dir, "data"), "-U", "devmanager", "--locale=C", "--encoding=UTF8", "--auth-host=scram-sha-256", "--auth-local=scram-sha-256", "--pwfile="+filepath.Join(dir, "password")); e != nil {
 			return e
 		}
 	} else if i.Kind == "mysql" || i.Kind == "mongodb" {
@@ -87,7 +87,11 @@ func (m *Manager) startInstance(ctx context.Context, s *State, i Instance) error
 		}
 		args = []string{bin, filepath.Join(dir, "valkey.conf")}
 	}
-	fresh, e := m.startJob(ctx, m.databaseJobID(i.ID), args, dir, nil, false)
+	var env map[string]string
+	if i.Kind == "postgresql" {
+		env = map[string]string{"LANG": "C", "LC_ALL": "C"}
+	}
+	fresh, e := m.startJob(ctx, m.databaseJobID(i.ID), args, dir, env, false)
 	if e != nil {
 		return e
 	}

@@ -11,13 +11,13 @@ build/devmgr help
 打开 Development，四个页面均通过图形表单配置，无需编辑 JSON：
 
 - Projects：左侧项目列表，右侧总览、服务、环境和日志。选择目录导入、编辑项目名称和目录；添加和编辑服务、选择已安装运行时、填写参数、工作目录、环境变量、依赖、健康检查和重启策略。勾选数据库后保存。底部固定“Save project”，一次保存当前服务和环境字段；菜单栏也可启停项目和打开网站。
-- Software：选择软件与精确版本，点击 Review package 查看来源、摘要、架构、系统要求、体积和安装目录，再下载；已安装版本可直接绑定项目草稿，保存后生效。检查引用后卸载。
+- Software：PHP 使用 shivammathur/php tap，PostgreSQL 使用 Homebrew core；先安装 Apple Silicon Homebrew。PHP 可在页面点击 Add shivammathur/php repository。选择系列或精确版本，Review package 解析为精确 keg 版本（含 revision），再点击 Install with Homebrew。其他软件仍下载校验后的归档。已安装版本绑定项目草稿，保存后生效。
 - Databases：选择实例或创建实例，选择引擎和已安装版本、端口、持久化；启停重启、查看/复制连接、单独复制密码、打开默认外部客户端、建库、创建用户、备份、选择备份文件恢复到新数据库、移除实例管理记录。
 - HTTPS：选择独立或项目站点，填写域名、上游、HTTPS 端口；支持重命名、移动所属项目、停用和删除。保存后用 Apply proxy 应用规则；可配置本地域名、信任或移除本地 CA、执行诊断。
 
 编辑服务时，程序及每个参数分别填写在独立行，以保留带空格的参数。环境变量使用 NAME=value 的普通表单输入。保存前需停止运行中的项目；站点规则可单独保存和应用。
 
-图形操作显示阶段和下载字节数。下载、缓存验证、归档解包与 DMG 拷贝支持上下文取消，失败不注册半成品包。系统授权框的取消由 macOS 处理。
+图形操作显示阶段；App 归档下载显示字节进度。下载、缓存验证、归档解包与 Homebrew 命令支持上下文取消，失败不注册半成品包。Homebrew 是共享安装，取消后已完成的 keg 或依赖由 Homebrew 保留，不承诺回滚系统安装。系统授权框的取消由 macOS 处理。
 
 ## 当前软件支持状态
 
@@ -28,21 +28,21 @@ build/devmgr help
 | 软件 | 当前已验证的实现 |
 | --- | --- |
 | Node.js | 上游精确版本下载、校验、项目版本选择和 launchctl 托管 |
-| PostgreSQL | Postgres.app 17-2.9.6 二进制包、独立实例、用户/数据库、备份恢复 |
-| PHP | Lerd 独立包 8.5.12；launchctl 托管本地 PHP 服务已实测 |
+| PostgreSQL | Homebrew core postgresql@17 / @18 / @16；实例仍使用 App 的独立数据目录和端口 |
+| PHP | shivammathur/php tap；支持选择 8.5 / 8.4 / 8.3 等系列，解析当前补丁版本 |
 | MySQL | 官方 8.4.4 包；独立实例、用户、数据库、备份恢复已实测 |
 | Redis | Redis Stack 中的 Redis 7.4.7 服务；认证、启停和持久化已实测，不使用 Valkey 替代 |
 | MongoDB | 官方 8.0.5 包；认证实例、用户、数据库、原始 BSON、索引、集合校验规则和视图的备份恢复已实测 |
 
-旧的 Go 和 Valkey 包管理后端仍保留兼容。目录只解析 arm64 下载；自定义清单和启动路径拒绝 Intel-only 包及可执行文件。PostgreSQL 等上游只提供通用归档的条目保留原包身份，校验其包含 arm64，作为 Apple Silicon 可用包管理；这不构成 Intel 支持。软件包携带各自许可证，开源 App 不改变这些组件的授权条件。
+旧的 Go 和 Valkey 包管理后端仍保留兼容。目录只解析 arm64 下载；自定义清单和启动路径拒绝 Intel-only 包及可执行文件。PHP/PostgreSQL 不再保留 Lerd/Postgres.app 的安装、解包或迁移逻辑；项目尚未发布，旧测试数据直接清理。软件包携带各自许可证，开源 App 不改变这些组件的授权条件。
 
-当前 App 使用 Go 1.27.3 构建，实际最低系统为 macOS 13，安装包已据此声明；此前 macOS 12 声明与 Mach-O 要求不符。用户已于 2026-11-07 明确采用 macOS 13+，替代原兼容目标；[Go 官方要求](https://go.dev/doc/go1.27#darwin)与当前 Mach-O 一致。当前目录中的 PHP/MySQL 包要求 macOS 15+，Redis 要求 14+，MongoDB/PostgreSQL 要求 13+。安装时检查包的最低系统版本。这些是工具链和包清单要求，不能等同于已在所有系统版本实测通过。
+当前 App 使用 Go 1.27.3 构建，实际最低系统为 macOS 13，安装包已据此声明；此前 macOS 12 声明与 Mach-O 要求不符。用户已于 2026-11-07 明确采用 macOS 13+，替代原兼容目标；[Go 官方要求](https://go.dev/doc/go1.27#darwin)与当前 Mach-O 一致。当前目录中的 MySQL 包要求 macOS 15+，Redis 要求 14+，MongoDB 要求 13+；PHP/PostgreSQL 的系统及依赖支持由 Homebrew formula/bottle 决定。安装时检查包的最低系统版本。这些是工具链和包清单要求，不能等同于已在所有系统版本实测通过。
 
 用户随后指定：以后只验收电脑已安装的当前 macOS 版本。本轮实际环境是 macOS 27.3 arm64，不要求另备 macOS 13 机器或虚拟机；文档保留“最低要求”与“实际测试环境”的区别。
 
 ## 数据与权限
 
-默认存储目录为 ~/Library/Application Support/ServiceManager/Development。MSM_DEV_HOME 可指定隔离测试目录。App 管理包、实例配置和数据；launchctl 管理常驻进程。移除管理记录与卸载包不会删除数据库数据。安装包来源和摘要保存在内部清单，用户无需编辑这些文件。
+默认存储目录为 ~/Library/Application Support/ServiceManager/Development。MSM_DEV_HOME 可指定隔离测试目录。App 管理归档包、实例配置和数据；Homebrew 管理 PHP/PostgreSQL 的共享 Cellar 安装与依赖；launchctl 管理常驻进程。移除管理记录与卸载包不会删除数据库数据。安装包来源和摘要保存在内部清单，用户无需编辑这些文件。
 
 HTTPS 只监听 IPv4 回环地址。配置 hosts 和系统 CA 信任会显示 macOS 授权对话框；CA 信任允许本工具签发受本机信任的证书。当前已通过用户钥匙串信任授权和 Chrome 默认 443 HTTPS 实机验证（当前浏览器验收范围仅 Chrome）。低端口由 launchd 创建监听，代理进程以当前用户运行。首次创建或变更系统端口任务需要管理员授权；路由变更复用已有任务。详见验证记录。
 
@@ -86,7 +86,7 @@ HTTPS 的 Customize proxy settings 提供连接超时和响应头超时，单位
 
 导入时读取 .nvmrc、.node-version、package.json engines/volta、.php-version 和 composer.json PHP 声明，展示来源。不同精确版本的冲突会提示；范围不会被假装解析成精确版本。只发现声明不会自动下载或执行 npm/composer 脚本；仅在存在 dev/start 脚本时建议 npm 命令。总览可重新扫描，运行时选择不覆盖版本声明文件。Node 支持手输上游精确版本；不存在的版本明确失败，不静默换版本。
 
-顶部 Diagnostics 或 HTTPS 的 Diagnose HTTPS 打开分层报告。DNS 必须只返回代理实际监听的 127.0.0.1，其他回环别名、IPv6 或外部地址不会被当作成功。解析超时单独标记为未完成的警告，不直接判断 hosts 配置错误。检查进程/就绪、数据库端口、CA 有效期与 macOS 信任、上游 TCP/TLS，以及以系统信任校验的本地 HTTPS。软件包按已记录索引检查完整文件树，旧安装没有索引时明确显示警告。数据库认证和普通上游 HTTP 响应不在该报告的检测范围，页面和结果会说明。诊断只读取状态，不应用 hosts、修改信任或启停服务。
+顶部 Diagnostics 或 HTTPS 的 Diagnose HTTPS 打开分层报告。DNS 必须只返回代理实际监听的 127.0.0.1，其他回环别名、IPv6 或外部地址不会被当作成功。解析超时单独标记为未完成的警告，不直接判断 hosts 配置错误。检查进程/就绪、数据库端口、CA 有效期与 macOS 信任、上游 TCP/TLS，以及以系统信任校验的本地 HTTPS。归档软件包按已记录索引检查完整文件树；Homebrew 包仅核对收据的 tap、版本与必需可执行文件。数据库认证和普通上游 HTTP 响应不在该报告的检测范围，页面和结果会说明。诊断只读取状态，不应用 hosts、修改信任或启停服务。
 
 Copy redacted report 复制匿名 JSON；Export redacted report 在私有 reports 目录写出 0600 文件并在 Finder 显示。资源名、域名与证书标识替换为本次报告的匿名编号，不导出环境、命令、日志、数据库密码、私钥或本地路径。CLI 对应 devmgr doctor、doctor --json、doctor --export。报告标记检查时间，修复后需要重新运行。
 
@@ -257,3 +257,5 @@ worker 最长运行 30 分钟。正常调用者取消时会停止它自己的 wo
 - 归属改变或状态未知时，停止入口禁用，保留文件供检查。
 
 **Reveal private command files** 打开经过目录身份核对的任务文件夹。输入和输出可能包含秘密，不会自动复制进操作历史。收尾仅清除该任务的私有文件和占用记录，保留命令对项目的写入，不自动再次执行。未审阅记录继续保护项目、关联数据库和软件版本；独立资源仍可使用。CLI `project-commands` 与 `project-command-resolve <id> <revision>` 提供相同能力，revision 取最新快照。
+
+PHP/PostgreSQL 不使用 Homebrew 默认服务，仍由 App 为每个实例生成独立 launchd 任务。精确 Cellar 路径缺失时会报错，不跟随 opt 软链接改用其他版本。Homebrew 不保证历史补丁包可长期安装。工作区的 Remove from workspace 只移除注册记录，保留共享 keg；修复需停止使用方后通过 brew reinstall <formula> 完成。

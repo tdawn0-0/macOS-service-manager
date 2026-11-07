@@ -84,7 +84,7 @@ func TestIntelManifestRejectedBeforeInstallAndSavedBinaryUse(t *testing.T) {
 	}
 }
 func TestCatalogOffersOnlyAppleSiliconCompatiblePackages(t *testing.T) {
-	for _, name := range []string{"php", "mysql", "postgresql", "redis", "mongodb"} {
+	for _, name := range []string{"mysql", "redis", "mongodb"} {
 		p, e := Resolve(context.Background(), name, AvailableVersions(name)[0])
 		if e != nil {
 			t.Fatal(name, e)

@@ -120,7 +120,7 @@ func TestUIDatabaseWorkStopsOrphanToolAndRejectsChangedOwnership(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			pkg := devplatform.Package{Name: "postgresql", Version: "controlled-tool", Arch: "universal", Binaries: map[string]string{"pg_dump": "pg_dump"}}
+			pkg := devplatform.Package{Name: "database-tool-fixture", Version: "controlled-tool", Arch: "universal", Binaries: map[string]string{"pg_dump": "pg_dump"}}
 			dir := filepath.Join(h.root, "packages", pkg.ID())
 			if e = os.MkdirAll(dir, 0700); e != nil {
 				t.Fatal(e)

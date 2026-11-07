@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/egoist/mygo/ui"
 	"macos-service-manager/internal/devplatform"
-	"path/filepath"
 )
 
 func (a *app) storePackageCheck(id string, result devplatform.PackageIntegrityResult) {
@@ -22,6 +21,9 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 	status := "Not checked"
 	if d.state.PackageIntegrity[id] == "" {
 		status = "Not recorded"
+	}
+	if p.Formula != "" {
+		status = "Homebrew managed"
 	}
 	result, checked := d.packageChecks[id]
 	if checked && result.Baseline == d.state.PackageIntegrity[id] {
@@ -55,7 +57,7 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 				return r.Text(), e
 			})
 		}
-		if ui.Button(c, "Repair "+p.Name+" "+p.Version).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
+		if ui.Button(c, "Repair "+p.Name+" "+p.Version).Disabled(d.busy || a.packageTaskRunning(id) || p.Formula != "").Clicked() {
 			a.startPackageTask(p, "repair", func(m *devplatform.Manager) (string, error) {
 				if e := m.RepairPackage(m.Context, id); e != nil {
 					return "Repair did not complete.", e
@@ -70,10 +72,15 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 	})
 	if ui.Button(c, "Reveal package folder "+p.Name+" "+p.Version).Disabled(d.busy || a.reveal == nil).Clicked() {
 		a.devTask(func(m *devplatform.Manager) (string, error) {
-			path := filepath.Join(m.Root, "packages", p.ID())
+			path := m.PackageDirectory(p)
 			a.post(func() { a.reveal(path) })
 			return "Revealed package folder: " + path, nil
 		})
 	}
-	ui.Text(c, "Repair restores this version from its recorded source and checksum. Stop its projects, databases and CLI commands first. Database data stays in separate folders.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
+	note := "Repair restores this version from its recorded source and checksum. Stop its projects, databases and CLI commands first. Database data stays in separate folders."
+	if p.Formula != "" {
+		note = "Check files validates the keg source and required executables, not every file or dependency. This Homebrew installation is shared: removing it here only removes workspace registration. To repair it, stop its users and run brew reinstall " + p.Formula + "."
+
+	}
+	ui.Text(c, note).FontSize(textSmall).TextColor(c.Theme().TextMuted)
 }

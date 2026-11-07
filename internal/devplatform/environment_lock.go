@@ -271,11 +271,11 @@ func (m *Manager) PrepareEnvironment(ctx context.Context, id string) error {
 	// Validate every package before starting the first installation.
 	for _, key := range keys {
 		locked := lock.Packages[key]
-		pkg, e := Resolve(ctx, locked.Name, locked.Version)
+		pkg, e := m.ResolvePackage(ctx, locked.Name, locked.Version)
 		if e != nil {
 			return e
 		}
-		if pkg.Arch == locked.Arch && pkg.SHA256 != locked.SHA256 {
+		if pkg.Arch == locked.Arch && (pkg.SHA256 != locked.SHA256 || pkg.Formula != locked.Formula || pkg.Format != locked.Format) {
 			return fmt.Errorf("catalog checksum differs from the lock for %s", key)
 		}
 		resolved[key] = pkg

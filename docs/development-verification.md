@@ -709,3 +709,19 @@ App/DMG 签名、hdiutil 镜像检查通过；只读挂载后 App 签名及 50 �
 原验证站点最后 HTTP 200 / TLS verification 0，用户 launchd 仅原项目 marker、PHP PID 30406 和原维护任务。未新增 CA 信任、hosts 改动、管理员授权、公证上传或远程发布。
 
 用户随后明确选择“暂不重启，留待后续验收”。已确认预备重启测试没有运行/登记作业、没有启用的登录 plist，然后删除其独立私有目录（包括 CA 副本、实例凭据及包副本）。ServiceManager/Verification/deferred-reboot.json 仅保留非秘密的基线、延期与清理结果。未执行系统重启，也不把它标为已通过。后续复验时重新建立独立 Node/Redis/HTTPS 项目，核对登录启动 plist，再在用户允许的时间重启；用变化的 kern.bootsessionuuid 证明真实系统事件，检查登录后 HTTPS、Node 版本和持久化 Redis 值 42，最后清理自有测试资源。
+
+## 2026-11-07：PHP / PostgreSQL 改用 Homebrew
+
+用户指定 PHP 使用 shivammathur/homebrew-php，PostgreSQL 使用 Homebrew；并明确项目尚未发布，不做旧来源兼容。已删除 Lerd / Postgres.app 的目录项和 DMG 解包实现。PHP 默认提供 8.5 / 8.4 / 8.3 系列，PostgreSQL 提供 17 / 18 / 16 系列；预览读取 brew info，保存实际补丁和 revision、canonical formula 和 formula SHA-256。该摘要标识 formula，不冒充 bottle 校验值。安装通过 brew install --formula --force-bottle，依赖与 bottle 校验归 Homebrew。运行时绑定精确 Cellar 路径，不跟随 opt；安装收据必须匹配 tap，不能把 core PHP 当作 shivammathur/php 复用。
+
+软件页提供添加 PHP tap、Homebrew 安装预览、实际 keg 目录和来源检查。Homebrew 安装是共享资源，工作区移除只注销记录，不删除共享 keg；修复通过 Homebrew 进行，不提供归档修复。诊断区分 Homebrew 收据/必需入口检查与 App 归档的完整文件树校验。旧清单直接拒绝，不实现迁移或兼容。
+
+验证：
+
+- Homebrew 控制层测试通过，含精确版本/来源解析、core PHP 拒绝、formula 漂移拒绝、安装失败与取消、缺失 keg 不换版本、使用中的其他版本租约阻止安装，以及移除记录不删除共享软件。Homebrew 与诊断专项 race 通过（12.374 秒）。
+- 900×520 明暗 UI 输入测试通过，覆盖添加 tap、系列解析为实际版本、来源预览和安装失败。已查看最小窗口明暗截图。PHP 安装命令通过模拟运行器验证，未在本机覆盖现有 core PHP，也未声称完成新的 tap PHP 实际安装。
+- 只读实际 brew 元数据验证通过：PHP 8.5 对应 shivammathur/php/php 8.5.12；PostgreSQL 对应 postgresql@17 17.11_1，postgres --version 返回 17.11 (Homebrew)。
+- 真实 Homebrew PostgreSQL 双实例 UI 验证通过（普通运行 11.33 秒）；与 Homebrew UI 一起的 race 专项通过（17.363 秒）。覆盖独立凭据、同名库写入 42 / 84、备份恢复到新库、停止/移除一个实例不影响另一个、重启保留数据。首次运行发现 launchd 继承无效 locale，现初始化固定 C / UTF8，PostgreSQL 启动作业固定 LANG/LC_ALL=C；修复后重新通过。
+- 最终全量 go test ./... 已通过，主包 113.098 秒、devplatform 77.967 秒；全量启动后补充的 Homebrew 诊断分支另经专项 race 验证。go vet ./...、脚本语法及 git diff --check 通过。未配置的其他真实软件包集成测试仍为跳过，不算通过。
+
+已按用户要求清理默认 Development 中的旧 PHP 验证项目、Lerd 包和缓存、测试作业/日志，以及 /private/tmp/msm-development-verification、/private/tmp/msm-six-verification 两个旧验证环境。默认工作区 projects/packages/instances/sites 均为空，proxy 的测试路由清空；现有本地 CA 与 hosts 备份保留，未变更系统 hosts 或信任。原有测试站点的历史 HTTP 200 记录不再表示清理后仍有演示服务运行。本轮未重新打包发布 App/DMG，以上验证针对工作区源码。

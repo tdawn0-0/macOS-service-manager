@@ -183,6 +183,15 @@ func (m *Manager) verifyPackage(ctx context.Context, s *State, p Package) (Packa
 		if _, err := m.Binary(s, p.ID(), name); err != nil {
 			r.Issues = append(r.Issues, "Required executable is missing or invalid: "+name)
 		}
+		if p.Formula != "" {
+			r.Files++
+		}
+	}
+	if p.Formula != "" {
+		if len(r.Issues) == 0 {
+			r.Status = "Homebrew managed"
+		}
+		return r, nil
 	}
 	if r.Baseline == "" {
 		if len(r.Issues) == 0 {

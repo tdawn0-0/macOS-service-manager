@@ -31,7 +31,8 @@ func TestRuntimeShellResolverProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func TestRuntimeShellStartupModes(t *testing.T) {
+func runtimeShellFixture(t *testing.T) (*Manager, map[string]string, string) {
+	t.Helper()
 	t.Setenv("ZDOTDIR", "")
 	ctx := context.Background()
 	m := New(filepath.Join(t.TempDir(), "managed runtimes ' [x]"))
@@ -44,6 +45,11 @@ func TestRuntimeShellStartupModes(t *testing.T) {
 		path := filepath.Join(m.Root, "packages", "node@"+version+"-arm64", "bin", "node")
 		if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s\\n' "+shellQuote(version)+"\n"), 0700); err != nil {
 			t.Fatal(err)
+		}
+		for _, name := range []string{"npm", "npx", "corepack"} {
+			if err := os.WriteFile(filepath.Join(filepath.Dir(path), name), []byte("#!/usr/bin/env node\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	testExe, err := os.Executable()
@@ -70,6 +76,19 @@ func TestRuntimeShellStartupModes(t *testing.T) {
 		}
 		bins[name] = filepath.Join(m.packageDir(p), p.Binaries[name])
 	}
+	project := filepath.Join(m.Home, "project with ' quotes")
+	if err := os.Mkdir(project, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".nvmrc"), []byte("20\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return m, bins, project
+}
+
+func enableRuntimeShellFixture(t *testing.T, m *Manager) {
+	t.Helper()
+	ctx := context.Background()
 	// Simulate an old rc-only setup; explicitly enabling upgrades it.
 	if err := os.WriteFile(filepath.Join(m.Home, ".zshrc"), []byte(m.nodeBlock()), 0600); err != nil {
 		t.Fatal(err)
@@ -87,13 +106,12 @@ func TestRuntimeShellStartupModes(t *testing.T) {
 			}
 		}
 	}
-	project := filepath.Join(m.Home, "project with ' quotes")
-	if err := os.Mkdir(project, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(project, ".nvmrc"), []byte("20\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+}
+
+func TestRuntimeShellStartupModes(t *testing.T) {
+	m, bins, project := runtimeShellFixture(t)
+	enableRuntimeShellFixture(t, m)
+	ctx := context.Background()
 	inspect := `node; command -v java; command -v go; printf '%s\n' "$JAVA_HOME" "$PATH" "$npm_config_prefix"`
 	for _, mode := range []string{"-c", "-lc", "-ic", "-lic"} {
 		for _, scenario := range []string{"default", "project", "cd", "nested", "nested-project"} {

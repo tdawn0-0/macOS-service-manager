@@ -156,7 +156,7 @@ func (a *app) devAdditionalRuntimeInstalled(c *ui.Context, id string, p devplatf
 }
 func (a *app) devAdditionalRuntimeShell(c *ui.Context) {
 	name := a.dev.software
-	ui.Text(c, "Applies to new zsh terminals and non-interactive commands, including AI tasks.").FontSize(textSmall)
+	ui.Text(c, "Detects installed shells and enables new terminal and AI sessions.").FontSize(textSmall)
 	for _, enable := range []bool{true, false} {
 		label := "Disable in terminal"
 		if enable {
@@ -168,4 +168,5 @@ func (a *app) devAdditionalRuntimeShell(c *ui.Context) {
 			})
 		}
 	}
+	a.devBashCommand(c, name)
 }

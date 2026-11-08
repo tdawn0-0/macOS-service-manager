@@ -184,6 +184,11 @@ func TestJavaRemovalRollsBackOnCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fishPath := strings.TrimSuffix(m.runtimeScript("java"), ".sh") + ".fish"
+	oldFish, err := os.ReadFile(fishPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	m.Event = func(message string) {
@@ -201,6 +206,10 @@ func TestJavaRemovalRollsBackOnCancellation(t *testing.T) {
 	script, err := os.ReadFile(m.runtimeScript("java"))
 	if err != nil || string(script) != string(old) {
 		t.Fatal("rollback lost default script", err)
+	}
+	fishScript, err := os.ReadFile(fishPath)
+	if err != nil || string(fishScript) != string(oldFish) {
+		t.Fatal("rollback lost fish default script", err)
 	}
 	s, err := m.Read()
 	if err != nil || s.RuntimeDefaults["java"] != row.ID {

@@ -103,8 +103,12 @@ func TestUINodeVersionsListDefaultAliasesAndTerminal(t *testing.T) {
 				t.Fatalf("%s: %v %q", name, e, b)
 			}
 		}
-		if !h.ui.HasText("Enabled for all zsh session modes") {
+		if !h.ui.HasText("Enabled for detected shells") {
 			t.Fatal("enabled is not shown", h.ui.Texts())
+		}
+		h.click("Copy Bash command")
+		if len(h.copied) == 0 || h.copied[len(h.copied)-1] != h.a.dev.managerFactory().BashCommand() {
+			t.Fatal("Bash command was not copied")
 		}
 		h.click("Disable in terminal")
 		for _, name := range []string{".zshenv", ".zprofile", ".zshrc"} {

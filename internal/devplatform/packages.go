@@ -367,7 +367,7 @@ func (m *Manager) Uninstall(ctx context.Context, id string) error {
 		}
 		if s.RuntimeDefaults[p.Name] == id || p.Name == "java" && s.RuntimeDefaults["java"] == javaInstallationID(m.packageDir(p)) {
 			delete(s.RuntimeDefaults, p.Name)
-			if err := os.Remove(m.runtimeScript(p.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if _, err := m.updateRuntimeScripts(p.Name, nil); err != nil {
 				return err
 			}
 		}

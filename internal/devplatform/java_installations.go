@@ -294,15 +294,13 @@ func (m *Manager) RemoveJavaInstallation(ctx context.Context, selected JavaInsta
 		if err = publishNewPackageDirectory(row.Path, trashPath); err != nil {
 			return nil, nil, err
 		}
-		script := m.runtimeScript("java")
-		var oldScript []byte
-		scriptRemoved := false
+		var restoreScripts func() error
 		undo := func() error {
 			if err := publishNewPackageDirectory(trashPath, row.Path); err != nil {
 				return fmt.Errorf("JDK retained in Trash at %s: %w", trashPath, err)
 			}
-			if scriptRemoved {
-				return atomicWrite(script, oldScript, 0600)
+			if restoreScripts != nil {
+				return restoreScripts()
 			}
 			return nil
 		}
@@ -311,15 +309,9 @@ func (m *Manager) RemoveJavaInstallation(ctx context.Context, selected JavaInsta
 			return undo, nil, errors.New("Java installation changed while moving; refresh and review again")
 		}
 		if s.RuntimeDefaults["java"] == row.ID || row.PackageID != "" && s.RuntimeDefaults["java"] == row.PackageID {
-			oldScript, err = os.ReadFile(script)
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
+			restoreScripts, err = m.updateRuntimeScripts("java", nil)
+			if err != nil {
 				return undo, nil, err
-			}
-			if err == nil {
-				if err = os.Remove(script); err != nil {
-					return undo, nil, err
-				}
-				scriptRemoved = true
 			}
 			delete(s.RuntimeDefaults, "java")
 		}

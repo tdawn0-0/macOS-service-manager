@@ -240,19 +240,34 @@ export MSM_NODE_HOME=` + shellQuote(m.nodeHome()) + `
 # Puts the Node.js version for the current directory first in PATH: the one
 # .node-version, .nvmrc or engines.node of package.json names, else the default.
 __msm_node_apply() {
-  local out frag prefix
+  local out frag prefix rest item clean have old_global old_bin new_global new_bin
   out="$("$MSM_NODE_RESOLVE" node path "$PWD")" || out=""
   frag="${out%%$'\n'*}"
   prefix=""
   case "$out" in *$'\n'*) prefix="${out#*$'\n'}" ;; esac
-  if [ -n "$__MSM_NODE_PATH" ]; then
-    PATH=":$PATH:"
-    PATH="${PATH//:$__MSM_NODE_PATH:/:}"
-    PATH="${PATH#:}"
-    PATH="${PATH%:}"
-  fi
+  old_global="${__MSM_NODE_PATH%%:*}"
+  old_bin="${__MSM_NODE_PATH#*:}"
+  new_global="${frag%%:*}"
+  new_bin="${frag#*:}"
+  rest="$PATH"
+  clean=""
+  have=""
+  while :; do
+    item="${rest%%:*}"
+    if { [ -n "$old_global" ] && [ "$item" = "$old_global" ]; } ||
+       { [ -n "$old_bin" ] && [ "$item" = "$old_bin" ]; } ||
+       { [ -n "$new_global" ] && [ "$item" = "$new_global" ]; } ||
+       { [ -n "$new_bin" ] && [ "$item" = "$new_bin" ]; }; then
+      :
+    else
+      clean="$clean${have:+:}$item"
+      have=1
+    fi
+    case "$rest" in *:*) rest="${rest#*:}" ;; *) break ;; esac
+  done
+  export PATH="$clean"
   if [ -n "$frag" ]; then
-    export PATH="$frag:$PATH"
+    export PATH="$frag${have:+:$clean}"
     export npm_config_prefix="$prefix"
   else
     unset npm_config_prefix
@@ -262,13 +277,21 @@ __msm_node_apply() {
 
 if [ -n "$ZSH_VERSION" ]; then
   autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook chpwd __msm_node_apply
-elif [ -n "$BASH_VERSION" ] && [[ $- == *i* ]]; then
+elif [ -n "$BASH_VERSION" ]; then
+  # Non-interactive AI commands often cd before invoking Node. Refresh at each
+  # tool invocation too, without replacing the user's cd, traps or functions.
+  declare -F node >/dev/null || node() { __msm_node_apply; command node "$@"; }
+  declare -F npm >/dev/null || npm() { __msm_node_apply; command npm "$@"; }
+  declare -F npx >/dev/null || npx() { __msm_node_apply; command npx "$@"; }
+  declare -F corepack >/dev/null || corepack() { __msm_node_apply; command corepack "$@"; }
+  if [[ $- == *i* ]]; then
   __msm_node_prompt() {
     [ "$PWD" = "$__MSM_NODE_PWD" ] && return 0
     __MSM_NODE_PWD="$PWD"
     __msm_node_apply
   }
   case ";$PROMPT_COMMAND;" in *";__msm_node_prompt;"*) ;; *) PROMPT_COMMAND="__msm_node_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;; esac
+  fi
 fi
 __msm_node_apply
 `
@@ -285,16 +308,39 @@ func (m *Manager) nodeBlock() string {
 	return nodeBlockBegin + "\n[ ! -r " + shellQuote(m.nodeInitPath()) + " ] || . " + shellQuote(m.nodeInitPath()) + "\n" + nodeBlockEnd + "\n"
 }
 
-// NodeShellEnabled requires all startup modes, so older rc-only setups offer
+// NodeShellEnabled requires all supported shells and startup modes, so older rc-only setups offer
 // Enable again to upgrade without silently editing more user files.
 func (m *Manager) NodeShellEnabled() bool {
-	paths, e := m.zshStartupFiles()
-	if e != nil {
+	if !m.RuntimeShellEnabled("node") {
 		return false
 	}
-	for _, path := range paths {
-		b, e := os.ReadFile(path)
-		if e != nil || !bytes.Contains(b, []byte(nodeBlockBegin)) || !bytes.Contains(b, []byte(nodeBlockEnd)) {
+	data, err := os.ReadFile(m.nodeInitPath())
+	if err != nil || string(data) != m.nodeInitScript() {
+		return false
+	}
+	if m.hasShell("fish") {
+		data, err = os.ReadFile(filepath.Join(m.nodeHome(), "init.fish"))
+		if err != nil || string(data) != m.nodeFishScript() {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Manager) RuntimeShellEnabled(name string) bool {
+	begin, end := "# BEGIN Service Manager "+name, "# END Service Manager "+name
+	if name == "node" {
+		begin, end = nodeBlockBegin, nodeBlockEnd
+	}
+
+	files, e := m.shellStartupFiles(true)
+	if e != nil || len(files) == 0 {
+		return false
+	}
+	files = append(files, shellStartupFile{path: m.bashEnvPath()})
+	for _, file := range files {
+		b, e := os.ReadFile(file.path)
+		if e != nil || !bytes.Contains(b, []byte(begin)) || !bytes.Contains(b, []byte(end)) {
 			return false
 		}
 	}
@@ -315,7 +361,10 @@ func (m *Manager) WriteNodeShell() error {
 	if e = atomicWrite(m.nodeWrapperPath(), []byte(wrapper), 0700); e != nil {
 		return e
 	}
-	return atomicWrite(m.nodeInitPath(), []byte(m.nodeInitScript()), 0600)
+	if e = atomicWrite(m.nodeInitPath(), []byte(m.nodeInitScript()), 0600); e != nil {
+		return e
+	}
+	return atomicWrite(filepath.Join(m.nodeHome(), "init.fish"), []byte(m.nodeFishScript()), 0600)
 }
 
 // nodeShellConfiguration keeps the observed identity separate from the path
@@ -379,7 +428,7 @@ func (c nodeShellConfiguration) commit(data []byte) error {
 	return atomicWrite(c.target, data, c.mode)
 }
 
-// EnableNodeShell covers interactive, login and non-interactive zsh sessions.
+// EnableNodeShell covers zsh, Bash and fish, including non-interactive sessions.
 func (m *Manager) EnableNodeShell(ctx context.Context) (string, error) {
 	if e := ctx.Err(); e != nil {
 		return "", e
@@ -387,12 +436,12 @@ func (m *Manager) EnableNodeShell(ctx context.Context) (string, error) {
 	if e := m.WriteNodeShell(); e != nil {
 		return "", e
 	}
-	return m.configureZshShell(ctx, nodeBlockBegin, nodeBlockEnd, m.nodeBlock(), true)
+	return m.configureRuntimeShellFiles(ctx, "node", nodeBlockBegin, nodeBlockEnd, true)
 }
 
 // DisableNodeShell removes only this runtime's marked blocks in all modes.
 func (m *Manager) DisableNodeShell(ctx context.Context) (string, error) {
-	return m.configureZshShell(ctx, nodeBlockBegin, nodeBlockEnd, m.nodeBlock(), false)
+	return m.configureRuntimeShellFiles(ctx, "node", nodeBlockBegin, nodeBlockEnd, false)
 }
 
 // NodeIndexAge says how old the cached release list is, zero when there is none.

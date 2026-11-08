@@ -30,25 +30,14 @@ func (m *Manager) SetRuntimeDefault(ctx context.Context, name, id string) error 
 	})
 }
 func (m *Manager) saveRuntimeDefault(s *State, name, id, binary string) (func() error, func(), error) {
-	path := m.runtimeScript(name)
-	old, readErr := os.ReadFile(path)
-	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-		return nil, nil, readErr
-	}
-	script := runtimeInitScript(name, binary)
-	if e := atomicWrite(path, []byte(script), 0600); e != nil {
+	undo, e := m.updateRuntimeScripts(name, []string{runtimeInitScript(name, binary), runtimeFishScript(name, binary)})
+	if e != nil {
 		return nil, nil, e
 	}
 	if s.RuntimeDefaults == nil {
 		s.RuntimeDefaults = map[string]string{}
 	}
 	s.RuntimeDefaults[name] = id
-	undo := func() error {
-		if errors.Is(readErr, os.ErrNotExist) {
-			return os.Remove(path)
-		}
-		return atomicWrite(path, old, 0600)
-	}
 	return undo, nil, nil
 }
 
@@ -79,8 +68,7 @@ func (m *Manager) ConfigureRuntimeShell(ctx context.Context, name string, enable
 	}
 	begin := "# BEGIN Service Manager " + name
 	end := "# END Service Manager " + name
-	block := begin + "\n[ ! -r " + shellLiteral(m.runtimeScript(name)) + " ] || . " + shellLiteral(m.runtimeScript(name)) + "\n" + end + "\n"
-	_, e := m.configureZshShell(ctx, begin, end, block, enable)
+	_, e := m.configureRuntimeShellFiles(ctx, name, begin, end, enable)
 	return e
 }
 
@@ -110,4 +98,57 @@ func runtimePathScript(bin string) string {
 __msm_runtime_path
 unset -f __msm_runtime_path
 `
+}
+
+// Both shell formats track the same default and roll back together on failure.
+// A nil scripts slice removes the default's setup files.
+func (m *Manager) updateRuntimeScripts(name string, scripts []string) (func() error, error) {
+	type snapshot struct {
+		path   string
+		data   []byte
+		exists bool
+	}
+	var snapshots []snapshot
+	for _, suffix := range []string{".sh", ".fish"} {
+		path := strings.TrimSuffix(m.runtimeScript(name), ".sh") + suffix
+		data, err := os.ReadFile(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		snapshots = append(snapshots, snapshot{path, data, err == nil})
+	}
+	written := 0
+	undo := func() error {
+		var result error
+		for i := written - 1; i >= 0; i-- {
+			old := snapshots[i]
+			var err error
+			if old.exists {
+				err = atomicWrite(old.path, old.data, 0600)
+			} else {
+				err = os.Remove(old.path)
+				if errors.Is(err, os.ErrNotExist) {
+					err = nil
+				}
+			}
+			result = errors.Join(result, err)
+		}
+		return result
+	}
+	for i, old := range snapshots {
+		var err error
+		if scripts == nil {
+			err = os.Remove(old.path)
+			if errors.Is(err, os.ErrNotExist) {
+				err = nil
+			}
+		} else {
+			err = atomicWrite(old.path, []byte(scripts[i]), 0600)
+		}
+		if err != nil {
+			return nil, errors.Join(err, undo())
+		}
+		written++
+	}
+	return undo, nil
 }

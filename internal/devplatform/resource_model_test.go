@@ -58,12 +58,12 @@ func TestResourceOnlyCore(t *testing.T) {
 			t.Fatal(got, e)
 		}
 		path := filepath.Join(m.Root, "state.json")
-		old := []byte(`{"schemaVersion":1,"packages":{},"instances":{},"sites":{},"proxyRules":[],"proxyListenerPort":443}`)
+		old := []byte(`{"schemaVersion":1,"packages":{},"projects":{},"instances":{},"sites":{}}`)
 		if e = os.WriteFile(path, old, 0600); e != nil {
 			t.Fatal(e)
 		}
-		if _, e = m.Read(); e == nil {
-			t.Fatal("old schema accepted")
+		if _, e = m.Read(); e == nil || !strings.Contains(e.Error(), "unsupported format 1") || strings.Contains(e.Error(), "projects") {
+			t.Fatal("old schema must report its format, not removed fields", e)
 		}
 		if e = m.ReplaceProxyRules(context.Background(), 0, 443, []ProxyRule{}); e == nil {
 			t.Fatal("old state overwritten")
@@ -71,6 +71,13 @@ func TestResourceOnlyCore(t *testing.T) {
 		after, e := os.ReadFile(path)
 		if e != nil || !bytes.Equal(after, old) {
 			t.Fatal("old state bytes changed", e)
+		}
+		unknown := []byte(`{"schemaVersion":2,"packages":{},"instances":{},"proxyRules":[],"proxyListenerPort":443,"unexpected":true}`)
+		if e = os.WriteFile(path, unknown, 0600); e != nil {
+			t.Fatal(e)
+		}
+		if _, e = m.Read(); e == nil || !strings.Contains(e.Error(), "unknown field") {
+			t.Fatal("current schema must still reject unknown fields", e)
 		}
 		for _, raw := range [][]byte{[]byte(`{"schemaVersion":2,"packages":{},"instances":{},"proxyListenerPort":443}`), []byte(`{"schemaVersion":2,"packages":{},"instances":{},"proxyRules":[],"proxyListenerPort":0}`)} {
 			if e = os.WriteFile(path, raw, 0600); e != nil {

@@ -29,6 +29,13 @@ func (m *Manager) packageDir(p Package) string {
 		}
 		return filepath.Join(cellar, filepath.Base(p.Formula), p.Version)
 	}
+	if p.Name == "java" {
+		folder := p.JavaFolder
+		if folder == "" {
+			folder = javaFolderBase(p)
+		}
+		return filepath.Join(m.javaDirectory(), folder)
+	}
 	return filepath.Join(m.Root, "packages", p.ID())
 }
 
@@ -47,7 +54,7 @@ func (m *Manager) Binary(s *State, id, name string) (string, error) {
 	if p.Name == "php" || p.Name == "php-fpm" {
 		return "", errors.New("PHP is not managed by this app")
 	}
-	if p.Formula != "" || p.Name == "postgresql" {
+	if p.Formula != "" || p.Name == "postgresql" || p.Name == "java" {
 		if e := p.Validate(); e != nil {
 			return "", e
 		}
@@ -56,6 +63,9 @@ func (m *Manager) Binary(s *State, id, name string) (string, error) {
 		if e := m.checkHomebrewReceipt(p); e != nil {
 			return "", e
 		}
+	}
+	if e := m.checkJavaOwnership(p); e != nil {
+		return "", e
 	}
 	rel, ok := p.Binaries[name]
 	if !ok {
@@ -101,7 +111,11 @@ func (m *Manager) stagePackage(ctx context.Context, p Package) (*stagedPackage, 
 		}
 	}
 	m.emit("Downloading " + p.ID())
-	cache := filepath.Join(m.Root, "downloads", p.SHA256)
+	cache := filepath.Join(m.downloadDirectory(), p.SHA256)
+	// Caches can be removed while the app is running.
+	if e := os.MkdirAll(filepath.Dir(cache), 0700); e != nil {
+		return nil, e
+	}
 	if !hasDigestContext(ctx, cache, p.SHA256) {
 		last := time.Time{}
 		if e := downloadProgress(ctx, p.URL, cache, p.SHA256, func(done, total int64) {
@@ -118,7 +132,16 @@ func (m *Manager) stagePackage(ctx context.Context, p Package) (*stagedPackage, 
 			return nil, e
 		}
 	}
-	tmp, e := os.MkdirTemp(filepath.Join(m.Root, "packages"), ".install-")
+	// Stage beside the destination so publication and repair remain atomic,
+	// including when the application data lives on another volume.
+	parent := filepath.Dir(m.packageDir(p))
+	if e := os.MkdirAll(parent, 0700); e != nil {
+		return nil, e
+	}
+	if info, e := os.Lstat(parent); e != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("package parent must be a plain directory")
+	}
+	tmp, e := os.MkdirTemp(parent, ".install-")
 	if e != nil {
 		return nil, e
 	}
@@ -134,6 +157,23 @@ func (m *Manager) stagePackage(ctx context.Context, p Package) (*stagedPackage, 
 	}
 	if e = ctx.Err(); e != nil {
 		return nil, e
+	}
+	if p.Name == "java" {
+		if p.Binaries["java"] == "Contents/Home/bin/java" {
+			if e = validateJavaBundle(tmp); e != nil {
+				return nil, e
+			}
+		} else if p.Binaries["java"] == "bin/java" {
+			b, err := readJavaMetadata(filepath.Join(tmp, "release"))
+			if err != nil || javaReleaseValues(b)["JAVA_VERSION"] == "" {
+				return nil, errors.New("JDK archive must contain valid release metadata")
+			}
+		} else {
+			return nil, errors.New("unsupported Java archive layout")
+		}
+		if e = atomicWrite(filepath.Join(tmp, javaOwnerFile), []byte(m.javaOwner(p)), 0600); e != nil {
+			return nil, e
+		}
 	}
 	for _, rel := range p.Binaries {
 		path := filepath.Join(tmp, rel)
@@ -240,6 +280,13 @@ func (m *Manager) install(ctx context.Context, p Package) error {
 	if e = m.requirePackageIdle(ctx, &state, p); e != nil {
 		return e
 	}
+	if p.Name == "java" {
+		p.JavaFolder, e = m.nextJavaFolder(p)
+		if e != nil {
+			return e
+		}
+		m.emit("Installing Java into " + m.packageDir(p))
+	}
 	return m.preparePackageForPublication(ctx, p, false)
 
 }
@@ -298,6 +345,14 @@ func (m *Manager) Uninstall(ctx context.Context, id string) error {
 			}
 		}
 		if p.Formula == "" {
+			if p.Name == "java" {
+				if e := p.Validate(); e != nil {
+					return e
+				}
+			}
+			if e := m.checkJavaOwnership(p); e != nil {
+				return e
+			}
 			if e := os.RemoveAll(m.packageDir(p)); e != nil {
 				return e
 			}
@@ -310,7 +365,7 @@ func (m *Manager) Uninstall(ctx context.Context, id string) error {
 				return e
 			}
 		}
-		if s.RuntimeDefaults[p.Name] == id {
+		if s.RuntimeDefaults[p.Name] == id || p.Name == "java" && s.RuntimeDefaults["java"] == javaInstallationID(m.packageDir(p)) {
 			delete(s.RuntimeDefaults, p.Name)
 			if err := os.Remove(m.runtimeScript(p.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err

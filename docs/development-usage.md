@@ -4,7 +4,7 @@ Open the app and choose Software, Databases, or HTTPS. Application servers run i
 
 ## Software and Node.js
 
-Install a checked version of Node.js, MySQL, PostgreSQL, Redis, or MongoDB. Review the source, checksum, architecture, license, and destination before installation. PostgreSQL uses Homebrew core; removing its App registration leaves the shared Homebrew keg alone. In Node.js, select a default installed version, then click Enable in terminal if you want new zsh terminals to use it. A directory's `.node-version`, `.nvmrc`, or `package.json` `engines.node` can select another installed version without registering the folder. Copy executable path is available for a verified binary. Disabling the terminal integration removes the App's own zsh block.
+Install a checked version of Node.js, MySQL, PostgreSQL, Redis, or MongoDB. Review the source, checksum, architecture, license, and destination before installation. PostgreSQL uses Homebrew core; removing its App registration leaves the shared Homebrew keg alone. In Node.js, select a default installed version, then click Enable in terminal if you want new zsh terminals and non-interactive commands (`zsh -c` and `zsh -lc`) to use it. A directory's `.node-version`, `.nvmrc`, or `package.json` `engines.node` can select another installed version without registering the folder. Copy executable path is available for a verified binary. Disabling the terminal integration removes the App's own blocks in `.zshenv`, `.zprofile`, and `.zshrc`.
 
 ## Databases
 

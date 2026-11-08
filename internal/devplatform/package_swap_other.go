@@ -7,3 +7,7 @@ import "errors"
 func exchangePackageDirectories(string, string) error {
 	return errors.New("atomic package repair requires macOS")
 }
+
+func publishNewPackageDirectory(string, string) error {
+	return errors.New("exclusive package publication requires macOS")
+}

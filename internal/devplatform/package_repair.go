@@ -221,6 +221,11 @@ func (m *Manager) publishPackage(ctx context.Context, s *State, p Package, stage
 	if exists && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {
 		return undo, nil, errors.New("installation path is not a plain directory; reveal it for inspection before repair")
 	}
+	if exists {
+		if e := m.checkJavaOwnership(p); e != nil {
+			return undo, nil, e
+		}
+	}
 	if exists && !repair {
 		var prior Package
 		b, e := os.ReadFile(filepath.Join(dest, ".package.json"))
@@ -243,7 +248,7 @@ func (m *Manager) publishPackage(ctx context.Context, s *State, p Package, stage
 		err = exchangePackageDirectories(stage.Dir, dest)
 		swapped = err == nil
 	} else {
-		err = os.Rename(stage.Dir, dest)
+		err = publishNewPackageDirectory(stage.Dir, dest)
 		renamed = err == nil
 	}
 	if err != nil {

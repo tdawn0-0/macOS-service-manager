@@ -25,21 +25,34 @@ const Schema = 2
 var nameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$`)
 
 type Package struct {
-	Formula  string            `json:"formula,omitempty"` // Homebrew canonical full name; empty for app archives
-	Name     string            `json:"name"`
-	Version  string            `json:"version"`
-	Arch     string            `json:"arch"`
-	URL      string            `json:"url"`
-	SHA256   string            `json:"sha256"`
-	Format   string            `json:"format"` // tar.gz, zip, or homebrew
-	Strip    int               `json:"strip,omitempty"`
-	Binaries map[string]string `json:"binaries"`
-	License  string            `json:"license"`
-	MinMacOS string            `json:"minMacOS,omitempty"`
+	JavaInstallName string            `json:"javaInstallName,omitempty"`
+	JavaProduct     string            `json:"javaProduct,omitempty"`
+	JavaFolder      string            `json:"javaFolder,omitempty"` // Actual user-level installation folder; Java only.
+	Formula         string            `json:"formula,omitempty"`    // Homebrew canonical full name; empty for app archives
+	Name            string            `json:"name"`
+	Version         string            `json:"version"`
+	Arch            string            `json:"arch"`
+	URL             string            `json:"url"`
+	SHA256          string            `json:"sha256"`
+	Format          string            `json:"format"` // tar.gz, zip, or homebrew
+	Strip           int               `json:"strip,omitempty"`
+	Binaries        map[string]string `json:"binaries"`
+	License         string            `json:"license"`
+	MinMacOS        string            `json:"minMacOS,omitempty"`
 }
 
 func (p Package) ID() string { return p.Name + "@" + p.Version + "-" + p.Arch }
 func (p Package) Validate() error {
+	if p.JavaInstallName != "" && (p.Name != "java" || !javaInstallNameRE.MatchString(p.JavaInstallName)) {
+		return errors.New("invalid Java catalog installation name")
+	}
+	if p.JavaFolder != "" {
+		base := javaFolderBase(p)
+		suffix := strings.TrimPrefix(p.JavaFolder, base+"-")
+		if p.Name != "java" || filepath.Base(p.JavaFolder) != p.JavaFolder || (p.JavaFolder != base && (suffix == p.JavaFolder || !javaFolderSuffix.MatchString(suffix))) {
+			return errors.New("invalid Java installation folder")
+		}
+	}
 	if p.Arch != "arm64" && p.Arch != "universal" {
 		return errors.New("managed software requires Apple Silicon (arm64); Intel packages are not supported")
 	}
@@ -135,7 +148,7 @@ func DefaultRoot() string {
 		return p
 	}
 	h, _ := os.UserHomeDir()
-	return filepath.Join(h, "Library", "Application Support", "ServiceManager", "Development")
+	return defaultStorageRoot(h)
 }
 func New(root string) *Manager {
 	return &Manager{Context: context.Background(), Root: root, Run: runCommand, Event: func(string) {}}
@@ -149,12 +162,12 @@ func (m *Manager) init() error {
 	if !filepath.IsAbs(m.Root) {
 		return errors.New("storage root must be absolute")
 	}
-	for _, d := range []string{"", "packages", "downloads", "instances", "jobs", "logs", "proxy", "backups", "integrity", "package-locks"} {
+	for _, d := range []string{"", "packages", "instances", "jobs", "logs", "proxy", "backups", "integrity", "package-locks"} {
 		if e := os.MkdirAll(filepath.Join(m.Root, d), 0700); e != nil {
 			return e
 		}
 	}
-	return nil
+	return os.MkdirAll(m.downloadDirectory(), 0700)
 }
 
 // withState serializes complete mutations across GUI and CLI processes.
@@ -233,6 +246,17 @@ func (m *Manager) Read() (State, error) {
 	if e != nil {
 		return s, e
 	}
+	// Check the format before strict field decoding. Removed fields in an old
+	// document must not look like current features or corrupt current settings.
+	var header struct {
+		SchemaVersion int `json:"schemaVersion"`
+	}
+	if e = json.Unmarshal(b, &header); e != nil {
+		return s, fmt.Errorf("read state: %w", e)
+	}
+	if header.SchemaVersion != Schema {
+		return s, fmt.Errorf("saved settings use unsupported format %d (expected %d); existing files were left unchanged", header.SchemaVersion, Schema)
+	}
 	var decoded State
 	reader := json.NewDecoder(bytes.NewReader(b))
 	reader.DisallowUnknownFields()
@@ -242,9 +266,6 @@ func (m *Manager) Read() (State, error) {
 	var trailing any
 	if e = reader.Decode(&trailing); e != io.EOF {
 		return s, errors.New("read state: trailing data")
-	}
-	if decoded.SchemaVersion != Schema {
-		return s, fmt.Errorf("unsupported state schema %d", decoded.SchemaVersion)
 	}
 	if decoded.Packages == nil || decoded.Instances == nil || decoded.ProxyRules == nil || decoded.ProxyListenerPort < 1 || decoded.ProxyListenerPort > 65535 {
 		return s, errors.New("incomplete state")

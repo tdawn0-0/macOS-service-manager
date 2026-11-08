@@ -245,7 +245,6 @@ __msm_node_apply() {
   frag="${out%%$'\n'*}"
   prefix=""
   case "$out" in *$'\n'*) prefix="${out#*$'\n'}" ;; esac
-  [ "$frag" = "$__MSM_NODE_PATH" ] && return 0
   if [ -n "$__MSM_NODE_PATH" ]; then
     PATH=":$PATH:"
     PATH="${PATH//:$__MSM_NODE_PATH:/:}"
@@ -258,12 +257,12 @@ __msm_node_apply() {
   else
     unset npm_config_prefix
   fi
-  __MSM_NODE_PATH="$frag"
+  export __MSM_NODE_PATH="$frag"
 }
 
 if [ -n "$ZSH_VERSION" ]; then
   autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook chpwd __msm_node_apply
-elif [ -n "$BASH_VERSION" ]; then
+elif [ -n "$BASH_VERSION" ] && [[ $- == *i* ]]; then
   __msm_node_prompt() {
     [ "$PWD" = "$__MSM_NODE_PWD" ] && return 0
     __MSM_NODE_PWD="$PWD"
@@ -282,26 +281,24 @@ func (m *Manager) home() (string, error) {
 	return os.UserHomeDir()
 }
 
-func (m *Manager) zshrc() (string, error) {
-	h, e := m.home()
-	if e != nil {
-		return "", e
-	}
-	return filepath.Join(h, ".zshrc"), nil
-}
-
 func (m *Manager) nodeBlock() string {
-	return nodeBlockBegin + "\n[ -r " + shellQuote(m.nodeInitPath()) + " ] && . " + shellQuote(m.nodeInitPath()) + "\n" + nodeBlockEnd + "\n"
+	return nodeBlockBegin + "\n[ ! -r " + shellQuote(m.nodeInitPath()) + " ] || . " + shellQuote(m.nodeInitPath()) + "\n" + nodeBlockEnd + "\n"
 }
 
-// NodeShellEnabled reports whether ~/.zshrc sources the setup.
+// NodeShellEnabled requires all startup modes, so older rc-only setups offer
+// Enable again to upgrade without silently editing more user files.
 func (m *Manager) NodeShellEnabled() bool {
-	rc, e := m.zshrc()
+	paths, e := m.zshStartupFiles()
 	if e != nil {
 		return false
 	}
-	b, e := os.ReadFile(rc)
-	return e == nil && bytes.Contains(b, []byte(nodeBlockBegin))
+	for _, path := range paths {
+		b, e := os.ReadFile(path)
+		if e != nil || !bytes.Contains(b, []byte(nodeBlockBegin)) || !bytes.Contains(b, []byte(nodeBlockEnd)) {
+			return false
+		}
+	}
+	return true
 }
 
 // WriteNodeShell writes the command wrapper and the setup script, without
@@ -382,68 +379,20 @@ func (c nodeShellConfiguration) commit(data []byte) error {
 	return atomicWrite(c.target, data, c.mode)
 }
 
-// EnableNodeShell adds one marked block to ~/.zshrc. Running it again changes
-// nothing.
+// EnableNodeShell covers interactive, login and non-interactive zsh sessions.
 func (m *Manager) EnableNodeShell(ctx context.Context) (string, error) {
 	if e := ctx.Err(); e != nil {
 		return "", e
 	}
-	rc, e := m.zshrc()
-	if e != nil {
+	if e := m.WriteNodeShell(); e != nil {
 		return "", e
 	}
-	if e = m.WriteNodeShell(); e != nil {
-		return rc, e
-	}
-	config, e := readNodeShellConfiguration(rc)
-	if e != nil {
-		return rc, e
-	}
-	b := bytes.Clone(config.data)
-	if bytes.Contains(b, []byte(nodeBlockBegin)) {
-		return rc, nil
-	}
-	if len(b) > 0 && !bytes.HasSuffix(b, []byte("\n")) {
-		b = append(b, '\n')
-	}
-	if len(b) > 0 {
-		b = append(b, '\n')
-	}
-	b = append(b, m.nodeBlock()...)
-	return rc, config.commit(b)
+	return m.configureZshShell(ctx, nodeBlockBegin, nodeBlockEnd, m.nodeBlock(), true)
 }
 
-// DisableNodeShell removes the block it added, and nothing else.
+// DisableNodeShell removes only this runtime's marked blocks in all modes.
 func (m *Manager) DisableNodeShell(ctx context.Context) (string, error) {
-	if e := ctx.Err(); e != nil {
-		return "", e
-	}
-	rc, e := m.zshrc()
-	if e != nil {
-		return "", e
-	}
-	config, e := readNodeShellConfiguration(rc)
-	if e != nil {
-		return rc, e
-	}
-	b := bytes.Clone(config.data)
-	begin := bytes.Index(b, []byte(nodeBlockBegin))
-	if begin < 0 {
-		return rc, nil
-	}
-	end := bytes.Index(b[begin:], []byte(nodeBlockEnd))
-	if end < 0 {
-		return rc, errors.New("the Service Manager block in .zshrc has no end line; remove it by hand")
-	}
-	end += begin + len(nodeBlockEnd)
-	if end < len(b) && b[end] == '\n' {
-		end++
-	}
-	// The blank line that separated the block from what came before goes too.
-	if begin > 0 && b[begin-1] == '\n' && (begin == 1 || b[begin-2] == '\n') {
-		begin--
-	}
-	return rc, config.commit(append(b[:begin:begin], b[end:]...))
+	return m.configureZshShell(ctx, nodeBlockBegin, nodeBlockEnd, m.nodeBlock(), false)
 }
 
 // NodeIndexAge says how old the cached release list is, zero when there is none.

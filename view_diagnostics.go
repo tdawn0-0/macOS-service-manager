@@ -6,13 +6,6 @@ import (
 	"macos-service-manager/internal/devplatform"
 )
 
-func devProjectStarted(status string) bool {
-	switch status {
-	case "Running", "Healthy", "Not ready", "Partly running", "Starting", "Restarting", "Stopping", "Failed":
-		return true
-	}
-	return false
-}
 func devStatusColor(c *ui.Context, status string) ui.Color {
 	switch status {
 	case "Healthy":

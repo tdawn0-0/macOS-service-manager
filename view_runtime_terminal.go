@@ -18,24 +18,24 @@ func (a *app) devNodeTerminal(c *ui.Context) {
 		}
 	}
 	devDivider(c, "Terminal")
-	ui.Text(c, "Enable or disable in a new terminal. Running Node.js processes keep their version.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
+	ui.Text(c, "Applies to new zsh terminals and non-interactive commands, including AI tasks.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 	ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
 		if d.nodeShell == 1 {
-			ui.Text(c, "Enabled in ~/.zshrc").FontSize(textSmall).TextColor(c.Theme().Success).Grow(1).MinWidth(0)
+			ui.Text(c, "Enabled for all zsh session modes").FontSize(textSmall).TextColor(c.Theme().Success).Grow(1).MinWidth(0)
 			if ui.Button(c, "Disable in terminal").Disabled(d.busy).Clicked() {
 				a.devTask(func(m *devplatform.Manager) (string, error) {
 					_, e := m.DisableNodeShell(m.Context)
 					a.post(func() { a.dev.nodeShell = 0 })
-					return "Removed the Service Manager block from ~/.zshrc", e
+					return "Removed the Service Manager blocks from zsh startup files", e
 				})
 			}
 			return
 		}
-		if ui.PrimaryButton(c, "Enable in terminal").Tooltip("Adds one block to ~/.zshrc. Each folder then runs the Node.js its .node-version, .nvmrc or package.json engines name, else the default.").Disabled(d.busy).Clicked() {
+		if ui.PrimaryButton(c, "Enable in terminal").Tooltip("Configures .zshenv, .zprofile and .zshrc, including zsh -c and zsh -lc. Each folder then runs the Node.js its .node-version, .nvmrc or package.json engines name, else the default.").Disabled(d.busy).Clicked() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				rc, e := m.EnableNodeShell(m.Context)
 				a.post(func() { a.dev.nodeShell = 0 })
-				return "Added the Service Manager block to " + rc + ". Open a new terminal.", e
+				return "Added the Service Manager blocks to " + rc + ". Open a new terminal.", e
 			})
 		}
 	})

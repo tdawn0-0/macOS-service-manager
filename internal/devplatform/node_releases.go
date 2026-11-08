@@ -52,7 +52,7 @@ type nodeIndexCache struct {
 	Releases  []NodeRelease `json:"releases"`
 }
 
-func (m *Manager) nodeIndexPath() string { return filepath.Join(m.Root, "cache", "node-index.json") }
+func (m *Manager) nodeIndexPath() string { return filepath.Join(m.cacheDirectory(), "node-index.json") }
 
 // fetchNodeReleases reads nodejs.org's index and keeps what runs on Apple
 // Silicon, newest first.

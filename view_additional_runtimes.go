@@ -8,6 +8,9 @@ import (
 func (a *app) devRuntimeCatalog(c *ui.Context) {
 	d := &a.dev
 	name := d.software
+	if name == "java" {
+		ui.Text(c, "JDK downloads from the JetBrains catalog used by IDEA. Choose a distribution and version; review its source and license before installing.").FontSize(textSmall)
+	}
 	if ui.Button(c, "Refresh available versions").Disabled(d.busy).Clicked() {
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			rows, e := m.RuntimeVersions(m.Context, name)
@@ -17,6 +20,17 @@ func (a *app) devRuntimeCatalog(c *ui.Context) {
 						a.dev.runtimeVersions = map[string][]string{}
 					}
 					a.dev.runtimeVersions[name] = rows
+					if name == "java" && a.dev.software == name && len(rows) > 0 {
+						found := false
+						for _, v := range rows {
+							if v == a.dev.version {
+								found = true
+							}
+						}
+						if !found {
+							a.dev.version = rows[0]
+						}
+					}
 				})
 			}
 			return "Version list refreshed", e
@@ -142,7 +156,7 @@ func (a *app) devAdditionalRuntimeInstalled(c *ui.Context, id string, p devplatf
 }
 func (a *app) devAdditionalRuntimeShell(c *ui.Context) {
 	name := a.dev.software
-	ui.Text(c, "Terminal changes apply in a new zsh session. Running processes keep their version.").FontSize(textSmall)
+	ui.Text(c, "Applies to new zsh terminals and non-interactive commands, including AI tasks.").FontSize(textSmall)
 	for _, enable := range []bool{true, false} {
 		label := "Disable in terminal"
 		if enable {

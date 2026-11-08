@@ -87,7 +87,7 @@ func (a *app) devDatabasePort(c *ui.Context, instance devplatform.Instance) {
 	devField(c, "Database port", &d.dbPort, strconv.Itoa(instance.Port))
 	a.devPortControls(c, &d.dbPort, "database")
 	port, err := strconv.Atoi(d.dbPort)
-	if ui.Button(c, "Save database port").AlignSelf(ui.Start).Tooltip("Stop this instance and its linked projects first. Data, users and password are kept; update project connection settings afterwards.").Disabled(d.busy || err != nil || port < 1024 || port > 65535 || port == instance.Port).Clicked() {
+	if ui.Button(c, "Save database port").AlignSelf(ui.Start).Tooltip("Stop this instance and disconnect its clients first. Data, users and password are kept; update client connection settings afterwards.").Disabled(d.busy || err != nil || port < 1024 || port > 65535 || port == instance.Port).Clicked() {
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			return "Database port update. Review connection details before restarting.", m.ChangeInstancePort(m.Context, instance, port)
 		})

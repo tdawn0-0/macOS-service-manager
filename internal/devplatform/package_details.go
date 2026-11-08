@@ -82,6 +82,9 @@ func (m *Manager) PackageDetails(ctx context.Context, p Package) (PackageDetails
 		if installed.SHA256 != p.SHA256 {
 			return info, errors.New("installed package has a different checksum")
 		}
+		p = installed
+		info.Package = installed
+		info.Location = m.packageDir(installed)
 		info.Installed = true
 		info.Integrity = "Not checked"
 		info.IntegrityNote = "Run Check files to compare the installed tree with its recorded index."
@@ -95,6 +98,15 @@ func (m *Manager) PackageDetails(ctx context.Context, p Package) (PackageDetails
 				info.IntegrityNote = "A required executable is missing or invalid: " + name
 			}
 		}
+	}
+	if !info.Installed && p.Name == "java" {
+		folder, err := m.nextJavaFolder(p)
+		if err != nil {
+			return info, err
+		}
+		preview := p
+		preview.JavaFolder = folder
+		info.Location = m.packageDir(preview)
 	}
 	for _, instance := range state.Instances {
 		if instance.Package == p.ID() {
@@ -117,7 +129,7 @@ func (m *Manager) PackageDetails(ctx context.Context, p Package) (PackageDetails
 		}
 		return info, ctx.Err()
 	}
-	cache := filepath.Join(m.Root, "downloads", p.SHA256)
+	cache := filepath.Join(m.downloadDirectory(), p.SHA256)
 	if hasDigestContext(ctx, cache, p.SHA256) {
 		if stat, e := os.Stat(cache); e == nil {
 			info.ArchiveBytes = stat.Size()

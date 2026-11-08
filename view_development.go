@@ -25,6 +25,10 @@ type proxyRuleDraft struct {
 }
 
 type developmentState struct {
+	javaInstallations                                                                                   []devplatform.JavaInstallation
+	javaLoaded                                                                                          bool
+	javaError                                                                                           string
+	javaRemove                                                                                          *devplatform.JavaInstallation
 	runtimeVersions                                                                                     map[string][]string
 	uvPath, uvDescription, uvPin, uvVersion                                                             string
 	uvInstalled, uvAvailable                                                                            []devplatform.UVPython
@@ -105,6 +109,7 @@ func (a *app) devTaskKeepingDraft(fn func(*devplatform.Manager) (string, error),
 	initialize := !a.dev.loaded && a.dev.managerFactory == nil
 	ctx, cancel := context.WithCancel(context.Background())
 	previousState := a.dev.state
+	refreshJava := a.dev.javaLoaded || a.dev.software == "java"
 	a.dev.cancel = cancel
 	a.spawn(func() {
 		defer cancel()
@@ -137,6 +142,11 @@ func (a *app) devTaskKeepingDraft(fn func(*devplatform.Manager) (string, error),
 		if se != nil {
 			s = previousState
 		}
+		var javaRows []devplatform.JavaInstallation
+		var javaErr error
+		if refreshJava && se == nil {
+			javaRows, javaErr = m.JavaInstallations(ctx)
+		}
 		snapshot := m.Snapshot(context.Background(), s)
 		operations, oe := m.Operations(context.Background())
 		a.post(func() {
@@ -150,6 +160,15 @@ func (a *app) devTaskKeepingDraft(fn func(*devplatform.Manager) (string, error),
 			a.dev.cancel = nil
 			a.dev.loaded = true
 			a.dev.state = s
+			if refreshJava {
+				a.dev.javaLoaded = true
+				a.dev.javaError = ""
+				if javaErr != nil {
+					a.dev.javaError = javaErr.Error()
+				} else if se == nil {
+					a.dev.javaInstallations = javaRows
+				}
+			}
 			if !a.dev.proxyDraftLoaded || a.dev.proxyDraftRevision != s.ProxyRulesRevision && !a.dev.proxyDraftDirty() {
 				a.dev.loadProxyDraft(s)
 			}
@@ -409,6 +428,9 @@ func (a *app) devMaster(c *ui.Context) {
 			if name == "python" {
 				n = len(d.uvInstalled)
 			}
+			if name == "java" && d.javaLoaded {
+				n = len(d.javaInstallations)
+			}
 			if n > 0 {
 				count = strconv.Itoa(n)
 			}
@@ -505,6 +527,14 @@ func (a *app) devSoftware(c *ui.Context) {
 		return
 	}
 	a.devPackageTasks(c)
+	if d.software == "java" {
+		a.devJavaInstallations(c)
+		devDivider(c, "Install a JDK")
+		a.devRuntimeCatalog(c)
+		a.devPackageReview(c)
+		a.devAdditionalRuntimeShell(c)
+		return
+	}
 	if d.software == "node" {
 		a.loadNodeReleases()
 		devNodeChoice(c, &d.version, d.nodeReleases)
@@ -863,7 +893,11 @@ func packageDetailsText(info devplatform.PackageDetails) string {
 	if info.Package.MinMacOS != "" {
 		minimum = "macOS " + info.Package.MinMacOS + " or newer"
 	}
-	return fmt.Sprintf("Source: %s\nSHA-256: %s\nArchitecture: %s\nSystem: %s\nLicense: %s\nInstallation folder: %s", info.Package.URL, info.Package.SHA256, info.Package.Arch, minimum, info.Package.License, info.Location)
+	text := fmt.Sprintf("Source: %s\nSHA-256: %s\nArchitecture: %s\nSystem: %s\nLicense: %s\nInstallation folder: %s", info.Package.URL, info.Package.SHA256, info.Package.Arch, minimum, info.Package.License, info.Location)
+	if info.Package.JavaProduct != "" {
+		text = "Distribution: " + info.Package.JavaProduct + "\n" + text
+	}
+	return text
 }
 func (a *app) devPackageReview(c *ui.Context) {
 	d := &a.dev

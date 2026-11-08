@@ -28,7 +28,7 @@ func TestRuntimeCatalogs(t *testing.T) {
 		if e := r.Context().Err(); e != nil {
 			return nil, e
 		}
-		body := `[{"version_data":{"semver":"21.0.13+9"},"binaries":[{"architecture":"aarch64","os":"mac","image_type":"jdk","package":{"link":"https://example.test/jdk.tar.gz","checksum":"` + checksum + `"}}]}]`
+		body := `{"jdks":[{"vendor":"Eclipse","product":"Temurin","jdk_version":"21.0.13","packages":[{"os":"macOS","arch":"aarch64","url":"https://example.test/jdk.tar.gz","sha256":"` + checksum + `","package_type":"targz","package_root_prefix":"jdk-21.0.13+9","package_to_java_home_prefix":"Contents/Home","install_folder_name":"temurin-21.0.13"}]}]}`
 		if r.URL.Host == "go.dev" {
 			body = `[{"version":"go1.27.3","stable":true,"files":[{"os":"darwin","arch":"arm64","kind":"archive"}]}]`
 		}
@@ -36,19 +36,19 @@ func TestRuntimeCatalogs(t *testing.T) {
 	})}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, e := resolveJava(ctx, "21.0.13_9"); e == nil {
+	if _, e := resolveJava(ctx, "temurin-21.0.13"); e == nil {
 		t.Fatal("ignored cancellation")
 	}
 	m := testManager(t)
-	p, e := resolveJava(context.Background(), "21.0.13_9")
+	p, e := resolveJava(context.Background(), "temurin-21.0.13")
 	if e != nil || p.Binaries["java"] != "Contents/Home/bin/java" || len(p.SHA256) != 64 {
 		t.Fatal(p, e)
 	}
-	if _, e = resolveJava(context.Background(), "21.0.12_7"); e == nil {
+	if _, e = resolveJava(context.Background(), "temurin-21.0.12"); e == nil {
 		t.Fatal("accepted unavailable JDK")
 	}
 	checksum = "invalid"
-	if _, e := resolveJava(context.Background(), "21.0.13_9"); e == nil {
+	if _, e := resolveJava(context.Background(), "temurin-21.0.13"); e == nil {
 		t.Fatal("accepted invalid upstream checksum")
 	}
 	rows, e := m.RuntimeVersions(context.Background(), "go")
@@ -152,37 +152,11 @@ func additionalRuntimeInstalledVersions(t *testing.T) {
 			p.Binaries["java"] = "Contents/Home/bin/java"
 			javaIDs = append(javaIDs, p.ID())
 		}
-		p.URL = "https://example.invalid/runtime.tar.gz"
-		p.Format = "tar.gz"
-		p.Strip = 1
-		binary, e := os.ReadFile("/bin/echo")
-		if e != nil {
+		p = cacheRuntimeArchive(t, m, p)
+		if e := m.Install(ctx, p); e != nil {
 			t.Fatal(e)
 		}
-		var archive bytes.Buffer
-		gz := gzip.NewWriter(&archive)
-		tw := tar.NewWriter(gz)
-		if e = tw.WriteHeader(&tar.Header{Name: "runtime/" + p.Binaries[p.Name], Mode: 0755, Size: int64(len(binary))}); e != nil {
-			t.Fatal(e)
-		}
-		if _, e = tw.Write(binary); e != nil {
-			t.Fatal(e)
-		}
-		if e = tw.Close(); e != nil {
-			t.Fatal(e)
-		}
-		if e = gz.Close(); e != nil {
-			t.Fatal(e)
-		}
-		sum := sha256.Sum256(archive.Bytes())
-		p.SHA256 = hex.EncodeToString(sum[:])
-		if e = os.WriteFile(filepath.Join(m.Root, "downloads", p.SHA256), archive.Bytes(), 0600); e != nil {
-			t.Fatal(e)
-		}
-		if e = m.Install(ctx, p); e != nil {
-			t.Fatal(e)
-		}
-		if e = m.SetRuntimeDefault(ctx, p.Name, p.ID()); e != nil {
+		if e := m.SetRuntimeDefault(ctx, p.Name, p.ID()); e != nil {
 			t.Fatal(e)
 		}
 	}
@@ -214,7 +188,7 @@ func additionalRuntimeInstalledVersions(t *testing.T) {
 		t.Fatal(s.RuntimeDefaults)
 	}
 	b, _ = os.ReadFile(m.runtimeScript("java"))
-	if !strings.Contains(string(b), "JAVA_HOME=") || !strings.Contains(string(b), javaIDs[0]+"/Contents/Home") {
+	if !strings.Contains(string(b), "JAVA_HOME=") || !strings.Contains(string(b), filepath.Join(m.packageDir(s.Packages[javaIDs[0]]), "Contents/Home")) {
 		t.Fatal(string(b))
 	}
 	b, _ = os.ReadFile(m.runtimeScript("go"))
@@ -238,4 +212,54 @@ func additionalRuntimeInstalledVersions(t *testing.T) {
 	if _, e := os.Stat(m.runtimeScript("java")); !os.IsNotExist(e) {
 		t.Fatal(e)
 	}
+}
+
+// Uses a native echo binary to test the installer without downloading or running a JDK.
+func cacheRuntimeArchive(t *testing.T, m *Manager, p Package) Package {
+	t.Helper()
+	p.URL = "https://example.invalid/runtime.tar.gz"
+	p.Format = "tar.gz"
+	p.Strip = 1
+	binary, e := os.ReadFile("/bin/echo")
+	if e != nil {
+		t.Fatal(e)
+	}
+	var archive bytes.Buffer
+	gz := gzip.NewWriter(&archive)
+	tw := tar.NewWriter(gz)
+	if e = tw.WriteHeader(&tar.Header{Name: "runtime/" + p.Binaries[p.Name], Mode: 0755, Size: int64(len(binary))}); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = tw.Write(binary); e != nil {
+		t.Fatal(e)
+	}
+	if p.Name == "java" {
+		info := []byte(`<?xml version="1.0"?><plist version="1.0"><dict><key>JavaVM</key><dict><key>JVMVersion</key><string>21.0.13</string></dict></dict></plist>`)
+		if e = tw.WriteHeader(&tar.Header{Name: "runtime/Contents/Info.plist", Mode: 0644, Size: int64(len(info))}); e != nil {
+			t.Fatal(e)
+		}
+		if _, e = tw.Write(info); e != nil {
+			t.Fatal(e)
+		}
+		release := []byte("JAVA_VERSION=\"21.0.13\"\nIMPLEMENTOR=\"Fixture Vendor\"\nOS_ARCH=\"aarch64\"\n")
+		releasePath := filepath.Join("runtime", filepath.Dir(filepath.Dir(p.Binaries["java"])), "release")
+		if e = tw.WriteHeader(&tar.Header{Name: releasePath, Mode: 0644, Size: int64(len(release))}); e != nil {
+			t.Fatal(e)
+		}
+		if _, e = tw.Write(release); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if e = tw.Close(); e != nil {
+		t.Fatal(e)
+	}
+	if e = gz.Close(); e != nil {
+		t.Fatal(e)
+	}
+	sum := sha256.Sum256(archive.Bytes())
+	p.SHA256 = hex.EncodeToString(sum[:])
+	if e = os.WriteFile(filepath.Join(m.downloadDirectory(), p.SHA256), archive.Bytes(), 0600); e != nil {
+		t.Fatal(e)
+	}
+	return p
 }

@@ -55,6 +55,10 @@ func TestUIAdditionalRuntimes(t *testing.T) {
 						a.dev.state.Packages[p.ID()] = p
 					}
 					a.dev.state.RuntimeDefaults = map[string]string{name: p.ID()}
+					if name == "java" {
+						a.dev.javaLoaded = true
+						a.dev.javaInstallations = []devplatform.JavaInstallation{{ID: "java-fixture", PackageID: p.ID(), Managed: true, CanUse: true, Name: "Temurin", Vendor: "Eclipse Adoptium", Version: p.Version, Arch: "aarch64", Path: "/Users/developer/Library/Java/JavaVirtualMachines/temurin-21.0.13", Home: "/Users/developer/Library/Java/JavaVirtualMachines/temurin-21.0.13/Contents/Home"}}
+					}
 					a.dev.uvPin = "cpython-3.12.12-macos-aarch64-none"
 					a.dev.uvDescription = "uv 0.9.10 · /Users/developer/.local/bin/uv"
 					a.dev.uvInstalled = []devplatform.UVPython{{Key: "cpython-3.12.12-macos-aarch64-none", Version: "3.12.12", Path: "/Users/developer/.local/share/uv/python/cpython-3.12.12-macos-aarch64-none/bin/python3.12"}}
@@ -74,7 +78,19 @@ func TestUIAdditionalRuntimes(t *testing.T) {
 						}
 					}
 					if name != "python" {
-						r, ok := tt.Find(softwareTitle(name) + " · " + p.Version)
+						title := softwareTitle(name) + " · " + p.Version
+						if name == "java" {
+							title = a.dev.javaInstallations[0].Label()
+							for n := 0; n < 8; n++ {
+								r, ok := tt.Find(title)
+								if ok && r.W > 0 && r.Y >= 50 && r.Y+r.H < float32(size[1]-45) {
+									break
+								}
+								tt.Scroll(float32(size[0]-20), float32(size[1]/2), 0, 100)
+								tt.Frame()
+							}
+						}
+						r, ok := tt.Find(title)
 						if !ok || r.W < 100 || r.X+r.W > float32(size[0]) {
 							t.Fatal("installed version clipped", r)
 						}

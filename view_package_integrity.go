@@ -55,7 +55,7 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 				return r.Text(), e
 			})
 		}
-		if ui.Button(c, "Repair "+p.Name+" "+p.Version).AlignSelf(ui.Start).Tooltip("Restores this version from its recorded source and checksum. Stop its projects, databases and CLI commands first. Database data stays in separate folders.").Disabled(d.busy || a.packageTaskRunning(id) || p.Formula != "").Clicked() {
+		if ui.Button(c, "Repair "+p.Name+" "+p.Version).AlignSelf(ui.Start).Tooltip("Restores this version from its recorded source and checksum. Stop databases and commands using this version first. Database data stays in separate folders.").Disabled(d.busy || a.packageTaskRunning(id) || p.Formula != "").Clicked() {
 			a.startPackageTask(p, "repair", func(m *devplatform.Manager) (string, error) {
 				if e := m.RepairPackage(m.Context, id); e != nil {
 					return "Repair did not complete.", e

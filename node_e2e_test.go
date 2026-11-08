@@ -94,19 +94,23 @@ func TestUINodeVersionsListDefaultAliasesAndTerminal(t *testing.T) {
 			t.Fatalf("22 became %q", h.a.dev.version)
 		}
 
-		// The terminal setup adds one block to .zshrc, and takes it away.
-		rc := filepath.Join(h.a.dev.managerFactory().Home, ".zshrc")
+		// The terminal setup covers every zsh startup mode, and removes all blocks.
+		home := h.a.dev.managerFactory().Home
 		h.click("Enable in terminal")
-		b, e := os.ReadFile(rc)
-		if e != nil || !strings.Contains(string(b), "Service Manager Node.js") {
-			t.Fatalf("%v %q", e, b)
+		for _, name := range []string{".zshenv", ".zprofile", ".zshrc"} {
+			b, e := os.ReadFile(filepath.Join(home, name))
+			if e != nil || !strings.Contains(string(b), "Service Manager Node.js") {
+				t.Fatalf("%s: %v %q", name, e, b)
+			}
 		}
-		if !h.ui.HasText("Enabled in ~/.zshrc") {
+		if !h.ui.HasText("Enabled for all zsh session modes") {
 			t.Fatal("enabled is not shown", h.ui.Texts())
 		}
 		h.click("Disable in terminal")
-		if b, _ = os.ReadFile(rc); strings.Contains(string(b), "Service Manager Node.js") {
-			t.Fatalf("%q", b)
+		for _, name := range []string{".zshenv", ".zprofile", ".zshrc"} {
+			if b, _ := os.ReadFile(filepath.Join(home, name)); strings.Contains(string(b), "Service Manager Node.js") {
+				t.Fatalf("%s: %q", name, b)
+			}
 		}
 		if _, ok := h.ui.Find("Enable in terminal"); !ok {
 			t.Fatal("the setup cannot be enabled again", h.ui.Texts())

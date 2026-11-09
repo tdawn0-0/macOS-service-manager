@@ -71,15 +71,16 @@ func TestUINodeVersionsListDefaultAliasesAndTerminal(t *testing.T) {
 			t.Fatalf("the first version offered is the newest LTS, not %q", got)
 		}
 
-		h.click("Set default 22.14.0")
-		if h.a.dev.state.NodeDefault != "node@22.14.0-arm64" {
+		h.click("Set default")
+		if h.a.dev.state.NodeDefault != "node@20.19.0-arm64" {
 			t.Fatalf("default %q", h.a.dev.state.NodeDefault)
 		}
 		if !h.ui.HasText("Default") {
 			t.Fatal("the default is not marked", h.ui.Texts())
 		}
-		if _, ok := h.ui.Find("Set default 22.14.0"); ok {
-			t.Fatal("the default offers to become the default")
+		h.click("Set default")
+		if h.a.dev.state.NodeDefault != "node@22.14.0-arm64" {
+			t.Fatalf("default %q", h.a.dev.state.NodeDefault)
 		}
 
 		// A name resolves to the exact release before anything is installed.

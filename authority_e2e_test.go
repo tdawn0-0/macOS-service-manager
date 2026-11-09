@@ -154,7 +154,7 @@ func TestUIAuthorityRepairTrustCancellationActivationRollbackAndTLS(t *testing.T
 			if h.a.dev.authorityStatus == nil || h.a.dev.authorityStatus.Active.Status != "Expired" || h.a.dev.authorityStatus.Active.Fingerprint != old {
 				t.Fatal("UI did not identify expired authority", h.a.dev.output)
 			}
-			h.click("Copy active CA fingerprint")
+			h.click("Copy fingerprint")
 			if len(h.copied) != 1 || h.copied[0] != old {
 				t.Fatal("copied fingerprint is not the displayed authority")
 			}
@@ -228,12 +228,12 @@ func TestUIAuthorityRepairTrustCancellationActivationRollbackAndTLS(t *testing.T
 			if r.Previous == nil || r.Previous.Fingerprint != repairedFingerprint {
 				t.Fatal("valid previous authority not retained")
 			}
-			h.click("Use saved CA " + r.Previous.ID[:8])
+			h.click("Use this CA")
 			r = h.a.dev.authorityStatus
 			if r.Active.Fingerprint != repairedFingerprint {
 				t.Fatal("GUI rollback did not restore the selected authority", h.a.dev.output)
 			}
-			h.click("Remove saved CA trust " + r.Previous.ID[:8])
+			h.click("Remove trust")
 			h.click("Apply proxy")
 			check()
 			if strings.Contains(h.a.dev.output, "Error:") {

@@ -113,7 +113,7 @@ func TestUIDatabaseInitializationKeepsIndependentDrafts(t *testing.T) {
 			}
 			h.click("Databases")
 			h.click("Instance first-bg")
-			h.click("Start instance")
+			h.click("Start")
 			i := h.a.dev.state.Instances["first-bg"]
 			pw, _ := os.ReadFile(filepath.Join(h.root, "instances", i.ID, "password"))
 			c := exec.Command(filepath.Join(h.root, "packages", pkg.ID(), pkg.Binaries["redis-cli"]), "-p", fmt.Sprint(i.Port), "PING")
@@ -121,7 +121,7 @@ func TestUIDatabaseInitializationKeepsIndependentDrafts(t *testing.T) {
 			if b, e := c.CombinedOutput(); e != nil || strings.TrimSpace(string(b)) != "PONG" {
 				t.Fatal("published configuration points to staging", string(b), e)
 			}
-			h.click("Stop instance")
+			h.click("Stop")
 			for _, name := range []string{"first-bg", "second-bg"} {
 				if e := m.InstanceAction(context.Background(), name, "remove"); e != nil {
 					t.Fatal(e)
@@ -353,7 +353,7 @@ func TestUIDatabaseInitializationArchiveCrashFinishesWhileReusedInstanceRuns(t *
 			h.click("Refresh")
 			configureUIInitialization(t, h, "crash-init", port)
 			h.click("Create instance")
-			h.click("Start instance")
+			h.click("Start")
 			password, e := os.ReadFile(filepath.Join(h.root, "instances", "crash-init", "password"))
 			if e != nil || string(password) == string(oldPassword) {
 				t.Fatal("new instance did not receive independent credentials", e)
@@ -377,7 +377,7 @@ func TestUIDatabaseInitializationArchiveCrashFinishesWhileReusedInstanceRuns(t *
 			}
 			h.click("Back to database settings")
 			h.click("Instance crash-init")
-			h.click("Stop instance")
+			h.click("Stop")
 		})
 	}
 }

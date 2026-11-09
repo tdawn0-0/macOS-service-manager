@@ -81,11 +81,11 @@ func TestUIHTTPSPortConflictKeepsLastGoodRulesAndRepairsByChangingPort(t *testin
 			if err != nil || len(after.Listeners) == 0 || after.Listeners[0].PID != before.Listeners[0].PID {
 				t.Fatal("failed preflight restarted the last good proxy", err)
 			}
-			h.click("Check HTTPS port")
+			h.click("Check port")
 			if !h.ui.HasText(fmt.Sprintf("PID %d", os.Getpid())) {
 				t.Fatal("UI did not show the actual occupying process", h.ui.Texts())
 			}
-			h.click("Find available HTTPS port")
+			h.click("Find a free port")
 			newPort, err := strconv.Atoi(h.a.dev.proxyListenerPort)
 			if err != nil || newPort == oldPort || newPort < 1024 {
 				t.Fatal("invalid port suggestion", h.a.dev.proxyListenerPort)

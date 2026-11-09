@@ -71,7 +71,7 @@ func TestNativeResourceProduct(t *testing.T) {
 		h.click("Create instance")
 		m := devplatform.New(h.root)
 		defer m.InstanceAction(context.Background(), "quit-native", "remove")
-		h.click("Start instance")
+		h.click("Start")
 		plan, err := m.PreviewShutdown(context.Background())
 		if err != nil || len(plan.Instances) != 1 || plan.Instances[0].ID != "quit-native" {
 			t.Fatalf("quit scope missed managed database: %v %+v", err, plan.Instances)
@@ -110,7 +110,7 @@ func TestNativeResourceProduct(t *testing.T) {
 		if _, ok := h.a.dev.state.Instances["profile-native"]; !ok {
 			t.Fatal("Redis instance missing")
 		}
-		h.click("Start instance")
+		h.click("Start")
 		defer m.InstanceAction(context.Background(), "profile-native", "stop")
 		p, err := m.SaveConnectionProfile(context.Background(), devplatform.ConnectionProfile{InstanceID: "profile-native", Name: "Business database", RedisDB: 3})
 		if err != nil {

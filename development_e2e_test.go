@@ -254,11 +254,11 @@ func TestUISoftwareInstallAndDatabaseWorkflow(t *testing.T) {
 	}
 	manager := devplatform.New(h.root)
 	defer manager.InstanceAction(context.Background(), "ui-redis", "remove")
-	h.click("Start instance")
+	h.click("Start")
 	if strings.Contains(h.a.dev.output, "Error:") {
 		t.Fatal(h.a.dev.output)
 	}
-	h.click("Restart instance")
+	h.click("Restart")
 	if strings.Contains(h.a.dev.output, "Error:") {
 		t.Fatal(h.a.dev.output)
 	}
@@ -271,7 +271,7 @@ func TestUISoftwareInstallAndDatabaseWorkflow(t *testing.T) {
 	if e != nil || len(h.copied) != 2 || h.copied[1] != string(password) || strings.Contains(h.a.dev.output, string(password)) {
 		t.Fatal("password copy failed or exposed the password in task output", e)
 	}
-	h.click("Open external database client")
+	h.click("Open in client")
 	if len(h.opened) != 1 || h.opened[0] != h.copied[0] {
 		t.Fatal("external client handoff used an invalid connection URI")
 	}
@@ -287,7 +287,7 @@ func TestUISoftwareInstallAndDatabaseWorkflow(t *testing.T) {
 	if strings.Contains(h.a.dev.output, "Error:") {
 		t.Fatal(h.a.dev.output)
 	}
-	h.click("Stop instance")
+	h.click("Stop")
 
 }
 
@@ -329,9 +329,9 @@ func TestUISoftwareCatalogAllFive(t *testing.T) {
 				h.click("Software " + name)
 			}
 			if pkg.Formula != "" {
-				h.click("Remove from workspace " + name + " " + pkg.Version)
+				h.click("Remove from workspace")
 			} else {
-				h.click("Uninstall " + name + " " + pkg.Version)
+				h.click("Uninstall")
 			}
 			if _, ok := h.a.dev.state.Packages[pkg.ID()]; ok {
 				t.Fatal("software was not uninstalled through the UI", h.a.dev.output)
@@ -355,11 +355,11 @@ func exerciseUIDatabase(t *testing.T, h *devUIHarness, pkg devplatform.Package) 
 	if _, ok := h.a.dev.state.Instances[id]; !ok {
 		t.Fatal("UI did not initialize database", h.a.dev.output)
 	}
-	h.click("Start instance")
+	h.click("Start")
 	if strings.Contains(h.a.dev.output, "Error:") {
 		t.Fatal(h.a.dev.output)
 	}
-	h.click("Show connection details")
+	h.click("Details")
 	if !strings.Contains(h.a.dev.output, "127.0.0.1") {
 		t.Fatal("connection details are missing", h.a.dev.output)
 	}
@@ -483,22 +483,22 @@ func exerciseUIDatabase(t *testing.T, h *devUIHarness, pkg devplatform.Package) 
 	if h.a.dev.state.Instances[id].Port != oldPort || !strings.Contains(h.a.dev.output, "stop the database") {
 		t.Fatal("running instance changed its port", h.a.dev.output)
 	}
-	h.click("Stop instance")
+	h.click("Stop")
 	occupied, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", oldPort))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer occupied.Close()
 	h.fill("Database port", fmt.Sprint(oldPort))
-	h.click("Start instance")
+	h.click("Start")
 	if check, ok := h.a.dev.portChecks[oldPort]; !ok || check.Status != "In use" {
 		t.Fatal("startup conflict did not produce a port inspection", h.a.dev.output)
 	}
-	h.click("Check database port")
+	h.click("Check port")
 	if !h.ui.HasText(fmt.Sprintf("PID %d", os.Getpid())) {
 		t.Fatal("UI did not display the actual listener process", h.ui.Texts())
 	}
-	h.click("Find available database port")
+	h.click("Find a free port")
 	h.click("Save database port")
 	i = h.a.dev.state.Instances[id]
 	if i.Port == oldPort || strings.Contains(h.a.dev.output, "Error:") {
@@ -508,7 +508,7 @@ func exerciseUIDatabase(t *testing.T, h *devUIHarness, pkg devplatform.Package) 
 	if err != nil || string(currentPassword) != string(pw) {
 		t.Fatal("port change replaced database credentials", err)
 	}
-	h.click("Start instance")
+	h.click("Start")
 	if strings.Contains(h.a.dev.output, "Error:") {
 		t.Fatal("new endpoint failed", h.a.dev.output)
 	}
@@ -520,7 +520,7 @@ func exerciseUIDatabase(t *testing.T, h *devUIHarness, pkg devplatform.Package) 
 		t.Fatal("port repair stopped the external listener", err)
 	}
 	conn.Close()
-	h.click("Stop instance")
+	h.click("Stop")
 	h.click("Remove instance (keep data files)")
 	if _, ok := h.a.dev.state.Instances[id]; ok {
 		t.Fatal("UI removal failed", h.a.dev.output)
@@ -536,8 +536,8 @@ func exerciseUIDatabase(t *testing.T, h *devUIHarness, pkg devplatform.Package) 
 	h.fill("Local port", fmt.Sprint(freeUIPort(t)))
 	h.click("Create instance")
 	t.Cleanup(func() { _ = manager.InstanceAction(context.Background(), deleteID, "remove") })
-	h.click("Start instance")
-	h.click("Stop instance")
+	h.click("Start")
+	h.click("Stop")
 	h.click("Review permanent data deletion")
 	if preview := h.a.dev.instanceDeletionPreview; preview == nil || !preview.CanDelete {
 		t.Fatal("stopped database did not produce a deletable preview", h.a.dev.output)

@@ -14,7 +14,7 @@ func TestUIBackgroundInstanceStartupKeepsPhaseConfigurationAndIndependentInstanc
 	for _, cancelled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("cancel-%t", cancelled), func(t *testing.T) {
 			h, m, _, id, redis := newUIDeletionInstance(t, cancelled)
-			h.click("Stop instance")
+			h.click("Stop")
 			entered, release := make(chan struct{}), make(chan struct{})
 			var signal, once sync.Once
 			unblock := func() { once.Do(func() { close(release) }) }
@@ -45,7 +45,7 @@ func TestUIBackgroundInstanceStartupKeepsPhaseConfigurationAndIndependentInstanc
 				_ = m.InstanceAction(context.Background(), "independent-start", "remove")
 			})
 			h.foregroundOnly = true
-			h.click("Start instance")
+			h.click("Start")
 			select {
 			case <-entered:
 			case <-time.After(5 * time.Second):
@@ -65,7 +65,7 @@ func TestUIBackgroundInstanceStartupKeepsPhaseConfigurationAndIndependentInstanc
 			waitUIPackageCondition(t, h, func() bool {
 				return !h.a.databaseTaskRunning("independent-start") && !h.a.dev.busy && !h.a.dev.databaseNeedsRefresh
 			})
-			h.click("Start instance")
+			h.click("Start")
 			waitUIPackageCondition(t, h, func() bool {
 				return !h.a.databaseTaskRunning("independent-start") && !h.a.dev.busy && !h.a.dev.databaseNeedsRefresh
 			})
@@ -106,7 +106,7 @@ func TestUIBackgroundInstanceStartupKeepsPhaseConfigurationAndIndependentInstanc
 					t.Fatal("cancelled startup was reported as running", h.a.dev.statuses)
 				}
 				unblock()
-				h.click("Start instance")
+				h.click("Start")
 			}
 			if h.a.dev.databaseTasks[id].err != nil || h.a.dev.statuses["instance:"+id] != "Running" {
 				t.Fatal("retry did not become ready", h.a.dev.databaseTasks[id].Result, h.a.dev.statuses["instance:"+id])
@@ -114,10 +114,10 @@ func TestUIBackgroundInstanceStartupKeepsPhaseConfigurationAndIndependentInstanc
 			if redis("GET", "value") != "42" {
 				t.Fatal("lifecycle lost existing database contents")
 			}
-			h.click("Stop instance")
+			h.click("Stop")
 			h.click("Instance independent-start")
-			h.click("Restart instance")
-			h.click("Stop instance")
+			h.click("Restart")
+			h.click("Stop")
 		})
 	}
 }

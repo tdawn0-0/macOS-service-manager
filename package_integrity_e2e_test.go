@@ -29,7 +29,7 @@ func TestUICheckRepairRealNodeAndRefuseRunningUsers(t *testing.T) {
 	if _, ok := h.a.dev.state.Packages[id]; !ok {
 		t.Fatal("runtime install failed", h.a.dev.output)
 	}
-	h.click("Check files node 20.19.0")
+	h.click("Check files")
 	if r := h.a.dev.packageChecks[id]; r.Status != "Verified" || r.Files < 100 {
 		t.Fatal("UI did not check the installed tree", r, h.a.dev.output)
 	}
@@ -42,7 +42,7 @@ func TestUICheckRepairRealNodeAndRefuseRunningUsers(t *testing.T) {
 	if err = os.WriteFile(dataFile, append(append([]byte{}, original...), '\n'), 0644); err != nil {
 		t.Fatal(err)
 	}
-	h.click("Check files node 20.19.0")
+	h.click("Check files")
 	if r := h.a.dev.packageChecks[id]; r.Status != "Needs repair" || !strings.Contains(r.Text(), "lib/node_modules/npm/package.json") {
 		t.Fatal("UI hid non-binary package damage", r)
 	}
@@ -53,7 +53,7 @@ func TestUICheckRepairRealNodeAndRefuseRunningUsers(t *testing.T) {
 	if err = os.WriteFile(sentinel, []byte("database-data"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	h.click("Repair node 20.19.0")
+	h.click("Repair")
 	if r := h.a.dev.packageChecks[id]; r.Status != "Verified" {
 		t.Fatal("UI repair failed", r, h.a.dev.output)
 	}
@@ -62,7 +62,7 @@ func TestUICheckRepairRealNodeAndRefuseRunningUsers(t *testing.T) {
 	}
 	var revealed string
 	h.a.reveal = func(path string) { revealed = path }
-	h.click("Reveal package folder node 20.19.0")
+	h.click("Show in Finder")
 	if revealed != packageDir {
 		t.Fatal("revealed a different workspace package", revealed)
 	}

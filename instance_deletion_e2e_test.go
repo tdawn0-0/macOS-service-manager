@@ -43,7 +43,7 @@ func newUIDeletionInstance(t *testing.T, dark bool) (*devUIHarness, *devplatform
 		t.Fatal(h.a.dev.output)
 	}
 	t.Cleanup(func() { _ = m.InstanceAction(context.Background(), id, "remove") })
-	h.click("Start instance")
+	h.click("Start")
 	instance := h.a.dev.state.Instances[id]
 	pw, e := os.ReadFile(filepath.Join(h.root, "instances", id, "password"))
 	if e != nil {
@@ -85,7 +85,7 @@ func TestUIInstanceDeletionPreviewConfirmationAndPreservedBackup(t *testing.T) {
 				t.Fatal(v)
 			}
 			h.click("Cancel deletion preview")
-			h.click("Stop instance")
+			h.click("Stop")
 			h.click("Review permanent data deletion")
 			dir := filepath.Join(h.root, "instances", id)
 			if p := h.a.dev.instanceDeletionPreview; p == nil || !p.CanDelete || p.Path != dir {
@@ -134,7 +134,7 @@ func TestUIInstanceDeletionPreviewConfirmationAndPreservedBackup(t *testing.T) {
 			h.fill("Local port", fmt.Sprint(freeUIPort(t)))
 			h.click("Create instance")
 			t.Cleanup(func() { _ = m.InstanceAction(context.Background(), "restored-after-delete", "remove") })
-			h.click("Start instance")
+			h.click("Start")
 			h.fill("Database number (0–15)", "0")
 			h.fill("Backup file", backup)
 			h.click("Restore into new database")
@@ -148,7 +148,7 @@ func TestUIInstanceDeletionPreviewConfirmationAndPreservedBackup(t *testing.T) {
 			if b, e := c.CombinedOutput(); e != nil || strings.TrimSpace(string(b)) != "42" {
 				t.Fatal("retained backup did not restore real data", string(b), e)
 			}
-			h.click("Stop instance")
+			h.click("Stop")
 		})
 	}
 }
@@ -174,7 +174,7 @@ func TestUIInstanceDeletionActualCrashRestoresOrFinishes(t *testing.T) {
 	for n, point := range []string{"Database data staged for deletion", "Database deletion committed"} {
 		t.Run(point, func(t *testing.T) {
 			h, m, _, id, redis := newUIDeletionInstance(t, n == 1)
-			h.click("Stop instance")
+			h.click("Stop")
 			outside := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 			defer outside.Close()
 			c := exec.Command(os.Args[0], "-test.run=^TestUIInstanceDeletionCrashHelper$")
@@ -208,11 +208,11 @@ func TestUIInstanceDeletionActualCrashRestoresOrFinishes(t *testing.T) {
 				h.click("Restore original data " + prefix)
 				h.click("Back to database settings")
 				h.click("Instance " + id)
-				h.click("Start instance")
+				h.click("Start")
 				if value := redis("GET", "value"); value != "42" {
 					t.Fatal("restored data folder lost value", value)
 				}
-				h.click("Stop instance")
+				h.click("Stop")
 			} else {
 				if !r.CanErase || r.CanRestore {
 					t.Fatal(r)

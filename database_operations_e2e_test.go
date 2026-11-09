@@ -62,7 +62,7 @@ func TestUIBackgroundDatabaseBackupKeepsConfigurationAndIndependentInstance(t *t
 			waitUIPackageCondition(t, h, func() bool {
 				return !h.a.databaseTaskRunning("independent") && !h.a.dev.busy && !h.a.dev.databaseNeedsRefresh
 			})
-			h.click("Start instance")
+			h.click("Start")
 			waitUIPackageCondition(t, h, func() bool {
 				return !h.a.databaseTaskRunning("independent") && !h.a.dev.busy && !h.a.dev.databaseNeedsRefresh
 			})
@@ -128,9 +128,9 @@ func TestUIBackgroundDatabaseBackupKeepsConfigurationAndIndependentInstance(t *t
 			if redis("-n", "1", "GET", "value") != "42" {
 				t.Fatal("background backup did not restore actual data")
 			}
-			h.click("Stop instance")
+			h.click("Stop")
 			h.click("Instance independent")
-			h.click("Stop instance")
+			h.click("Stop")
 		})
 	}
 }
@@ -179,7 +179,7 @@ func TestUITwoPostgreSQLInstancesKeepSameNamedDatabasesIsolated(t *testing.T) {
 			}
 			t.Fatal("PostgreSQL initialization failed", h.a.dev.output)
 		}
-		h.click("Start instance")
+		h.click("Start")
 		h.fill("Database name", "same_db")
 		h.click("Create database")
 		h.fill("Database user", "app_user")
@@ -231,7 +231,7 @@ func TestUITwoPostgreSQLInstancesKeepSameNamedDatabasesIsolated(t *testing.T) {
 	if value(ids[0], "restored_db") != "42" || value(ids[1], "same_db") != "84" {
 		t.Fatal("restore affected another instance")
 	}
-	h.click("Stop instance")
+	h.click("Stop")
 	if value(ids[1], "same_db") != "84" {
 		t.Fatal("stopping one instance affected the other")
 	}
@@ -240,10 +240,10 @@ func TestUITwoPostgreSQLInstancesKeepSameNamedDatabasesIsolated(t *testing.T) {
 		t.Fatal("removal discarded the original data", e)
 	}
 	h.click("Instance " + ids[1])
-	h.click("Restart instance")
+	h.click("Restart")
 	if value(ids[1], "same_db") != "84" {
 		t.Fatal("independent instance lost data on restart")
 	}
-	h.click("Stop instance")
+	h.click("Stop")
 	h.click("Remove instance (keep data files)")
 }

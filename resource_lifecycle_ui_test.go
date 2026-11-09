@@ -23,7 +23,7 @@ func TestUIIndependentResourceLifecycle(t *testing.T) {
 		panel := ui.NewTester(func(c *ui.Context) { a.menubarView(c, func() { opened++ }) }, 320, a.panelHeight())
 		panel.Frame()
 		shown := strings.Join(panel.Texts(), " ")
-		for _, want := range []string{"2 running", "Databases", "one · Running", "two · Unknown", "Proxy · Running", "HTTPS settings"} {
+		for _, want := range []string{"2 running", "Databases", "Stop one", "Unknown · Redis", "Proxy · Running", "HTTPS settings"} {
 			if !strings.Contains(shown, want) {
 				t.Fatalf("missing %q: %s", want, shown)
 			}

@@ -230,6 +230,7 @@ type app struct {
 	gone      map[string]bool // ids of items removed that a read may still return
 	toasts    []string        // messages the next frame shows
 	panelOpen bool            // the menu bar's panel shows, and the toasts with it
+	panelFolded map[string]bool // the sections of the panel folded, by key
 
 	nav     string
 	query   string

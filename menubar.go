@@ -3,11 +3,12 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/choice"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 
 	"devbase/internal/devplatform"
@@ -20,9 +21,11 @@ import (
 //go:embed assets/icons/menubar.png
 var menubarIcon []byte
 
-// menubar is the app's icon in the menu bar, and the panel it opens: the
-// services the user runs by hand, with a switch each, for starting and
-// stopping them without opening the window. System agents and daemons are
+// menubar is the app's icon in the menu bar, and the panel it opens: a
+// glance at what runs, with a switch for each, for starting and stopping it
+// without opening the window. The workspace's own resources come first:
+// database instances and the HTTPS proxy. Below them are the services the
+// user runs by hand, in sections that fold. System agents and daemons are
 // left out: their changes affect the machine, and daemons ask for a password.
 type menubar struct {
 	a     *app
@@ -30,6 +33,12 @@ type menubar struct {
 	tray  *mygo.Tray
 	panel *mygo.Window // the open panel, or nil
 }
+
+// The panel's width, and the most height it grows to before it scrolls.
+const (
+	panelWidth     = 340
+	panelMaxHeight = 620
+)
 
 // panelSources lists the sources the panel shows.
 var panelSources = []service.Source{service.Brew, service.UserAgent}
@@ -70,111 +79,327 @@ func (a *app) panelRunning() int {
 	return running
 }
 
-// menubarView builds the panel.
+// menubarView builds the panel. It takes the height of what it shows, up to
+// panelMaxHeight, beyond which its middle scrolls.
 func (a *app) menubarView(c *ui.Context, openWindow func()) {
 	style(c)
 	if a.panelOpen {
 		a.showToasts(c)
 	}
-	t := c.Theme()
+	tk := theme.TokensOf(c)
 	c.Root().Background(ui.Transparent)
-	box := ui.Column(c).Fill()
+	box := ui.Column(c).Grow(1).MinHeight(0)
 	if !c.Vibrancy() {
-		box.Background(t.Background).Radius(12).Border(1, t.Border)
+		box.Background(tk.BgLayout).Radius(12).Border(1, tk.BorderSecondary)
 	}
 	box.Children(func() {
-		ui.Row(c).Shrink(0).Padding(12, 10, 8, 16).AlignItems(ui.Center).Gap(6).Children(func() {
-			ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
-				ui.Text(c, "Devbase").FontSize(14).FontWeight(650).SingleLine()
-				ui.Text(c, fmt.Sprintf("%d running", a.panelRunning())).TextColor(t.TextMuted).FontSize(textCaption)
-			})
-			if a.loading() || a.dev.busy {
-				ui.Spinner(c).Label("Loading").Size(14, 14)
-			}
-			iconButton(c, iconRestart, "Refresh", t.TextMuted).Disabled(a.loading() || a.dev.busy).OnClick(func() {
-				a.devTask(func(*devplatform.Manager) (string, error) { return "Workspace refreshed.", nil })
+		a.panelHeader(c)
+		ui.Column(c).Height(1).Shrink(0).Background(hairline(c.Theme()))
+		ui.Scroll(c.Key("panel-body")).Grow(1).MinHeight(0).Padding(6, 8, 8).Children(func() {
+			ui.Column(c).Gap(2).Children(func() {
+				a.panelDatabases(c, openWindow)
+				a.panelProxy(c, openWindow)
 				for _, src := range panelSources {
-					a.refresh(src)
+					a.panelServices(c, src)
 				}
 			})
 		})
-		ui.Scroll(c).Grow(1).MinHeight(0).Padding(0, 8, 8).Gap(2).Children(func() {
-			empty := true
-			if len(a.dev.state.Instances) > 0 {
-				empty = false
-				ui.Text(c, "Databases").FontSize(textCaption).FontWeight(650).TextColor(t.TextMuted).Padding(8, 8, 4)
-				for _, id := range sortedKeys(a.dev.state.Instances) {
-					a.menubarDatabase(c, a.dev.state.Instances[id])
-				}
-			}
-			empty = false
-			ui.Text(c, "HTTPS").FontSize(textCaption).FontWeight(650).TextColor(t.TextMuted).Padding(8, 8, 4)
-			proxyStatus := a.dev.statuses["proxy"]
-			if proxyStatus == "" {
-				proxyStatus = "Stopped"
-				if len(a.dev.state.ProxyRules) > 0 {
-					proxyStatus = "Unknown"
-				}
-			}
-			ui.Row(c).Height(32).Shrink(0).AlignItems(ui.Center).Gap(8).Padding(0, 8).Children(func() {
-				ui.Text(c, "Proxy · "+proxyStatus).Grow(1).MinWidth(0).SingleLine()
-				if action.Button(c, "HTTPS settings", action.ButtonProps{Variant: action.Filled, Size: theme.Small}).Clicked() {
-					a.nav = "development"
-					a.dev.tab = devTabHTTPS
-					openWindow()
-				}
-			})
-			for _, src := range panelSources {
-				items := a.panelItems(src)
-				if st := a.sources[src]; st != nil && st.err != "" {
-					ui.Text(c, src.Title()+": "+st.err).TextColor(t.Danger).FontSize(textCaption).Padding(4, 8)
-				}
-				if len(items) == 0 {
-					continue
-				}
-				empty = false
-				ui.Text(c, src.Title()).FontSize(textCaption).FontWeight(650).TextColor(t.TextMuted).Padding(8, 8, 4)
-				for _, it := range items {
-					a.menubarRow(c, it)
-				}
-			}
-			if empty {
-				ui.Text(c, map[bool]string{true: "Loading…", false: "No services"}[a.loading()]).TextColor(t.TextMuted).Padding(8)
-			}
-		})
-		ui.Column(c).Height(1).Shrink(0).Background(hairline(t))
+		ui.Column(c).Height(1).Shrink(0).Background(hairline(c.Theme()))
 		ui.Row(c).Shrink(0).Padding(8, 10).Gap(6).AlignItems(ui.Center).Children(func() {
-			labeledButton(c, iconWindow, "Open Devbase", false).Grow(1).OnClick(openWindow)
-			iconButton(c, iconQuit, "Quit", t.TextMuted).OnClick(a.requestQuit)
+			if btn(c, "Open Devbase", iconWindow, btnDefault).Grow(1).Clicked() {
+				openWindow()
+			}
+			iconButton(c, iconQuit, "Quit", tk.TextSecondary).OnClick(a.requestQuit)
 		})
 	})
 }
 
-func (a *app) menubarDatabase(c *ui.Context, instance devplatform.Instance) {
+// panelHeader names the app and says how much runs.
+func (a *app) panelHeader(c *ui.Context) {
+	tk := theme.TokensOf(c)
+	ui.Row(c).Shrink(0).Padding(12, 10, 10, 14).AlignItems(ui.Center).Gap(10).Children(func() {
+		iconTile(c, iconPackage, tk.Primary, 30)
+		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
+			ui.Text(c, "Devbase").FontSize(14).FontWeight(650).SingleLine()
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				running := a.panelRunning()
+				status := "Stopped"
+				if running > 0 {
+					status = "Running"
+				}
+				devStatusDot(c, status)
+				ui.Text(c, fmt.Sprintf("%d running", running)).TextColor(tk.TextDescription).FontSize(textCaption).SingleLine()
+			})
+		})
+		if a.loading() || a.dev.busy {
+			ui.Spinner(c).Label("Loading").Size(14, 14)
+		}
+		iconButton(c, icoRotate, "Refresh", tk.TextSecondary).Disabled(a.loading() || a.dev.busy).OnClick(func() {
+			a.devTask(func(*devplatform.Manager) (string, error) { return "Workspace refreshed.", nil })
+			for _, src := range panelSources {
+				a.refresh(src)
+			}
+		})
+	})
+}
+
+// panelSection heads a section of the panel, with a count and controls at its
+// end. A section that folds does so on a click on its title, and reports
+// whether it is open.
+func (a *app) panelSection(c *ui.Context, key, title, count string, folds bool, extra func()) bool {
+	tk := theme.TokensOf(c)
+	open := !a.panelFolded[key]
+	ui.Row(c).Height(28).Shrink(0).Padding(0, 4, 0, 6).Margin(4, 0, 0).AlignItems(ui.Center).Gap(6).Children(func() {
+		var head ui.Element
+		if folds {
+			head = ui.ButtonBase(c).Label(title).Grow(1).MinWidth(0).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+		} else {
+			head = ui.Row(c).Grow(1).MinWidth(0)
+		}
+		head.Children(func() {
+			ui.Row(c).Grow(1).MinWidth(0).Gap(6).AlignItems(ui.Center).Justify(ui.Start).Children(func() {
+				ui.Text(c, title).FontSize(textSmall).FontWeight(600).TextColor(tk.TextSecondary).SingleLine().Shrink(0)
+				if count != "" {
+					ui.Text(c, count).FontSize(textCaption).TextColor(tk.TextTertiary).SingleLine()
+				}
+				if folds {
+					chevron := "▾"
+					if !open {
+						chevron = "▸"
+					}
+					ui.Text(c, chevron).FontSize(textCaption).TextColor(tk.TextTertiary)
+				}
+			})
+		})
+		if folds && head.Clicked() {
+			if a.panelFolded == nil {
+				a.panelFolded = map[string]bool{}
+			}
+			a.panelFolded[key] = open
+			open = !open
+		}
+		if extra != nil {
+			extra()
+		}
+	})
+	return open
+}
+
+// panelRow is a row of the panel: an icon or a status dot, a title over a
+// line about it, the actions that show while the pointer is on the row, and
+// a switch at its end. A click on the title opens it, where open is set.
+func panelRow(c *ui.Context, key string, lead func(), title, sub, openLabel string, open func(), hover func(), end func()) {
+	tk := theme.TokensOf(c)
+	row := ui.Row(c.Key(key)).Height(40).Shrink(0).AlignItems(ui.Center).Gap(10).Padding(0, 8).Radius(tk.BorderRadius)
+	hovered := row.Hovered()
+	if hovered {
+		row.Background(tk.FillTertiary)
+	}
+	row.Children(func() {
+		lead()
+		var body ui.Element
+		if open != nil {
+			body = ui.ButtonBase(c).Label(openLabel).Grow(1).MinWidth(0).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+		} else {
+			body = ui.Row(c).Grow(1).MinWidth(0)
+		}
+		body.Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(1).AlignItems(ui.Start).Justify(ui.Center).Children(func() {
+				ui.Text(c, title).SingleLine().MinWidth(0).Tooltip(title)
+				if sub != "" {
+					ui.Text(c, sub).FontSize(textCaption).TextColor(tk.TextDescription).SingleLine().MinWidth(0)
+				}
+			})
+		})
+		if open != nil && body.Clicked() {
+			open()
+		}
+		if hover != nil && hovered {
+			hover()
+		}
+		end()
+	})
+}
+
+// panelDatabases lists the managed database instances, each with a switch
+// that starts or stops it, and copies its connection on hover.
+func (a *app) panelDatabases(c *ui.Context, openWindow func()) {
+	d := &a.dev
+	running := 0
+	for id := range d.state.Instances {
+		if s := d.statuses["instance:"+id]; s == "Running" || s == "Healthy" {
+			running++
+		}
+	}
+	count := ""
+	if n := len(d.state.Instances); n > 0 {
+		count = fmt.Sprintf("%d/%d", running, n)
+	}
+	if !a.panelSection(c, "databases", "Databases", count, false, nil) {
+		return
+	}
+	if len(d.state.Instances) == 0 {
+		panelRow(c, "menu-db-none", func() { iconTile(c, icoDatabase, theme.TokensOf(c).TextTertiary, 26) }, "No instances", "", "New database instance", func() {
+			a.openNewInstance("postgresql")
+			openWindow()
+		}, nil, func() {})
+		return
+	}
+	for _, id := range sortedKeys(d.state.Instances) {
+		a.panelDatabase(c, d.state.Instances[id], openWindow)
+	}
+}
+
+func (a *app) panelDatabase(c *ui.Context, instance devplatform.Instance, openWindow func()) {
+	d := &a.dev
 	id := instance.ID
-	status := a.dev.statuses["instance:"+id]
+	status := d.statuses["instance:"+id]
 	if status == "" {
 		status = "Unknown"
 	}
-	busy := a.dev.busy || a.databaseTaskRunning(id) || a.quit.open
-	ui.Row(c.Key("menu-db-"+id)).Height(32).Shrink(0).AlignItems(ui.Center).Gap(8).Padding(0, 8).Children(func() {
-		ui.Text(c, id+" · "+status).Grow(1).MinWidth(0).SingleLine().Tooltip(id)
-		action := "Start"
-		verb := "start"
-		icon := iconPlay
-		if status == "Running" {
-			action, verb = "Stop", "stop"
-			icon = iconStop
+	on := status == "Running" || status == "Healthy"
+	busy := d.busy || a.databaseTaskRunning(id) || a.quit.open
+	switch status {
+	case "Unknown", "Starting", "Stopping", "Restarting":
+		busy = true
+	}
+	icon, tint := softwareMeta(instance.Kind)
+	sub := softwareTitle(instance.Kind) + " · :" + strconv.Itoa(instance.Port)
+	if news := devNews(status); news != "" {
+		sub = news + " · " + sub
+	}
+	panelRow(c, "menu-db-"+id, func() {
+		ui.Box(c).Size(26, 26).Shrink(0).Children(func() {
+			iconTile(c, icon, tint, 26)
+			ui.Box(c).Absolute().Right(-2).Bottom(-2).Size(10, 10).Radius(5).Center().Background(theme.TokensOf(c).BgContainer).Children(func() {
+				devStatusDot(c, status)
+			})
+		})
+	}, id, sub, "Open "+id, func() {
+		a.openInstance(id)
+		openWindow()
+	}, func() {
+		if iconButton(c, icoCopy, "Copy connection URI for "+id, theme.TokensOf(c).TextSecondary).Disabled(d.busy).Clicked() {
+			a.devTask(func(m *devplatform.Manager) (string, error) {
+				info, err := m.ConnectionInfo(id)
+				if err == nil {
+					a.post(func() {
+						if a.copy != nil {
+							a.copy(info.URI)
+						}
+						a.toasts = append(a.toasts, "Copied connection URI for "+id)
+					})
+				}
+				return "Connection URI copied", err
+			})
 		}
-		if status == "Unknown" || status == "Failed" || status == "Starting" || status == "Stopping" {
-			busy = true
+	}, func() {
+		if a.databaseTaskRunning(id) {
+			ui.Spinner(c).Label("Working").Size(13, 13)
 		}
-		if iconButton(c, icon, action+" "+id, c.Theme().TextMuted).Disabled(busy).Clicked() {
+		verb, label := "start", "Start "+id
+		if on {
+			verb, label = "stop", "Stop "+id
+		}
+		if choice.Switch(c, &on, choice.SwitchProps{Size: theme.Small}).Label(label).Disabled(busy).Changed() {
+			result := map[string]string{"start": "Started ", "stop": "Stopped "}[verb] + id
 			a.startDatabaseOperation(instance, verb, func(m *devplatform.Manager) (string, error) {
-				return action + " " + id, m.InstanceAction(m.Context, id, verb)
+				return result, m.InstanceAction(m.Context, id, verb)
 			})
 		}
 	})
+}
+
+// openInstance goes to an instance's page in the window.
+func (a *app) openInstance(id string) {
+	d := &a.dev
+	i, ok := d.state.Instances[id]
+	a.nav = navDevelopment
+	d.tab = devTabDatabases
+	if !ok || id != d.dbID && a.connectionProfileDirty() {
+		return
+	}
+	d.dbNewDraft, d.databaseWorkOpen, d.initializationsOpen, d.deletionsOpen = false, false, false, false
+	d.instanceDeletionPreview = nil
+	d.dbID, d.dbKind, d.dbPackage, d.dbPort, d.persistent = id, i.Kind, i.Package, strconv.Itoa(i.Port), i.Persistent
+	d.detailScroll[devTabDatabases].Y = 0
+	a.loadConnectionProfileDraft(id, "")
+}
+
+// panelProxy is the single HTTPS proxy: its state, a switch that applies the
+// saved rules or stops it, and the way to its settings. Its rules are not
+// resources of their own, and are not listed.
+func (a *app) panelProxy(c *ui.Context, openWindow func()) {
+	d := &a.dev
+	status := d.statuses["proxy"]
+	if status == "" {
+		status = "Stopped"
+		if len(d.state.ProxyRules) > 0 {
+			status = "Unknown"
+		}
+	}
+	openSettings := func() {
+		a.nav = navDevelopment
+		d.tab = devTabHTTPS
+		openWindow()
+	}
+	a.panelSection(c, "https", "HTTPS", "", false, func() {
+		if btn(c, "HTTPS settings", nil, btnText).Clicked() {
+			openSettings()
+		}
+	})
+	listener := d.state.ProxyListenerPort
+	if listener == 0 {
+		listener = 443
+	}
+	sub := fmt.Sprintf("%s · :%d", plural(len(d.state.ProxyRules), "rule"), listener)
+	on := status == "Running"
+	panelRow(c, "menu-proxy", func() {
+		ui.Box(c).Size(26, 26).Shrink(0).Children(func() {
+			iconTile(c, icoShield, ui.RGB(22, 119, 255), 26)
+			ui.Box(c).Absolute().Right(-2).Bottom(-2).Size(10, 10).Radius(5).Center().Background(theme.TokensOf(c).BgContainer).Children(func() {
+				devStatusDot(c, status)
+			})
+		})
+	}, "Proxy · "+status, sub, "Open HTTPS proxy", openSettings, nil, func() {
+		label := "Apply proxy"
+		if on {
+			label = "Stop HTTPS proxy"
+		}
+		if choice.Switch(c, &on, choice.SwitchProps{Size: theme.Small}).Label(label).Disabled(d.busy || a.quit.open || len(d.state.ProxyRules) == 0 && !on).Changed() {
+			a.devTask(func(m *devplatform.Manager) (string, error) {
+				if on {
+					return "Proxy configuration published. Check DNS, TLS and upstream separately.", m.ApplyProxy(m.Context)
+				}
+				return "Stopped HTTPS proxy", m.StopProxy(m.Context)
+			})
+		}
+	})
+}
+
+// panelServices lists the services of a source, under a heading that folds.
+func (a *app) panelServices(c *ui.Context, src service.Source) {
+	items := a.panelItems(src)
+	st := a.sources[src]
+	failed := st != nil && st.err != ""
+	if len(items) == 0 && !failed {
+		return
+	}
+	running := 0
+	for _, it := range items {
+		if it.Up() {
+			running++
+		}
+	}
+	if !a.panelSection(c, "src:"+string(src), src.Title(), fmt.Sprintf("%d/%d", running, len(items)), true, nil) {
+		return
+	}
+	if failed {
+		ui.Text(c, st.err).TextColor(theme.TokensOf(c).ErrorText).FontSize(textCaption).Padding(2, 8, 4)
+	}
+	for _, it := range items {
+		a.menubarRow(c, it)
+	}
 }
 
 // switchAction returns the action a panel's switch runs, turned on or off.
@@ -194,17 +419,18 @@ func switchAction(actions []service.Action, on bool) service.Action {
 func (a *app) menubarRow(c *ui.Context, it service.Item) {
 	on := it.Up()
 	busy := a.busy[it.ID]
-	row := ui.Row(c.Key(it.ID)).Height(32).Shrink(0).AlignItems(ui.Center).Gap(10).Padding(0, 8).Radius(7)
+	tk := theme.TokensOf(c)
+	row := ui.Row(c.Key(it.ID)).Height(32).Shrink(0).AlignItems(ui.Center).Gap(10).Padding(0, 8).Radius(tk.BorderRadius)
 	if row.Hovered() {
-		row.Background(c.Theme().Text.Alpha(0.06))
+		row.Background(tk.FillTertiary)
 	}
 	row.Children(func() {
-		statusDot(c, it.State, false)
+		ui.Box(c).Size(26, 26).Shrink(0).Center().Children(func() { statusDot(c, it.State, false) })
 		ui.Text(c, it.Name).SingleLine().Grow(1).MinWidth(0).Tooltip(it.Name)
 		if busy {
 			ui.Spinner(c).Label("Working").Size(13, 13)
 		}
-		if ui.Switch(c, &on).Label(it.Name).Disabled(busy).Changed() {
+		if choice.Switch(c, &on, choice.SwitchProps{Size: theme.Small}).Label(it.Name).Disabled(busy).Changed() {
 			if act := switchAction(a.providers[it.Source].Actions(it), on); act != "" {
 				a.request(it, act)
 			}
@@ -238,20 +464,22 @@ func (m *menubar) showWindow() {
 	m.win.Focus()
 }
 
-// panelHeight fits the panel to its rows, up to where it scrolls.
+// panelHeight estimates the panel's height from its rows: the size it opens
+// at, before it measures what it shows.
 func (a *app) panelHeight() int {
-	const header, footer, row, heading = 54, 50, 34, 30
+	const header, footer, row, heading = 56, 50, 42, 32
 	height := header + footer + 16
-	if n := len(a.dev.state.Instances); n > 0 {
-		height += heading + n*row
-	}
-	height += heading + row // The single HTTPS proxy and settings entry.
+	height += heading + max(len(a.dev.state.Instances), 1)*row
+	height += heading + row // The single HTTPS proxy.
 	for _, src := range panelSources {
 		if n := len(a.panelItems(src)); n > 0 {
-			height += heading + n*row
+			height += heading
+			if !a.panelFolded["src:"+string(src)] {
+				height += n * 34
+			}
 		}
 	}
-	return min(max(height, 200), 540)
+	return min(max(height, 220), panelMaxHeight)
 }
 
 // toggle opens the panel below the icon, or closes it.
@@ -262,15 +490,20 @@ func (m *menubar) toggle() {
 	}
 	m.a.panelOpen = true
 	m.panel = mygo.NewFlyout(mygo.FlyoutOptions{
-		Tray:      m.tray,
-		Placement: mygo.PlacementBottom,
-		Gap:       4,
-		Width:     320,
-		Height:    m.a.panelHeight(),
-		Focusable: true,
-		Shadow:    true,
-		Popover:   true,
-		Content:   ui.View(func(c *ui.Context) { m.a.menubarView(c, m.showWindow) }),
+		Tray:       m.tray,
+		Placement:  mygo.PlacementBottom,
+		Gap:        4,
+		Width:      panelWidth,
+		Height:     m.a.panelHeight(),
+		FitContent: true,
+		MinWidth:   panelWidth,
+		MaxWidth:   panelWidth,
+		MinHeight:  180,
+		MaxHeight:  panelMaxHeight,
+		Focusable:  true,
+		Shadow:     true,
+		Popover:    true,
+		Content:    ui.View(func(c *ui.Context) { m.a.menubarView(c, m.showWindow) }),
 	})
 	m.panel.OnClosed(func() {
 		m.panel = nil

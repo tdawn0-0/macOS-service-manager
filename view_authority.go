@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"macos-service-manager/internal/devplatform"
 )
 
@@ -53,10 +55,10 @@ func (a *app) devAuthority(c *ui.Context) {
 	d := &a.dev
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "Local certificates").FontSize(18).FontWeight(650).Grow(1).MinWidth(0)
-		if ui.Button(c, "Refresh certificate status").Disabled(d.busy).Clicked() {
+		if action.Button(c, "Refresh certificate status", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 			a.authorityTask(nil)
 		}
-		if ui.Button(c, "Back to HTTPS rules").Clicked() {
+		if action.Button(c, "Back to HTTPS rules", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 			d.authorityOpen = false
 		}
 	})
@@ -67,26 +69,26 @@ func (a *app) devAuthority(c *ui.Context) {
 	a.authorityInfo(c, "Active authority", r.Active)
 	ui.Text(c, "Checked "+r.CheckedAt.Local().Format("2006-01-02 15:04:05")).FontSize(textCaption).TextColor(c.Theme().TextMuted)
 	ui.Row(c).Wrap().Gap(8).Children(func() {
-		if ui.Button(c, "Copy active CA fingerprint").AlignSelf(ui.Start).Disabled(r.Active.Fingerprint == "" || a.copy == nil).Clicked() {
+		if action.Button(c, "Copy active CA fingerprint", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(r.Active.Fingerprint == "" || a.copy == nil).Clicked() {
 			a.copy(r.Active.Fingerprint)
 		}
-		if ui.Button(c, "Trust local CA").AlignSelf(ui.Start).Tooltip("Uses your login keychain and may ask for macOS authorization.").Disabled(d.busy || !r.Active.Usable && r.Active.Status != "Not created").Clicked() {
+		if action.Button(c, "Trust local CA", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("Uses your login keychain and may ask for macOS authorization.").Disabled(d.busy || !r.Active.Usable && r.Active.Status != "Not created").Clicked() {
 			a.authorityTask(func(m *devplatform.Manager) error { return m.ConfigureTrust(m.Context, false) })
 		}
-		if ui.Button(c, "Remove CA trust").AlignSelf(ui.Start).Disabled(d.busy || r.Active.Fingerprint == "").Clicked() {
+		if action.Button(c, "Remove CA trust", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || r.Active.Fingerprint == "").Clicked() {
 			a.authorityTask(func(m *devplatform.Manager) error { return m.ConfigureTrust(m.Context, true) })
 		}
 	})
 	devDivider(c, "Replace or repair")
-	if ui.Button(c, "Prepare replacement CA").AlignSelf(ui.Start).Disabled(d.busy || r.Prepared != nil).Clicked() {
+	if action.Button(c, "Prepare replacement CA", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || r.Prepared != nil).Clicked() {
 		a.authorityTask(func(m *devplatform.Manager) error { return m.PrepareAuthority(m.Context) })
 	}
 	if r.Prepared != nil {
 		a.authorityInfo(c, "Prepared replacement", *r.Prepared)
-		if ui.Button(c, "Copy prepared CA fingerprint").AlignSelf(ui.Start).Disabled(a.copy == nil || r.Prepared.Fingerprint == "").Clicked() {
+		if action.Button(c, "Copy prepared CA fingerprint", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(a.copy == nil || r.Prepared.Fingerprint == "").Clicked() {
 			a.copy(r.Prepared.Fingerprint)
 		}
-		if ui.Button(c, "Trust prepared CA").AlignSelf(ui.Start).Disabled(d.busy || !r.Prepared.Usable).Clicked() {
+		if action.Button(c, "Trust prepared CA", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || !r.Prepared.Usable).Clicked() {
 			revision := r.Revision
 			a.authorityTask(func(m *devplatform.Manager) error { return m.TrustPreparedAuthority(m.Context, revision) })
 		}
@@ -94,19 +96,19 @@ func (a *app) devAuthority(c *ui.Context) {
 		if r.PreparedIsActive {
 			label = "Finish CA activation"
 		}
-		if ui.Button(c, label).AlignSelf(ui.Start).Disabled(d.busy || !r.Prepared.Usable || !r.PreparedIsActive && r.Prepared.Trust != "Trusted").Clicked() {
+		if action.Button(c, label, action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || !r.Prepared.Usable || !r.PreparedIsActive && r.Prepared.Trust != "Trusted").Clicked() {
 			revision := r.Revision
 			a.authorityTask(func(m *devplatform.Manager) error { return m.ActivateAuthority(m.Context, revision) })
 		}
-		if ui.Button(c, "Discard prepared CA").AlignSelf(ui.Start).Tooltip("The saved certificate stays listed below, so any trust granted to it can still be removed.").Disabled(d.busy).Clicked() {
+		if action.Button(c, "Discard prepared CA", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("The saved certificate stays listed below, so any trust granted to it can still be removed.").Disabled(d.busy).Clicked() {
 			revision := r.Revision
 			a.authorityTask(func(m *devplatform.Manager) error { return m.DiscardPreparedAuthority(m.Context, revision) })
 		}
 	}
-	if ui.Button(c, "Stop HTTPS proxy").AlignSelf(ui.Start).Tooltip("Stopping or reinstalling a system listener can require administrator authorization.").Disabled(d.busy).Clicked() {
+	if action.Button(c, "Stop HTTPS proxy", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("Stopping or reinstalling a system listener can require administrator authorization.").Disabled(d.busy).Clicked() {
 		a.authorityTask(func(m *devplatform.Manager) error { return m.StopProxy(m.Context) })
 	}
-	if ui.Button(c, "Apply proxy").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
+	if action.Button(c, "Apply proxy", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 		a.authorityTask(func(m *devplatform.Manager) error { return m.ApplyProxy(m.Context) })
 	}
 	for _, saved := range r.Archives {
@@ -119,15 +121,15 @@ func (a *app) devAuthority(c *ui.Context) {
 		}
 		a.authorityInfo(c, title, saved)
 		id, fingerprint, revision := saved.ID, saved.Fingerprint, r.Revision
-		if ui.Button(c, "Trust saved CA "+id[:8]).AlignSelf(ui.Start).Disabled(d.busy || !saved.Usable).Clicked() {
+		if action.Button(c, "Trust saved CA "+id[:8], action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || !saved.Usable).Clicked() {
 			a.authorityTask(func(m *devplatform.Manager) error {
 				return m.ConfigureSavedAuthorityTrust(m.Context, id, fingerprint, false)
 			})
 		}
-		if ui.Button(c, "Use saved CA "+id[:8]).AlignSelf(ui.Start).Disabled(d.busy || !saved.Usable || r.Prepared != nil).Clicked() {
+		if action.Button(c, "Use saved CA "+id[:8], action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || !saved.Usable || r.Prepared != nil).Clicked() {
 			a.authorityTask(func(m *devplatform.Manager) error { return m.RestoreAuthority(m.Context, id, fingerprint, revision) })
 		}
-		if ui.Button(c, "Remove saved CA trust "+id[:8]).AlignSelf(ui.Start).Tooltip("Affects that exact certificate wherever it is used on this Mac.").Disabled(d.busy).Clicked() {
+		if action.Button(c, "Remove saved CA trust "+id[:8], action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("Affects that exact certificate wherever it is used on this Mac.").Disabled(d.busy).Clicked() {
 			a.authorityTask(func(m *devplatform.Manager) error { return m.RemoveArchivedAuthorityTrust(m.Context, id, fingerprint) })
 		}
 	}

@@ -5,6 +5,9 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/choice"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 
 	"macos-service-manager/internal/service"
 )
@@ -34,7 +37,7 @@ func (a *app) editorDialog(c *ui.Context) {
 				}
 			})
 			if e.existing == "" {
-				ui.Segmented(c, &e.kind, "User Agent", "System Agent", "Daemon").Label("Kind of job").AlignSelf(ui.Start)
+				action.Segmented(c, &e.kind, []string{"User Agent", "System Agent", "Daemon"}, action.SegmentedProps{Variant: action.SegmentedFilled, Size: theme.Small}).AlignSelf(ui.Start)
 			}
 			ui.Scroll(c).MaxHeight(windowHeight - 210).Children(func() {
 				ui.Form(c, func() {
@@ -62,7 +65,7 @@ func (a *app) editorDialog(c *ui.Context) {
 						})
 						if e.existing == "" {
 							if path := e.logDefaultPath("<label>"); path != "" {
-								ui.Checkbox(c, &e.logDefault, "Write to "+tildePath(path)+" if no log file is set")
+								choice.Checkbox(c, &e.logDefault, "Write to "+tildePath(path)+" if no log file is set", choice.CheckboxProps{})
 							}
 						}
 					})
@@ -76,12 +79,12 @@ func (a *app) editorDialog(c *ui.Context) {
 				if e.existing != "" {
 					applyLabel = "Reload it after saving"
 				}
-				ui.Checkbox(c, &e.apply, applyLabel)
+				choice.Checkbox(c, &e.apply, applyLabel, choice.CheckboxProps{})
 				ui.Spacer(c)
-				if ui.Button(c, "Cancel").Clicked() {
+				if action.Button(c, "Cancel", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 					e.open = false
 				}
-				if ui.PrimaryButton(c, "Save").Disabled(e.saving).Clicked() {
+				if action.Button(c, "Save", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Disabled(e.saving).Clicked() {
 					a.saveJob()
 				}
 			})

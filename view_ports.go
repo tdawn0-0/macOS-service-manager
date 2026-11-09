@@ -5,6 +5,8 @@ import (
 	"strconv"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"macos-service-manager/internal/devplatform"
 )
 
@@ -50,10 +52,10 @@ func (a *app) devPortControls(c *ui.Context, value *string, scope string) {
 	d := &a.dev
 	port, err := strconv.Atoi(*value)
 	ui.Row(c).Wrap().Gap(8).Children(func() {
-		if ui.Button(c, "Check "+scope+" port").AlignSelf(ui.Start).Disabled(d.busy || err != nil || port < 1 || port > 65535).Clicked() {
+		if action.Button(c, "Check "+scope+" port", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || err != nil || port < 1 || port > 65535).Clicked() {
 			a.checkDevPort(port)
 		}
-		if ui.Button(c, "Find available "+scope+" port").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
+		if action.Button(c, "Find available "+scope+" port", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 			original, tab, dbID := *value, d.tab, d.dbID
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				suggestion, err := m.AvailableLocalPort(m.Context)
@@ -87,12 +89,12 @@ func (a *app) devDatabasePort(c *ui.Context, instance devplatform.Instance) {
 	devField(c, "Database port", &d.dbPort, strconv.Itoa(instance.Port))
 	a.devPortControls(c, &d.dbPort, "database")
 	port, err := strconv.Atoi(d.dbPort)
-	if ui.Button(c, "Save database port").AlignSelf(ui.Start).Tooltip("Stop this instance and disconnect its clients first. Data, users and password are kept; update client connection settings afterwards.").Disabled(d.busy || err != nil || port < 1024 || port > 65535 || port == instance.Port).Clicked() {
+	if action.Button(c, "Save database port", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("Stop this instance and disconnect its clients first. Data, users and password are kept; update client connection settings afterwards.").Disabled(d.busy || err != nil || port < 1024 || port > 65535 || port == instance.Port).Clicked() {
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			return "Database port update. Review connection details before restarting.", m.ChangeInstancePort(m.Context, instance, port)
 		})
 	}
-	if ui.Button(c, "Repair saved port settings").AlignSelf(ui.Start).Tooltip("Restores the saved endpoint after an interrupted change. Data and credentials stay in place.").Disabled(d.busy).Clicked() {
+	if action.Button(c, "Repair saved port settings", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("Restores the saved endpoint after an interrupted change. Data and credentials stay in place.").Disabled(d.busy).Clicked() {
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			return "Saved port settings repair. Check the port before starting.", m.RepairInstancePort(m.Context, instance)
 		})

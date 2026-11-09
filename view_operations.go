@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"macos-service-manager/internal/devplatform"
 )
 
@@ -100,7 +102,7 @@ func (a *app) devOperations(c *ui.Context) {
 		ui.Column(c).Width(1).Background(hairline(c.Theme()))
 		ui.Scroll(c.Key("operation-detail")).TrackScroll(&d.operationScroll).Grow(1).MinWidth(0).MinHeight(0).Padding(20, 24).Children(func() {
 			ui.Column(c).Gap(10).Children(func() {
-				if ui.Button(c, "Back to workspace").Clicked() {
+				if action.Button(c, "Back to workspace", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 					d.operationsOpen = false
 				}
 				if d.operationsError != "" {
@@ -149,22 +151,22 @@ func (a *app) devOperations(c *ui.Context) {
 						ui.Text(c, "This output may be incomplete. Do not use it as a verified backup.").FontSize(textSmall).TextColor(c.Theme().Warning)
 					}
 				}
-				if ui.Button(c, "Retry operation").AlignSelf(ui.Start).Tooltip("Rechecks saved settings and live launchd jobs. Ownership is never assumed from a historical PID.").Disabled(d.busy || !devplatform.OperationCanRetry(r)).Clicked() {
+				if action.Button(c, "Retry operation", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("Rechecks saved settings and live launchd jobs. Ownership is never assumed from a historical PID.").Disabled(d.busy || !devplatform.OperationCanRetry(r)).Clicked() {
 					a.devTask(func(m *devplatform.Manager) (string, error) {
 						return "Follow-up task finished. Review its result.", m.RetryOperation(m.Context, r.ID, r.Revision)
 					})
 				}
-				if ui.Button(c, "Review resource settings").AlignSelf(ui.Start).Tooltip("Initialization, restore and commands are never replayed. Existing data is kept.").Disabled(d.busy || r.Busy).Clicked() {
+				if action.Button(c, "Review resource settings", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("Initialization, restore and commands are never replayed. Existing data is kept.").Disabled(d.busy || r.Busy).Clicked() {
 					a.reviewOperation(r)
 				}
-				if ui.Button(c, "Reveal task files").AlignSelf(ui.Start).Disabled(d.busy || a.reveal == nil).Clicked() {
+				if action.Button(c, "Reveal task files", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || a.reveal == nil).Clicked() {
 					a.devTask(func(m *devplatform.Manager) (string, error) {
 						path := filepath.Join(m.Root, "operations", r.ID)
 						a.post(func() { a.reveal(path) })
 						return "Task folder revealed.", nil
 					})
 				}
-				if ui.Button(c, "Dismiss record (keep all files)").AlignSelf(ui.Start).Disabled(d.busy || r.Busy).Clicked() {
+				if action.Button(c, "Dismiss record (keep all files)", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || r.Busy).Clicked() {
 					a.devTask(func(m *devplatform.Manager) (string, error) {
 						return "Task record dismissed; resource and output files retained.", m.DismissOperation(m.Context, r.ID, r.Revision)
 					})

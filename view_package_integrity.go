@@ -2,7 +2,10 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"macos-service-manager/internal/devplatform"
 )
 
@@ -46,7 +49,7 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 		}
 	}
 	ui.Row(c).Wrap().Gap(8).Children(func() {
-		if ui.Button(c, "Check files "+p.Name+" "+p.Version).AlignSelf(ui.Start).Tooltip(checkTip(p)).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
+		if action.Button(c, "Check files "+p.Name+" "+p.Version, action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Tooltip(checkTip(p)).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				r, e := m.VerifyPackage(m.Context, id)
 				if e == nil {
@@ -55,7 +58,7 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 				return r.Text(), e
 			})
 		}
-		if ui.Button(c, "Repair "+p.Name+" "+p.Version).AlignSelf(ui.Start).Tooltip("Restores this version from its recorded source and checksum. Stop databases and commands using this version first. Database data stays in separate folders.").Disabled(d.busy || a.packageTaskRunning(id) || p.Formula != "").Clicked() {
+		if action.Button(c, "Repair "+p.Name+" "+p.Version, action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("Restores this version from its recorded source and checksum. Stop databases and commands using this version first. Database data stays in separate folders.").Disabled(d.busy || a.packageTaskRunning(id) || p.Formula != "").Clicked() {
 			a.startPackageTask(p, "repair", func(m *devplatform.Manager) (string, error) {
 				if e := m.RepairPackage(m.Context, id); e != nil {
 					return "Repair did not complete.", e
@@ -68,7 +71,7 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 			}, nil)
 		}
 	})
-	if ui.Button(c, "Reveal package folder "+p.Name+" "+p.Version).AlignSelf(ui.Start).Disabled(d.busy || a.reveal == nil).Clicked() {
+	if action.Button(c, "Reveal package folder "+p.Name+" "+p.Version, action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || a.reveal == nil).Clicked() {
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			path := m.PackageDirectory(p)
 			a.post(func() { a.reveal(path) })

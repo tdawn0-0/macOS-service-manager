@@ -14,6 +14,8 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 
 	"macos-service-manager/internal/system"
 )
@@ -365,8 +367,8 @@ func (a *app) guideWelcome(c *ui.Context) {
 		ui.Text(c, "Allow Full Disk Access").FontSize(20).FontWeight(700).Margin(10, 0, 4).TextAlign(ui.Center)
 		ui.Text(c, "Needed to list every login item").TextColor(t.TextMuted).TextAlign(ui.Center)
 		ui.Column(c).Grow(1)
-		ui.PrimaryButton(c, "Allow…").Margin(0, 0, 10).OnClick(func() { a.openRestrictionSettings(a.guide.src) })
-		ui.Button(c, skip).OnClick(a.closeGuide)
+		action.Button(c, "Allow…", action.ButtonProps{Variant: action.Primary, Size: theme.Middle}).Margin(0, 0, 10).OnClick(func() { a.openRestrictionSettings(a.guide.src) })
+		action.Button(c, skip, action.ButtonProps{Variant: action.Default, Size: theme.Middle}).OnClick(a.closeGuide)
 	})
 }
 
@@ -388,13 +390,13 @@ func (a *app) guideSidecar(c *ui.Context) {
 				ui.Text(c, "Waiting for access").FontSize(textSmall).TextColor(t.TextMuted)
 			})
 		} else {
-			ui.Button(c, "Open Settings").Margin(0, 0, 10).OnClick(func() { a.openRestrictionSettings(a.guide.src) })
+			action.Button(c, "Open Settings", action.ButtonProps{Variant: action.Default, Size: theme.Middle}).Margin(0, 0, 10).OnClick(func() { a.openRestrictionSettings(a.guide.src) })
 		}
 		skip := "Close"
 		if a.guide.welcome {
 			skip = "Skip for Now"
 		}
-		ui.Button(c, skip).OnClick(a.closeGuide)
+		action.Button(c, skip, action.ButtonProps{Variant: action.Default, Size: theme.Middle}).OnClick(a.closeGuide)
 	})
 }
 

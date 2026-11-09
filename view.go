@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 
 	"macos-service-manager/internal/service"
 )
@@ -294,7 +296,7 @@ func (a *app) emptyList(c *ui.Context) {
 		case a.query != "" || a.filter != 0:
 			ui.Icon(c, iconSearch).FontSize(26).TextColor(t.TextMuted).Opacity(0.5)
 			ui.Text(c, "Nothing matches").TextColor(t.TextMuted)
-			if ui.Button(c, "Clear search and filter").Clicked() {
+			if action.Button(c, "Clear search and filter", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 				a.query, a.filter = "", 0
 			}
 		default:

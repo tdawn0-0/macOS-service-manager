@@ -2,6 +2,9 @@ package main
 
 import (
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/display"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"macos-service-manager/internal/devplatform"
 )
 
@@ -11,7 +14,7 @@ func (a *app) devRuntimeCatalog(c *ui.Context) {
 	if name == "java" {
 		ui.Text(c, "JDK downloads from the JetBrains catalog used by IDEA. Choose a distribution and version; review its source and license before installing.").FontSize(textSmall)
 	}
-	if ui.Button(c, "Refresh available versions").Disabled(d.busy).Clicked() {
+	if action.Button(c, "Refresh available versions", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			rows, e := m.RuntimeVersions(m.Context, name)
 			if e == nil {
@@ -43,13 +46,13 @@ func (a *app) devPython(c *ui.Context) {
 	d := &a.dev
 	ui.Text(c, "Python uses uv’s existing installation store. Uninstall removes the selected interpreter; virtual environments that reference it will need repair.").FontSize(textSmall)
 	devField(c, "uv executable", &d.uvPath, "/absolute/path/to/uv (optional)")
-	if ui.Button(c, "Use uv executable").Disabled(d.busy).Clicked() {
+	if action.Button(c, "Use uv executable", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 		path := d.uvPath
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			return "uv executable selected", m.SetUVPath(m.Context, path)
 		})
 	}
-	if ui.Button(c, "Refresh Python versions").Disabled(d.busy).Clicked() {
+	if action.Button(c, "Refresh Python versions", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			description, e := m.UVDescription(m.Context)
 			if e != nil {
@@ -83,7 +86,7 @@ func (a *app) devPython(c *ui.Context) {
 		}
 	}
 	devChoice(c, "Python version", &d.uvVersion, keys)
-	if ui.PrimaryButton(c, "Install Python with uv").Disabled(d.busy || d.uvVersion == "").Clicked() {
+	if action.Button(c, "Install Python with uv", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Disabled(d.busy || d.uvVersion == "").Clicked() {
 		key := d.uvVersion
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			e := m.InstallUVPython(m.Context, key)
@@ -107,18 +110,18 @@ func (a *app) devPython(c *ui.Context) {
 		ui.Column(c).Gap(6).Children(func() {
 			ui.Text(c, r.Key)
 			ui.Row(c).Wrap().Gap(6).Children(func() {
-				if ui.Button(c, "Copy Python path "+r.Version).Clicked() && a.copy != nil {
+				if action.Button(c, "Copy Python path "+r.Version, action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() && a.copy != nil {
 					a.copy(r.Path)
 				}
-				for _, action := range []string{"default", "uninstall"} {
+				for _, act := range []string{"default", "uninstall"} {
 					label := "Set uv default " + r.Version
-					if action == "uninstall" {
+					if act == "uninstall" {
 						label = "Uninstall Python " + r.Version
 					}
-					if ui.Button(c, label).Disabled(d.busy).Clicked() {
+					if action.Button(c, label, action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 						a.devTask(func(m *devplatform.Manager) (string, error) {
-							e := m.UVPythonAction(m.Context, r.Key, action)
-							if e == nil && action == "default" {
+							e := m.UVPythonAction(m.Context, r.Key, act)
+							if e == nil && act == "default" {
 								a.post(func() { a.dev.uvPin = r.Key })
 							}
 							if e == nil {
@@ -128,7 +131,7 @@ func (a *app) devPython(c *ui.Context) {
 									a.post(func() { a.dev.uvInstalled = rows })
 								}
 							}
-							return "Python " + action + " completed", e
+							return "Python " + act + " completed", e
 						})
 					}
 				}
@@ -139,13 +142,13 @@ func (a *app) devPython(c *ui.Context) {
 
 func (a *app) devAdditionalRuntimeInstalled(c *ui.Context, id string, p devplatform.Package) {
 	if a.dev.state.RuntimeDefaults[p.Name] == id {
-		ui.Text(c, "Default")
-	} else if ui.Button(c, "Set default "+p.Version).Disabled(a.dev.busy).Clicked() {
+		display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
+	} else if action.Button(c, "Set default "+p.Version, action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(a.dev.busy).Clicked() {
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			return "Default version selected; enable terminal integration to use it", m.SetRuntimeDefault(m.Context, p.Name, id)
 		})
 	}
-	if ui.Button(c, "Copy executable path").Disabled(a.dev.busy).Clicked() {
+	if action.Button(c, "Copy executable path", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(a.dev.busy).Clicked() {
 		path, e := a.devManager().Binary(&a.dev.state, id, p.Name)
 		if e != nil {
 			a.dev.output = e.Error()
@@ -162,7 +165,7 @@ func (a *app) devAdditionalRuntimeShell(c *ui.Context) {
 		if enable {
 			label = "Enable in terminal"
 		}
-		if ui.Button(c, label).Disabled(a.dev.busy).Clicked() {
+		if action.Button(c, label, action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(a.dev.busy).Clicked() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				return "Terminal configuration updated; open a new terminal", m.ConfigureRuntimeShell(m.Context, name, enable)
 			})

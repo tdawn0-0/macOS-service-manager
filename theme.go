@@ -2,39 +2,17 @@ package main
 
 import (
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 
 	"macos-service-manager/internal/service"
 )
 
-// style sets the look of a window: the system's accent and appearance, with
-// quieter surfaces, the colors of macOS and tighter controls.
+// style sets the look of a window to the Lobe UI design tokens.
 func style(c *ui.Context) {
+	theme.Apply(c)
 	t := *c.Theme()
 	t.Spacing = 3.5
-	t.Radius = 7
-	if t.Dark {
-		t.Background = ui.Hex("#1c1c1e")
-		t.Surface = ui.Hex("#2a2a2d")
-		t.SurfaceHover = ui.Hex("#343437")
-		t.SurfacePressed = ui.Hex("#3d3d41")
-		t.Border = ui.RGBA(255, 255, 255, 0.11)
-		t.Text = ui.Hex("#f5f5f7")
-		t.TextMuted = ui.Hex("#98989f")
-		t.Success = ui.Hex("#30d158")
-		t.Warning = ui.Hex("#ff9f0a")
-		t.Danger = ui.Hex("#ff453a")
-	} else {
-		t.Background = ui.Hex("#ffffff")
-		t.Surface = ui.Hex("#f5f5f7")
-		t.SurfaceHover = ui.Hex("#ececf0")
-		t.SurfacePressed = ui.Hex("#e3e3e8")
-		t.Border = ui.RGBA(0, 0, 0, 0.11)
-		t.Text = ui.Hex("#1d1d1f")
-		t.TextMuted = ui.Hex("#6e6e73")
-		t.Success = ui.Hex("#28b04f")
-		t.Warning = ui.Hex("#f59300")
-		t.Danger = ui.Hex("#e5352b")
-	}
 	c.SetTheme(&t)
 }
 
@@ -86,28 +64,32 @@ func statusDot(c *ui.Context, s service.State, onAccent bool) {
 	}
 }
 
-// iconButton is a button showing only an icon, without a face until hovered.
+// iconButton is a button showing only an icon, styled with Lobe ActionIcon.
 func iconButton(c *ui.Context, icon *ui.SVG, label string, tint ui.Color) ui.Element {
-	const size = 26
-	b := ui.ButtonBase(c).Size(size, size).Center().Radius(6).Shrink(0).Label(label).Tooltip(label)
-	if b.Hovered() {
-		b.Background(tint.Alpha(0.12))
-	}
-	b.Children(func() { ui.Icon(c, icon).FontSize(14).TextColor(tint) })
-	return b
+	return action.ActionIcon(c, icon, action.ActionIconProps{
+		Variant: action.ActionIconBorderless,
+		Size:    theme.Small,
+		Title:   label,
+	})
 }
 
-// labeledButton is a button showing an icon before its label.
+// labeledButton is a button showing an icon before its label, styled with Lobe Button.
 func labeledButton(c *ui.Context, icon *ui.SVG, label string, primary bool) ui.Element {
-	var b ui.Element
+	variant := action.Default
 	if primary {
-		b = ui.PrimaryButton(c, "")
-	} else {
-		b = ui.Button(c, "")
+		variant = action.Primary
 	}
-	b.Justify(ui.Center).Children(func() {
-		ui.Icon(c, icon).FontSize(13)
-		ui.Text(c, label).SingleLine()
+	b := ui.ButtonBase(c)
+	action.StyleButton(c, b, "", action.ButtonProps{
+		Variant: variant,
+		Size:    theme.Small,
+	})
+	b.Label(label)
+	b.Children(func() {
+		ui.Row(c).Center().Gap(6).Children(func() {
+			ui.Icon(c, icon).FontSize(13)
+			ui.Text(c, label).SingleLine()
+		})
 	})
 	return b
 }

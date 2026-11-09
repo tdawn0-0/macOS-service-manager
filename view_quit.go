@@ -3,9 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/egoist/mygo/ui"
-	"macos-service-manager/internal/devplatform"
 	"time"
+
+	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/choice"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
+	"macos-service-manager/internal/devplatform"
 )
 
 type quitState struct {
@@ -121,10 +125,10 @@ func (a *app) quitDialog(c *ui.Context) {
 					}
 					if a.quitOperationBusy() && !q.stopping {
 						ui.Text(c, "An operation is running. Finish it before quitting.").FontSize(textSmall)
-						if a.backgroundTasksRunning() && ui.Button(c, "Cancel background tasks").Clicked() {
+						if a.backgroundTasksRunning() && action.Button(c, "Cancel background tasks", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 							a.cancelBackgroundTasks()
 						}
-						if a.dev.cancel != nil && ui.Button(c, "Cancel current operation").Clicked() {
+						if a.dev.cancel != nil && action.Button(c, "Cancel current operation", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 							a.dev.cancel()
 						}
 					}
@@ -133,20 +137,20 @@ func (a *app) quitDialog(c *ui.Context) {
 						for _, i := range q.plan.Instances {
 							ui.Text(c, "Database · "+i.ID+" · "+softwareTitle(i.Name)).FontSize(textSmall)
 						}
-						ui.Checkbox(c, &q.stopProxy, "Stop local HTTPS proxy").Disabled(q.stopping)
+						choice.Checkbox(c, &q.stopProxy, "Stop local HTTPS proxy", choice.CheckboxProps{}).Disabled(q.stopping)
 						if q.plan.PrivilegedProxy && q.stopProxy {
 							ui.Text(c, "Stopping the system HTTPS listener may require macOS administrator authorization.").FontSize(textSmall).TextColor(c.Theme().Warning)
 						}
 					}
 					if q.stopping {
 						ui.Text(c, a.dev.output).FontSize(textSmall)
-						if ui.Button(c, "Cancel stopping").Clicked() && a.dev.cancel != nil {
+						if action.Button(c, "Cancel stopping", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() && a.dev.cancel != nil {
 							a.dev.cancel()
 						}
 					}
 					if q.err != "" {
 						ui.Text(c, q.err).FontSize(textSmall).TextColor(c.Theme().Danger)
-						if ui.Button(c, "Review updated quit scope").Disabled(a.dev.busy).Clicked() {
+						if action.Button(c, "Review updated quit scope", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(a.dev.busy).Clicked() {
 							q.err = ""
 							a.loadQuitPreview()
 						}
@@ -154,15 +158,15 @@ func (a *app) quitDialog(c *ui.Context) {
 				})
 			})
 			ui.Row(c).Gap(8).Children(func() {
-				if ui.Button(c, "Cancel quit").Disabled(q.stopping).Clicked() {
+				if action.Button(c, "Cancel quit", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(q.stopping).Clicked() {
 					q.open = false
 					q.sequence++
 				}
 				ui.Spacer(c)
-				if ui.Button(c, "Keep services and quit").Disabled(a.quitOperationBusy()).Clicked() {
+				if action.Button(c, "Keep services and quit", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(a.quitOperationBusy()).Clicked() {
 					a.finishQuit()
 				}
-				if ui.PrimaryButton(c, "Stop managed databases and quit").Tooltip("Stops the selected app-owned resources. If HTTPS is kept, its log maintenance continues. Data, settings, CA trust and domain mappings are kept.").Disabled(a.quitOperationBusy() || q.loading || q.plan == nil).Clicked() {
+				if action.Button(c, "Stop managed databases and quit", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Tooltip("Stops the selected app-owned resources. If HTTPS is kept, its log maintenance continues. Data, settings, CA trust and domain mappings are kept.").Disabled(a.quitOperationBusy() || q.loading || q.plan == nil).Clicked() {
 					a.stopForQuit()
 				}
 			})

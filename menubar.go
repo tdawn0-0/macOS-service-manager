@@ -3,12 +3,14 @@ package main
 import (
 	_ "embed"
 	"fmt"
-	"macos-service-manager/internal/devplatform"
 	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 
+	"macos-service-manager/internal/devplatform"
 	"macos-service-manager/internal/service"
 )
 
@@ -116,7 +118,7 @@ func (a *app) menubarView(c *ui.Context, openWindow func()) {
 			}
 			ui.Row(c).Height(32).Shrink(0).AlignItems(ui.Center).Gap(8).Padding(0, 8).Children(func() {
 				ui.Text(c, "Proxy · "+proxyStatus).Grow(1).MinWidth(0).SingleLine()
-				if ui.Button(c, "HTTPS settings").Clicked() {
+				if action.Button(c, "HTTPS settings", action.ButtonProps{Variant: action.Filled, Size: theme.Small}).Clicked() {
 					a.nav = "development"
 					a.dev.tab = devTabHTTPS
 					openWindow()

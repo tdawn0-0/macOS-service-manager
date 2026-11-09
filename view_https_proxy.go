@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
-	"github.com/egoist/mygo/ui"
-	"macos-service-manager/internal/devplatform"
 	"strconv"
+
+	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
+	"macos-service-manager/internal/devplatform"
 )
 
 func (a *app) devHTTPS(c *ui.Context) {
@@ -18,7 +21,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 	}
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "HTTPS proxy rules").FontSize(18).FontWeight(650).Grow(1).MinWidth(0)
-		if ui.Button(c, "Local certificates").Disabled(d.busy).Clicked() {
+		if action.Button(c, "Local certificates", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 			d.authorityOpen = true
 			a.authorityTask(nil)
 		}
@@ -45,7 +48,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.TextInput(c, &row.Domain).Placeholder("app.test").Label("Domain")
 			ui.TextInput(c, &row.LocalPort).Placeholder("3000").Label("Local port")
-			if !d.proxyDraftDirty() && ui.Button(c, "Open HTTPS URL").Clicked() {
+			if !d.proxyDraftDirty() && action.Button(c, "Open HTTPS URL", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 				url := "https://" + row.Domain
 				if d.state.ProxyListenerPort != 443 {
 					url = fmt.Sprintf("%s:%d", url, d.state.ProxyListenerPort)
@@ -55,7 +58,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 					return "Opened saved HTTPS rule in browser.", err
 				})
 			}
-			if ui.Button(c, "Remove rule").Clicked() {
+			if action.Button(c, "Remove rule", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 				removeRule = i
 			}
 		})
@@ -66,14 +69,14 @@ func (a *app) devHTTPS(c *ui.Context) {
 	if removeRule >= 0 {
 		d.proxyDraft = append(d.proxyDraft[:removeRule], d.proxyDraft[removeRule+1:]...)
 	}
-	if ui.Button(c, "Add rule").Clicked() {
+	if action.Button(c, "Add rule", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 		d.proxyDraft = append(d.proxyDraft, proxyRuleDraft{LocalPort: "3000"})
 	}
-	if ui.Button(c, "Discard changes").Disabled(d.busy || !d.proxyDraftDirty()).Clicked() {
+	if action.Button(c, "Discard changes", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy || !d.proxyDraftDirty()).Clicked() {
 		d.loadProxyDraft(d.state)
 	}
 	ui.Row(c).Gap(8).Children(func() {
-		if ui.PrimaryButton(c, "Save HTTPS rules").Grow(1).Disabled(d.busy || !d.proxyDraftDirty()).Clicked() {
+		if action.Button(c, "Save HTTPS rules", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Grow(1).Disabled(d.busy || !d.proxyDraftDirty()).Clicked() {
 			listener, err := strconv.Atoi(d.proxyListenerPort)
 			rules := make([]devplatform.ProxyRule, 0, len(d.proxyDraft))
 			for _, row := range d.proxyDraft {
@@ -97,7 +100,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 				})
 			}
 		}
-		if ui.Button(c, "Apply proxy").Disabled(d.busy || d.proxyDraftDirty()).Clicked() {
+		if action.Button(c, "Apply proxy", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy || d.proxyDraftDirty()).Clicked() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				err := m.ApplyProxy(m.Context)
 				return "Proxy configuration published. Check DNS, TLS and upstream separately.", err
@@ -108,12 +111,12 @@ func (a *app) devHTTPS(c *ui.Context) {
 		ui.Text(c, "Save or discard changes before applying the proxy.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
 	}
 	devDivider(c, "Proxy")
-	for _, action := range []string{"Restart HTTPS proxy", "Stop HTTPS proxy", "Configure local domains", "Trust local CA", "Remove CA trust", "Diagnose HTTPS"} {
-		action := action
-		if ui.Button(c, action).AlignSelf(ui.Start).Disabled(d.busy || d.proxyDraftDirty()).Clicked() {
+	for _, act := range []string{"Restart HTTPS proxy", "Stop HTTPS proxy", "Configure local domains", "Trust local CA", "Remove CA trust", "Diagnose HTTPS"} {
+		act := act
+		if action.Button(c, act, action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || d.proxyDraftDirty()).Clicked() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				var e error
-				switch action {
+				switch act {
 				case "Restart HTTPS proxy":
 					e = m.RestartProxy(m.Context)
 				case "Stop HTTPS proxy":
@@ -131,7 +134,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 					}
 					return "Diagnostics finished. Review checks by layer.", err
 				}
-				return action, e
+				return act, e
 			})
 		}
 	}

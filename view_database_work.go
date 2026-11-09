@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
-	"github.com/egoist/mygo/ui"
-	"macos-service-manager/internal/devplatform"
 	"time"
+
+	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
+	"macos-service-manager/internal/devplatform"
 )
 
 func (a *app) databaseWorkTask(fn func(*devplatform.Manager) error) {
@@ -33,10 +36,10 @@ func (a *app) openDatabaseWork() {
 func (a *app) devDatabaseWork(c *ui.Context) {
 	d := &a.dev
 	devPaneHeader(c, "Unfinished database tasks", func() {
-		if ui.Button(c, "Refresh database tasks").Disabled(d.busy).Clicked() {
+		if action.Button(c, "Refresh database tasks", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 			a.databaseWorkTask(nil)
 		}
-		if ui.Button(c, "Back to database settings").Disabled(d.busy).Clicked() {
+		if action.Button(c, "Back to database settings", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 			d.databaseWorkOpen = false
 			d.detailScroll[devTabDatabases].Y = 0
 		}
@@ -62,7 +65,7 @@ func (a *app) devDatabaseWork(c *ui.Context) {
 		if r.Running {
 			label = "Stop database task " + prefix
 		}
-		if ui.Button(c, label).AlignSelf(ui.Start).Tooltip("Does not undo changes already written. Database files and backup output are kept.").Disabled(d.busy || !r.CanResolve).Clicked() {
+		if action.Button(c, label, action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("Does not undo changes already written. Database files and backup output are kept.").Disabled(d.busy || !r.CanResolve).Clicked() {
 			a.databaseWorkTask(func(m *devplatform.Manager) error { return m.ResolveDatabaseWork(m.Context, r.ID, r.Revision) })
 		}
 	}

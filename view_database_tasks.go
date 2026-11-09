@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"macos-service-manager/internal/devplatform"
 )
 
@@ -184,12 +186,12 @@ func (a *app) devDatabaseTasks(c *ui.Context) {
 		devDivider(c, label+" · "+id)
 		if task.Running {
 			ui.Text(c, task.Progress).FontSize(textSmall)
-			if ui.Button(c, cancelLabel+id).AlignSelf(ui.Start).Tooltip("Canceling does not undo data already written. Review the target before retrying.").Clicked() && task.cancel != nil {
+			if action.Button(c, cancelLabel+id, action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("Canceling does not undo data already written. Review the target before retrying.").Clicked() && task.cancel != nil {
 				task.cancel()
 			}
 		} else {
 			ui.Text(c, task.Result).FontSize(textSmall)
-			if ui.Button(c, dismissLabel+id).AlignSelf(ui.Start).Clicked() {
+			if action.Button(c, dismissLabel+id, action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Clicked() {
 				delete(d.databaseTasks, id)
 			}
 		}
@@ -225,10 +227,10 @@ func (a *app) openInitializations() {
 func (a *app) devInitializations(c *ui.Context) {
 	d := &a.dev
 	devPaneHeader(c, "Unfinished initializations", func() {
-		if ui.Button(c, "Refresh initializations").Disabled(d.busy).Clicked() {
+		if action.Button(c, "Refresh initializations", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 			a.initializationTask(nil)
 		}
-		if ui.Button(c, "Back to database settings").Disabled(d.busy).Clicked() {
+		if action.Button(c, "Back to database settings", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 			d.databaseWorkOpen = false
 			d.initializationsOpen = false
 			d.detailScroll[devTabDatabases].Y = 0
@@ -249,7 +251,7 @@ func (a *app) devInitializations(c *ui.Context) {
 		} else if r.Status == "Archived" {
 			label = "Finish archive " + r.ID[:min(8, len(r.ID))]
 		}
-		if ui.Button(c, label).AlignSelf(ui.Start).Disabled(d.busy || r.Busy || !r.CanResolve).Clicked() {
+		if action.Button(c, label, action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || r.Busy || !r.CanResolve).Clicked() {
 			a.initializationTask(func(m *devplatform.Manager) (string, error) {
 				archive, e := m.ResolveInstanceInitialization(m.Context, r.ID, r.Revision)
 				if archive != "" {

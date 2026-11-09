@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
-	"github.com/egoist/mygo/ui"
-	"macos-service-manager/internal/devplatform"
 	"strconv"
+
+	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
+	"macos-service-manager/internal/devplatform"
 )
 
 func (a *app) loadConnectionProfileDraft(instanceID, profileID string) {
@@ -56,7 +59,7 @@ func (a *app) devDatabaseConnections(c *ui.Context, instance devplatform.Instanc
 	ui.Column(c).Gap(8).Children(func() {
 		devDivider(c, "Connections")
 		ui.Row(c).Wrap().Gap(8).Children(func() {
-			if ui.Button(c, "Administrator connection").Clicked() {
+			if action.Button(c, "Administrator connection", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 				a.chooseConnectionProfile(instance.ID, "")
 			}
 			for _, id := range sortedKeys(d.state.ConnectionProfiles) {
@@ -64,22 +67,22 @@ func (a *app) devDatabaseConnections(c *ui.Context, instance devplatform.Instanc
 				if p.InstanceID != instance.ID {
 					continue
 				}
-				if ui.Button(c, "Profile "+p.Name).Clicked() {
+				if action.Button(c, "Profile "+p.Name, action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 					a.chooseConnectionProfile(instance.ID, id)
 				}
 			}
-			if ui.Button(c, "Add connection profile").Clicked() {
+			if action.Button(c, "Add connection profile", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 				a.chooseConnectionProfile(instance.ID, "new")
 			}
 		})
 		if d.profilePendingSelect != "" || d.profilePendingInstance != "" {
 			ui.Text(c, "Unsaved connection changes. Discard or cancel the switch.").FontSize(textSmall)
 			ui.Row(c).Gap(8).Children(func() {
-				if ui.Button(c, "Cancel connection switch").Clicked() {
+				if action.Button(c, "Cancel connection switch", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 					d.profilePendingSelect = ""
 					d.profilePendingInstance = ""
 				}
-				if ui.Button(c, "Discard connection changes").Clicked() {
+				if action.Button(c, "Discard connection changes", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 					selected, target := d.profilePendingSelect, d.profilePendingInstance
 					d.profilePendingSelect, d.profilePendingInstance = "", ""
 					a.loadConnectionProfileDraft(instance.ID, "")
@@ -114,7 +117,7 @@ func (a *app) devDatabaseConnections(c *ui.Context, instance devplatform.Instanc
 			}
 			ui.Text(c, "Connection profiles store no password. Enter credentials in your client.").FontSize(textSmall)
 			ui.Row(c).Wrap().Gap(8).Children(func() {
-				if ui.Button(c, "Save connection profile").Disabled(d.busy || a.databaseTaskRunning(instance.ID)).Clicked() {
+				if action.Button(c, "Save connection profile", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Disabled(d.busy || a.databaseTaskRunning(instance.ID)).Clicked() {
 					p := d.profileDraft
 					p.InstanceID = instance.ID
 					if d.profileSelected == "new" {
@@ -141,7 +144,7 @@ func (a *app) devDatabaseConnections(c *ui.Context, instance devplatform.Instanc
 						}
 					})
 				}
-				if d.profileSelected != "new" && ui.Button(c, "Delete connection profile").Disabled(d.busy).Clicked() {
+				if d.profileSelected != "new" && action.Button(c, "Delete connection profile", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 					id := d.profileSelected
 					a.devTaskThen(func(m *devplatform.Manager) (string, error) {
 						return "Connection profile deleted; database and user remain", m.DeleteConnectionProfile(m.Context, instance.ID, id)
@@ -158,11 +161,11 @@ func (a *app) devDatabaseConnections(c *ui.Context, instance devplatform.Instanc
 			selected = ""
 		}
 		ui.Row(c).Wrap().Gap(8).Children(func() {
-			if ui.Button(c, "Show connection details").Disabled(d.busy || d.profileSelected != "").Clicked() {
+			if action.Button(c, "Show connection details", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy || d.profileSelected != "").Clicked() {
 				id := instance.ID
 				a.devTask(func(m *devplatform.Manager) (string, error) { return m.Connection(id) })
 			}
-			if ui.Button(c, "Copy connection URI").Disabled(d.busy || d.profileSelected == "new").Clicked() {
+			if action.Button(c, "Copy connection URI", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy || d.profileSelected == "new").Clicked() {
 				id, profileID := instance.ID, selected
 				a.devTask(func(m *devplatform.Manager) (string, error) {
 					info, err := a.connectionInfoFor(id, profileID, m)
@@ -176,7 +179,7 @@ func (a *app) devDatabaseConnections(c *ui.Context, instance devplatform.Instanc
 					return "Connection URI copied", err
 				})
 			}
-			if d.profileSelected == "" && ui.Button(c, "Copy database password").Disabled(d.busy).Clicked() {
+			if d.profileSelected == "" && action.Button(c, "Copy database password", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 				id := instance.ID
 				a.devTask(func(m *devplatform.Manager) (string, error) {
 					password, err := m.DatabasePassword(id)
@@ -190,7 +193,7 @@ func (a *app) devDatabaseConnections(c *ui.Context, instance devplatform.Instanc
 					return "Database password copied", err
 				})
 			}
-			if ui.Button(c, "Open external database client").Disabled(d.busy || d.profileSelected == "new").Clicked() {
+			if action.Button(c, "Open external database client", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy || d.profileSelected == "new").Clicked() {
 				id, profileID := instance.ID, selected
 				a.devTask(func(m *devplatform.Manager) (string, error) {
 					info, err := a.connectionInfoFor(id, profileID, m)
@@ -203,7 +206,7 @@ func (a *app) devDatabaseConnections(c *ui.Context, instance devplatform.Instanc
 			}
 		})
 		if offer := d.profileOffer; offer != nil && offer.InstanceID == instance.ID {
-			if ui.Button(c, "Use created database/user in connection profile").Clicked() {
+			if action.Button(c, "Use created database/user in connection profile", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 				current, ok := d.state.Instances[offer.InstanceID]
 				if !ok || current.Kind != offer.Kind || a.connectionProfileDirty() {
 					d.output = "Review the current connection draft and instance before using the result."

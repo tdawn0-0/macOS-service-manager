@@ -7,6 +7,10 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/choice"
+	"github.com/lobehub/lobe-mygo/pkg/layout"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 
 	"macos-service-manager/internal/service"
 )
@@ -32,7 +36,9 @@ func (a *app) bulkPane(c *ui.Context, n int) {
 			labeledButton(c, iconPlay, fmt.Sprintf("Start %d", start), true).Grow(1).Disabled(start == 0).OnClick(func() { a.bulk(true) })
 			labeledButton(c, iconStop, fmt.Sprintf("Stop %d", stop), false).Grow(1).Disabled(stop == 0).OnClick(func() { a.bulk(false) })
 		})
-		ui.Button(c, "Clear selection").OnClick(a.chosen.Clear)
+		if action.Button(c, "Clear selection", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
+			a.chosen.Clear()
+		}
 	})
 }
 
@@ -102,7 +108,9 @@ func (a *app) itemPane(c *ui.Context, it service.Item) {
 	d := &a.detail
 	tab := d.tab
 	if len(d.logs) > 0 {
-		ui.Box(c).Shrink(0).Padding(0, 12).Children(func() { ui.Tabs(c, &d.tab, "Info", "Logs") })
+		ui.Box(c).Shrink(0).Padding(0, 12).Children(func() {
+			action.Segmented(c, &d.tab, []string{"Info", "Logs"}, action.SegmentedProps{Variant: action.SegmentedFilled, Size: theme.Small})
+		})
 	} else {
 		tab = 0
 	}
@@ -129,7 +137,9 @@ func (a *app) actionRow(c *ui.Context, it service.Item, actions []service.Action
 		}
 		if it.Source == service.LoginItem {
 			if service.Has(actions, service.Remove) {
-				ui.Button(c, "Remove…").Grow(1).Disabled(busy).OnClick(func() { a.request(it, service.Remove) })
+				if action.Button(c, "Remove…", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Grow(1).Disabled(busy).Clicked() {
+					a.request(it, service.Remove)
+				}
 			} else {
 				labeledButton(c, iconOpen, "Open System Settings", false).Grow(1).OnClick(a.openLoginSettings)
 			}
@@ -181,7 +191,7 @@ func (a *app) itemMenu(m *ui.Menu, it service.Item, inRow bool) {
 
 // card is a rounded group of a pane.
 func card(c *ui.Context) ui.Element {
-	return ui.Column(c).Radius(10).Background(c.Theme().Surface)
+	return layout.Block(c, layout.BlockProps{Variant: layout.BlockFilled})
 }
 
 // autostartCard shows whether an item starts by itself: a switch, or for a
@@ -228,7 +238,7 @@ func (a *app) autostartCard(c *ui.Context, it service.Item, actions []service.Ac
 					ui.Icon(c, iconLock).FontSize(11).TextColor(t.TextMuted).Shrink(0).Tooltip("Changing it asks for your password")
 				}
 			})
-			if ui.Switch(c.Key("autostart"), &on).Label(label).Disabled(busy).Changed() {
+			if choice.Switch(c.Key("autostart"), &on, choice.SwitchProps{Size: theme.Small}).Disabled(busy).Changed() {
 				set(on)
 			}
 		})
@@ -356,7 +366,7 @@ func (a *app) logTab(c *ui.Context) {
 			for i, f := range d.logs {
 				labels[i] = f.Label
 			}
-			ui.Segmented(c, &l.file, labels...).Label("Log file").AlignSelf(ui.Start)
+			action.Segmented(c, &l.file, labels, action.SegmentedProps{Variant: action.SegmentedFilled, Size: theme.Small}).AlignSelf(ui.Start)
 		}
 		file := d.logs[min(l.file, len(d.logs)-1)]
 		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {

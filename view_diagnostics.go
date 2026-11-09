@@ -2,7 +2,11 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/layout"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"macos-service-manager/internal/devplatform"
 )
 
@@ -59,10 +63,10 @@ func (a *app) devDiagnostics(c *ui.Context) {
 		ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, summary).FontWeight(600).Grow(1).MinWidth(0)
 			if report != nil {
-				if ui.Button(c, "Copy redacted report").Tooltip("Anonymous resource names. Excludes local paths, domains, commands, environment values, logs, credentials and private keys.").Disabled(d.busy || a.copy == nil).Clicked() {
+				if action.Button(c, "Copy redacted report", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Tooltip("Anonymous resource names. Excludes local paths, domains, commands, environment values, logs, credentials and private keys.").Disabled(d.busy || a.copy == nil).Clicked() {
 					a.copy(d.diagnosticJSON)
 				}
-				if ui.Button(c, "Export redacted report").Tooltip("Anonymous resource names. Excludes local paths, domains, commands, environment values, logs, credentials and private keys.").Disabled(d.busy).Clicked() {
+				if action.Button(c, "Export redacted report", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Tooltip("Anonymous resource names. Excludes local paths, domains, commands, environment values, logs, credentials and private keys.").Disabled(d.busy).Clicked() {
 					snapshot := *report
 					a.devTask(func(m *devplatform.Manager) (string, error) {
 						path, err := m.ExportDiagnostics(m.Context, snapshot)
@@ -73,20 +77,20 @@ func (a *app) devDiagnostics(c *ui.Context) {
 					})
 				}
 			}
-			if ui.Button(c, "Run diagnostics again").Tooltip("Changes no hosts, certificates or services.").Disabled(d.busy).Clicked() {
+			if action.Button(c, "Run diagnostics again", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Tooltip("Changes no hosts, certificates or services.").Disabled(d.busy).Clicked() {
 				a.runDevDiagnostics()
 			}
-			if ui.Button(c, "Back to workspace").Clicked() {
+			if action.Button(c, "Back to workspace", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 				d.diagnosticsOpen = false
 			}
 		})
 		if d.diagnosticPendingTarget != nil {
 			ui.Text(c, "Unsaved database changes. Discard them to open the selected setting?").TextColor(c.Theme().Warning)
 			ui.Row(c).Gap(8).Children(func() {
-				if ui.Button(c, "Cancel navigation").Clicked() {
+				if action.Button(c, "Cancel navigation", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 					d.diagnosticPendingTarget = nil
 				}
-				if ui.Button(c, "Discard draft and open").Clicked() {
+				if action.Button(c, "Discard draft and open", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
 					target := *d.diagnosticPendingTarget
 					d.diagnosticPendingTarget = nil
 					a.openDiagnosticTarget(target, true)
@@ -108,14 +112,14 @@ func (a *app) devDiagnostics(c *ui.Context) {
 			if check.Status == "OK" {
 				color = c.Theme().Success
 			}
-			ui.Column(c).Padding(12).Radius(8).Background(c.Theme().Surface).Gap(5).Children(func() {
+			layout.Block(c, layout.BlockProps{Variant: layout.BlockFilled}).Padding(12).Gap(5).Children(func() {
 				ui.Text(c, check.Status+" · "+check.Layer).FontSize(textSmall).FontWeight(650).TextColor(color)
 				ui.Text(c, check.Resource).FontWeight(600)
 				ui.Text(c, check.Summary).FontSize(textSmall)
 				if check.Remedy != "" {
 					ui.Text(c, check.Remedy).FontSize(textSmall).TextColor(c.Theme().TextMuted)
 				}
-				if check.Target.Kind != "" && ui.Button(c, "Open related setting").Disabled(d.busy).Clicked() {
+				if check.Target.Kind != "" && action.Button(c, "Open related setting", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 					a.openDiagnosticTarget(check.Target, false)
 				}
 			})

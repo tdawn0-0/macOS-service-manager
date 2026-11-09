@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"macos-service-manager/internal/devplatform"
 )
 
@@ -56,10 +58,10 @@ func (a *app) devInstanceDeletionPreview(c *ui.Context) {
 	d := &a.dev
 	p := d.instanceDeletionPreview
 	devPaneHeader(c, "Delete "+p.InstanceID, func() {
-		if ui.Button(c, "Refresh deletion preview").Disabled(d.busy).Clicked() {
+		if action.Button(c, "Refresh deletion preview", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 			a.previewInstanceDeletion(p.InstanceID)
 		}
-		if ui.Button(c, "Cancel deletion preview").AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
+		if action.Button(c, "Cancel deletion preview", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 			d.instanceDeletionPreview = nil
 			d.deleteConfirmation = ""
 			d.detailScroll[devTabDatabases].Y = 0
@@ -78,7 +80,7 @@ func (a *app) devInstanceDeletionPreview(c *ui.Context) {
 		ui.Text(c, "Linked project: "+ref).FontSize(textSmall)
 	}
 	devField(c, "Confirm instance ID", &d.deleteConfirmation, p.InstanceID)
-	if ui.Button(c, "Permanently delete instance data").AlignSelf(ui.Start).Tooltip("Once erasure begins, cancelling can leave a pending deletion. Erased files cannot be restored.").Disabled(d.busy || !p.CanDelete || d.deleteConfirmation != p.InstanceID).Clicked() {
+	if action.Button(c, "Permanently delete instance data", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("Once erasure begins, cancelling can leave a pending deletion. Erased files cannot be restored.").Disabled(d.busy || !p.CanDelete || d.deleteConfirmation != p.InstanceID).Clicked() {
 		id, fingerprint, confirmation := p.InstanceID, p.Fingerprint, d.deleteConfirmation
 		a.deletionTask(func(m *devplatform.Manager) error {
 			return m.DeleteInstanceData(m.Context, id, fingerprint, confirmation)
@@ -99,10 +101,10 @@ func (a *app) devInstanceDeletionPreview(c *ui.Context) {
 func (a *app) devInstanceDeletions(c *ui.Context) {
 	d := &a.dev
 	devPaneHeader(c, "Pending data deletions", func() {
-		if ui.Button(c, "Refresh pending deletions").Disabled(d.busy).Clicked() {
+		if action.Button(c, "Refresh pending deletions", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 			a.deletionTask(nil, nil)
 		}
-		if ui.Button(c, "Back to database settings").Disabled(d.busy).Clicked() {
+		if action.Button(c, "Back to database settings", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 			d.deletionsOpen = false
 			d.deleteConfirmation = ""
 			d.detailScroll[devTabDatabases].Y = 0
@@ -125,11 +127,11 @@ func (a *app) devInstanceDeletions(c *ui.Context) {
 			ui.Text(c, "Another caller owns this deletion.").FontSize(textSmall).TextColor(c.Theme().Warning)
 		}
 		prefix := r.ID[:min(8, len(r.ID))]
-		if ui.Button(c, "Restore original data "+prefix).AlignSelf(ui.Start).Tooltip("Before removal commits, keeps the original data and clears the pending record. After commit, finish erases the staged data.").Disabled(d.busy || r.Busy || !r.CanRestore).Clicked() {
+		if action.Button(c, "Restore original data "+prefix, action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("Before removal commits, keeps the original data and clears the pending record. After commit, finish erases the staged data.").Disabled(d.busy || r.Busy || !r.CanRestore).Clicked() {
 			a.deletionTask(func(m *devplatform.Manager) error { return m.RestoreInstanceDeletion(m.Context, r.ID, r.Revision) }, nil)
 		}
 		devField(c, "Confirm deletion of "+r.InstanceID, &d.deleteConfirmation, r.InstanceID)
-		if ui.Button(c, "Finish permanent deletion "+prefix).AlignSelf(ui.Start).Disabled(d.busy || r.Busy || !r.CanErase || d.deleteConfirmation != r.InstanceID).Clicked() {
+		if action.Button(c, "Finish permanent deletion "+prefix, action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || r.Busy || !r.CanErase || d.deleteConfirmation != r.InstanceID).Clicked() {
 			confirmation := d.deleteConfirmation
 			a.deletionTask(func(m *devplatform.Manager) error {
 				return m.FinishInstanceDeletion(m.Context, r.ID, r.Revision, confirmation)

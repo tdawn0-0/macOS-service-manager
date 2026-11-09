@@ -2,6 +2,9 @@ package main
 
 import (
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/display"
+	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"macos-service-manager/internal/devplatform"
 )
 
@@ -12,7 +15,7 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 	}
 	devDivider(c, "Installed Java")
 	ui.Text(c, a.devManager().JavaInstallationDirectory()).FontSize(textSmall).TextColor(c.Theme().TextMuted)
-	if ui.Button(c, "Refresh installed Java").Disabled(d.busy || a.packageTasksRunning()).Clicked() {
+	if action.Button(c, "Refresh installed Java", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
 		a.devTask(func(*devplatform.Manager) (string, error) { return "Local Java installations refreshed", nil })
 	}
 	if d.javaError != "" {
@@ -42,16 +45,16 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 		}
 		ui.Row(c).Wrap().Gap(6).Children(func() {
 			if d.state.RuntimeDefaults["java"] == row.ID || row.PackageID != "" && d.state.RuntimeDefaults["java"] == row.PackageID {
-				ui.Text(c, "Default")
-			} else if ui.Button(c.Key(row.ID+"-default"), "Set default").Disabled(d.busy || a.packageTasksRunning() || !row.CanUse).Clicked() {
+				display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
+			} else if action.Button(c.Key(row.ID+"-default"), "Set default", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy || a.packageTasksRunning() || !row.CanUse).Clicked() {
 				a.devTask(func(m *devplatform.Manager) (string, error) {
 					return "Java default selected; enable terminal integration to use it", m.SetJavaDefault(m.Context, row)
 				})
 			}
-			if ui.Button(c.Key(row.ID+"-copy"), "Copy JAVA_HOME").Clicked() && a.copy != nil {
+			if action.Button(c.Key(row.ID+"-copy"), "Copy JAVA_HOME", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() && a.copy != nil {
 				a.copy(row.Home)
 			}
-			if ui.Button(c.Key(row.ID+"-remove"), "Remove JDK").Disabled(d.busy || a.packageTasksRunning()).Clicked() {
+			if action.Button(c.Key(row.ID+"-remove"), "Remove JDK", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
 				d.javaRemove = &row
 			}
 		})
@@ -72,7 +75,7 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 				}
 				ui.Text(c, message).FontSize(textSmall)
 				ui.Row(c).Wrap().Gap(6).Children(func() {
-					if ui.Button(c, label).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
+					if action.Button(c, label, action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
 						reviewed := *selected
 						a.devTaskThen(func(m *devplatform.Manager) (string, error) {
 							path, err := m.RemoveJavaInstallation(m.Context, reviewed)
@@ -82,7 +85,7 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 							return "Moved to Trash: " + path, nil
 						}, func(error) { a.dev.javaRemove = nil })
 					}
-					if ui.Button(c, "Cancel Java removal").Disabled(d.busy).Clicked() {
+					if action.Button(c, "Cancel Java removal", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
 						d.javaRemove = nil
 					}
 				})

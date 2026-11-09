@@ -31,6 +31,13 @@ func (m *Manager) zshStartupFiles() ([]string, error) {
 
 func updateShellBlock(data []byte, begin, end, block string, enable bool) ([]byte, error) {
 	b := bytes.Clone(data)
+	legacyBegin := strings.Replace(begin, "Devbase", "Service Manager", 1)
+	legacyEnd := strings.Replace(end, "Devbase", "Service Manager", 1)
+	if legacyBegin != begin && bytes.Contains(b, []byte(legacyBegin)) {
+		if cleaned, err := updateShellBlock(b, legacyBegin, legacyEnd, "", false); err == nil {
+			b = cleaned
+		}
+	}
 	start, stop := bytes.Index(b, []byte(begin)), bytes.Index(b, []byte(end))
 	if bytes.Count(b, []byte(begin)) > 1 || bytes.Count(b, []byte(end)) > 1 {
 		return nil, errors.New("duplicate runtime shell blocks")
@@ -161,7 +168,7 @@ func (m *Manager) BashCommand() string {
 
 func (m *Manager) writeBashSetup(fishEnabled bool) error {
 	path := shellQuote(m.bashEnvPath())
-	setup := `# Written by Service Manager.
+	setup := `# Written by Devbase.
 # Keep dynamic user BASH_ENV expressions intact; never evaluate them here.
 case "${BASH_ENV-}" in
   *` + shellQuote("$") + `*|*` + shellQuote("`") + `*) ;;
@@ -179,7 +186,7 @@ esac
 	if !fishEnabled {
 		return nil
 	}
-	fish := `# Written by Service Manager.
+	fish := `# Written by Devbase.
 if not string match -rq ` + fishQuote("[$`]") + ` -- "$BASH_ENV"
   if not set -q BASH_ENV; or test "$BASH_ENV" != ` + fishQuote(m.bashEnvPath()) + `
     set -gx MSM_PREVIOUS_BASH_ENV "$BASH_ENV"
@@ -191,7 +198,7 @@ end
 }
 
 func (m *Manager) bashEnvHeader() string {
-	return `# Written by Service Manager. BASH_ENV is read by non-interactive Bash.
+	return `# Written by Devbase. BASH_ENV is read by non-interactive Bash.
 # Preserve the caller's existing startup file; do not evaluate it as shell code.
 case $- in
   *i*) ;;

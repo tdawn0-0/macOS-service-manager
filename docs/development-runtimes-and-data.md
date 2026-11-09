@@ -16,9 +16,9 @@ With the normal application storage root, paths are:
 | --- | --- | --- |
 | JDK distributions | `~/Library/Java/JavaVirtualMachines/<install_folder_name from catalog>` | User-level JDK discovery, independent exact versions, no administrator access |
 | Java home | `<installation>/Contents/Home` or `<installation>` | Uses the archive layout declared by the catalog and preserves upstream metadata |
-| Downloaded archives | `~/Library/Caches/ServiceManager/Development/downloads` | Downloadable files can be purged without removing installed versions |
-| Node release catalog | `~/Library/Caches/ServiceManager/Development/node-index.json` | Re-fetchable version metadata |
-| Go, Node, MySQL, Redis, MongoDB and Caddy archives after installation | `~/Library/Application Support/ServiceManager/Development/packages/<package-id>` | App-managed exact versions; these are durable installations, not caches |
+| Downloaded archives | `~/Library/Caches/Devbase/Development/downloads` | Downloadable files can be purged without removing installed versions |
+| Node release catalog | `~/Library/Caches/Devbase/Development/node-index.json` | Re-fetchable version metadata |
+| Go, Node, MySQL, Redis, MongoDB and Caddy archives after installation | `~/Library/Application Support/Devbase/Development/packages/<package-id>` | App-managed exact versions; these are durable installations, not caches |
 | Python interpreters and uv caches | uv's own resolved locations | Shares uv's installation store and respects uv storage settings |
 | PostgreSQL binaries | Homebrew's exact Cellar keg | Homebrew owns the installation and its dependencies |
 | Database data | App instance storage or the explicitly selected directory | Durable data stays separate from package versions and downloadable caches |

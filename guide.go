@@ -424,7 +424,7 @@ func (a *app) dragTile(c *ui.Context) {
 	t := c.Theme()
 	tile := ui.Column(c).Size(132, 132).Shrink(0).Center().Radius(26).Cursor(ui.CursorGrab).
 		Border(1, t.Accent.Alpha(0.35)).Background(t.Accent.Alpha(0.07)).
-		Label("Drag Service Manager into the list").Tooltip("Drag into the list in System Settings")
+		Label("Drag Devbase into the list").Tooltip("Drag into the list in System Settings")
 	if tile.Hovered() {
 		tile.Background(t.Accent.Alpha(0.14)).Border(1, t.Accent)
 	}

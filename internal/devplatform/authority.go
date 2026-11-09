@@ -23,7 +23,7 @@ import (
 const authorityCurrent = "ca-current"
 const authorityPrepared = "ca-prepared"
 const authorityPrevious = "ca-previous"
-const authorityName = "Service Manager Local Development CA"
+const authorityName = "Devbase Local Development CA"
 
 type AuthorityInfo struct {
 	ID, Name, Status, Detail, Fingerprint, Trust, CertificatePath string

@@ -125,7 +125,7 @@ class NativePreparationTests(unittest.TestCase):
                 module.main(['--devmgr',str(harness),'--app',str(app),'--reuse-ca',str(ca.parent),'--node-root',str(cache),'--redis-root',str(cache)])
             record = json.loads((private / 'native-ui.json').read_text())
             self.assertEqual(record['harness'],str(harness))
-            self.assertEqual(record['executable'],str(private / 'Service Manager Native Verification.app/Contents/MacOS/NativeApp'))
+            self.assertEqual(record['executable'],str(private / 'Devbase Native Verification.app/Contents/MacOS/NativeApp'))
             self.assertEqual(record['externalPID'],12345)
             self.assertNotIn('project',record)
             commands = [x.args[0][1] for x in calls.call_args_list if x.args[0][0] == str(harness)]

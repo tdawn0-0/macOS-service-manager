@@ -12,10 +12,10 @@ import (
 )
 
 func defaultStorageRoot(home string) string {
-	return filepath.Join(home, "Library", "Application Support", "ServiceManager", "Development")
+	return filepath.Join(home, "Library", "Application Support", "Devbase", "Development")
 }
 
-// Explicit storage roots (including MSM_DEV_HOME) stay self-contained. This
+// Explicit storage roots (including DEVBASE_HOME / MSM_DEV_HOME) stay self-contained. This
 // keeps disposable CLI environments out of the user's shared runtime folders.
 func (m *Manager) usesUserStorage() bool {
 	home, err := m.home()
@@ -25,7 +25,7 @@ func (m *Manager) usesUserStorage() bool {
 func (m *Manager) cacheDirectory() string {
 	if m.usesUserStorage() {
 		home, _ := m.home()
-		return filepath.Join(home, "Library", "Caches", "ServiceManager", "Development")
+		return filepath.Join(home, "Library", "Caches", "Devbase", "Development")
 	}
 	return filepath.Join(m.Root, "cache")
 }
@@ -45,7 +45,8 @@ func (m *Manager) javaDirectory() string {
 	return filepath.Join(m.Root, "JavaVirtualMachines")
 }
 
-const javaOwnerFile = ".service-manager-java-owner"
+const javaOwnerFile = ".devbase-java-owner"
+const legacyJavaOwnerFile = ".service-manager-java-owner"
 
 var javaFolderSuffix = regexp.MustCompile(`^[1-9][0-9]*$`)
 var javaInstallNameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,119}$`)
@@ -97,6 +98,14 @@ func (m *Manager) checkJavaOwnership(p Package) error {
 	}
 	marker := filepath.Join(dir, javaOwnerFile)
 	info, err := os.Lstat(marker)
+	if err != nil {
+		legacyMarker := filepath.Join(dir, legacyJavaOwnerFile)
+		if lInfo, lErr := os.Lstat(legacyMarker); lErr == nil {
+			marker = legacyMarker
+			info = lInfo
+			err = nil
+		}
+	}
 	if err != nil || !info.Mode().IsRegular() {
 		return fmt.Errorf("Java installation ownership is missing or invalid; inspect %s", dir)
 	}

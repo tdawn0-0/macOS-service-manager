@@ -585,7 +585,7 @@ func TestMenubarPanelTogglesServices(t *testing.T) {
 	opened := 0
 	panel := ui.NewTester(func(c *ui.Context) { h.a.menubarView(c, func() { opened++ }) }, 320, 400)
 	panel.Frame()
-	for _, w := range []string{"Service Manager", "1 running", "Homebrew", "postgresql", "redis", "User Agents", "com.example.sync", "Open Service Manager"} {
+	for _, w := range []string{"Devbase", "1 running", "Homebrew", "postgresql", "redis", "User Agents", "com.example.sync", "Open Devbase"} {
 		if !panel.HasText(w) {
 			t.Errorf("panel lacks %q: %q", w, panel.Texts())
 		}
@@ -593,7 +593,7 @@ func TestMenubarPanelTogglesServices(t *testing.T) {
 	if panel.HasText("CleanShot X") {
 		t.Error("login items have no switch to show in the panel")
 	}
-	if err := panel.Click("Open Service Manager"); err != nil || opened != 1 {
+	if err := panel.Click("Open Devbase"); err != nil || opened != 1 {
 		t.Errorf("open: %v %d", err, opened)
 	}
 	rect, ok := panel.Find("redis")
@@ -758,7 +758,7 @@ func shots(t *testing.T, dir, name string, dark bool, width, height int) {
 	}}
 	h.a.refresh(service.LoginItem)
 	shot(h.tt, "7-login-restricted")
-	h.a.appPath = "/Applications/Service Manager.app"
+	h.a.appPath = "/Applications/Devbase.app"
 	guide := ui.NewTester(h.a.guideView, guideWidth, guideHeight)
 	guide.SetDark(dark)
 	for _, welcome := range []bool{true, false} {
@@ -948,7 +948,7 @@ func TestNoWelcomeWithAccess(t *testing.T) {
 func TestTheGuideLeadsToSettingsAndClosesOnceAllowed(t *testing.T) {
 	h := newHarness(t)
 	login, _, hidden, joined := h.restrict()
-	h.a.appPath = "/Applications/Service Manager.app"
+	h.a.appPath = "/Applications/Devbase.app"
 	h.a.welcome()
 	page := ui.NewTester(h.a.guideView, guideWidth, guideHeight)
 	page.Frame()
@@ -969,7 +969,7 @@ func TestTheGuideLeadsToSettingsAndClosesOnceAllowed(t *testing.T) {
 			t.Errorf("missing %q in %q", want, page.Texts())
 		}
 	}
-	if _, ok := page.Find("Drag Service Manager into the list"); !ok {
+	if _, ok := page.Find("Drag Devbase into the list"); !ok {
 		t.Errorf("no icon to drag in %q", page.Texts())
 	}
 
@@ -1000,7 +1000,7 @@ func TestTheGuideLeadsToSettingsAndClosesOnceAllowed(t *testing.T) {
 
 func TestTheIconDragsAsTheAppsBundle(t *testing.T) {
 	h := newHarness(t)
-	h.a.appPath = "/Applications/Service Manager.app"
+	h.a.appPath = "/Applications/Devbase.app"
 	data, err := h.a.guideDragData()
 	if err != nil {
 		t.Fatal(err)
@@ -1022,7 +1022,7 @@ func TestTheIconDragsAsTheAppsBundle(t *testing.T) {
 	h.a.appPath = ""
 	page := ui.NewTester(h.a.guideView, sidecarWidth, sidecarHeight)
 	page.Frame()
-	if _, ok := page.Find("Drag Service Manager into the list"); ok || !page.HasText("Add this app with the + button") {
+	if _, ok := page.Find("Drag Devbase into the list"); ok || !page.HasText("Add this app with the + button") {
 		t.Errorf("without a bundle: %q", page.Texts())
 	}
 }
@@ -1095,7 +1095,7 @@ func TestSidecarOrigin(t *testing.T) {
 
 func TestBundleOf(t *testing.T) {
 	for exe, want := range map[string]string{
-		"/Applications/Service Manager.app/Contents/MacOS/Service Manager": "/Applications/Service Manager.app",
+		"/Applications/Devbase.app/Contents/MacOS/Devbase": "/Applications/Devbase.app",
 		"/Users/me/go/bin/msm": "",
 		"/tmp/x.app/msm":       "",
 	} {

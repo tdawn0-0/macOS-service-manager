@@ -28,7 +28,7 @@ func TestUserStorageLocations(t *testing.T) {
 	if got := m.PackageDirectory(p); got != want {
 		t.Fatalf("JDK location = %s, want %s", got, want)
 	}
-	cache := filepath.Join(m.Home, "Library/Caches/ServiceManager/Development")
+	cache := filepath.Join(m.Home, "Library/Caches/Devbase/Development")
 	if m.downloadDirectory() != filepath.Join(cache, "downloads") || m.nodeIndexPath() != filepath.Join(cache, "node-index.json") {
 		t.Fatal("download and catalog caches must use Library/Caches")
 	}

@@ -112,7 +112,7 @@ func newReverseRoute(site proxyRoute) *reverseRoute {
 	return &reverseRoute{site: site, proxy: proxy, transport: transport}
 }
 
-var proxyFailurePage = template.Must(template.New("proxy-failure").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{{.Title}}</title><style>body{font:16px/1.6 system-ui;margin:12vh auto;padding:24px;max-width:640px;color:#202124;background:#f5f6f8}main{background:white;padding:32px;border-radius:16px}h1{line-height:1.2;font-size:28px}code{word-break:break-all}p{color:#555}</style></head><body><main><h1>{{.Title}}</h1><p>{{.Message}}</p><p><strong>{{.Domain}}</strong> → <code>{{.Upstream}}</code></p><p>Open Service Manager to check the local port and application logs.</p></main></body></html>`))
+var proxyFailurePage = template.Must(template.New("proxy-failure").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{{.Title}}</title><style>body{font:16px/1.6 system-ui;margin:12vh auto;padding:24px;max-width:640px;color:#202124;background:#f5f6f8}main{background:white;padding:32px;border-radius:16px}h1{line-height:1.2;font-size:28px}code{word-break:break-all}p{color:#555}</style></head><body><main><h1>{{.Title}}</h1><p>{{.Message}}</p><p><strong>{{.Domain}}</strong> → <code>{{.Upstream}}</code></p><p>Open Devbase to check the local port and application logs.</p></main></body></html>`))
 
 func writeProxyFailure(w http.ResponseWriter, site proxyRoute, e error) {
 	status, title, message := http.StatusBadGateway, "Local service is unavailable", "The local server did not accept this request. Start the local application or check its port."

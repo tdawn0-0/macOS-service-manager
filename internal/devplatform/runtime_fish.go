@@ -10,7 +10,7 @@ func fishQuote(s string) string {
 }
 
 func runtimeFishScript(name, binary string) string {
-	script := `# Written by Service Manager. Only the current process environment changes.
+	script := `# Written by Devbase. Only the current process environment changes.
 set -l msm_bin ` + fishQuote(filepath.Dir(binary)) + `
 set -l msm_path "$msm_bin"
 for entry in $PATH
@@ -27,7 +27,7 @@ set -gx PATH $msm_path
 }
 
 func (m *Manager) nodeFishScript() string {
-	return `# Written by Service Manager. Changes are overwritten.
+	return `# Written by Devbase. Changes are overwritten.
 set -g MSM_NODE_RESOLVE ` + fishQuote(m.nodeWrapperPath()) + `
 set -gx MSM_NODE_HOME ` + fishQuote(m.nodeHome()) + `
 functions -e __msm_node_apply

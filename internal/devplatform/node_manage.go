@@ -136,11 +136,11 @@ func (n NodeSelection) Path() string {
 type NodeMissingError struct{ Spec, Source string }
 
 func (e *NodeMissingError) Error() string {
-	return fmt.Sprintf("Node.js %s, asked for by %s, is not installed. Install it in Service Manager: Software, Node.js", e.Spec, e.Source)
+	return fmt.Sprintf("Node.js %s, asked for by %s, is not installed. Install it in Devbase: Software, Node.js", e.Spec, e.Source)
 }
 
 // NoNodeDefaultError says that nothing is installed or chosen.
-var ErrNoNodeDefault = errors.New("no default Node.js version. Install one in Service Manager: Software, Node.js")
+var ErrNoNodeDefault = errors.New("no default Node.js version. Install one in Devbase: Software, Node.js")
 
 // NodeVersionFile finds what a directory, or the nearest one above it, asks
 // for: .node-version, .nvmrc, then the engines.node of package.json.
@@ -226,14 +226,14 @@ func (m *Manager) SelectNode(dir, override string) (NodeSelection, error) {
 // The shell setup. The rc file only sources init.sh, which this app rewrites,
 // so a change here reaches every shell without editing a dotfile again.
 const (
-	nodeBlockBegin = "# >>> Service Manager Node.js >>>"
-	nodeBlockEnd   = "# <<< Service Manager Node.js <<<"
+	nodeBlockBegin = "# >>> Devbase Node.js >>>"
+	nodeBlockEnd   = "# <<< Devbase Node.js <<<"
 )
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 func (m *Manager) nodeInitScript() string {
-	return `# Written by Service Manager. Changes are overwritten.
+	return `# Written by Devbase. Changes are overwritten.
 MSM_NODE_RESOLVE=` + shellQuote(m.nodeWrapperPath()) + `
 export MSM_NODE_HOME=` + shellQuote(m.nodeHome()) + `
 
@@ -328,7 +328,7 @@ func (m *Manager) NodeShellEnabled() bool {
 }
 
 func (m *Manager) RuntimeShellEnabled(name string) bool {
-	begin, end := "# BEGIN Service Manager "+name, "# END Service Manager "+name
+	begin, end := "# BEGIN Devbase "+name, "# END Devbase "+name
 	if name == "node" {
 		begin, end = nodeBlockBegin, nodeBlockEnd
 	}
@@ -340,7 +340,14 @@ func (m *Manager) RuntimeShellEnabled(name string) bool {
 	files = append(files, shellStartupFile{path: m.bashEnvPath()})
 	for _, file := range files {
 		b, e := os.ReadFile(file.path)
-		if e != nil || !bytes.Contains(b, []byte(begin)) || !bytes.Contains(b, []byte(end)) {
+		if e != nil {
+			return false
+		}
+		hasNew := bytes.Contains(b, []byte(begin)) && bytes.Contains(b, []byte(end))
+		legacyBegin := strings.Replace(begin, "Devbase", "Service Manager", 1)
+		legacyEnd := strings.Replace(end, "Devbase", "Service Manager", 1)
+		hasLegacy := bytes.Contains(b, []byte(legacyBegin)) && bytes.Contains(b, []byte(legacyEnd))
+		if !hasNew && !hasLegacy {
 			return false
 		}
 	}

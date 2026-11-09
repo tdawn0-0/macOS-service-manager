@@ -251,19 +251,23 @@ func (m *Manager) ServeProxy(ctx context.Context) error {
 	}
 }
 
-const hostsBegin = "# BEGIN Service Manager Development"
-const hostsEnd = "# END Service Manager Development"
+const hostsBegin = "# BEGIN Devbase Development"
+const hostsEnd = "# END Devbase Development"
+const legacyHostsBegin = "# BEGIN Service Manager Development"
+const legacyHostsEnd = "# END Service Manager Development"
 
 func HostsContent(old string, sites []proxyRoute) (string, error) {
 	if e := validateProxyRoutes(sites); e != nil {
 		return "", e
 	}
-	start, end := strings.Index(old, hostsBegin), strings.Index(old, hostsEnd)
-	if (start < 0) != (end < 0) || end < start {
-		return "", errors.New("malformed managed hosts block")
-	}
-	if start >= 0 {
-		old = old[:start] + old[end+len(hostsEnd):]
+	for _, pair := range [][2]string{{legacyHostsBegin, legacyHostsEnd}, {hostsBegin, hostsEnd}} {
+		start, end := strings.Index(old, pair[0]), strings.Index(old, pair[1])
+		if (start < 0) != (end < 0) || end < start {
+			return "", errors.New("malformed managed hosts block")
+		}
+		if start >= 0 {
+			old = old[:start] + old[end+len(pair[1]):]
+		}
 	}
 	domains := map[string]bool{}
 	for _, s := range sites {

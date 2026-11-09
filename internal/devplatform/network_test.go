@@ -13,7 +13,7 @@ func TestSocketJobBindsLoopbackAndDropsPrivileges(t *testing.T) {
 	}
 	m := testManager(t)
 	sites := []proxyRoute{{Domain: "web.test", LocalPort: 3000, Port: 443}}
-	data, e := m.socketJob(sites, "/Applications/Service Manager.app/Contents/MacOS/Service Manager", "developer")
+	data, e := m.socketJob(sites, "/Applications/Devbase.app/Contents/MacOS/Devbase", "developer")
 	if e != nil {
 		t.Fatal(e)
 	}

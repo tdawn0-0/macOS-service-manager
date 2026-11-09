@@ -171,7 +171,7 @@ jobs:
           xcrun stapler validate "$dmg"
           sha=$(shasum -a 256 "$dmg" | cut -d' ' -f1)
           args=(gh release create "$TAG" "$dmg" --verify-tag
-            --title "macOS Service Manager v$VERSION"
+            --title "Devbase v$VERSION"
             --notes "SHA-256 of the disk image: \`$sha\`"
             --generate-notes)
           case "$VERSION" in

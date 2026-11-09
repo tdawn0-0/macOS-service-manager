@@ -85,7 +85,7 @@ func (a *app) menubarView(c *ui.Context, openWindow func()) {
 	box.Children(func() {
 		ui.Row(c).Shrink(0).Padding(12, 10, 8, 16).AlignItems(ui.Center).Gap(6).Children(func() {
 			ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
-				ui.Text(c, "Service Manager").FontSize(14).FontWeight(650).SingleLine()
+				ui.Text(c, "Devbase").FontSize(14).FontWeight(650).SingleLine()
 				ui.Text(c, fmt.Sprintf("%d running", a.panelRunning())).TextColor(t.TextMuted).FontSize(textCaption)
 			})
 			if a.loading() || a.dev.busy {
@@ -144,7 +144,7 @@ func (a *app) menubarView(c *ui.Context, openWindow func()) {
 		})
 		ui.Column(c).Height(1).Shrink(0).Background(hairline(t))
 		ui.Row(c).Shrink(0).Padding(8, 10).Gap(6).AlignItems(ui.Center).Children(func() {
-			labeledButton(c, iconWindow, "Open Service Manager", false).Grow(1).OnClick(openWindow)
+			labeledButton(c, iconWindow, "Open Devbase", false).Grow(1).OnClick(openWindow)
 			iconButton(c, iconQuit, "Quit", t.TextMuted).OnClick(a.requestQuit)
 		})
 	})
@@ -227,7 +227,7 @@ func (m *menubar) update() {
 		title = fmt.Sprint(running)
 	}
 	m.tray.SetTitle(title)
-	m.tray.SetToolTip(fmt.Sprintf("Service Manager: %d running", running))
+	m.tray.SetToolTip(fmt.Sprintf("Devbase: %d running", running))
 }
 
 func (m *menubar) showWindow() {
@@ -291,14 +291,14 @@ func (m *menubar) install() error {
 		ID:             "xyz.jyeu.msm.menubar",
 		Icon:           menubarIcon,
 		IconIsTemplate: true,
-		ToolTip:        "Service Manager",
+		ToolTip:        "Devbase",
 	})
 	if err != nil {
 		return err
 	}
 	m.tray = tray
 	menu := mygo.NewMenu([]*mygo.MenuItem{
-		{Label: "Open Service Manager", Click: func(*mygo.MenuItem, *mygo.Window) { m.showWindow() }},
+		{Label: "Open Devbase", Click: func(*mygo.MenuItem, *mygo.Window) { m.showWindow() }},
 		{Label: "Refresh", Click: func(*mygo.MenuItem, *mygo.Window) {
 			m.a.refreshNavigation()
 			for _, src := range panelSources {

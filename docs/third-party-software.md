@@ -1,6 +1,6 @@
 # 第三方软件与包来源
 
-PostgreSQL 通过 Apple Silicon Homebrew core 的版本公式管理。Java 使用 JetBrains JDK 列表，按其 `install_folder_name` 保存在 `~/Library/Java/JavaVirtualMachines`，Python 使用现有 uv 的安装目录。其他归档软件由 App 下载并校验，按版本保存在 `~/Library/Application Support/ServiceManager/Development/packages`；下载缓存保存在 `~/Library/Caches/ServiceManager/Development/downloads`。Homebrew 软件保留在 Cellar，App 记录精确 keg 版本（含 revision），不跟随 `opt` 软链接切换版本。下表记录当前目录来源；实际授权文件以安装包内的 LICENSE/NOTICE 为准，此表不改变组件许可。
+PostgreSQL 通过 Apple Silicon Homebrew core 的版本公式管理。Java 使用 JetBrains JDK 列表，按其 `install_folder_name` 保存在 `~/Library/Java/JavaVirtualMachines`，Python 使用现有 uv 的安装目录。其他归档软件由 App 下载并校验，按版本保存在 `~/Library/Application Support/Devbase/Development/packages`；下载缓存保存在 `~/Library/Caches/Devbase/Development/downloads`。Homebrew 软件保留在 Cellar，App 记录精确 keg 版本（含 revision），不跟随 `opt` 软链接切换版本。下表记录当前目录来源；实际授权文件以安装包内的 LICENSE/NOTICE 为准，此表不改变组件许可。
 
 | 软件 | 当前目录版本 | 发行来源 | 目录记录的许可 |
 | --- | --- | --- | --- |

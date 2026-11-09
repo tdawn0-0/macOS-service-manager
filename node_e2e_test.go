@@ -99,7 +99,7 @@ func TestUINodeVersionsListDefaultAliasesAndTerminal(t *testing.T) {
 		h.click("Enable in terminal")
 		for _, name := range []string{".zshenv", ".zprofile", ".zshrc"} {
 			b, e := os.ReadFile(filepath.Join(home, name))
-			if e != nil || !strings.Contains(string(b), "Service Manager Node.js") {
+			if e != nil || !strings.Contains(string(b), "Devbase Node.js") {
 				t.Fatalf("%s: %v %q", name, e, b)
 			}
 		}
@@ -112,7 +112,7 @@ func TestUINodeVersionsListDefaultAliasesAndTerminal(t *testing.T) {
 		}
 		h.click("Disable in terminal")
 		for _, name := range []string{".zshenv", ".zprofile", ".zshrc"} {
-			if b, _ := os.ReadFile(filepath.Join(home, name)); strings.Contains(string(b), "Service Manager Node.js") {
+			if b, _ := os.ReadFile(filepath.Join(home, name)); strings.Contains(string(b), "Devbase Node.js") {
 				t.Fatalf("%s: %q", name, b)
 			}
 		}

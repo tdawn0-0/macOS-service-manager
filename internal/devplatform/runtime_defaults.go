@@ -66,8 +66,8 @@ func (m *Manager) ConfigureRuntimeShell(ctx context.Context, name string, enable
 			return e
 		}
 	}
-	begin := "# BEGIN Service Manager " + name
-	end := "# END Service Manager " + name
+	begin := "# BEGIN Devbase " + name
+	end := "# END Devbase " + name
 	_, e := m.configureRuntimeShellFiles(ctx, name, begin, end, enable)
 	return e
 }

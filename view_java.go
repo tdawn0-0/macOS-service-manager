@@ -34,7 +34,7 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 		ui.Text(c, row.Path).FontSize(textSmall)
 		source := "Existing installation"
 		if row.Managed {
-			source = "Installed by Service Manager"
+			source = "Installed by Devbase"
 		}
 		if row.Symlink {
 			source = "Symbolic link → " + row.Home

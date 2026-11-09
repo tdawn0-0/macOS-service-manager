@@ -89,7 +89,7 @@ def start_external_app(binary, directory, environment, port, log_path):
 def _main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--devmgr', type=Path, required=True, help='Test harness built from cmd/devmgr')
-    parser.add_argument('--app', type=Path, default=Path('build/darwin-arm64/MacOS Service Manager.app'))
+    parser.add_argument('--app', type=Path, default=Path('build/darwin-arm64/Devbase.app'))
     parser.add_argument('--node-root', type=Path, default=Path('/tmp/msm-native-node-cache'))
     parser.add_argument('--redis-root', type=Path, default=Path('/tmp/msm-native-redis-cache'))
     parser.add_argument('--reuse-ca', type=Path, required=True, help='Existing development root; never changes its material or trust')
@@ -105,12 +105,12 @@ def _main(argv=None):
     try:
         root = base / 'development'
         root.mkdir(mode=0o700)
-        app = base / 'Service Manager Native Verification.app'
+        app = base / 'Devbase Native Verification.app'
         shutil.copytree(source, app)
         info_path = app / 'Contents/Info.plist'
         info = plistlib.loads(info_path.read_bytes())
         info['CFBundleIdentifier'] = 'xyz.jyeu.msm.nativeverification.' + uuid.uuid4().hex
-        info['CFBundleName'] = 'Service Manager Native Verification'
+        info['CFBundleName'] = 'Devbase Native Verification'
         info['CFBundleDisplayName'] = info['CFBundleName']
         info['LSEnvironment'] = {'MSM_DEV_HOME': str(root)}
         info_path.write_bytes(plistlib.dumps(info))

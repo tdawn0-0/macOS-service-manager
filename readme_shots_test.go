@@ -63,7 +63,7 @@ func TestReadmeShots(t *testing.T) {
 
 			save(ui.NewTester(func(c *ui.Context) { h.a.menubarView(c, func() {}) }, 320, h.a.panelHeight()), "menu-bar", false)
 
-			h.a.appPath = "/Applications/Service Manager.app"
+			h.a.appPath = "/Applications/Devbase.app"
 			h.a.guide = guideState{open: true, src: service.LoginItem, welcome: true, checked: time.Now()}
 			save(ui.NewTester(h.a.guideView, guideWidth, guideHeight), "welcome", false)
 			h.a.guide = guideState{}

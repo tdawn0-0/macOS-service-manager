@@ -34,7 +34,7 @@ func (a *app) devNodeTerminal(c *ui.Context) {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				_, e := m.DisableNodeShell(m.Context)
 				a.post(func() { a.dev.nodeShell = 0 })
-				return "Removed the Service Manager blocks from all supported shells", e
+				return "Removed the Devbase blocks from all supported shells", e
 			})
 		}
 	})

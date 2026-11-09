@@ -1,4 +1,4 @@
-// Command macos-service-manager manages project environments, local HTTPS and
+// Command devbase manages development software, databases, local HTTPS and
 // macOS services in a MyGo window and from the menu bar.
 package main
 
@@ -50,7 +50,7 @@ func main() {
 	quitting := false
 	mygo.App.WhenReady(func() {
 		win := mygo.NewWindow(mygo.WindowOptions{
-			Title:     "Service Manager",
+			Title:     "Devbase",
 			Width:     1120,
 			Height:    720,
 			MinWidth:  minWidth,

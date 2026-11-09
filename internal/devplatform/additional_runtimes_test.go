@@ -173,7 +173,7 @@ func additionalRuntimeInstalledVersions(t *testing.T) {
 		}
 	}
 	b, _ := os.ReadFile(rc)
-	if strings.Count(string(b), "# BEGIN Service Manager java") != 1 || !strings.Contains(string(b), "# user settings") {
+	if strings.Count(string(b), "# BEGIN Devbase java") != 1 || !strings.Contains(string(b), "# user settings") {
 		t.Fatal(string(b))
 	}
 	f, _ := os.Lstat(rc)
@@ -199,7 +199,7 @@ func additionalRuntimeInstalledVersions(t *testing.T) {
 		t.Fatal(e)
 	}
 	b, _ = os.ReadFile(rc)
-	if strings.Contains(string(b), "Service Manager java") || !strings.Contains(string(b), "Service Manager go") {
+	if strings.Contains(string(b), "Devbase java") || !strings.Contains(string(b), "Devbase go") {
 		t.Fatal(string(b))
 	}
 	if e := m.Uninstall(ctx, javaIDs[0]); e != nil {

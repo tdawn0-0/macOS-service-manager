@@ -5,7 +5,7 @@ package main
 import (
 	"context"
 	"log"
-	"macos-service-manager/internal/devcli"
+	"devbase/internal/devcli"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -14,7 +14,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	"macos-service-manager/internal/system"
+	"devbase/internal/system"
 )
 
 // The smallest window the layout fits.

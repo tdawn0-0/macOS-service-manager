@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 func pauseUIPackage(t *testing.T, h *devUIHarness, id string) (<-chan struct{}, func()) {

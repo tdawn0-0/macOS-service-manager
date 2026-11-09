@@ -15,7 +15,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 
-PACKAGE = 'macos-service-manager'
+PACKAGE = 'devbase'
 CORE = ('TestUIStandaloneRuntimeAndHTTPS',
         'TestUIDatabaseInitializationKeepsIndependentDrafts')
 CATALOG = 'TestUISoftwareCatalogAllFive'

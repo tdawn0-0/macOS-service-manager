@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 func resource018Screenshot(t *testing.T, tt *ui.Tester, name string) {

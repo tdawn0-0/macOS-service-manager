@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"macos-service-manager/internal/launchd"
+	"devbase/internal/launchd"
 	"os"
 	"os/exec"
 	"path/filepath"

@@ -11,8 +11,8 @@ import (
 
 	"howett.net/plist"
 
-	"macos-service-manager/internal/service"
-	"macos-service-manager/internal/system"
+	"devbase/internal/service"
+	"devbase/internal/system"
 )
 
 // Job is what launchd says of a loaded job.

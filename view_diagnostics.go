@@ -7,7 +7,7 @@ import (
 	"github.com/lobehub/lobe-mygo/pkg/action"
 	"github.com/lobehub/lobe-mygo/pkg/layout"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 func devStatusColor(c *ui.Context, status string) ui.Color {

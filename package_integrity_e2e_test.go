@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 	"os"
 	"os/exec"
 	"path/filepath"

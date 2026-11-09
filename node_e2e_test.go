@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 // seedNodeWorkspace writes installed Node.js versions and a fresh copy of

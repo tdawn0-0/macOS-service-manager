@@ -10,8 +10,8 @@ import (
 	"github.com/lobehub/lobe-mygo/pkg/action"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 
-	"macos-service-manager/internal/devplatform"
-	"macos-service-manager/internal/service"
+	"devbase/internal/devplatform"
+	"devbase/internal/service"
 )
 
 // menubarIcon is black on transparent for macOS to tint to the menu bar, from
@@ -288,7 +288,7 @@ func (m *menubar) toggle() {
 // install puts the icon in the menu bar.
 func (m *menubar) install() error {
 	tray, err := mygo.NewTray(mygo.TrayOptions{
-		ID:             "xyz.jyeu.msm.menubar",
+		ID:             "xyz.jyeu.devbase.menubar",
 		Icon:           menubarIcon,
 		IconIsTemplate: true,
 		ToolTip:        "Devbase",

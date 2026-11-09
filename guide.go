@@ -17,7 +17,7 @@ import (
 	"github.com/lobehub/lobe-mygo/pkg/action"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 
-	"macos-service-manager/internal/system"
+	"devbase/internal/system"
 )
 
 const (

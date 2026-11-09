@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"image/png"
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 	"os"
 	"path/filepath"
 	"strings"

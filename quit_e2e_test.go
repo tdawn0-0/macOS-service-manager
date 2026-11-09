@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/egoist/mygo/ui"
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 	"net"
 	"net/http"
 	"net/http/httptest"

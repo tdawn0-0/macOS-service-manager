@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"macos-service-manager/internal/system"
+	"devbase/internal/system"
 )
 
 func TestCalendarEntries(t *testing.T) {

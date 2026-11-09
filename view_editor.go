@@ -9,7 +9,7 @@ import (
 	"github.com/lobehub/lobe-mygo/pkg/choice"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 
-	"macos-service-manager/internal/service"
+	"devbase/internal/service"
 )
 
 // editorDialog is the dialog that makes and edits launchd's jobs.

@@ -5,7 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/hex"
-	"macos-service-manager/internal/system"
+	"devbase/internal/system"
 	"os"
 	"os/exec"
 	"path/filepath"

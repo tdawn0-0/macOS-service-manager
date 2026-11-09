@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"macos-service-manager/internal/devcli"
+	"devbase/internal/devcli"
 	"os"
 	"os/signal"
 	"syscall"

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 func TestUIResourceOnlyNavigation(t *testing.T) {

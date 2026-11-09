@@ -1,6 +1,6 @@
 {
   "name": "Devbase",
-  "identifier": "xyz.jyeu.msm.app",
+  "identifier": "xyz.jyeu.devbase",
   "version": "0.1.0",
   "out": "build",
   "macos": {

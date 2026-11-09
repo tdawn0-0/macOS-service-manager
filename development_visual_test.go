@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"github.com/egoist/mygo/ui"
 	"image/png"
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 	"os"
 	"path/filepath"
 	"testing"

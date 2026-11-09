@@ -12,7 +12,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"macos-service-manager/internal/service"
+	"devbase/internal/service"
 )
 
 // TestReadmeShots draws the README's pictures from made-up items, so that no

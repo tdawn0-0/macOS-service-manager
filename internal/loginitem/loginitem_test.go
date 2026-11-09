@@ -11,9 +11,9 @@ import (
 
 	"howett.net/plist"
 
-	"macos-service-manager/internal/launchd"
-	"macos-service-manager/internal/service"
-	"macos-service-manager/internal/system"
+	"devbase/internal/launchd"
+	"devbase/internal/service"
+	"devbase/internal/system"
 )
 
 // dump is what `sfltool dumpbtm` prints, cut down.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 // TestNativeResourceProduct is required by the disposable-runner release gate.

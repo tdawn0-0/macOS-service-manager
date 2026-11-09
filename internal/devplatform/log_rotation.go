@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"macos-service-manager/internal/launchd"
+	"devbase/internal/launchd"
 	"os"
 	"path/filepath"
 	"strings"

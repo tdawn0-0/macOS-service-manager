@@ -23,9 +23,9 @@ import (
 	"sync"
 	"time"
 
-	"macos-service-manager/internal/launchd"
-	"macos-service-manager/internal/service"
-	"macos-service-manager/internal/system"
+	"devbase/internal/launchd"
+	"devbase/internal/service"
+	"devbase/internal/system"
 )
 
 // Record is an item of the background task management database that

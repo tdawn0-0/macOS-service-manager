@@ -15,10 +15,10 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"macos-service-manager/internal/brew"
-	"macos-service-manager/internal/launchd"
-	"macos-service-manager/internal/service"
-	"macos-service-manager/internal/system"
+	"devbase/internal/brew"
+	"devbase/internal/launchd"
+	"devbase/internal/service"
+	"devbase/internal/system"
 )
 
 // fake is a source of items that remembers what was done to them.

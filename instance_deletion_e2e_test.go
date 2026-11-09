@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 func newUIDeletionInstance(t *testing.T, dark bool) (*devUIHarness, *devplatform.Manager, devplatform.Package, string, func(...string) string) {

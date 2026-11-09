@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 func installUIInitializationRedis(t *testing.T, h *devUIHarness) devplatform.Package {

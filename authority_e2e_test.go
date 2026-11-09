@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 type uiAuthorityTrust struct {

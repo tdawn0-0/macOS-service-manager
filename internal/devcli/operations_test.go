@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 func TestCLITasksExposeReviewedRevisionAndDismissKeepsResources(t *testing.T) {

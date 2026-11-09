@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 	"os"
 	"os/signal"
 	"syscall"

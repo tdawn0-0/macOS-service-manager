@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 func TestCLIInitializationReviewAndArchivePreservesPreparedFiles(t *testing.T) {

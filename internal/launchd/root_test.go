@@ -15,8 +15,8 @@ import (
 
 	"howett.net/plist"
 
-	"macos-service-manager/internal/service"
-	"macos-service-manager/internal/system"
+	"devbase/internal/service"
+	"devbase/internal/system"
 )
 
 const vendorJob = `<?xml version="1.0" encoding="UTF-8"?>

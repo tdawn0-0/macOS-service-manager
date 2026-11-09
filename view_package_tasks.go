@@ -10,7 +10,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/action"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 type packageTask struct {

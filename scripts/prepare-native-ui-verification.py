@@ -109,7 +109,7 @@ def _main(argv=None):
         shutil.copytree(source, app)
         info_path = app / 'Contents/Info.plist'
         info = plistlib.loads(info_path.read_bytes())
-        info['CFBundleIdentifier'] = 'xyz.jyeu.msm.nativeverification.' + uuid.uuid4().hex
+        info['CFBundleIdentifier'] = 'xyz.jyeu.devbase.nativeverification.' + uuid.uuid4().hex
         info['CFBundleName'] = 'Devbase Native Verification'
         info['CFBundleDisplayName'] = info['CFBundleName']
         info['LSEnvironment'] = {'MSM_DEV_HOME': str(root)}

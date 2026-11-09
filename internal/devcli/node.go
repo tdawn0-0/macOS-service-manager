@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 	"os"
 )
 

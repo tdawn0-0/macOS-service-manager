@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"macos-service-manager/internal/system"
+	"devbase/internal/system"
 )
 
 func TestInspectPortShowsRealListenerWithReadOnlyArguments(t *testing.T) {

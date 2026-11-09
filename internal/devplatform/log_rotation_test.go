@@ -2,7 +2,7 @@ package devplatform
 
 import (
 	"context"
-	"macos-service-manager/internal/launchd"
+	"devbase/internal/launchd"
 	"os"
 	"os/exec"
 	"path/filepath"

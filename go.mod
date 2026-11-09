@@ -1,4 +1,4 @@
-module macos-service-manager
+module devbase
 
 go 1.27.3
 

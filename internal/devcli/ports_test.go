@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 func TestPortCLIInspectsListenerAndSuggestsWithoutChangingData(t *testing.T) {

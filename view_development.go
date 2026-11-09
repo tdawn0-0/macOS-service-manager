@@ -16,7 +16,7 @@ import (
 	"github.com/lobehub/lobe-mygo/pkg/display"
 	"github.com/lobehub/lobe-mygo/pkg/layout"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 const (

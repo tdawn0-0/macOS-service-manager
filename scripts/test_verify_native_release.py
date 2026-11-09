@@ -17,7 +17,7 @@ def module():
 
 
 def events(names):
-    package = 'macos-service-manager'
+    package = 'devbase'
     rows = [{'Package': package, 'Action': 'start'}]
     for name in names:
         rows += [{'Package': package, 'Test': name, 'Action': 'run'},

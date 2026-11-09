@@ -7,7 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"macos-service-manager/internal/launchd"
+	"devbase/internal/launchd"
 	"net/http"
 	"net/http/httptest"
 	"os"

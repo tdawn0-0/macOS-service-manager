@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 func TestUITaskHistoryInitializationRequiresNewTargetReview(t *testing.T) {

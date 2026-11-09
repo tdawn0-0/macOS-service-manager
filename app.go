@@ -12,13 +12,13 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"macos-service-manager/internal/brew"
-	"macos-service-manager/internal/devplatform"
-	"macos-service-manager/internal/launchd"
-	"macos-service-manager/internal/loginitem"
-	"macos-service-manager/internal/logs"
-	"macos-service-manager/internal/service"
-	"macos-service-manager/internal/system"
+	"devbase/internal/brew"
+	"devbase/internal/devplatform"
+	"devbase/internal/launchd"
+	"devbase/internal/loginitem"
+	"devbase/internal/logs"
+	"devbase/internal/service"
+	"devbase/internal/system"
 )
 
 // sourceState is what the app knows of one source.

@@ -2,7 +2,7 @@ package devplatform
 
 import (
 	"fmt"
-	"macos-service-manager/internal/logs"
+	"devbase/internal/logs"
 	"os"
 	"path/filepath"
 	"regexp"

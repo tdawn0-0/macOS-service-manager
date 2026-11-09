@@ -8,7 +8,7 @@ import (
 	"github.com/lobehub/lobe-mygo/pkg/action"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 
-	"macos-service-manager/internal/service"
+	"devbase/internal/service"
 )
 
 // barHeight is the height of the title bar's row in each pane, whose top the

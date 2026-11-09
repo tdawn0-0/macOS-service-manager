@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/egoist/mygo/ui"
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 	"strings"
 	"time"
 )

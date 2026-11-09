@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 	"strings"
 	"sync"
 	"testing"

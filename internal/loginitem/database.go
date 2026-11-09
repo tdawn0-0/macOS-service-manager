@@ -13,7 +13,7 @@ import (
 
 	"howett.net/plist"
 
-	"macos-service-manager/internal/system"
+	"devbase/internal/system"
 )
 
 // The database's files are named BackgroundItems-v<version>.btm, and from

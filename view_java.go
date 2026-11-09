@@ -5,7 +5,7 @@ import (
 	"github.com/lobehub/lobe-mygo/pkg/action"
 	"github.com/lobehub/lobe-mygo/pkg/display"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 func (a *app) devJavaInstallations(c *ui.Context) {

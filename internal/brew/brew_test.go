@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"macos-service-manager/internal/service"
-	"macos-service-manager/internal/system"
+	"devbase/internal/service"
+	"devbase/internal/system"
 )
 
 const listJSON = `[

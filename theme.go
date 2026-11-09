@@ -5,7 +5,7 @@ import (
 	"github.com/lobehub/lobe-mygo/pkg/action"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 
-	"macos-service-manager/internal/service"
+	"devbase/internal/service"
 )
 
 // style sets the look of a window to the Lobe UI design tokens.

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"macos-service-manager/internal/devplatform"
+	"devbase/internal/devplatform"
 )
 
 func TestAuthorityCLIStatusPreparationAndDiscardDoNotTrustOrActivate(t *testing.T) {

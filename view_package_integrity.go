@@ -46,7 +46,7 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 			}
 			ui.Text(c, "Installed files: "+status).FontSize(textSmall).FontWeight(500).TextColor(color).SingleLine().MinWidth(0)
 		})
-		if btn(c, "Check files "+p.Name+" "+p.Version, "Check files", icoCheck, btnText).Tooltip(checkTip(p)).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
+		if btn(c, "Check files", icoCheck, btnText).Tooltip(checkTip(p)).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				r, e := m.VerifyPackage(m.Context, id)
 				if e == nil {
@@ -60,7 +60,7 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 			repairKind = btnPrimary
 		}
 		// Homebrew repairs its own kegs.
-		if p.Formula == "" && btn(c, "Repair "+p.Name+" "+p.Version, "Repair", icoWrench, repairKind).Tooltip("Restores this version from its recorded source and checksum. Stop databases and commands using this version first. Database data stays in separate folders.").Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
+		if p.Formula == "" && btn(c, "Repair", icoWrench, repairKind).Tooltip("Restores this version from its recorded source and checksum. Stop databases and commands using this version first. Database data stays in separate folders.").Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
 			a.startPackageTask(p, "repair", func(m *devplatform.Manager) (string, error) {
 				if e := m.RepairPackage(m.Context, id); e != nil {
 					return "Repair did not complete.", e
@@ -72,7 +72,7 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 				return "Restored the same exact version.\n" + r.Text(), e
 			}, nil)
 		}
-		if btn(c, "Reveal package folder "+p.Name+" "+p.Version, "Show in Finder", icoFolder, btnText).Disabled(d.busy || a.reveal == nil).Clicked() {
+		if btn(c, "Show in Finder", icoFolder, btnText).Disabled(d.busy || a.reveal == nil).Clicked() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				path := m.PackageDirectory(p)
 				a.post(func() { a.reveal(path) })

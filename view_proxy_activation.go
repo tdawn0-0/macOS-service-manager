@@ -31,7 +31,7 @@ func (a *app) devProxyActivation(c *ui.Context, domain string) {
 			ui.Text(c, fmt.Sprintf("HTTP response: %d · %s ago", r.StatusCode, time.Since(r.CheckedAt).Round(time.Second))).FontSize(textCaption)
 		}
 	}
-	if btn(c.Key("check-https-"+domain), "Check HTTPS response", "", icoStetho, btnText).AlignSelf(ui.Start).Disabled(d.busy || d.proxyDraftDirty() || d.proxyChecking[domain]).Clicked() {
+	if btn(c.Key("check-https-"+domain), "Check HTTPS response", icoStetho, btnText).AlignSelf(ui.Start).Disabled(d.busy || d.proxyDraftDirty() || d.proxyChecking[domain]).Clicked() {
 		m := a.devManager()
 		fp, revision, err := m.ProxyRuleFingerprint(domain)
 		if err != nil {

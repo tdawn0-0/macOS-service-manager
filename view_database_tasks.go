@@ -227,10 +227,10 @@ func (a *app) openInitializations() {
 func (a *app) devInitializations(c *ui.Context) {
 	d := &a.dev
 	devPaneHeader(c, "Unfinished initializations", func() {
-		if btn(c, "Refresh initializations", "", icoRotate, btnText).Disabled(d.busy).Clicked() {
+		if btn(c, "Refresh initializations", icoRotate, btnText).Disabled(d.busy).Clicked() {
 			a.initializationTask(nil)
 		}
-		if btn(c, "Back to database settings", "", icoUndo, btnDefault).Disabled(d.busy).Clicked() {
+		if btn(c, "Back to database settings", icoUndo, btnDefault).Disabled(d.busy).Clicked() {
 			d.databaseWorkOpen = false
 			d.initializationsOpen = false
 			d.detailScroll[devTabDatabases].Y = 0

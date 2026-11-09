@@ -108,7 +108,7 @@ func (a *app) devOperations(c *ui.Context) {
 		ui.Column(c).Width(1).Background(hairline(c.Theme()))
 		ui.Scroll(c.Key("operation-detail")).TrackScroll(&d.operationScroll).Grow(1).MinWidth(0).MinHeight(0).Padding(22, 28, 28).Children(func() {
 			ui.Column(c).Gap(14).MaxWidth(880).Children(func() {
-				if btn(c, "Back to workspace", "", icoUndo, btnText).AlignSelf(ui.Start).Clicked() {
+				if btn(c, "Back to workspace", icoUndo, btnText).AlignSelf(ui.Start).Clicked() {
 					d.operationsOpen = false
 				}
 				if d.operationsError != "" {
@@ -155,22 +155,22 @@ func (a *app) devOperations(c *ui.Context) {
 					}
 				})
 				devButtonRow(c, func() {
-					if btn(c, "Retry operation", "", icoRotate, btnPrimary).Tooltip("Rechecks saved settings and live launchd jobs. Ownership is never assumed from a historical PID.").Disabled(d.busy || !devplatform.OperationCanRetry(r)).Clicked() {
+					if btn(c, "Retry operation", icoRotate, btnPrimary).Tooltip("Rechecks saved settings and live launchd jobs. Ownership is never assumed from a historical PID.").Disabled(d.busy || !devplatform.OperationCanRetry(r)).Clicked() {
 						a.devTask(func(m *devplatform.Manager) (string, error) {
 							return "Follow-up task finished. Review its result.", m.RetryOperation(m.Context, r.ID, r.Revision)
 						})
 					}
-					if btn(c, "Review resource settings", "", icoArrow, btnDefault).Tooltip("Initialization, restore and commands are never replayed. Existing data is kept.").Disabled(d.busy || r.Busy).Clicked() {
+					if btn(c, "Review resource settings", icoArrow, btnDefault).Tooltip("Initialization, restore and commands are never replayed. Existing data is kept.").Disabled(d.busy || r.Busy).Clicked() {
 						a.reviewOperation(r)
 					}
-					if btn(c, "Reveal task files", "", icoFolder, btnText).Disabled(d.busy || a.reveal == nil).Clicked() {
+					if btn(c, "Reveal task files", icoFolder, btnText).Disabled(d.busy || a.reveal == nil).Clicked() {
 						a.devTask(func(m *devplatform.Manager) (string, error) {
 							path := filepath.Join(m.Root, "operations", r.ID)
 							a.post(func() { a.reveal(path) })
 							return "Task folder revealed.", nil
 						})
 					}
-					if btn(c, "Dismiss record (keep all files)", "", nil, btnText).Disabled(d.busy || r.Busy).Clicked() {
+					if btn(c, "Dismiss record (keep all files)", nil, btnText).Disabled(d.busy || r.Busy).Clicked() {
 						a.devTask(func(m *devplatform.Manager) (string, error) {
 							return "Task record dismissed; resource and output files retained.", m.DismissOperation(m.Context, r.ID, r.Revision)
 						})

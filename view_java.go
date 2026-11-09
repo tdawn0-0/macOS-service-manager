@@ -14,7 +14,7 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 		a.devTask(func(*devplatform.Manager) (string, error) { return "Local Java installations refreshed", nil })
 	}
 	devCardWith(c, icoCoffee, "Installed Java", "", func() {
-		if btn(c, "Refresh installed Java", "Refresh", icoRotate, btnText).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
+		if btn(c, "Refresh", icoRotate, btnText).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
 			a.devTask(func(*devplatform.Manager) (string, error) { return "Local Java installations refreshed", nil })
 		}
 	}, func() {
@@ -40,12 +40,12 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 					})
 					ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
 						isDefault := d.state.RuntimeDefaults["java"] == row.ID || row.PackageID != "" && d.state.RuntimeDefaults["java"] == row.PackageID
-						if !isDefault && btn(c.Key(row.ID+"-default"), "Set default", "", nil, btnDefault).Disabled(d.busy || a.packageTasksRunning() || !row.CanUse).Clicked() {
+						if !isDefault && btn(c.Key(row.ID+"-default"), "Set default", nil, btnDefault).Disabled(d.busy || a.packageTasksRunning() || !row.CanUse).Clicked() {
 							a.devTask(func(m *devplatform.Manager) (string, error) {
 								return "Java default selected; enable terminal integration to use it", m.SetJavaDefault(m.Context, row)
 							})
 						}
-						if btn(c.Key(row.ID+"-copy"), "Copy JAVA_HOME", "", icoCopy, btnText).Clicked() && a.copy != nil {
+						if btn(c.Key(row.ID+"-copy"), "Copy JAVA_HOME", icoCopy, btnText).Clicked() && a.copy != nil {
 							a.copy(row.Home)
 						}
 					})
@@ -83,7 +83,7 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 						}
 						devSubtle(c, message)
 						devButtonRow(c, func() {
-							if btn(c, label, "", icoTrash, btnDanger).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
+							if btn(c, label, icoTrash, btnDanger).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
 								reviewed := *selected
 								a.devTaskThen(func(m *devplatform.Manager) (string, error) {
 									path, err := m.RemoveJavaInstallation(m.Context, reviewed)
@@ -93,12 +93,12 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 									return "Moved to Trash: " + path, nil
 								}, func(error) { a.dev.javaRemove = nil })
 							}
-							if btn(c, "Cancel Java removal", "", nil, btnDefault).Disabled(d.busy).Clicked() {
+							if btn(c, "Cancel Java removal", nil, btnDefault).Disabled(d.busy).Clicked() {
 								d.javaRemove = nil
 							}
 						})
 					})
-				} else if btn(c.Key(row.ID+"-remove"), "Remove JDK", "", icoTrash, btnDanger).AlignSelf(ui.Start).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
+				} else if btn(c.Key(row.ID+"-remove"), "Remove JDK", icoTrash, btnDanger).AlignSelf(ui.Start).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
 					d.javaRemove = &row
 				}
 			})

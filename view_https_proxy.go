@@ -36,7 +36,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 	pageHeader(c, icoShield, ui.RGB(22, 119, 255), "HTTPS proxy rules", fmt.Sprintf("%s · listener :%d", plural(len(d.state.ProxyRules), "rule"), listener), func() {
 		statusTag(c, state)
 	}, func() {
-		if btn(c, "Apply proxy", "", icoPlay, btnPrimary).Disabled(d.busy || dirty).Clicked() {
+		if btn(c, "Apply proxy", icoPlay, btnPrimary).Disabled(d.busy || dirty).Clicked() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				err := m.ApplyProxy(m.Context)
 				return "Proxy configuration published. Check DNS, TLS and upstream separately.", err
@@ -56,7 +56,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 	}
 
 	devCardWith(c, icoRoute, "Rules", "", func() {
-		if btn(c, "Add rule", "", icoPlus, btnText).Clicked() {
+		if btn(c, "Add rule", icoPlus, btnText).Clicked() {
 			d.proxyDraft = append(d.proxyDraft, proxyRuleDraft{LocalPort: "3000"})
 		}
 	}, func() {
@@ -114,10 +114,10 @@ func (a *app) devHTTPS(c *ui.Context) {
 			} else {
 				ui.Spacer(c)
 			}
-			if btn(c, "Discard changes", "", icoUndo, btnDefault).Disabled(d.busy || !dirty).Clicked() {
+			if btn(c, "Discard changes", icoUndo, btnDefault).Disabled(d.busy || !dirty).Clicked() {
 				d.loadProxyDraft(d.state)
 			}
-			if btn(c, "Save HTTPS rules", "", icoSave, btnPrimary).Disabled(d.busy || !dirty).Clicked() {
+			if btn(c, "Save HTTPS rules", icoSave, btnPrimary).Disabled(d.busy || !dirty).Clicked() {
 				listener, err := strconv.Atoi(d.proxyListenerPort)
 				rules := make([]devplatform.ProxyRule, 0, len(d.proxyDraft))
 				for _, row := range d.proxyDraft {
@@ -174,14 +174,14 @@ func (a *app) devHTTPS(c *ui.Context) {
 				label string
 				icon  *ui.SVG
 			}{{"Restart HTTPS proxy", icoRotate}, {"Stop HTTPS proxy", icoStop}, {"Diagnose HTTPS", icoStetho}} {
-				if btn(c, act.label, "", act.icon, btnDefault).Disabled(d.busy || dirty).Clicked() {
+				if btn(c, act.label, act.icon, btnDefault).Disabled(d.busy || dirty).Clicked() {
 					proxyAction(act.label)
 				}
 			}
 		})
 	})
 	devCardWith(c, icoKey, "Local domains & trust", "", func() {
-		if btn(c, "Local certificates", "", icoArrow, btnText).Disabled(d.busy).Clicked() {
+		if btn(c, "Local certificates", icoArrow, btnText).Disabled(d.busy).Clicked() {
 			d.authorityOpen = true
 			a.authorityTask(nil)
 		}
@@ -192,7 +192,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 				icon  *ui.SVG
 				kind  btnKind
 			}{{"Configure local domains", icoGlobe, btnDefault}, {"Trust local CA", icoShield, btnDefault}, {"Remove CA trust", nil, btnText}} {
-				if btn(c, act.label, "", act.icon, act.kind).Disabled(d.busy || dirty).Clicked() {
+				if btn(c, act.label, act.icon, act.kind).Disabled(d.busy || dirty).Clicked() {
 					proxyAction(act.label)
 				}
 			}

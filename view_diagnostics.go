@@ -70,20 +70,20 @@ func (a *app) devDiagnostics(c *ui.Context) {
 		}
 	}
 	pageHeader(c, icoStetho, tk.TextSecondary, "Diagnostics", summary, func() { statusTag(c, status) }, func() {
-		if btn(c, "Run diagnostics again", "", icoRotate, btnPrimary).Tooltip("Changes no hosts, certificates or services.").Disabled(d.busy).Clicked() {
+		if btn(c, "Run diagnostics again", icoRotate, btnPrimary).Tooltip("Changes no hosts, certificates or services.").Disabled(d.busy).Clicked() {
 			a.runDevDiagnostics()
 		}
 	})
 	devButtonRow(c, func() {
-		if btn(c, "Back to workspace", "", icoUndo, btnText).Clicked() {
+		if btn(c, "Back to workspace", icoUndo, btnText).Clicked() {
 			d.diagnosticsOpen = false
 		}
 		if report != nil {
 			ui.Spacer(c)
-			if btn(c, "Copy redacted report", "", icoCopy, btnText).Tooltip("Anonymous resource names. Excludes local paths, domains, commands, environment values, logs, credentials and private keys.").Disabled(d.busy || a.copy == nil).Clicked() {
+			if btn(c, "Copy redacted report", icoCopy, btnText).Tooltip("Anonymous resource names. Excludes local paths, domains, commands, environment values, logs, credentials and private keys.").Disabled(d.busy || a.copy == nil).Clicked() {
 				a.copy(d.diagnosticJSON)
 			}
-			if btn(c, "Export redacted report", "", icoDownload, btnText).Tooltip("Anonymous resource names. Excludes local paths, domains, commands, environment values, logs, credentials and private keys.").Disabled(d.busy).Clicked() {
+			if btn(c, "Export redacted report", icoDownload, btnText).Tooltip("Anonymous resource names. Excludes local paths, domains, commands, environment values, logs, credentials and private keys.").Disabled(d.busy).Clicked() {
 				snapshot := *report
 				a.devTask(func(m *devplatform.Manager) (string, error) {
 					path, err := m.ExportDiagnostics(m.Context, snapshot)
@@ -98,10 +98,10 @@ func (a *app) devDiagnostics(c *ui.Context) {
 	if d.diagnosticPendingTarget != nil {
 		devHint(c, feedback.Warning, "Unsaved database changes. Discard them to open the selected setting?", "")
 		devButtonRow(c, func() {
-			if btn(c, "Cancel navigation", "", nil, btnDefault).Clicked() {
+			if btn(c, "Cancel navigation", nil, btnDefault).Clicked() {
 				d.diagnosticPendingTarget = nil
 			}
-			if btn(c, "Discard draft and open", "", nil, btnDanger).Clicked() {
+			if btn(c, "Discard draft and open", nil, btnDanger).Clicked() {
 				target := *d.diagnosticPendingTarget
 				d.diagnosticPendingTarget = nil
 				a.openDiagnosticTarget(target, true)
@@ -126,7 +126,7 @@ func (a *app) devDiagnostics(c *ui.Context) {
 					}
 					display.Tag(c, check.Status+" · "+check.Layer, display.TagProps{Color: color, Size: theme.Small})
 					ui.Text(c, check.Resource).FontWeight(600).SingleLine().Grow(1).MinWidth(0)
-					if check.Target.Kind != "" && btn(c, "Open related setting", "", icoArrow, btnText).Disabled(d.busy).Clicked() {
+					if check.Target.Kind != "" && btn(c, "Open related setting", icoArrow, btnText).Disabled(d.busy).Clicked() {
 						a.openDiagnosticTarget(check.Target, false)
 					}
 				})

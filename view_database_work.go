@@ -36,10 +36,10 @@ func (a *app) openDatabaseWork() {
 func (a *app) devDatabaseWork(c *ui.Context) {
 	d := &a.dev
 	devPaneHeader(c, "Unfinished database tasks", func() {
-		if btn(c, "Refresh database tasks", "", icoRotate, btnText).Disabled(d.busy).Clicked() {
+		if btn(c, "Refresh database tasks", icoRotate, btnText).Disabled(d.busy).Clicked() {
 			a.databaseWorkTask(nil)
 		}
-		if btn(c, "Back to database settings", "", icoUndo, btnDefault).Disabled(d.busy).Clicked() {
+		if btn(c, "Back to database settings", icoUndo, btnDefault).Disabled(d.busy).Clicked() {
 			d.databaseWorkOpen = false
 			d.detailScroll[devTabDatabases].Y = 0
 		}

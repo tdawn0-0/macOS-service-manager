@@ -17,7 +17,7 @@ func (a *app) devRuntimeCatalog(c *ui.Context) {
 		devChoice(c, "Version", &d.version, d.runtimeVersions[name])
 		devField(c, "Exact version", &d.version, "Refresh available versions")
 	})
-	if btn(c, "Refresh available versions", "", icoRotate, btnText).AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
+	if btn(c, "Refresh available versions", icoRotate, btnText).AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			rows, e := m.RuntimeVersions(m.Context, name)
 			if e == nil {
@@ -49,13 +49,13 @@ func (a *app) devPython(c *ui.Context) {
 		devSubtle(c, "Python uses uv’s existing installation store. Uninstall removes the selected interpreter; virtual environments that reference it will need repair.")
 		devField(c, "uv executable", &d.uvPath, "/absolute/path/to/uv (optional)")
 		devButtonRow(c, func() {
-			if btn(c, "Use uv executable", "", icoCheck, btnDefault).Disabled(d.busy).Clicked() {
+			if btn(c, "Use uv executable", icoCheck, btnDefault).Disabled(d.busy).Clicked() {
 				path := d.uvPath
 				a.devTask(func(m *devplatform.Manager) (string, error) {
 					return "uv executable selected", m.SetUVPath(m.Context, path)
 				})
 			}
-			if btn(c, "Refresh Python versions", "", icoRotate, btnText).Disabled(d.busy).Clicked() {
+			if btn(c, "Refresh Python versions", icoRotate, btnText).Disabled(d.busy).Clicked() {
 				a.devTask(func(m *devplatform.Manager) (string, error) {
 					description, e := m.UVDescription(m.Context)
 					if e != nil {
@@ -89,7 +89,7 @@ func (a *app) devPython(c *ui.Context) {
 			}
 		}
 		devChoice(c, "Python version", &d.uvVersion, keys)
-		if btn(c, "Install Python with uv", "", icoDownload, btnPrimary).AlignSelf(ui.Start).Disabled(d.busy || d.uvVersion == "").Clicked() {
+		if btn(c, "Install Python with uv", icoDownload, btnPrimary).AlignSelf(ui.Start).Disabled(d.busy || d.uvVersion == "").Clicked() {
 			key := d.uvVersion
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				e := m.InstallUVPython(m.Context, key)
@@ -123,7 +123,7 @@ func (a *app) devPython(c *ui.Context) {
 					}
 				})
 				devButtonRow(c, func() {
-					if btn(c, "Copy Python path "+r.Version, "Copy path", icoCopy, btnText).Clicked() && a.copy != nil {
+					if btn(c, "Copy path", icoCopy, btnText).Clicked() && a.copy != nil {
 						a.copy(r.Path)
 					}
 					for _, act := range []string{"default", "uninstall"} {
@@ -131,7 +131,7 @@ func (a *app) devPython(c *ui.Context) {
 						if act == "uninstall" {
 							label, kind, icon = "Uninstall Python "+r.Version, btnDanger, icoTrash
 						}
-						if btn(c, label, "", icon, kind).Disabled(d.busy).Clicked() {
+						if btn(c, label, icon, kind).Disabled(d.busy).Clicked() {
 							a.devTask(func(m *devplatform.Manager) (string, error) {
 								e := m.UVPythonAction(m.Context, r.Key, act)
 								if e == nil && act == "default" {
@@ -156,13 +156,13 @@ func (a *app) devPython(c *ui.Context) {
 
 func (a *app) devAdditionalRuntimeInstalled(c *ui.Context, id string, p devplatform.Package) {
 	if a.dev.state.RuntimeDefaults[p.Name] != id {
-		if btn(c, "Set default "+p.Version, "Set default", nil, btnDefault).Disabled(a.dev.busy).Clicked() {
+		if btn(c, "Set default", nil, btnDefault).Disabled(a.dev.busy).Clicked() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				return "Default version selected; enable terminal integration to use it", m.SetRuntimeDefault(m.Context, p.Name, id)
 			})
 		}
 	}
-	if btn(c, "Copy executable path", "", icoCopy, btnText).Disabled(a.dev.busy).Clicked() {
+	if btn(c, "Copy executable path", icoCopy, btnText).Disabled(a.dev.busy).Clicked() {
 		path, e := a.devManager().Binary(&a.dev.state, id, p.Name)
 		if e != nil {
 			a.dev.output = e.Error()
@@ -180,7 +180,7 @@ func (a *app) devAdditionalRuntimeShell(c *ui.Context) {
 			if enable {
 				label, kind, icon = "Enable in terminal", btnPrimary, icoTerminal
 			}
-			if btn(c, label, "", icon, kind).Disabled(a.dev.busy).Clicked() {
+			if btn(c, label, icon, kind).Disabled(a.dev.busy).Clicked() {
 				a.devTask(func(m *devplatform.Manager) (string, error) {
 					return "Terminal configuration updated; open a new terminal", m.ConfigureRuntimeShell(m.Context, name, enable)
 				})

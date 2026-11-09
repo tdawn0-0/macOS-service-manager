@@ -332,16 +332,16 @@ func (a *app) devTopBar(c *ui.Context) {
 			ui.Spinner(c).Size(14, 14)
 		}
 		if !d.busy && len(d.databaseTasks) > 0 && (d.tab == devTabDatabases || a.databaseTasksRunning()) {
-			if btn(c, "Database tasks", "", icoHistory, btnFilled).Clicked() {
+			if btn(c, "Database tasks", icoHistory, btnFilled).Clicked() {
 				a.showDatabaseTasks()
 			}
 		} else if !d.busy && len(d.packageTasks) > 0 {
-			if btn(c, "Package tasks", "", icoDownload, btnFilled).Clicked() {
+			if btn(c, "Package tasks", icoDownload, btnFilled).Clicked() {
 				a.showPackageTasks()
 			}
 		}
 		if d.busy {
-			if btn(c, "Cancel operation", "", nil, btnDefault).Clicked() && d.cancel != nil {
+			if btn(c, "Cancel operation", nil, btnDefault).Clicked() && d.cancel != nil {
 				d.cancel()
 			}
 		}
@@ -689,7 +689,7 @@ func (a *app) devSoftware(c *ui.Context) {
 	if engine := d.software; isDatabaseEngine(engine) && len(d.packages(engine)) > 0 {
 		// An installed engine is a step towards an instance of it.
 		actions = func() {
-			if btn(c, "New "+softwareTitle(engine)+" instance", "New instance", icoPlus, btnDefault).Disabled(d.busy).Clicked() {
+			if btn(c, "New instance", icoPlus, btnDefault).Disabled(d.busy).Clicked() {
 				a.openNewInstance(engine)
 			}
 		}
@@ -767,7 +767,7 @@ func (a *app) devInstalledPackage(c *ui.Context, id string, p devplatform.Packag
 			})
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
 				if p.Name == "node" && id != d.state.NodeDefault {
-					if btn(c, "Set default "+p.Version, "Set default", nil, btnDefault).Disabled(d.busy).Clicked() {
+					if btn(c, "Set default", nil, btnDefault).Disabled(d.busy).Clicked() {
 						a.devTask(func(m *devplatform.Manager) (string, error) {
 							return "Default is Node.js " + p.Version, m.SetNodeDefault(m.Context, id)
 						})
@@ -783,11 +783,11 @@ func (a *app) devInstalledPackage(c *ui.Context, id string, p devplatform.Packag
 		})
 		devSubtle(c, "License: "+p.License)
 		a.devPackageIntegrity(c, id, p)
-		removeLabel, removeText := "Uninstall "+p.Name+" "+p.Version, "Uninstall"
+		removeText := "Uninstall"
 		if p.Formula != "" {
-			removeLabel, removeText = "Remove from workspace "+p.Name+" "+p.Version, "Remove from workspace"
+			removeText = "Remove from workspace"
 		}
-		if btn(c, removeLabel, removeText, icoTrash, btnDanger).AlignSelf(ui.Start).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
+		if btn(c, removeText, icoTrash, btnDanger).AlignSelf(ui.Start).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				if p.Formula != "" {
 					return "Removed workspace registration. The shared Homebrew installation is kept.", m.Uninstall(m.Context, id)
@@ -929,7 +929,7 @@ func (a *app) devDatabases(c *ui.Context) {
 			if act.text == "Start" && status != "Running" && status != "Healthy" {
 				kind = btnPrimary
 			}
-			if btn(c, act.label, act.text, act.icon, kind).Disabled(busy).Clicked() {
+			if btn(c, act.text, act.icon, kind).Disabled(busy).Clicked() {
 				id := instance.ID
 				verb := strings.TrimSuffix(strings.ToLower(act.label), " instance")
 				a.startDatabaseOperation(instance, verb, func(m *devplatform.Manager) (string, error) {
@@ -963,7 +963,7 @@ func (a *app) devDatabases(c *ui.Context) {
 		devFieldGrid(c, func() {
 			devField(c, "Database name", &d.dbName, "app")
 		})
-		if btn(c, "Create database", "", icoPlus, btnDefault).AlignSelf(ui.Start).Disabled(busy).Clicked() {
+		if btn(c, "Create database", icoPlus, btnDefault).AlignSelf(ui.Start).Disabled(busy).Clicked() {
 			id, name := d.dbID, d.dbName
 			a.startDatabaseOperationWithOffer(d.state.Instances[id], "create database", func(m *devplatform.Manager) (string, error) {
 				return "Created database " + name, m.CreateDatabase(m.Context, id, name)
@@ -974,7 +974,7 @@ func (a *app) devDatabases(c *ui.Context) {
 			devField(c, "Database user", &d.dbUser, "app_user")
 			ui.Field(c, "New user password", func() { ui.TextInput(c, &d.dbPassword).Password() })
 		})
-		if btn(c, "Create database user", "", icoUser, btnDefault).AlignSelf(ui.Start).Disabled(busy).Clicked() {
+		if btn(c, "Create database user", icoUser, btnDefault).AlignSelf(ui.Start).Disabled(busy).Clicked() {
 			id, name, password, db := d.dbID, d.dbUser, d.dbPassword, d.dbName
 			d.dbPassword = ""
 			a.startDatabaseOperation(d.state.Instances[id], "create user", func(m *devplatform.Manager) (string, error) {
@@ -983,14 +983,14 @@ func (a *app) devDatabases(c *ui.Context) {
 		}
 	})
 	devCardWith(c, icoArchive, "Backups", "", nil, func() {
-		if btn(c, "Back up database", "", icoArchive, btnDefault).AlignSelf(ui.Start).Disabled(busy).Clicked() {
+		if btn(c, "Back up database", icoArchive, btnDefault).AlignSelf(ui.Start).Disabled(busy).Clicked() {
 			id, name := d.dbID, d.dbName
 			a.startDatabaseOperation(d.state.Instances[id], "backup", func(m *devplatform.Manager) (string, error) { return m.Backup(m.Context, id, name) })
 		}
 		devDivider(c, "Restore")
 		devField(c, "Backup file", &d.backupPath, "Select a backup file")
 		devButtonRow(c, func() {
-			if btn(c, "Choose backup file…", "", icoFolder, btnDefault).Clicked() {
+			if btn(c, "Choose backup file…", icoFolder, btnDefault).Clicked() {
 				paths, e := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "Restore database backup"})
 				if e != nil {
 					d.output = e.Error()
@@ -998,7 +998,7 @@ func (a *app) devDatabases(c *ui.Context) {
 					d.backupPath = paths[0]
 				}
 			}
-			if btn(c, "Restore into new database", "", icoRestore, btnDefault).Disabled(busy).Clicked() {
+			if btn(c, "Restore into new database", icoRestore, btnDefault).Disabled(busy).Clicked() {
 				id, name, path := d.dbID, d.dbName, d.backupPath
 				a.startDatabaseOperation(d.state.Instances[id], "restore", func(m *devplatform.Manager) (string, error) {
 					return "Restored into " + name, m.Restore(m.Context, id, name, path)
@@ -1008,13 +1008,13 @@ func (a *app) devDatabases(c *ui.Context) {
 	})
 	devDangerCard(c, "Remove", func() {
 		devButtonRow(c, func() {
-			if btn(c, "Remove instance (keep data files)", "", icoTrash, btnDanger).Disabled(busy).Clicked() {
+			if btn(c, "Remove instance (keep data files)", icoTrash, btnDanger).Disabled(busy).Clicked() {
 				id := d.dbID
 				a.startDatabaseOperation(d.state.Instances[id], "remove", func(m *devplatform.Manager) (string, error) {
 					return "Removed instance", m.InstanceAction(m.Context, id, "remove")
 				})
 			}
-			if btn(c, "Review permanent data deletion", "", nil, btnDanger).Disabled(busy).Clicked() {
+			if btn(c, "Review permanent data deletion", nil, btnDanger).Disabled(busy).Clicked() {
 				a.previewInstanceDeletion(d.dbID)
 			}
 		})
@@ -1034,7 +1034,7 @@ func (a *app) devNewInstance(c *ui.Context) {
 				devHint(c, feedback.Warning, "Install "+softwareTitle(d.dbKind)+" first", "")
 			})
 			kind := d.dbKind
-			if btn(c, "Open "+softwareTitle(kind)+" in Software", "Open Software", icoArrow, btnDefault).Clicked() {
+			if btn(c, "Open Software", icoArrow, btnDefault).Clicked() {
 				a.openSoftware(kind)
 			}
 		})
@@ -1065,7 +1065,7 @@ func (a *app) devNewInstance(c *ui.Context) {
 		devField(c, "Data location", &d.dbDataDirectory, "Blank for app storage, or a new absolute directory")
 		devSubtle(c, "External locations keep data when the instance is removed. Existing data is not adopted.")
 	})
-	if btn(c, "Create instance", "", icoPlus, btnPrimary).AlignSelf(ui.Start).Disabled(d.busy || d.databaseTasks[d.dbID] != nil && d.databaseTasks[d.dbID].Running).Clicked() {
+	if btn(c, "Create instance", icoPlus, btnPrimary).AlignSelf(ui.Start).Disabled(d.busy || d.databaseTasks[d.dbID] != nil && d.databaseTasks[d.dbID].Running).Clicked() {
 		port, e := strconv.Atoi(d.dbPort)
 		if e != nil {
 			d.output = "Error: Enter a valid port"
@@ -1142,10 +1142,10 @@ func (a *app) devPackageReview(c *ui.Context) {
 					devTag(c, "Cached", display.TagColor(""))
 				}
 				ui.Spacer(c)
-				if btn(c, "Copy package source", "Source", icoCopy, btnText).Clicked() && a.copy != nil {
+				if btn(c, "Source", icoCopy, btnText).Clicked() && a.copy != nil {
 					a.copy(info.Package.URL)
 				}
-				if btn(c, "Copy package checksum", "Checksum", icoCopy, btnText).Clicked() && a.copy != nil {
+				if btn(c, "Checksum", icoCopy, btnText).Clicked() && a.copy != nil {
 					a.copy(info.Package.SHA256)
 				}
 			})
@@ -1190,7 +1190,7 @@ func (a *app) devPackageReview(c *ui.Context) {
 		if valid {
 			reviewKind = btnDefault
 		}
-		if btn(c, "Review package", "", icoFileCheck, reviewKind).Disabled(d.busy || d.software == "" || strings.TrimSpace(d.version) == "").Clicked() {
+		if btn(c, "Review package", icoFileCheck, reviewKind).Disabled(d.busy || d.software == "" || strings.TrimSpace(d.version) == "").Clicked() {
 			name, version := d.software, strings.TrimSpace(d.version)
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				pkg, e := m.ResolveInstalledOrCatalog(m.Context, name, version)
@@ -1214,7 +1214,7 @@ func (a *app) devPackageReview(c *ui.Context) {
 		if valid {
 			installKind = btnPrimary
 		}
-		if btn(c, installLabel, "", icoDownload, installKind).Disabled(d.busy || !valid || d.packagePreview.Installed || !d.packagePreview.Compatible || (d.packagePreview.Integrity == "Needs repair" && d.packagePreview.Package.Formula == "") || a.packageTaskRunning(d.packagePreview.Package.ID())).Clicked() {
+		if btn(c, installLabel, icoDownload, installKind).Disabled(d.busy || !valid || d.packagePreview.Installed || !d.packagePreview.Compatible || (d.packagePreview.Integrity == "Needs repair" && d.packagePreview.Package.Formula == "") || a.packageTaskRunning(d.packagePreview.Package.ID())).Clicked() {
 			pkg := d.packagePreview.Package
 			a.startPackageTask(pkg, "install", func(m *devplatform.Manager) (string, error) {
 				if err := m.Install(m.Context, pkg); err != nil {

@@ -91,13 +91,8 @@ const (
 	btnFilled
 )
 
-// btn is a small Lobe button named label, showing text (the label when
-// empty) after an optional icon. A danger button is a default one in the
-// error color.
-func btn(c *ui.Context, label, text string, icon *ui.SVG, kind btnKind) ui.Element {
-	if text == "" {
-		text = label
-	}
+// btn is a small Lobe button showing text after an optional icon.
+func btn(c *ui.Context, text string, icon *ui.SVG, kind btnKind) ui.Element {
 	variant := action.Default
 	switch kind {
 	case btnPrimary:
@@ -116,7 +111,7 @@ func btn(c *ui.Context, label, text string, icon *ui.SVG, kind btnKind) ui.Eleme
 			b.Background(tk.ErrorFillTertiary)
 		}
 	}
-	b.Label(label).Shrink(0)
+	b.Shrink(0)
 	b.Children(func() {
 		if icon != nil {
 			ui.Icon(c, icon).FontSize(13).Shrink(0)

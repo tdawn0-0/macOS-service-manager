@@ -97,6 +97,7 @@ type developmentState struct {
 	nodeReleasesTried, nodeReleasesRefresh, nodeReleasesStale                                           bool
 	nodeReleasesError                                                                                   string
 	nodeShell                                                                                           int
+	runtimeShell                                                                                        map[string]int
 	showResult                                                                                          bool
 }
 

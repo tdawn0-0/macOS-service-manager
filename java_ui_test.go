@@ -50,6 +50,10 @@ func TestUIExistingJavaManagement(t *testing.T) {
 		t.Fatal(h.copied)
 	}
 	h.click("Enable in terminal")
+	shownText := strings.Join(h.ui.Texts(), "\n")
+	if !strings.Contains(shownText, "Enabled for detected shells") {
+		t.Fatal("terminal status not shown as enabled", shownText)
+	}
 	h.click("Remove JDK")
 	if _, err = os.Stat(path); err != nil {
 		t.Fatal("review deleted before confirmation", err)

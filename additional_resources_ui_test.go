@@ -39,6 +39,7 @@ func TestUIAdditionalRuntimes(t *testing.T) {
 				testName := fmt.Sprintf("%s-%dx%d-dark-%t", name, size[0], size[1], dark)
 				t.Run(testName, func(t *testing.T) {
 					a := designFixture(t)
+					a.dev.runtimeShell = map[string]int{"java": 2, "go": 2}
 					a.dev.software = name
 					a.dev.version = "21.0.13_9.0.LTS"
 					a.dev.runtimeVersions = map[string][]string{"java": {"21.0.13_9.0.LTS", "25.0.1_8.0.LTS"}, "go": {"1.27.3", "1.26.8"}}

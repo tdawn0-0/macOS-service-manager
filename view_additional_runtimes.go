@@ -173,18 +173,44 @@ func (a *app) devAdditionalRuntimeInstalled(c *ui.Context, id string, p devplatf
 }
 func (a *app) devAdditionalRuntimeShell(c *ui.Context) {
 	name := a.dev.software
+	d := &a.dev
+	if d.runtimeShell == nil {
+		d.runtimeShell = map[string]int{}
+	}
+	if d.runtimeShell[name] == 0 {
+		d.runtimeShell[name] = 2
+		if a.devManager().RuntimeShellEnabled(name) {
+			d.runtimeShell[name] = 1
+		}
+	}
 	devSubtle(c, "Detects installed shells and enables new terminal and AI sessions.")
 	devButtonRow(c, func() {
-		for _, enable := range []bool{true, false} {
-			label, kind, icon := "Disable in terminal", btnDefault, (*ui.SVG)(nil)
-			if enable {
-				label, kind, icon = "Enable in terminal", btnPrimary, icoTerminal
-			}
-			if btn(c, label, icon, kind).Disabled(a.dev.busy).Clicked() {
-				a.devTask(func(m *devplatform.Manager) (string, error) {
-					return "Terminal configuration updated; open a new terminal", m.ConfigureRuntimeShell(m.Context, name, enable)
+		if d.runtimeShell[name] == 1 {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Grow(1).MinWidth(0).Children(func() {
+				statusTag(c, "Enabled")
+				ui.Text(c, "Enabled for detected shells").FontSize(textSmall).TextColor(c.Theme().Success).SingleLine().MinWidth(0)
+			})
+		} else if btn(c, "Enable in terminal", icoTerminal, btnPrimary).Disabled(a.dev.busy).Clicked() {
+			a.devTask(func(m *devplatform.Manager) (string, error) {
+				e := m.ConfigureRuntimeShell(m.Context, name, true)
+				a.post(func() {
+					if a.dev.runtimeShell != nil {
+						a.dev.runtimeShell[name] = 0
+					}
 				})
-			}
+				return "Terminal configuration updated; open a new terminal", e
+			})
+		}
+		if btn(c, "Disable in terminal", nil, btnDefault).Disabled(a.dev.busy).Clicked() {
+			a.devTask(func(m *devplatform.Manager) (string, error) {
+				e := m.ConfigureRuntimeShell(m.Context, name, false)
+				a.post(func() {
+					if a.dev.runtimeShell != nil {
+						a.dev.runtimeShell[name] = 0
+					}
+				})
+				return "Terminal configuration updated; open a new terminal", e
+			})
 		}
 		a.devBashCommand(c, name)
 	})

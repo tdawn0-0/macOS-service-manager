@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/egoist/mygo/ui"
-	"github.com/lobehub/lobe-mygo/pkg/action"
 	"github.com/lobehub/lobe-mygo/pkg/display"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"devbase/internal/devplatform"
@@ -12,9 +11,13 @@ func (a *app) devRuntimeCatalog(c *ui.Context) {
 	d := &a.dev
 	name := d.software
 	if name == "java" {
-		ui.Text(c, "JDK downloads from the JetBrains catalog used by IDEA. Choose a distribution and version; review its source and license before installing.").FontSize(textSmall)
+		devSubtle(c, "JDK downloads from the JetBrains catalog used by IDEA. Choose a distribution and version; review its source and license before installing.")
 	}
-	if action.Button(c, "Refresh available versions", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
+	devFieldGrid(c, func() {
+		devChoice(c, "Version", &d.version, d.runtimeVersions[name])
+		devField(c, "Exact version", &d.version, "Refresh available versions")
+	})
+	if btn(c, "Refresh available versions", "", icoRotate, btnText).AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
 		a.devTask(func(m *devplatform.Manager) (string, error) {
 			rows, e := m.RuntimeVersions(m.Context, name)
 			if e == nil {
@@ -39,116 +42,127 @@ func (a *app) devRuntimeCatalog(c *ui.Context) {
 			return "Version list refreshed", e
 		})
 	}
-	devChoice(c, "Version", &d.version, d.runtimeVersions[name])
-	devField(c, "Exact version", &d.version, "Refresh available versions")
 }
 func (a *app) devPython(c *ui.Context) {
 	d := &a.dev
-	ui.Text(c, "Python uses uv’s existing installation store. Uninstall removes the selected interpreter; virtual environments that reference it will need repair.").FontSize(textSmall)
-	devField(c, "uv executable", &d.uvPath, "/absolute/path/to/uv (optional)")
-	if action.Button(c, "Use uv executable", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
-		path := d.uvPath
-		a.devTask(func(m *devplatform.Manager) (string, error) {
-			return "uv executable selected", m.SetUVPath(m.Context, path)
+	devCardWith(c, icoTerminal, "uv", d.uvDescription, nil, func() {
+		devSubtle(c, "Python uses uv’s existing installation store. Uninstall removes the selected interpreter; virtual environments that reference it will need repair.")
+		devField(c, "uv executable", &d.uvPath, "/absolute/path/to/uv (optional)")
+		devButtonRow(c, func() {
+			if btn(c, "Use uv executable", "", icoCheck, btnDefault).Disabled(d.busy).Clicked() {
+				path := d.uvPath
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					return "uv executable selected", m.SetUVPath(m.Context, path)
+				})
+			}
+			if btn(c, "Refresh Python versions", "", icoRotate, btnText).Disabled(d.busy).Clicked() {
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					description, e := m.UVDescription(m.Context)
+					if e != nil {
+						return "", e
+					}
+					installed, e := m.UVPythons(m.Context, true)
+					if e != nil {
+						return "", e
+					}
+					pin, pinErr := m.UVGlobalPin(m.Context)
+					if pinErr != nil {
+						pin = "Unavailable; refresh to retry"
+					} else if pin == "" {
+						pin = "No global pin"
+					}
+					a.post(func() { a.dev.uvInstalled = installed; a.dev.uvDescription = description; a.dev.uvPin = pin })
+					available, e := m.UVPythons(m.Context, false)
+					if e == nil {
+						a.post(func() { a.dev.uvInstalled = installed; a.dev.uvAvailable = available })
+					}
+					return "Python versions refreshed", e
+				})
+			}
 		})
-	}
-	if action.Button(c, "Refresh Python versions", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
-		a.devTask(func(m *devplatform.Manager) (string, error) {
-			description, e := m.UVDescription(m.Context)
-			if e != nil {
-				return "", e
+	})
+	devCardWith(c, icoDownload, "Install a version", "", nil, func() {
+		var keys []string
+		for _, r := range d.uvAvailable {
+			if r.OS == "macos" && r.Arch == "aarch64" {
+				keys = append(keys, r.Key)
 			}
-			installed, e := m.UVPythons(m.Context, true)
-			if e != nil {
-				return "", e
-			}
-			pin, pinErr := m.UVGlobalPin(m.Context)
-			if pinErr != nil {
-				pin = "Unavailable; refresh to retry"
-			} else if pin == "" {
-				pin = "No global pin"
-			}
-			a.post(func() { a.dev.uvInstalled = installed; a.dev.uvDescription = description; a.dev.uvPin = pin })
-			available, e := m.UVPythons(m.Context, false)
-			if e == nil {
-				a.post(func() { a.dev.uvInstalled = installed; a.dev.uvAvailable = available })
-			}
-			return "Python versions refreshed", e
-		})
-	}
-	if d.uvDescription != "" {
-		ui.Text(c, d.uvDescription).FontSize(textSmall)
-	}
-	var keys []string
-	for _, r := range d.uvAvailable {
-		if r.OS == "macos" && r.Arch == "aarch64" {
-			keys = append(keys, r.Key)
 		}
-	}
-	devChoice(c, "Python version", &d.uvVersion, keys)
-	if action.Button(c, "Install Python with uv", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Disabled(d.busy || d.uvVersion == "").Clicked() {
-		key := d.uvVersion
-		a.devTask(func(m *devplatform.Manager) (string, error) {
-			e := m.InstallUVPython(m.Context, key)
-			if e == nil {
-				rows, err := m.UVPythons(m.Context, true)
-				e = err
+		devChoice(c, "Python version", &d.uvVersion, keys)
+		if btn(c, "Install Python with uv", "", icoDownload, btnPrimary).AlignSelf(ui.Start).Disabled(d.busy || d.uvVersion == "").Clicked() {
+			key := d.uvVersion
+			a.devTask(func(m *devplatform.Manager) (string, error) {
+				e := m.InstallUVPython(m.Context, key)
 				if e == nil {
-					a.post(func() { a.dev.uvInstalled = rows })
-				}
-			}
-			return "Python installed by uv", e
-		})
-	}
-	devDivider(c, "Installed by uv")
-	if d.uvPin != "" {
-		ui.Text(c, "Global uv pin: "+d.uvPin).FontSize(textSmall)
-	}
-	ui.Text(c, "Set uv default updates the global uv Python pin. Directory pins and active virtual environments still take precedence; this does not replace the shell's python command.").FontSize(textSmall).TextColor(c.Theme().TextMuted)
-	for _, r := range d.uvInstalled {
-		r := r
-		ui.Column(c).Gap(6).Children(func() {
-			ui.Text(c, r.Key)
-			ui.Row(c).Wrap().Gap(6).Children(func() {
-				if action.Button(c, "Copy Python path "+r.Version, action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() && a.copy != nil {
-					a.copy(r.Path)
-				}
-				for _, act := range []string{"default", "uninstall"} {
-					label := "Set uv default " + r.Version
-					if act == "uninstall" {
-						label = "Uninstall Python " + r.Version
-					}
-					if action.Button(c, label, action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
-						a.devTask(func(m *devplatform.Manager) (string, error) {
-							e := m.UVPythonAction(m.Context, r.Key, act)
-							if e == nil && act == "default" {
-								a.post(func() { a.dev.uvPin = r.Key })
-							}
-							if e == nil {
-								rows, err := m.UVPythons(m.Context, true)
-								e = err
-								if e == nil {
-									a.post(func() { a.dev.uvInstalled = rows })
-								}
-							}
-							return "Python " + act + " completed", e
-						})
+					rows, err := m.UVPythons(m.Context, true)
+					e = err
+					if e == nil {
+						a.post(func() { a.dev.uvInstalled = rows })
 					}
 				}
+				return "Python installed by uv", e
 			})
-		})
+		}
+	})
+	note := ""
+	if d.uvPin != "" {
+		note = "Global uv pin: " + d.uvPin
 	}
+	devCardWith(c, iconPackage, "Installed by uv", note, nil, func() {
+		devSubtle(c, "Set uv default updates the global uv Python pin. Directory pins and active virtual environments still take precedence; this does not replace the shell's python command.")
+		if len(d.uvInstalled) == 0 {
+			devSubtle(c, "None installed")
+		}
+		for _, r := range d.uvInstalled {
+			r := r
+			devInset(c, func() {
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, r.Key).FontWeight(600).SingleLine().MinWidth(0)
+					if d.uvPin == r.Key {
+						display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
+					}
+				})
+				devButtonRow(c, func() {
+					if btn(c, "Copy Python path "+r.Version, "Copy path", icoCopy, btnText).Clicked() && a.copy != nil {
+						a.copy(r.Path)
+					}
+					for _, act := range []string{"default", "uninstall"} {
+						label, kind, icon := "Set uv default "+r.Version, btnDefault, (*ui.SVG)(nil)
+						if act == "uninstall" {
+							label, kind, icon = "Uninstall Python "+r.Version, btnDanger, icoTrash
+						}
+						if btn(c, label, "", icon, kind).Disabled(d.busy).Clicked() {
+							a.devTask(func(m *devplatform.Manager) (string, error) {
+								e := m.UVPythonAction(m.Context, r.Key, act)
+								if e == nil && act == "default" {
+									a.post(func() { a.dev.uvPin = r.Key })
+								}
+								if e == nil {
+									rows, err := m.UVPythons(m.Context, true)
+									e = err
+									if e == nil {
+										a.post(func() { a.dev.uvInstalled = rows })
+									}
+								}
+								return "Python " + act + " completed", e
+							})
+						}
+					}
+				})
+			})
+		}
+	})
 }
 
 func (a *app) devAdditionalRuntimeInstalled(c *ui.Context, id string, p devplatform.Package) {
-	if a.dev.state.RuntimeDefaults[p.Name] == id {
-		display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
-	} else if action.Button(c, "Set default "+p.Version, action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(a.dev.busy).Clicked() {
-		a.devTask(func(m *devplatform.Manager) (string, error) {
-			return "Default version selected; enable terminal integration to use it", m.SetRuntimeDefault(m.Context, p.Name, id)
-		})
+	if a.dev.state.RuntimeDefaults[p.Name] != id {
+		if btn(c, "Set default "+p.Version, "Set default", nil, btnDefault).Disabled(a.dev.busy).Clicked() {
+			a.devTask(func(m *devplatform.Manager) (string, error) {
+				return "Default version selected; enable terminal integration to use it", m.SetRuntimeDefault(m.Context, p.Name, id)
+			})
+		}
 	}
-	if action.Button(c, "Copy executable path", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(a.dev.busy).Clicked() {
+	if btn(c, "Copy executable path", "", icoCopy, btnText).Disabled(a.dev.busy).Clicked() {
 		path, e := a.devManager().Binary(&a.dev.state, id, p.Name)
 		if e != nil {
 			a.dev.output = e.Error()
@@ -159,17 +173,19 @@ func (a *app) devAdditionalRuntimeInstalled(c *ui.Context, id string, p devplatf
 }
 func (a *app) devAdditionalRuntimeShell(c *ui.Context) {
 	name := a.dev.software
-	ui.Text(c, "Detects installed shells and enables new terminal and AI sessions.").FontSize(textSmall)
-	for _, enable := range []bool{true, false} {
-		label := "Disable in terminal"
-		if enable {
-			label = "Enable in terminal"
+	devSubtle(c, "Detects installed shells and enables new terminal and AI sessions.")
+	devButtonRow(c, func() {
+		for _, enable := range []bool{true, false} {
+			label, kind, icon := "Disable in terminal", btnDefault, (*ui.SVG)(nil)
+			if enable {
+				label, kind, icon = "Enable in terminal", btnPrimary, icoTerminal
+			}
+			if btn(c, label, "", icon, kind).Disabled(a.dev.busy).Clicked() {
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					return "Terminal configuration updated; open a new terminal", m.ConfigureRuntimeShell(m.Context, name, enable)
+				})
+			}
 		}
-		if action.Button(c, label, action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(a.dev.busy).Clicked() {
-			a.devTask(func(m *devplatform.Manager) (string, error) {
-				return "Terminal configuration updated; open a new terminal", m.ConfigureRuntimeShell(m.Context, name, enable)
-			})
-		}
-	}
-	a.devBashCommand(c, name)
+		a.devBashCommand(c, name)
+	})
 }

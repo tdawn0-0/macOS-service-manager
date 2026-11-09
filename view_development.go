@@ -14,7 +14,7 @@ import (
 	"github.com/lobehub/lobe-mygo/pkg/action"
 	"github.com/lobehub/lobe-mygo/pkg/choice"
 	"github.com/lobehub/lobe-mygo/pkg/display"
-	"github.com/lobehub/lobe-mygo/pkg/layout"
+	"github.com/lobehub/lobe-mygo/pkg/feedback"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"devbase/internal/devplatform"
 )
@@ -242,63 +242,33 @@ func (a *app) developmentView(c *ui.Context) {
 	if !d.loaded && !d.busy {
 		a.devTask(func(m *devplatform.Manager) (string, error) { return "Ready to build locally.", nil })
 	}
-	titles := devSections[:]
 	if d.tab < devTabSoftware || d.tab > devTabHTTPS {
 		d.tab = devTabSoftware
 	}
-	ui.Column(c).Grow(1).MinWidth(0).Background(c.Theme().Background).Children(func() {
-		ui.Row(c).Height(barHeight).Shrink(0).Padding(0, 14, 0, 20).AlignItems(ui.Center).Gap(6).DragWindow().Children(func() {
-			title := titles[d.tab]
-			if d.operationsOpen {
-				title = "Task history"
-			}
-			if d.diagnosticsOpen {
-				title = "Diagnostics"
-			}
-			ui.Text(c, title).FontSize(15).FontWeight(650).SingleLine().Grow(1).MinWidth(0)
-			if d.busy || a.backgroundTasksRunning() {
-				ui.Spinner(c).Size(14, 14)
-			}
-			if !d.busy && len(d.databaseTasks) > 0 && (d.tab == devTabDatabases || a.databaseTasksRunning()) {
-				if action.Button(c, "Database tasks", action.ButtonProps{Variant: action.Filled, Size: theme.Small}).Clicked() {
-					a.showDatabaseTasks()
-				}
-			} else if !d.busy && len(d.packageTasks) > 0 {
-				if action.Button(c, "Package tasks", action.ButtonProps{Variant: action.Filled, Size: theme.Small}).Clicked() {
-					a.showPackageTasks()
-				}
-			}
-			if d.busy {
-				if action.Button(c, "Cancel operation", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() && d.cancel != nil {
-					d.cancel()
-				}
-			}
-			muted := c.Theme().TextMuted
-			if iconButton(c, iconRestart, "Refresh", muted).Disabled(d.busy).Clicked() {
-				d.nodeReleasesTried, d.nodeReleasesRefresh = false, true
-				a.devTask(func(m *devplatform.Manager) (string, error) { return "Workspace refreshed.", nil })
-			}
-			if iconButton(c, iconTasks, "Tasks", muted).Disabled(d.busy).Clicked() {
-				a.openOperations()
-			}
-			if iconButton(c, iconPulse, "Diagnostics", muted).Disabled(d.busy).Clicked() {
-				d.operationsOpen = false
-				a.runDevDiagnostics()
-			}
-		})
-		ui.Column(c).Height(1).Background(hairline(c.Theme()))
-		if d.operationsOpen {
+	tk := theme.TokensOf(c)
+	ui.Column(c).Grow(1).MinWidth(0).Background(tk.BgLayout).Children(func() {
+		a.devTopBar(c)
+		ui.Column(c).Height(1).Shrink(0).Background(hairline(c.Theme()))
+		switch {
+		case d.operationsOpen:
 			a.devOperations(c)
-		} else if d.diagnosticsOpen {
-			ui.Scroll(c.Key("development-diagnostics")).TrackScroll(&d.diagnosticScroll).Grow(1).MinHeight(0).Padding(20, 24).Children(func() { a.devDiagnostics(c) })
-		} else {
+		case d.diagnosticsOpen:
+			ui.Scroll(c.Key("development-diagnostics")).TrackScroll(&d.diagnosticScroll).Grow(1).MinHeight(0).Padding(22, 28, 28).Children(func() {
+				ui.Column(c).Gap(12).MaxWidth(880).Children(func() { a.devDiagnostics(c) })
+			})
+		default:
 			ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
-				ui.Column(c).Width(224).Shrink(0).Background(c.Theme().Surface).Children(func() {
-					ui.Scroll(c.Key("dev-master-" + strconv.Itoa(d.tab))).Grow(1).MinHeight(0).Padding(10).Children(func() { ui.Column(c).Gap(4).Children(func() { a.devMaster(c) }) })
-				})
-				ui.Column(c).Width(1).Background(hairline(c.Theme()))
-				ui.Scroll(c.Key(fmt.Sprintf("dev-detail-%d", d.tab))).TrackScroll(&d.detailScroll[d.tab]).Grow(1).MinWidth(0).MinHeight(0).Padding(20, 24).Children(func() {
-					ui.Column(c).Gap(10).Disabled(d.busy).Children(func() {
+				// HTTPS is one table: it has no list beside it.
+				if d.tab != devTabHTTPS {
+					ui.Column(c).Width(228).Shrink(0).Background(tk.BgContainer).Children(func() {
+						ui.Scroll(c.Key("dev-master-"+strconv.Itoa(d.tab))).Grow(1).MinHeight(0).Padding(4, 8, 10).Children(func() {
+							ui.Column(c).Gap(2).Children(func() { a.devMaster(c) })
+						})
+					})
+					ui.Column(c).Width(1).Background(hairline(c.Theme()))
+				}
+				ui.Scroll(c.Key(fmt.Sprintf("dev-detail-%d", d.tab))).TrackScroll(&d.detailScroll[d.tab]).Grow(1).MinWidth(0).MinHeight(0).Padding(22, 28, 28).Children(func() {
+					ui.Column(c).Gap(14).MaxWidth(880).Disabled(d.busy).Children(func() {
 						switch d.tab {
 						case devTabSoftware:
 							a.devSoftware(c)
@@ -311,55 +281,139 @@ func (a *app) developmentView(c *ui.Context) {
 				})
 			})
 		}
-		ui.Column(c).Height(1).Background(hairline(c.Theme()))
-		ui.Row(c).Padding(9, 18).Gap(10).AlignItems(ui.Center).Children(func() {
-			status := ""
-			if status == "" && a.backgroundTasksRunning() {
-				status = "Background tasks"
-			}
-			if d.busy {
-				status = "Working"
-			}
-			if strings.Contains(d.output, "Error:") {
-				status = "Needs attention"
-			}
-			if status != "" {
-				ui.Text(c, status).FontSize(textCaption).FontWeight(600).TextColor(func() ui.Color {
-					if status == "Needs attention" {
-						return c.Theme().Danger
-					}
+		a.devStatusBar(c)
+	})
+}
 
-					return c.Theme().Text
-				}())
+// devTitle is the title of the workspace's bar, with a count of what the
+// section holds.
+func (a *app) devTitle() (string, string) {
+	d := &a.dev
+	switch {
+	case d.operationsOpen:
+		return "Task history", ""
+	case d.diagnosticsOpen:
+		return "Diagnostics", ""
+	}
+	switch d.tab {
+	case devTabSoftware:
+		if n := len(d.state.Packages); n > 0 {
+			return devSections[d.tab], plural(n, "package") + " installed"
+		}
+	case devTabDatabases:
+		running := 0
+		for id := range d.state.Instances {
+			if s := d.statuses["instance:"+id]; s == "Running" || s == "Healthy" {
+				running++
 			}
-			ui.Text(c, strings.ReplaceAll(d.output, "\n", " · ")).FontSize(textSmall).TextColor(c.Theme().TextMuted).SingleLine().Grow(1).MinWidth(0)
-			if action.Button(c, "Details", action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
-				d.showResult = !d.showResult
+		}
+		if n := len(d.state.Instances); n > 0 {
+			return devSections[d.tab], fmt.Sprintf("%s · %d running", plural(n, "instance"), running)
+		}
+	case devTabHTTPS:
+		return devSections[d.tab], plural(len(d.state.ProxyRules), "rule")
+	}
+	return devSections[d.tab], ""
+}
+
+// devTopBar is the workspace's title bar: the section and its count, the
+// work going on, and the workspace-wide actions as icons.
+func (a *app) devTopBar(c *ui.Context) {
+	d := &a.dev
+	tk := theme.TokensOf(c)
+	title, meta := a.devTitle()
+	ui.Row(c).Height(barHeight).Shrink(0).Padding(0, 12, 0, 20).AlignItems(ui.Center).Gap(8).Background(tk.BgContainer).DragWindow().Children(func() {
+		ui.Text(c, title).FontSize(15).FontWeight(650).SingleLine().Shrink(0)
+		if meta != "" {
+			ui.Text(c, meta).FontSize(textSmall).TextColor(tk.TextTertiary).SingleLine().MinWidth(0)
+		}
+		ui.Spacer(c)
+		if d.busy || a.backgroundTasksRunning() {
+			ui.Spinner(c).Size(14, 14)
+		}
+		if !d.busy && len(d.databaseTasks) > 0 && (d.tab == devTabDatabases || a.databaseTasksRunning()) {
+			if btn(c, "Database tasks", "", icoHistory, btnFilled).Clicked() {
+				a.showDatabaseTasks()
 			}
-		})
-		if d.showResult {
-			ui.TextArea(c, &d.output).Lines(3, 5).ReadOnly(true).Label("Operation result").Margin(0, 18, 12)
+		} else if !d.busy && len(d.packageTasks) > 0 {
+			if btn(c, "Package tasks", "", icoDownload, btnFilled).Clicked() {
+				a.showPackageTasks()
+			}
+		}
+		if d.busy {
+			if btn(c, "Cancel operation", "", nil, btnDefault).Clicked() && d.cancel != nil {
+				d.cancel()
+			}
+		}
+		ui.Box(c).Width(1).Height(16).Margin(0, 4).Background(tk.BorderSecondary)
+		muted := c.Theme().TextMuted
+		if iconButton(c, icoRotate, "Refresh", muted).Disabled(d.busy).Clicked() {
+			d.nodeReleasesTried, d.nodeReleasesRefresh = false, true
+			a.devTask(func(m *devplatform.Manager) (string, error) { return "Workspace refreshed.", nil })
+		}
+		if action.ActionIcon(c, icoHistory, action.ActionIconProps{Variant: action.ActionIconBorderless, Size: theme.Small, Title: "Tasks", Active: d.operationsOpen}).Disabled(d.busy).Clicked() {
+			a.openOperations()
+		}
+		if action.ActionIcon(c, icoStetho, action.ActionIconProps{Variant: action.ActionIconBorderless, Size: theme.Small, Title: "Diagnostics", Active: d.diagnosticsOpen}).Disabled(d.busy).Clicked() {
+			d.operationsOpen = false
+			a.runDevDiagnostics()
 		}
 	})
 }
 
-// devHeading titles a detail. meta is data about the subject, never prose.
-func devHeading(c *ui.Context, title, meta string) {
-	ui.Text(c, title).FontSize(18).FontWeight(650)
-	if meta != "" {
-		ui.Text(c, meta).FontSize(textSmall).TextColor(c.Theme().TextMuted)
+// devStatusBar says what the last operation did, along the bottom.
+func (a *app) devStatusBar(c *ui.Context) {
+	d := &a.dev
+	tk := theme.TokensOf(c)
+	ui.Column(c).Height(1).Shrink(0).Background(hairline(c.Theme()))
+	ui.Row(c).Height(36).Shrink(0).Padding(0, 10, 0, 18).Gap(10).AlignItems(ui.Center).Background(tk.BgContainer).Children(func() {
+		status, kind := "", feedback.BadgeDefault
+		if a.backgroundTasksRunning() {
+			status, kind = "Background tasks", feedback.BadgeProcessing
+		}
+		if d.busy {
+			status, kind = "Working", feedback.BadgeProcessing
+		}
+		if strings.Contains(d.output, "Error:") {
+			status, kind = "Needs attention", feedback.BadgeError
+		}
+		if status != "" {
+			feedback.Badge(c, feedback.BadgeProps{Status: kind, Text: status}, nil).Shrink(0)
+		} else {
+			devStatusDot(c, "Succeeded")
+		}
+		ui.Text(c, strings.ReplaceAll(d.output, "\n", " · ")).FontSize(textSmall).TextColor(tk.TextDescription).SingleLine().Grow(1).MinWidth(0)
+		if action.Button(c, "Details", action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+			d.showResult = !d.showResult
+		}
+	})
+	if d.showResult {
+		ui.Row(c).Shrink(0).Padding(0, 18, 12).Background(tk.BgContainer).Children(func() {
+			ui.TextArea(c, &d.output).Lines(3, 5).ReadOnly(true).Label("Operation result").Grow(1).MinWidth(0)
+		})
 	}
 }
+
+// devHeading titles a detail. meta is data about the subject, never prose.
+func devHeading(c *ui.Context, title, meta string) {
+	pageHeader(c, nil, ui.Color{}, title, meta, nil, nil)
+}
+
+// devDivider heads a group of controls inside a pane: a small title over a
+// line that runs to the end of the row.
 func devDivider(c *ui.Context, title string) {
-	ui.Column(c).Height(1).Background(hairline(c.Theme())).Margin(12, 0, 2)
-	ui.Text(c, title).FontSize(textSmall).FontWeight(650).TextColor(c.Theme().TextMuted)
+	tk := theme.TokensOf(c)
+	ui.Row(c).Gap(10).AlignItems(ui.Center).Margin(8, 0, 0).Children(func() {
+		ui.Text(c, title).FontSize(textSmall).FontWeight(600).TextColor(tk.TextSecondary).SingleLine().Shrink(0)
+		ui.Box(c).Height(1).Grow(1).Background(tk.BorderSecondary)
+	})
 }
 
 // devPaneHeader titles a pane that replaces a detail, with the buttons that
 // leave or refresh it at the end of the same row.
 func devPaneHeader(c *ui.Context, title string, buttons func()) {
-	ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, title).FontSize(18).FontWeight(650).Grow(1).MinWidth(0)
+	ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Margin(0, 0, 6).Children(func() {
+		ui.Text(c, title).FontSize(20).FontWeight(650).TextColor(theme.TokensOf(c).TextHeading).Grow(1).MinWidth(220)
 		buttons()
 	})
 }
@@ -387,13 +441,13 @@ func devStatusDot(c *ui.Context, status string) {
 // devListEntry is a row of a list of the workspace: a dot for its status when
 // it has one, its name, and a word at its end only when the word is news.
 func devListEntry(c *ui.Context, label, title, status, trailing string, selected bool) bool {
-	t := c.Theme()
-	b := ui.ButtonBase(c).Label(label).Height(32).Padding(0, 10).Radius(7).AlignItems(ui.Center)
+	tk := theme.TokensOf(c)
+	b := ui.ButtonBase(c).Label(label).Height(34).Padding(0, 10).Radius(tk.BorderRadius).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 	switch {
 	case selected:
-		b.Background(t.Accent.Alpha(.14))
+		b.Background(tk.FillSecondary)
 	case b.Hovered():
-		b.Background(t.Text.Alpha(.06))
+		b.Background(tk.FillTertiary)
 	}
 	b.Children(func() {
 		ui.Row(c).Grow(1).MinWidth(0).AlignItems(ui.Center).Gap(9).Children(func() {
@@ -402,7 +456,7 @@ func devListEntry(c *ui.Context, label, title, status, trailing string, selected
 			}
 			ui.Text(c, title).FontWeight(map[bool]int{true: 600, false: 400}[selected]).SingleLine().Grow(1).MinWidth(0)
 			if trailing != "" {
-				ui.Text(c, trailing).FontSize(textCaption).TextColor(t.TextMuted).SingleLine().Shrink(0)
+				ui.Text(c, trailing).FontSize(textCaption).TextColor(tk.TextTertiary).SingleLine().Shrink(0)
 			}
 		})
 	})
@@ -424,51 +478,77 @@ func softwareTitle(name string) string {
 	}
 	return name
 }
+
+// softwareDefault is the version a piece of software runs by default, when
+// one is chosen.
+func (d *developmentState) softwareDefault(name string) string {
+	id := ""
+	switch name {
+	case "node":
+		id = d.state.NodeDefault
+	case "java", "go":
+		id = d.state.RuntimeDefaults[name]
+	}
+	if p, ok := d.state.Packages[id]; ok {
+		return p.Version
+	}
+	return ""
+}
+
+// softwareCount is how many versions of a piece of software are installed.
+func (d *developmentState) softwareCount(name string) int {
+	switch {
+	case name == "python":
+		return len(d.uvInstalled)
+	case name == "java" && d.javaLoaded:
+		return len(d.javaInstallations)
+	}
+	return len(d.packages(name))
+}
+
 func (a *app) devMaster(c *ui.Context) {
 	d := &a.dev
 	switch d.tab {
 	case devTabSoftware:
-		for _, name := range []string{"node", "java", "go", "python", "mysql", "postgresql", "redis", "mongodb"} {
-			count := ""
-			n := len(d.packages(name))
-			if name == "python" {
-				n = len(d.uvInstalled)
-			}
-			if name == "java" && d.javaLoaded {
-				n = len(d.javaInstallations)
-			}
-			if n > 0 {
-				count = strconv.Itoa(n)
-			}
-			if devListEntry(c, "Software "+name, softwareTitle(name), "", count, d.software == name) {
-				d.software = name
-				d.softwareContext = ""
-				d.version = a.defaultVersion(name)
+		groups := []struct {
+			title string
+			names []string
+		}{{"Runtimes", []string{"node", "java", "go", "python"}}, {"Database engines", []string{"mysql", "postgresql", "redis", "mongodb"}}}
+		for _, g := range groups {
+			masterGroup(c, g.title, nil)
+			for _, name := range g.names {
+				trailing := d.softwareDefault(name)
+				if n := d.softwareCount(name); trailing == "" && n == 1 && len(d.packages(name)) == 1 {
+					trailing = d.state.Packages[d.packages(name)[0]].Version
+				} else if trailing == "" && n > 0 {
+					trailing = strconv.Itoa(n)
+				}
+				icon, tint := softwareMeta(name)
+				if masterItem(c, "Software "+name, icon, tint, softwareTitle(name), trailing, "", d.software == name) {
+					d.software = name
+					d.softwareContext = ""
+					d.version = a.defaultVersion(name)
+				}
 			}
 		}
 	case devTabDatabases:
-		if action.Button(c, "New database instance", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Disabled(d.busy).Clicked() {
-			if a.connectionProfileDirty() {
-				d.profilePendingInstance = "new"
-			} else {
-				d.dbNewDraft = true
-				d.databaseWorkOpen = false
-				d.initializationsOpen = false
-				d.deletionsOpen = false
-				d.instanceDeletionPreview = nil
-				d.deleteConfirmation = ""
-				d.dbID = ""
-				d.dbKind = "postgresql"
-				d.dbPort = "55432"
-				d.dbPackage = ""
-				d.dbDataDirectory = ""
-				d.persistent = true
+		recovering := d.databaseWorkOpen || d.initializationsOpen || d.deletionsOpen
+		masterGroup(c, "Instances", func() {
+			if action.ActionIcon(c, icoPlus, action.ActionIconProps{Variant: action.ActionIconBorderless, Size: theme.Small, Title: "New database instance", Active: d.dbNewDraft && !recovering}).Disabled(d.busy).Clicked() {
+				a.newDatabaseDraft()
 			}
+		})
+		if len(d.state.Instances) == 0 {
+			ui.Text(c, "No instances").FontSize(textSmall).TextColor(theme.TokensOf(c).TextTertiary).Padding(6, 10)
 		}
 		for _, id := range sortedKeys(d.state.Instances) {
 			i := d.state.Instances[id]
 			status := d.statuses["instance:"+id]
-			if devListEntry(c, "Instance "+id, id, status, devNews(status), d.dbID == id) {
+			icon, tint := softwareMeta(i.Kind)
+			if status == "" {
+				status = "Stopped"
+			}
+			if masterItem(c, "Instance "+id, icon, tint, id, ":"+strconv.Itoa(i.Port), status, d.dbID == id && !d.dbNewDraft && !recovering && d.instanceDeletionPreview == nil) {
 				if id != d.dbID && a.connectionProfileDirty() {
 					d.profilePendingInstance = id
 					continue
@@ -487,10 +567,77 @@ func (a *app) devMaster(c *ui.Context) {
 				a.loadConnectionProfileDraft(id, "")
 			}
 		}
-	case devTabHTTPS:
-		ui.Text(c, "Proxy rules").FontSize(textSmall).TextColor(c.Theme().TextMuted).Padding(8)
-		ui.Text(c, strconv.Itoa(len(d.proxyDraft))+" domains").FontSize(textCaption).Padding(8)
+		// The reviews of work an exited caller left concern every instance.
+		masterGroup(c, "Recovery", nil)
+		tint := theme.TokensOf(c).TextSecondary
+		if masterItem(c, "Unfinished database tasks", icoHistory, tint, "Unfinished tasks", "", "", d.databaseWorkOpen) && !d.busy {
+			a.openDatabaseWork()
+		}
+		if masterItem(c, "Unfinished initializations", icoRotate, tint, "Initializations", "", "", d.initializationsOpen) && !d.busy {
+			a.openInitializations()
+		}
+		if masterItem(c, "Review pending data deletions", icoTrash, tint, "Pending deletions", "", "", d.deletionsOpen) && !d.busy {
+			a.openInstanceDeletions()
+		}
 	}
+}
+
+// newDatabaseDraft opens the form of a new instance, unless a connection
+// draft would be lost.
+func (a *app) newDatabaseDraft() {
+	d := &a.dev
+	if a.connectionProfileDirty() {
+		d.profilePendingInstance = "new"
+		return
+	}
+	d.dbNewDraft = true
+	d.databaseWorkOpen = false
+	d.initializationsOpen = false
+	d.deletionsOpen = false
+	d.instanceDeletionPreview = nil
+	d.deleteConfirmation = ""
+	d.dbID = ""
+	d.dbKind = "postgresql"
+	d.dbPort = "55432"
+	d.dbPackage = ""
+	d.dbDataDirectory = ""
+	d.persistent = true
+}
+
+func isDatabaseEngine(name string) bool {
+	switch name {
+	case "mysql", "postgresql", "redis", "mongodb":
+		return true
+	}
+	return false
+}
+
+// openNewInstance goes to the form of a new instance of an engine.
+func (a *app) openNewInstance(engine string) {
+	d := &a.dev
+	a.nav = navDevelopment
+	d.tab = devTabDatabases
+	d.detailScroll[devTabDatabases].Y = 0
+	a.newDatabaseDraft()
+	if !d.dbNewDraft {
+		return
+	}
+	d.dbKind = engine
+	d.dbPort = map[string]string{"mysql": "3306", "postgresql": "5432", "redis": "6379", "mongodb": "27017"}[engine]
+	if p := d.packages(engine); len(p) > 0 {
+		d.dbPackage = p[0]
+	}
+}
+
+// openSoftware goes to a piece of software's page.
+func (a *app) openSoftware(name string) {
+	d := &a.dev
+	a.nav = navDevelopment
+	d.tab = devTabSoftware
+	d.detailScroll[devTabSoftware].Y = 0
+	d.software = name
+	d.softwareContext = ""
+	d.version = a.defaultVersion(name)
 }
 
 func (d *developmentState) loadProxyDraft(s devplatform.State) {
@@ -527,7 +674,27 @@ func (a *app) devSoftware(c *ui.Context) {
 		d.software = "node"
 		d.version = devplatform.AvailableVersions("node")[0]
 	}
-	devHeading(c, softwareTitle(d.software), "")
+	icon, tint := softwareMeta(d.software)
+	meta := "Not installed"
+	if n := d.softwareCount(d.software); n > 0 {
+		meta = plural(n, "version") + " installed"
+	}
+	if v := d.softwareDefault(d.software); v != "" {
+		meta += " · default " + v
+	}
+	if d.software == "python" && d.uvPin != "" {
+		meta += " · " + d.uvPin
+	}
+	var actions func()
+	if engine := d.software; isDatabaseEngine(engine) && len(d.packages(engine)) > 0 {
+		// An installed engine is a step towards an instance of it.
+		actions = func() {
+			if btn(c, "New "+softwareTitle(engine)+" instance", "New instance", icoPlus, btnDefault).Disabled(d.busy).Clicked() {
+				a.openNewInstance(engine)
+			}
+		}
+	}
+	pageHeader(c, icon, tint, softwareTitle(d.software), meta, nil, actions)
 	if d.software == "python" {
 		a.devPython(c)
 		return
@@ -535,84 +702,100 @@ func (a *app) devSoftware(c *ui.Context) {
 	a.devPackageTasks(c)
 	if d.software == "java" {
 		a.devJavaInstallations(c)
-		devDivider(c, "Install a JDK")
-		a.devRuntimeCatalog(c)
-		a.devPackageReview(c)
-		a.devAdditionalRuntimeShell(c)
+		devCardWith(c, icoDownload, "Install a JDK", "", nil, func() {
+			a.devRuntimeCatalog(c)
+			a.devPackageReview(c)
+		})
+		devCardWith(c, icoTerminal, "Terminal", "", nil, func() { a.devAdditionalRuntimeShell(c) })
 		return
 	}
-	if d.software == "node" {
-		a.loadNodeReleases()
-		devNodeChoice(c, &d.version, d.nodeReleases)
-		if d.nodeReleasesError != "" {
-			ui.Text(c, d.nodeReleasesError).FontSize(textSmall).TextColor(c.Theme().Warning)
-		} else if d.nodeReleasesStale {
-			ui.Text(c, "nodejs.org could not be reached. Showing the last release list.").FontSize(textSmall).TextColor(c.Theme().Warning)
-		}
-		devField(c, "Exact version", &d.version, "22.14.0, 22, lts or latest")
-	} else if d.software == "java" || d.software == "go" {
-		a.devRuntimeCatalog(c)
-	} else {
-		devChoice(c, "Version", &d.version, devplatform.AvailableVersions(d.software))
-		devField(c, "Exact version", &d.version, "For example 22.14.0")
-	}
-	a.devPackageReview(c)
-	for _, id := range sortedKeys(d.state.Packages) {
-		p := d.state.Packages[id]
-		if p.Name != d.software {
-			continue
-		}
-		devDivider(c, "Installed")
-		ui.Text(c, "License: "+p.License).FontSize(textSmall).TextColor(c.Theme().TextMuted)
-		additionalRuntime := p.Name == "java" || p.Name == "go"
-		if additionalRuntime {
-			ui.Text(c, softwareTitle(p.Name)+" · "+p.Version)
-		}
-		row := ui.Row(c).Gap(8)
-		if additionalRuntime {
-			row.Wrap()
-		}
-		row.Children(func() {
-			if !additionalRuntime {
-				ui.Text(c, softwareTitle(p.Name)+" · "+p.Version).Grow(1).MinWidth(0).SingleLine()
-				ui.Spacer(c)
-			}
-			if p.Name == "node" {
-				if id == d.state.NodeDefault {
-					display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
-				} else if action.Button(c, "Set default "+p.Version, action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
-					a.devTask(func(m *devplatform.Manager) (string, error) {
-						return "Default is Node.js " + p.Version, m.SetNodeDefault(m.Context, id)
-					})
-				}
-			}
-			if p.Name == "node" {
-				a.devNodeExecutable(c, id)
-			}
-			if p.Name == "java" || p.Name == "go" {
-				a.devAdditionalRuntimeInstalled(c, id, p)
-			}
-			removeLabel := "Uninstall " + p.Name + " " + p.Version
-			if p.Formula != "" {
-				removeLabel = "Remove from workspace " + p.Name + " " + p.Version
-			}
-			if action.Button(c, removeLabel, action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
-				a.devTask(func(m *devplatform.Manager) (string, error) {
-					if p.Formula != "" {
-						return "Removed workspace registration. The shared Homebrew installation is kept.", m.Uninstall(m.Context, id)
-					}
-					return "Uninstalled " + p.Name, m.Uninstall(m.Context, id)
-				})
+	if ids := d.packages(d.software); len(ids) > 0 {
+		devCardWith(c, iconPackage, "Installed", "", nil, func() {
+			for _, id := range ids {
+				a.devInstalledPackage(c, id, d.state.Packages[id])
 			}
 		})
-		a.devPackageIntegrity(c, id, p)
 	}
+	devCardWith(c, icoDownload, "Install a version", "", nil, func() {
+		if d.software == "node" {
+			a.loadNodeReleases()
+			devFieldGrid(c, func() {
+				devNodeChoice(c, &d.version, d.nodeReleases)
+				devField(c, "Exact version", &d.version, "22.14.0, 22, lts or latest")
+			})
+			if d.nodeReleasesError != "" {
+				devHint(c, feedback.Warning, d.nodeReleasesError, "")
+			} else if d.nodeReleasesStale {
+				devHint(c, feedback.Warning, "nodejs.org could not be reached. Showing the last release list.", "")
+			}
+		} else if d.software == "go" {
+			a.devRuntimeCatalog(c)
+		} else {
+			devFieldGrid(c, func() {
+				devChoice(c, "Version", &d.version, devplatform.AvailableVersions(d.software))
+				devField(c, "Exact version", &d.version, "For example 22.14.0")
+			})
+		}
+		a.devPackageReview(c)
+	})
 	if d.software == "node" {
-		a.devNodeTerminal(c)
+		devCardWith(c, icoTerminal, "Terminal", "", nil, func() { a.devNodeTerminal(c) })
 	}
-	if d.software == "java" || d.software == "go" {
-		a.devAdditionalRuntimeShell(c)
+	if d.software == "go" {
+		devCardWith(c, icoTerminal, "Terminal", "", nil, func() { a.devAdditionalRuntimeShell(c) })
 	}
+}
+
+// devInstalledPackage is an installed version in the list of its software:
+// its name and version, whether it is the default, and what can be done
+// with it, with the checks of its files under them.
+func (a *app) devInstalledPackage(c *ui.Context, id string, p devplatform.Package) {
+	d := &a.dev
+	devInset(c, func() {
+		ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Grow(1).MinWidth(160).Children(func() {
+				ui.Text(c, softwareTitle(p.Name)+" · "+p.Version).FontWeight(600).SingleLine().MinWidth(100)
+				if p.Formula != "" {
+					devTag(c, "Homebrew", display.TagColor(""))
+				}
+				if p.Name == "node" && id == d.state.NodeDefault {
+					display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
+				}
+				if (p.Name == "java" || p.Name == "go") && d.state.RuntimeDefaults[p.Name] == id {
+					display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
+				}
+			})
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+				if p.Name == "node" && id != d.state.NodeDefault {
+					if btn(c, "Set default "+p.Version, "Set default", nil, btnDefault).Disabled(d.busy).Clicked() {
+						a.devTask(func(m *devplatform.Manager) (string, error) {
+							return "Default is Node.js " + p.Version, m.SetNodeDefault(m.Context, id)
+						})
+					}
+				}
+				if p.Name == "node" {
+					a.devNodeExecutable(c, id)
+				}
+				if p.Name == "java" || p.Name == "go" {
+					a.devAdditionalRuntimeInstalled(c, id, p)
+				}
+			})
+		})
+		devSubtle(c, "License: "+p.License)
+		a.devPackageIntegrity(c, id, p)
+		removeLabel, removeText := "Uninstall "+p.Name+" "+p.Version, "Uninstall"
+		if p.Formula != "" {
+			removeLabel, removeText = "Remove from workspace "+p.Name+" "+p.Version, "Remove from workspace"
+		}
+		if btn(c, removeLabel, removeText, icoTrash, btnDanger).AlignSelf(ui.Start).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
+			a.devTask(func(m *devplatform.Manager) (string, error) {
+				if p.Formula != "" {
+					return "Removed workspace registration. The shared Homebrew installation is kept.", m.Uninstall(m.Context, id)
+				}
+				return "Uninstalled " + p.Name, m.Uninstall(m.Context, id)
+			})
+		}
+	})
 }
 
 // devManager is the manager the window's tasks would use.
@@ -713,152 +896,185 @@ func (a *app) devDatabases(c *ui.Context) {
 		a.devInstanceDeletions(c)
 		return
 	}
-	a.devDatabaseTasks(c)
 	if d.dbKind == "" {
 		d.dbKind = "postgresql"
 		d.dbPort = "55432"
 		d.persistent = true
 	}
-	if instance, exists := d.state.Instances[d.dbID]; exists && !d.dbNewDraft {
-		devHeading(c, instance.ID, softwareTitle(instance.Kind)+" · 127.0.0.1:"+strconv.Itoa(instance.Port))
-		ui.Row(c).Wrap().Gap(8).Children(func() {
-			for _, act := range []string{"Start instance", "Restart instance", "Stop instance"} {
-				if action.Button(c, act, action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || a.databaseTaskRunning(instance.ID)).Clicked() {
-					id := instance.ID
-					verb := strings.TrimSuffix(strings.ToLower(act), " instance")
-					a.startDatabaseOperation(instance, verb, func(m *devplatform.Manager) (string, error) {
-						result := map[string]string{"start": "Started ", "stop": "Stopped ", "restart": "Restarted "}[verb] + id
-						return result, m.InstanceAction(m.Context, id, verb)
-					})
-				}
-			}
-		})
-		ui.Row(c).Wrap().Gap(8).Children(func() {
-			a.devDatabaseConnections(c, instance)
-			if action.Button(c, "Read instance logs", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
-				id := "db-" + instance.ID
-				d.showResult = true
-				a.devTask(func(m *devplatform.Manager) (string, error) { return m.Logs(id) })
-			}
-		})
-
-		a.devDatabasePort(c, instance)
-		devDivider(c, "Data")
-		ui.Text(c, "Version: "+d.state.Packages[instance.Package].Version)
-		ui.Text(c, "Data: "+a.devManager().DatabaseDataDirectory(instance)).FontSize(textSmall)
-	} else {
-		d.dbNewDraft = true
-		devHeading(c, "New instance", "")
-		if packages := d.packages(d.dbKind); len(packages) == 0 {
-			ui.Text(c, "Install "+softwareTitle(d.dbKind)+" first").FontSize(textSmall).TextColor(c.Theme().Warning)
-		} else if d.dbPackage == "" {
-			d.dbPackage = packages[0]
-		}
-		devField(c, "Instance name", &d.dbID, "app-db")
-		if devChoice(c, "Database engine", &d.dbKind, []string{"mysql", "postgresql", "redis", "mongodb"}) {
-			d.dbPackage = ""
-			if p := d.packages(d.dbKind); len(p) > 0 {
-				d.dbPackage = p[0]
-			}
-			d.dbPort = map[string]string{"mysql": "3306", "postgresql": "5432", "redis": "6379", "mongodb": "27017"}[d.dbKind]
-		}
-		devPackageChoice(c, "Database version", &d.dbPackage, d.packages(d.dbKind), d.state.Packages, false)
-		devField(c, "Data location", &d.dbDataDirectory, "Blank for app storage, or a new absolute directory")
-		ui.Text(c, "External locations keep data when the instance is removed. Existing data is not adopted.").FontSize(textSmall)
-		devField(c, "Local port", &d.dbPort, "55432")
-		a.devPortControls(c, &d.dbPort, "database")
-		if d.dbKind == "redis" {
-			choice.Checkbox(c, &d.persistent, "Persist database contents", choice.CheckboxProps{})
-		} else {
-			d.persistent = true
-		}
-		if action.Button(c, "Create instance", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || d.databaseTasks[d.dbID] != nil && d.databaseTasks[d.dbID].Running).Clicked() {
-			port, e := strconv.Atoi(d.dbPort)
-			if e != nil {
-				d.output = "Error: Enter a valid port"
-			} else {
-				i := devplatform.Instance{ID: d.dbID, Kind: d.dbKind, Package: d.dbPackage, Port: port, Persistent: d.persistent, DataDirectory: d.dbDataDirectory}
-				d.dbNewDraft = true
-				a.startDatabaseTask(i)
-			}
-		}
-		a.devDatabaseRecovery(c)
+	instance, exists := d.state.Instances[d.dbID]
+	if !exists || d.dbNewDraft {
+		a.devDatabaseTasks(c)
+		a.devNewInstance(c)
 		return
 	}
-	if d.dbKind == "redis" {
-		devField(c, "Database number (0–15)", &d.dbName, "0")
-	} else {
-		devField(c, "Database name", &d.dbName, "app")
+	busy := d.busy || a.databaseTaskRunning(instance.ID)
+	status := d.statuses["instance:"+instance.ID]
+	icon, tint := softwareMeta(instance.Kind)
+	meta := softwareTitle(instance.Kind)
+	if p, ok := d.state.Packages[instance.Package]; ok {
+		meta += " " + p.Version
 	}
-	if d.dbKind != "redis" {
-		if action.Button(c, "Create database", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
+	meta += " · 127.0.0.1:" + strconv.Itoa(instance.Port)
+	pageHeader(c, icon, tint, instance.ID, meta, func() {
+		if status == "" {
+			status = "Stopped"
+		}
+		statusTag(c, status)
+	}, func() {
+		for _, act := range []struct {
+			label, text string
+			icon        *ui.SVG
+		}{{"Start instance", "Start", icoPlay}, {"Restart instance", "Restart", icoRotate}, {"Stop instance", "Stop", icoStop}} {
+			kind := btnDefault
+			if act.text == "Start" && status != "Running" && status != "Healthy" {
+				kind = btnPrimary
+			}
+			if btn(c, act.label, act.text, act.icon, kind).Disabled(busy).Clicked() {
+				id := instance.ID
+				verb := strings.TrimSuffix(strings.ToLower(act.label), " instance")
+				a.startDatabaseOperation(instance, verb, func(m *devplatform.Manager) (string, error) {
+					result := map[string]string{"start": "Started ", "stop": "Stopped ", "restart": "Restarted "}[verb] + id
+					return result, m.InstanceAction(m.Context, id, verb)
+				})
+			}
+		}
+		if iconButton(c, icoScroll, "Read instance logs", c.Theme().TextMuted).Disabled(d.busy).Clicked() {
+			id := "db-" + instance.ID
+			d.showResult = true
+			a.devTask(func(m *devplatform.Manager) (string, error) { return m.Logs(id) })
+		}
+	})
+	a.devDatabaseTasks(c)
+	a.devDatabaseConnections(c, instance)
+	devCardWith(c, icoPlug, "Endpoint & storage", "", nil, func() {
+		devKV(c, "Version", d.state.Packages[instance.Package].Version)
+		devKV(c, "Data", a.devManager().DatabaseDataDirectory(instance))
+		a.devDatabasePort(c, instance)
+	})
+	title := "Databases & users"
+	if d.dbKind == "redis" {
+		title = "Database"
+	}
+	devCardWith(c, icoDatabase, title, "", nil, func() {
+		if d.dbKind == "redis" {
+			devField(c, "Database number (0–15)", &d.dbName, "0")
+			return
+		}
+		devFieldGrid(c, func() {
+			devField(c, "Database name", &d.dbName, "app")
+		})
+		if btn(c, "Create database", "", icoPlus, btnDefault).AlignSelf(ui.Start).Disabled(busy).Clicked() {
 			id, name := d.dbID, d.dbName
 			a.startDatabaseOperationWithOffer(d.state.Instances[id], "create database", func(m *devplatform.Manager) (string, error) {
 				return "Created database " + name, m.CreateDatabase(m.Context, id, name)
 			}, &connectionOperationOffer{InstanceID: id, Kind: d.dbKind, Database: name})
 		}
-		devField(c, "Database user", &d.dbUser, "app_user")
-		ui.Field(c, "New user password", func() { ui.TextInput(c, &d.dbPassword).Password() })
-		if action.Button(c, "Create database user", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
+		devDivider(c, "User")
+		devFieldGrid(c, func() {
+			devField(c, "Database user", &d.dbUser, "app_user")
+			ui.Field(c, "New user password", func() { ui.TextInput(c, &d.dbPassword).Password() })
+		})
+		if btn(c, "Create database user", "", icoUser, btnDefault).AlignSelf(ui.Start).Disabled(busy).Clicked() {
 			id, name, password, db := d.dbID, d.dbUser, d.dbPassword, d.dbName
 			d.dbPassword = ""
 			a.startDatabaseOperation(d.state.Instances[id], "create user", func(m *devplatform.Manager) (string, error) {
 				return "Created user " + name, m.CreateUser(m.Context, id, name, password, db)
 			})
 		}
-	}
-	devDivider(c, "Backups")
-	if action.Button(c, "Back up database", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
-		id, name := d.dbID, d.dbName
-		a.startDatabaseOperation(d.state.Instances[id], "backup", func(m *devplatform.Manager) (string, error) { return m.Backup(m.Context, id, name) })
-	}
-	devField(c, "Backup file", &d.backupPath, "Select a backup file")
-	ui.Row(c).Wrap().Gap(8).Children(func() {
-		if action.Button(c, "Choose backup file…", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Clicked() {
-			paths, e := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "Restore database backup"})
-			if e != nil {
-				d.output = e.Error()
-			} else if len(paths) > 0 {
-				d.backupPath = paths[0]
+	})
+	devCardWith(c, icoArchive, "Backups", "", nil, func() {
+		if btn(c, "Back up database", "", icoArchive, btnDefault).AlignSelf(ui.Start).Disabled(busy).Clicked() {
+			id, name := d.dbID, d.dbName
+			a.startDatabaseOperation(d.state.Instances[id], "backup", func(m *devplatform.Manager) (string, error) { return m.Backup(m.Context, id, name) })
+		}
+		devDivider(c, "Restore")
+		devField(c, "Backup file", &d.backupPath, "Select a backup file")
+		devButtonRow(c, func() {
+			if btn(c, "Choose backup file…", "", icoFolder, btnDefault).Clicked() {
+				paths, e := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "Restore database backup"})
+				if e != nil {
+					d.output = e.Error()
+				} else if len(paths) > 0 {
+					d.backupPath = paths[0]
+				}
 			}
-		}
-		if action.Button(c, "Restore into new database", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
-			id, name, path := d.dbID, d.dbName, d.backupPath
-			a.startDatabaseOperation(d.state.Instances[id], "restore", func(m *devplatform.Manager) (string, error) {
-				return "Restored into " + name, m.Restore(m.Context, id, name, path)
-			})
-		}
+			if btn(c, "Restore into new database", "", icoRestore, btnDefault).Disabled(busy).Clicked() {
+				id, name, path := d.dbID, d.dbName, d.backupPath
+				a.startDatabaseOperation(d.state.Instances[id], "restore", func(m *devplatform.Manager) (string, error) {
+					return "Restored into " + name, m.Restore(m.Context, id, name, path)
+				})
+			}
+		})
 	})
-	devDivider(c, "Remove")
-	ui.Row(c).Wrap().Gap(8).Children(func() {
-		if action.Button(c, "Remove instance (keep data files)", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
-			id := d.dbID
-			a.startDatabaseOperation(d.state.Instances[id], "remove", func(m *devplatform.Manager) (string, error) {
-				return "Removed instance", m.InstanceAction(m.Context, id, "remove")
-			})
-		}
-		if action.Button(c, "Review permanent data deletion", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || a.databaseTaskRunning(d.dbID)).Clicked() {
-			a.previewInstanceDeletion(d.dbID)
-		}
+	devDangerCard(c, "Remove", func() {
+		devButtonRow(c, func() {
+			if btn(c, "Remove instance (keep data files)", "", icoTrash, btnDanger).Disabled(busy).Clicked() {
+				id := d.dbID
+				a.startDatabaseOperation(d.state.Instances[id], "remove", func(m *devplatform.Manager) (string, error) {
+					return "Removed instance", m.InstanceAction(m.Context, id, "remove")
+				})
+			}
+			if btn(c, "Review permanent data deletion", "", nil, btnDanger).Disabled(busy).Clicked() {
+				a.previewInstanceDeletion(d.dbID)
+			}
+		})
 	})
-	a.devDatabaseRecovery(c)
 }
 
-// devDatabaseRecovery offers the reviews of work an exited caller left.
-func (a *app) devDatabaseRecovery(c *ui.Context) {
+// devNewInstance is the form of a new database instance.
+func (a *app) devNewInstance(c *ui.Context) {
 	d := &a.dev
-	devDivider(c, "Recovery")
-	ui.Row(c).Wrap().Gap(8).Children(func() {
-		if action.Button(c, "Unfinished database tasks", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
-			a.openDatabaseWork()
-		}
-		if action.Button(c, "Unfinished initializations", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
-			a.openInitializations()
-		}
-		if action.Button(c, "Review pending data deletions", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
-			a.openInstanceDeletions()
+	d.dbNewDraft = true
+	icon, tint := softwareMeta(d.dbKind)
+	pageHeader(c, icon, tint, "New instance", softwareTitle(d.dbKind), nil, nil)
+	packages := d.packages(d.dbKind)
+	if len(packages) == 0 {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+				devHint(c, feedback.Warning, "Install "+softwareTitle(d.dbKind)+" first", "")
+			})
+			kind := d.dbKind
+			if btn(c, "Open "+softwareTitle(kind)+" in Software", "Open Software", icoArrow, btnDefault).Clicked() {
+				a.openSoftware(kind)
+			}
+		})
+	} else if d.dbPackage == "" {
+		d.dbPackage = packages[0]
+	}
+	devCardWith(c, icoDatabase, "Instance", "", nil, func() {
+		devFieldGrid(c, func() {
+			devField(c, "Instance name", &d.dbID, "app-db")
+			if devChoice(c, "Database engine", &d.dbKind, []string{"mysql", "postgresql", "redis", "mongodb"}) {
+				d.dbPackage = ""
+				if p := d.packages(d.dbKind); len(p) > 0 {
+					d.dbPackage = p[0]
+				}
+				d.dbPort = map[string]string{"mysql": "3306", "postgresql": "5432", "redis": "6379", "mongodb": "27017"}[d.dbKind]
+			}
+			devPackageChoice(c, "Database version", &d.dbPackage, d.packages(d.dbKind), d.state.Packages, false)
+			devField(c, "Local port", &d.dbPort, "55432")
+		})
+		a.devPortControls(c, &d.dbPort, "database")
+		if d.dbKind == "redis" {
+			choice.Checkbox(c, &d.persistent, "Persist database contents", choice.CheckboxProps{})
+		} else {
+			d.persistent = true
 		}
 	})
+	devCardWith(c, icoFolder, "Storage", "", nil, func() {
+		devField(c, "Data location", &d.dbDataDirectory, "Blank for app storage, or a new absolute directory")
+		devSubtle(c, "External locations keep data when the instance is removed. Existing data is not adopted.")
+	})
+	if btn(c, "Create instance", "", icoPlus, btnPrimary).AlignSelf(ui.Start).Disabled(d.busy || d.databaseTasks[d.dbID] != nil && d.databaseTasks[d.dbID].Running).Clicked() {
+		port, e := strconv.Atoi(d.dbPort)
+		if e != nil {
+			d.output = "Error: Enter a valid port"
+		} else {
+			i := devplatform.Instance{ID: d.dbID, Kind: d.dbKind, Package: d.dbPackage, Port: port, Persistent: d.persistent, DataDirectory: d.dbDataDirectory}
+			d.dbNewDraft = true
+			a.startDatabaseTask(i)
+		}
+	}
 }
 
 func devPackageChoice(c *ui.Context, label string, selected *string, ids []string, packages map[string]devplatform.Package, optional bool) bool {
@@ -905,72 +1121,62 @@ func packageDetailsText(info devplatform.PackageDetails) string {
 	}
 	return text
 }
+
+// devPackageReview reviews the version chosen and installs it: the review
+// comes first, and Install acts on what it showed.
 func (a *app) devPackageReview(c *ui.Context) {
 	d := &a.dev
 	if d.softwareContext != "" {
-		ui.Text(c, d.softwareContext).FontSize(textSmall).TextColor(c.Theme().TextMuted)
-	}
-	if action.Button(c, "Review package", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || d.software == "" || strings.TrimSpace(d.version) == "").Clicked() {
-		name, version := d.software, strings.TrimSpace(d.version)
-		a.devTask(func(m *devplatform.Manager) (string, error) {
-			pkg, e := m.ResolveInstalledOrCatalog(m.Context, name, version)
-			if e != nil {
-				return "", e
-			}
-			info, e := m.PackageDetails(m.Context, pkg)
-			if e == nil {
-				a.post(func() {
-					a.dev.packagePreview = &info
-					a.dev.packageDetailsText = packageDetailsText(info)
-					if (pkg.Formula != "" || name == "node") && a.dev.software == name && strings.TrimSpace(a.dev.version) == version {
-						a.dev.version = pkg.Version
-					}
-				})
-			}
-			return "Package details ready.", e
-		})
+		devSubtle(c, d.softwareContext)
 	}
 	valid := d.previewMatches()
 	if valid {
 		info := d.packagePreview
-		devDivider(c, "Package")
-		size := "Download size is unavailable until transfer starts"
-		if info.ArchiveBytes > 0 {
-			size = fmt.Sprintf("Archive size: %.1f MiB", float64(info.ArchiveBytes)/(1<<20))
-		}
-		if info.Cached {
-			size += " · verified cache"
-		}
-		if info.Installed && info.ArchiveBytes == 0 {
-			size = "Installed version · download size unknown"
-		}
-		if info.Package.Formula != "" {
-			size = "Homebrew downloads and verifies the bottle and its dependencies."
-		}
-		ui.Text(c, size).FontSize(textSmall).TextColor(c.Theme().TextMuted)
-		ui.Text(c, info.Compatibility).FontSize(textSmall).TextColor(func() ui.Color {
-			if !info.Compatible {
-				return c.Theme().Danger
+		devInset(c, func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, softwareTitle(info.Package.Name)+" "+info.Package.Version).FontWeight(600).SingleLine().MinWidth(0)
+				if info.Installed {
+					statusTag(c, "Installed")
+				}
+				if info.Cached {
+					devTag(c, "Cached", display.TagColor(""))
+				}
+				ui.Spacer(c)
+				if btn(c, "Copy package source", "Source", icoCopy, btnText).Clicked() && a.copy != nil {
+					a.copy(info.Package.URL)
+				}
+				if btn(c, "Copy package checksum", "Checksum", icoCopy, btnText).Clicked() && a.copy != nil {
+					a.copy(info.Package.SHA256)
+				}
+			})
+			size := "Download size is unavailable until transfer starts"
+			if info.ArchiveBytes > 0 {
+				size = fmt.Sprintf("Archive size: %.1f MiB", float64(info.ArchiveBytes)/(1<<20))
 			}
-			return c.Theme().TextMuted
-		}())
-		layout.Block(c, layout.BlockProps{Variant: layout.BlockFilled}).Padding(12).MinWidth(0).Children(func() {
+			if info.Cached {
+				size += " · verified cache"
+			}
+			if info.Installed && info.ArchiveBytes == 0 {
+				size = "Installed version · download size unknown"
+			}
+			if info.Package.Formula != "" {
+				size = "Homebrew downloads and verifies the bottle and its dependencies."
+			}
+			devSubtle(c, size)
+			ui.Text(c, info.Compatibility).FontSize(textSmall).TextColor(func() ui.Color {
+				if !info.Compatible {
+					return c.Theme().Danger
+				}
+				return c.Theme().TextMuted
+			}())
 			ui.Text(c, d.packageDetailsText).FontSize(textSmall).Selectable().Label("Package details")
-		})
-		ui.Row(c).Gap(8).Children(func() {
-			if action.Button(c, "Copy package source", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Clicked() && a.copy != nil {
-				a.copy(info.Package.URL)
+			for _, reference := range info.References {
+				devSubtle(c, reference)
 			}
-			if action.Button(c, "Copy package checksum", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Clicked() && a.copy != nil {
-				a.copy(info.Package.SHA256)
+			if info.Installed && info.Integrity != "" {
+				devSubtle(c, "Installed files: "+info.Integrity+". "+info.IntegrityNote)
 			}
 		})
-		for _, reference := range info.References {
-			ui.Text(c, reference).FontSize(textSmall).TextColor(c.Theme().TextMuted)
-		}
-		if info.Installed && info.Integrity != "" {
-			ui.Text(c, "Installed files: "+info.Integrity+". "+info.IntegrityNote).FontSize(textSmall).TextColor(c.Theme().TextMuted)
-		}
 	}
 	installLabel := "Download and install"
 	if valid && d.packagePreview.Package.Formula != "" {
@@ -979,14 +1185,43 @@ func (a *app) devPackageReview(c *ui.Context) {
 	if valid && d.packagePreview.Installed {
 		installLabel = "Already installed"
 	}
-	if action.Button(c, installLabel, action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || !valid || d.packagePreview.Installed || !d.packagePreview.Compatible || (d.packagePreview.Integrity == "Needs repair" && d.packagePreview.Package.Formula == "") || a.packageTaskRunning(d.packagePreview.Package.ID())).Clicked() {
-		pkg := d.packagePreview.Package
-		a.startPackageTask(pkg, "install", func(m *devplatform.Manager) (string, error) {
-			if err := m.Install(m.Context, pkg); err != nil {
-				return "Install did not complete.", err
-			}
-			return "Installed " + softwareTitle(pkg.Name) + " " + pkg.Version, nil
-		}, nil)
-
-	}
+	devButtonRow(c, func() {
+		reviewKind := btnPrimary
+		if valid {
+			reviewKind = btnDefault
+		}
+		if btn(c, "Review package", "", icoFileCheck, reviewKind).Disabled(d.busy || d.software == "" || strings.TrimSpace(d.version) == "").Clicked() {
+			name, version := d.software, strings.TrimSpace(d.version)
+			a.devTask(func(m *devplatform.Manager) (string, error) {
+				pkg, e := m.ResolveInstalledOrCatalog(m.Context, name, version)
+				if e != nil {
+					return "", e
+				}
+				info, e := m.PackageDetails(m.Context, pkg)
+				if e == nil {
+					a.post(func() {
+						a.dev.packagePreview = &info
+						a.dev.packageDetailsText = packageDetailsText(info)
+						if (pkg.Formula != "" || name == "node") && a.dev.software == name && strings.TrimSpace(a.dev.version) == version {
+							a.dev.version = pkg.Version
+						}
+					})
+				}
+				return "Package details ready.", e
+			})
+		}
+		installKind := btnDefault
+		if valid {
+			installKind = btnPrimary
+		}
+		if btn(c, installLabel, "", icoDownload, installKind).Disabled(d.busy || !valid || d.packagePreview.Installed || !d.packagePreview.Compatible || (d.packagePreview.Integrity == "Needs repair" && d.packagePreview.Package.Formula == "") || a.packageTaskRunning(d.packagePreview.Package.ID())).Clicked() {
+			pkg := d.packagePreview.Package
+			a.startPackageTask(pkg, "install", func(m *devplatform.Manager) (string, error) {
+				if err := m.Install(m.Context, pkg); err != nil {
+					return "Install did not complete.", err
+				}
+				return "Installed " + softwareTitle(pkg.Name) + " " + pkg.Version, nil
+			}, nil)
+		}
+	})
 }

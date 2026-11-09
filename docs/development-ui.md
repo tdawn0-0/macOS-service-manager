@@ -2,6 +2,20 @@
 
 The native MyGo window has three main entries: Software, Databases, and HTTPS. Labels and accessible names must remain stable. The UI is reviewed at 900×520 and 1120×720 in light and dark themes.
 
+## Layout
+
+The window follows the Lobe UI look through [Lobe MyGo](https://mygo.lobehub.com/) components, assembled by the helpers in `ui_kit.go`:
+
+- **Sidebar**: the *Workspace* entries (Software, Databases, HTTPS) with counts — installed packages, running/total instances, and rules — above the secondary system-service sources.
+- **Title bar**: the section and what it holds, the work in progress (Package or Database tasks, Cancel operation), then Refresh, Tasks and Diagnostics as icon buttons.
+- **List** (Software and Databases only): Software groups *Runtimes* and *Database engines*, each with its icon and default or installed version. Databases lists instances with port and status dot, a `+` for a new instance, and the workspace-wide *Recovery* reviews (unfinished tasks, initializations, pending deletions). HTTPS has no list: it is a single page.
+- **Page**: a header with the subject's icon, name, facts and status tag, and its main actions at the end (Start/Restart/Stop and logs for an instance, Apply proxy for HTTPS). The controls below are grouped in outlined cards by concern; irreversible actions sit in a red *Remove* card.
+- **Status bar**: the last operation's result with a status dot, and Details for its full text.
+
+Buttons whose accessible name repeats their subject (for example `Check files node 22.14.0`) may show a shorter text (`Check files`); the accessible name is unchanged. A Software page for an installed database engine links to a new instance of it, and a new instance without an installed engine links back to Software.
+
+## Behavior
+
 Software shows the installed package, default Node version, and whether Node is enabled for new zsh terminals. Installation and terminal setup are separate actions. Databases shows independently managed instances, data work, deletion review, administrator connection, and instance-owned password-free business connection profiles. Editing one instance must not overwrite another instance's draft.
 
 HTTPS is a single rule table. Each row has Domain and Local port; the global listener port is separate. Save/Discard act on the whole draft, Apply publishes the saved configuration, and local domains/CA trust have their own explicit actions. Published means the routing snapshot matches saved intent; it does not mean Chrome can connect. DNS, listener TLS, upstream TCP, and the optional explicit HTTP response check have separate results. The HTTP check never runs automatically.

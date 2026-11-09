@@ -71,7 +71,7 @@ const navDevelopment = "development"
 
 var (
 	devSections     = [3]string{"Software", "Databases", "HTTPS"}
-	devSectionIcons = [3]*ui.SVG{iconPackage, iconDatabase, iconGlobe}
+	devSectionIcons = [3]*ui.SVG{iconPackage, iconDatabase, icoShield}
 )
 
 func devNavID(tab int) string { return fmt.Sprintf("%s:%d", navDevelopment, tab) }
@@ -120,19 +120,37 @@ func (a *app) sidebar(c *ui.Context) {
 	if a.nav == navDevelopment {
 		sel = devNavID(a.dev.tab)
 	}
-	devCounts := [3]int{0, len(a.dev.state.Instances), len(a.dev.state.ProxyRules)}
-	column := ui.Column(c).Width(216).Shrink(0)
+	devCounts := [3]string{"", "", ""}
+	if n := len(a.dev.state.Packages); n > 0 {
+		devCounts[devTabSoftware] = fmt.Sprint(n)
+	}
+	if n := len(a.dev.state.Instances); n > 0 {
+		running := 0
+		for id := range a.dev.state.Instances {
+			if s := a.dev.statuses["instance:"+id]; s == "Running" || s == "Healthy" {
+				running++
+			}
+		}
+		devCounts[devTabDatabases] = fmt.Sprint(n)
+		if running > 0 {
+			devCounts[devTabDatabases] = fmt.Sprintf("%d/%d", running, n)
+		}
+	}
+	if n := len(a.dev.state.ProxyRules); n > 0 {
+		devCounts[devTabHTTPS] = fmt.Sprint(n)
+	}
+	column := ui.Column(c).Width(204).Shrink(0)
 	if !c.Vibrancy() {
 		column.Background(t.Surface)
 	}
 	column.Children(func() {
 		ui.Row(c).Height(barHeight).Shrink(0).DragWindow()
 		if ui.Sidebar(c, &sel, func() {
-			ui.SidebarSection(c, "Development", nil, func() {
+			ui.SidebarSection(c, "Workspace", nil, func() {
 				for i, section := range devSections {
 					ui.SidebarItem(c, devNavID(i), devSectionIcons[i], section).Children(func() {
-						if devCounts[i] > 0 {
-							ui.Text(c, fmt.Sprint(devCounts[i])).FontSize(textCaption).Opacity(0.6).SingleLine()
+						if devCounts[i] != "" {
+							ui.Text(c, devCounts[i]).FontSize(textCaption).Opacity(0.6).SingleLine()
 						}
 					})
 				}

@@ -6,7 +6,8 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/lobehub/lobe-mygo/pkg/action"
+	"github.com/lobehub/lobe-mygo/pkg/display"
+	"github.com/lobehub/lobe-mygo/pkg/feedback"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"devbase/internal/devplatform"
 )
@@ -79,13 +80,18 @@ func (a *app) reviewOperation(r devplatform.OperationRecord) {
 }
 func (a *app) devOperations(c *ui.Context) {
 	d := &a.dev
+	tk := theme.TokensOf(c)
 	ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
 		if d.operationID == "" && len(d.operations) > 0 {
 			d.operationID = d.operations[0].ID
 		}
-		ui.Column(c).Width(224).Shrink(0).Background(c.Theme().Surface).Children(func() {
-			ui.Scroll(c.Key("operations-list")).Grow(1).MinHeight(0).Padding(10).Children(func() {
-				ui.Column(c).Gap(4).Children(func() {
+		ui.Column(c).Width(228).Shrink(0).Background(tk.BgContainer).Children(func() {
+			ui.Scroll(c.Key("operations-list")).Grow(1).MinHeight(0).Padding(4, 8, 10).Children(func() {
+				ui.Column(c).Gap(2).Children(func() {
+					masterGroup(c, "Tasks", nil)
+					if len(d.operations) == 0 {
+						ui.Text(c, "No tasks").FontSize(textSmall).TextColor(tk.TextTertiary).Padding(6, 10)
+					}
 					for _, r := range d.operations {
 						trailing := r.Status
 						if r.Status == "Succeeded" || r.Status == "Running" {
@@ -100,13 +106,13 @@ func (a *app) devOperations(c *ui.Context) {
 			})
 		})
 		ui.Column(c).Width(1).Background(hairline(c.Theme()))
-		ui.Scroll(c.Key("operation-detail")).TrackScroll(&d.operationScroll).Grow(1).MinWidth(0).MinHeight(0).Padding(20, 24).Children(func() {
-			ui.Column(c).Gap(10).Children(func() {
-				if action.Button(c, "Back to workspace", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
+		ui.Scroll(c.Key("operation-detail")).TrackScroll(&d.operationScroll).Grow(1).MinWidth(0).MinHeight(0).Padding(22, 28, 28).Children(func() {
+			ui.Column(c).Gap(14).MaxWidth(880).Children(func() {
+				if btn(c, "Back to workspace", "", icoUndo, btnText).AlignSelf(ui.Start).Clicked() {
 					d.operationsOpen = false
 				}
 				if d.operationsError != "" {
-					ui.Text(c, d.operationsError).FontSize(textSmall).TextColor(c.Theme().Warning)
+					devHint(c, feedback.Warning, d.operationsError, "")
 				}
 				var selected *devplatform.OperationRecord
 				for n := range d.operations {
@@ -116,61 +122,60 @@ func (a *app) devOperations(c *ui.Context) {
 					}
 				}
 				if selected == nil {
-					ui.Text(c, "No tasks").FontSize(textSmall).TextColor(c.Theme().TextMuted)
+					display.Empty(c, display.EmptyProps{Icon: icoHistory, Title: "No tasks"})
 					return
 				}
 				r := *selected
-				color := c.Theme().Warning
-				if r.Status == "Succeeded" {
-					color = c.Theme().Success
-				}
-				if r.Status == "Running" {
-					color = c.Theme().Accent
-				}
-				ui.Text(c, r.Status+" · "+r.Phase).FontWeight(600).TextColor(color)
-				ui.Text(c, "Operation "+r.ID).FontSize(textSmall)
-				ui.Text(c, "Started "+r.StartedAt.Local().Format("2006-01-02 15:04:05")+"\nUpdated "+r.UpdatedAt.Local().Format("2006-01-02 15:04:05")).FontSize(textSmall).TextColor(c.Theme().TextMuted)
-				ui.Text(c, r.Result).FontSize(textSmall)
-				if r.Busy {
-					ui.Text(c, "Another caller owns this task.").FontSize(textSmall)
-				}
-				if r.Followup != "" {
-					ui.Text(c, "Follow-up operation: "+r.Followup).FontSize(textSmall)
-				}
-				if r.RetryOf != "" {
-					ui.Text(c, "Retry of: "+r.RetryOf).FontSize(textSmall)
-				}
-				if r.Request.Database != "" {
-					ui.Text(c, "Database: "+r.Request.Database).FontSize(textSmall)
-				}
-				if r.Artifact != "" && r.Request.Kind == "backup" {
-					if strings.HasSuffix(r.Artifact, ".dump") || strings.HasSuffix(r.Artifact, ".partial") {
-						ui.Text(c, "Output: "+filepath.Base(r.Artifact)).FontSize(textSmall)
+				pageHeader(c, icoHistory, tk.TextSecondary, r.Request.Kind+" · "+r.Request.Resource, "Operation "+r.ID, func() {
+					statusTag(c, r.Status)
+				}, nil)
+				devCardWith(c, nil, r.Status+" · "+r.Phase, "", nil, func() {
+					devKV(c, "Started", r.StartedAt.Local().Format("2006-01-02 15:04:05"))
+					devKV(c, "Updated", r.UpdatedAt.Local().Format("2006-01-02 15:04:05"))
+					if r.Request.Database != "" {
+						devKV(c, "Database", r.Request.Database)
 					}
-					if r.Status != "Succeeded" {
-						ui.Text(c, "This output may be incomplete. Do not use it as a verified backup.").FontSize(textSmall).TextColor(c.Theme().Warning)
+					if r.Followup != "" {
+						devKV(c, "Follow-up", r.Followup)
 					}
-				}
-				if action.Button(c, "Retry operation", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("Rechecks saved settings and live launchd jobs. Ownership is never assumed from a historical PID.").Disabled(d.busy || !devplatform.OperationCanRetry(r)).Clicked() {
-					a.devTask(func(m *devplatform.Manager) (string, error) {
-						return "Follow-up task finished. Review its result.", m.RetryOperation(m.Context, r.ID, r.Revision)
-					})
-				}
-				if action.Button(c, "Review resource settings", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("Initialization, restore and commands are never replayed. Existing data is kept.").Disabled(d.busy || r.Busy).Clicked() {
-					a.reviewOperation(r)
-				}
-				if action.Button(c, "Reveal task files", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || a.reveal == nil).Clicked() {
-					a.devTask(func(m *devplatform.Manager) (string, error) {
-						path := filepath.Join(m.Root, "operations", r.ID)
-						a.post(func() { a.reveal(path) })
-						return "Task folder revealed.", nil
-					})
-				}
-				if action.Button(c, "Dismiss record (keep all files)", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy || r.Busy).Clicked() {
-					a.devTask(func(m *devplatform.Manager) (string, error) {
-						return "Task record dismissed; resource and output files retained.", m.DismissOperation(m.Context, r.ID, r.Revision)
-					})
-				}
+					if r.RetryOf != "" {
+						devKV(c, "Retry of", r.RetryOf)
+					}
+					if r.Artifact != "" && r.Request.Kind == "backup" && (strings.HasSuffix(r.Artifact, ".dump") || strings.HasSuffix(r.Artifact, ".partial")) {
+						devKV(c, "Output", filepath.Base(r.Artifact))
+					}
+					if r.Result != "" {
+						ui.Text(c, r.Result).FontSize(textSmall).Selectable()
+					}
+					if r.Busy {
+						devHint(c, feedback.Info, "Another caller owns this task.", "")
+					}
+					if r.Artifact != "" && r.Request.Kind == "backup" && r.Status != "Succeeded" {
+						devHint(c, feedback.Warning, "This output may be incomplete. Do not use it as a verified backup.", "")
+					}
+				})
+				devButtonRow(c, func() {
+					if btn(c, "Retry operation", "", icoRotate, btnPrimary).Tooltip("Rechecks saved settings and live launchd jobs. Ownership is never assumed from a historical PID.").Disabled(d.busy || !devplatform.OperationCanRetry(r)).Clicked() {
+						a.devTask(func(m *devplatform.Manager) (string, error) {
+							return "Follow-up task finished. Review its result.", m.RetryOperation(m.Context, r.ID, r.Revision)
+						})
+					}
+					if btn(c, "Review resource settings", "", icoArrow, btnDefault).Tooltip("Initialization, restore and commands are never replayed. Existing data is kept.").Disabled(d.busy || r.Busy).Clicked() {
+						a.reviewOperation(r)
+					}
+					if btn(c, "Reveal task files", "", icoFolder, btnText).Disabled(d.busy || a.reveal == nil).Clicked() {
+						a.devTask(func(m *devplatform.Manager) (string, error) {
+							path := filepath.Join(m.Root, "operations", r.ID)
+							a.post(func() { a.reveal(path) })
+							return "Task folder revealed.", nil
+						})
+					}
+					if btn(c, "Dismiss record (keep all files)", "", nil, btnText).Disabled(d.busy || r.Busy).Clicked() {
+						a.devTask(func(m *devplatform.Manager) (string, error) {
+							return "Task record dismissed; resource and output files retained.", m.DismissOperation(m.Context, r.ID, r.Revision)
+						})
+					}
+				})
 			})
 		})
 	})

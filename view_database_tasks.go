@@ -227,17 +227,17 @@ func (a *app) openInitializations() {
 func (a *app) devInitializations(c *ui.Context) {
 	d := &a.dev
 	devPaneHeader(c, "Unfinished initializations", func() {
-		if action.Button(c, "Refresh initializations", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
+		if btn(c, "Refresh initializations", "", icoRotate, btnText).Disabled(d.busy).Clicked() {
 			a.initializationTask(nil)
 		}
-		if action.Button(c, "Back to database settings", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
+		if btn(c, "Back to database settings", "", icoUndo, btnDefault).Disabled(d.busy).Clicked() {
 			d.databaseWorkOpen = false
 			d.initializationsOpen = false
 			d.detailScroll[devTabDatabases].Y = 0
 		}
 	})
 	if len(d.initializations) == 0 {
-		ui.Text(c, "None").FontSize(textSmall).TextColor(c.Theme().TextMuted)
+		devEmpty(c, "None")
 		return
 	}
 	for _, r := range d.initializations {

@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/lobehub/lobe-mygo/pkg/action"
-	"github.com/lobehub/lobe-mygo/pkg/layout"
+	"github.com/lobehub/lobe-mygo/pkg/display"
+	"github.com/lobehub/lobe-mygo/pkg/feedback"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"devbase/internal/devplatform"
 )
@@ -45,82 +45,94 @@ func (a *app) runDevDiagnostics() {
 
 func (a *app) devDiagnostics(c *ui.Context) {
 	d := &a.dev
-	ui.Column(c).Gap(10).Children(func() {
-		report := d.diagnosticReport
-		summary := ""
-		if report != nil {
-			failures, warnings := 0, 0
-			for _, check := range report.Checks {
-				if check.Status == "Failed" {
-					failures++
-				}
-				if check.Status == "Warning" {
-					warnings++
-				}
-			}
-			summary = fmt.Sprintf("%d failed · %d warnings · %d checks", failures, warnings, len(report.Checks))
-		}
-		ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, summary).FontWeight(600).Grow(1).MinWidth(0)
-			if report != nil {
-				if action.Button(c, "Copy redacted report", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Tooltip("Anonymous resource names. Excludes local paths, domains, commands, environment values, logs, credentials and private keys.").Disabled(d.busy || a.copy == nil).Clicked() {
-					a.copy(d.diagnosticJSON)
-				}
-				if action.Button(c, "Export redacted report", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Tooltip("Anonymous resource names. Excludes local paths, domains, commands, environment values, logs, credentials and private keys.").Disabled(d.busy).Clicked() {
-					snapshot := *report
-					a.devTask(func(m *devplatform.Manager) (string, error) {
-						path, err := m.ExportDiagnostics(m.Context, snapshot)
-						if err == nil && a.reveal != nil {
-							a.post(func() { a.reveal(path) })
-						}
-						return "Redacted report saved: " + path, err
-					})
-				}
-			}
-			if action.Button(c, "Run diagnostics again", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Tooltip("Changes no hosts, certificates or services.").Disabled(d.busy).Clicked() {
-				a.runDevDiagnostics()
-			}
-			if action.Button(c, "Back to workspace", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
-				d.diagnosticsOpen = false
-			}
-		})
-		if d.diagnosticPendingTarget != nil {
-			ui.Text(c, "Unsaved database changes. Discard them to open the selected setting?").TextColor(c.Theme().Warning)
-			ui.Row(c).Gap(8).Children(func() {
-				if action.Button(c, "Cancel navigation", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
-					d.diagnosticPendingTarget = nil
-				}
-				if action.Button(c, "Discard draft and open", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Clicked() {
-					target := *d.diagnosticPendingTarget
-					d.diagnosticPendingTarget = nil
-					a.openDiagnosticTarget(target, true)
-				}
-			})
-		}
-		if report == nil {
-			return
-		}
-		ui.Text(c, "Checked "+report.GeneratedAt.Local().Format("2006-01-02 15:04:05")).FontSize(textCaption).TextColor(c.Theme().TextMuted)
+	tk := theme.TokensOf(c)
+	report := d.diagnosticReport
+	summary := ""
+	status := ""
+	if report != nil {
+		failures, warnings := 0, 0
 		for _, check := range report.Checks {
-			color := c.Theme().TextMuted
 			if check.Status == "Failed" {
-				color = c.Theme().Danger
+				failures++
 			}
 			if check.Status == "Warning" {
-				color = c.Theme().Warning
+				warnings++
 			}
-			if check.Status == "OK" {
-				color = c.Theme().Success
+		}
+		summary = fmt.Sprintf("%d failed · %d warnings · %d checks", failures, warnings, len(report.Checks))
+		switch {
+		case failures > 0:
+			status = "Failed"
+		case warnings > 0:
+			status = "Not ready"
+		default:
+			status = "Healthy"
+		}
+	}
+	pageHeader(c, icoStetho, tk.TextSecondary, "Diagnostics", summary, func() { statusTag(c, status) }, func() {
+		if btn(c, "Run diagnostics again", "", icoRotate, btnPrimary).Tooltip("Changes no hosts, certificates or services.").Disabled(d.busy).Clicked() {
+			a.runDevDiagnostics()
+		}
+	})
+	devButtonRow(c, func() {
+		if btn(c, "Back to workspace", "", icoUndo, btnText).Clicked() {
+			d.diagnosticsOpen = false
+		}
+		if report != nil {
+			ui.Spacer(c)
+			if btn(c, "Copy redacted report", "", icoCopy, btnText).Tooltip("Anonymous resource names. Excludes local paths, domains, commands, environment values, logs, credentials and private keys.").Disabled(d.busy || a.copy == nil).Clicked() {
+				a.copy(d.diagnosticJSON)
 			}
-			layout.Block(c, layout.BlockProps{Variant: layout.BlockFilled}).Padding(12).Gap(5).Children(func() {
-				ui.Text(c, check.Status+" · "+check.Layer).FontSize(textSmall).FontWeight(650).TextColor(color)
-				ui.Text(c, check.Resource).FontWeight(600)
+			if btn(c, "Export redacted report", "", icoDownload, btnText).Tooltip("Anonymous resource names. Excludes local paths, domains, commands, environment values, logs, credentials and private keys.").Disabled(d.busy).Clicked() {
+				snapshot := *report
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					path, err := m.ExportDiagnostics(m.Context, snapshot)
+					if err == nil && a.reveal != nil {
+						a.post(func() { a.reveal(path) })
+					}
+					return "Redacted report saved: " + path, err
+				})
+			}
+		}
+	})
+	if d.diagnosticPendingTarget != nil {
+		devHint(c, feedback.Warning, "Unsaved database changes. Discard them to open the selected setting?", "")
+		devButtonRow(c, func() {
+			if btn(c, "Cancel navigation", "", nil, btnDefault).Clicked() {
+				d.diagnosticPendingTarget = nil
+			}
+			if btn(c, "Discard draft and open", "", nil, btnDanger).Clicked() {
+				target := *d.diagnosticPendingTarget
+				d.diagnosticPendingTarget = nil
+				a.openDiagnosticTarget(target, true)
+			}
+		})
+	}
+	if report == nil {
+		return
+	}
+	devCardWith(c, nil, "Checks", "Checked "+report.GeneratedAt.Local().Format("2006-01-02 15:04:05"), nil, func() {
+		for _, check := range report.Checks {
+			devInset(c, func() {
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					color := display.TagColor("")
+					switch check.Status {
+					case "Failed":
+						color = display.TagError
+					case "Warning":
+						color = display.TagWarning
+					case "OK":
+						color = display.TagSuccess
+					}
+					display.Tag(c, check.Status+" · "+check.Layer, display.TagProps{Color: color, Size: theme.Small})
+					ui.Text(c, check.Resource).FontWeight(600).SingleLine().Grow(1).MinWidth(0)
+					if check.Target.Kind != "" && btn(c, "Open related setting", "", icoArrow, btnText).Disabled(d.busy).Clicked() {
+						a.openDiagnosticTarget(check.Target, false)
+					}
+				})
 				ui.Text(c, check.Summary).FontSize(textSmall)
 				if check.Remedy != "" {
-					ui.Text(c, check.Remedy).FontSize(textSmall).TextColor(c.Theme().TextMuted)
-				}
-				if check.Target.Kind != "" && action.Button(c, "Open related setting", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
-					a.openDiagnosticTarget(check.Target, false)
+					devSubtle(c, check.Remedy)
 				}
 			})
 		}

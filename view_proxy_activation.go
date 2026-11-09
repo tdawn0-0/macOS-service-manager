@@ -16,7 +16,7 @@ func (a *app) devProxyActivation(c *ui.Context, domain string) {
 	if d.diagnosticReport != nil && d.diagnosticReport.ProxyRevision == d.state.ProxyRulesRevision {
 		for _, check := range d.diagnosticReport.Checks {
 			if check.Resource == domain && (check.Layer == "DNS" || check.Layer == "Proxy TLS" || check.Layer == "Upstream") {
-				ui.Text(c, check.Layer+": "+check.Status+" · "+check.Summary).FontSize(textCaption).TextColor(c.Theme().TextMuted)
+				ui.Text(c, check.Layer+": "+check.Status+" · "+check.Summary).FontSize(textCaption).TextColor(c.Theme().TextMuted).Padding(0, 2)
 			}
 		}
 	}
@@ -31,7 +31,7 @@ func (a *app) devProxyActivation(c *ui.Context, domain string) {
 			ui.Text(c, fmt.Sprintf("HTTP response: %d · %s ago", r.StatusCode, time.Since(r.CheckedAt).Round(time.Second))).FontSize(textCaption)
 		}
 	}
-	if ui.Button(c.Key("check-https-"+domain), "Check HTTPS response").Disabled(d.busy || d.proxyDraftDirty() || d.proxyChecking[domain]).Clicked() {
+	if btn(c.Key("check-https-"+domain), "Check HTTPS response", "", icoStetho, btnText).AlignSelf(ui.Start).Disabled(d.busy || d.proxyDraftDirty() || d.proxyChecking[domain]).Clicked() {
 		m := a.devManager()
 		fp, revision, err := m.ProxyRuleFingerprint(domain)
 		if err != nil {

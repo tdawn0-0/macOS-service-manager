@@ -58,7 +58,7 @@ func (a *app) devInstanceDeletionPreview(c *ui.Context) {
 	d := &a.dev
 	p := d.instanceDeletionPreview
 	devPaneHeader(c, "Delete "+p.InstanceID, func() {
-		if action.Button(c, "Refresh deletion preview", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
+		if btn(c, "Refresh deletion preview", "", icoRotate, btnText).Disabled(d.busy).Clicked() {
 			a.previewInstanceDeletion(p.InstanceID)
 		}
 		if action.Button(c, "Cancel deletion preview", action.ButtonProps{Variant: action.Default, Size: theme.Small}).AlignSelf(ui.Start).Disabled(d.busy).Clicked() {
@@ -101,17 +101,17 @@ func (a *app) devInstanceDeletionPreview(c *ui.Context) {
 func (a *app) devInstanceDeletions(c *ui.Context) {
 	d := &a.dev
 	devPaneHeader(c, "Pending data deletions", func() {
-		if action.Button(c, "Refresh pending deletions", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
+		if btn(c, "Refresh pending deletions", "", icoRotate, btnText).Disabled(d.busy).Clicked() {
 			a.deletionTask(nil, nil)
 		}
-		if action.Button(c, "Back to database settings", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(d.busy).Clicked() {
+		if btn(c, "Back to database settings", "", icoUndo, btnDefault).Disabled(d.busy).Clicked() {
 			d.deletionsOpen = false
 			d.deleteConfirmation = ""
 			d.detailScroll[devTabDatabases].Y = 0
 		}
 	})
 	if len(d.instanceDeletions) == 0 {
-		ui.Text(c, "None").FontSize(textSmall).TextColor(c.Theme().TextMuted)
+		devEmpty(c, "None")
 		return
 	}
 	for _, r := range d.instanceDeletions {

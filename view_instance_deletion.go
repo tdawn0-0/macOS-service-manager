@@ -31,6 +31,8 @@ func (a *app) deletionTask(fn func(*devplatform.Manager) error, after func(error
 }
 func (a *app) openInstanceDeletions() {
 	a.dev.deletionsOpen = true
+	a.dev.databaseWorkOpen = false
+	a.dev.initializationsOpen = false
 	a.dev.instanceDeletionPreview = nil
 	a.dev.deleteConfirmation = ""
 	a.dev.detailScroll[devTabDatabases].Y = 0

@@ -30,6 +30,10 @@ func (a *app) databaseWorkTask(fn func(*devplatform.Manager) error) {
 }
 func (a *app) openDatabaseWork() {
 	a.dev.databaseWorkOpen = true
+	a.dev.initializationsOpen = false
+	a.dev.deletionsOpen = false
+	a.dev.instanceDeletionPreview = nil
+	a.dev.deleteConfirmation = ""
 	a.dev.detailScroll[devTabDatabases].Y = 0
 	a.databaseWorkTask(nil)
 }

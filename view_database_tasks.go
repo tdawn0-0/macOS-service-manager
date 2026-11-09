@@ -221,6 +221,10 @@ func (a *app) initializationTaskThen(fn func(*devplatform.Manager) (string, erro
 }
 func (a *app) openInitializations() {
 	a.dev.initializationsOpen = true
+	a.dev.databaseWorkOpen = false
+	a.dev.deletionsOpen = false
+	a.dev.instanceDeletionPreview = nil
+	a.dev.deleteConfirmation = ""
 	a.dev.detailScroll[devTabDatabases].Y = 0
 	a.initializationTask(nil)
 }

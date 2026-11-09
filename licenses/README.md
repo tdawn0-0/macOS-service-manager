@@ -11,10 +11,11 @@ The SHA-256 inventory is in [manifest.json](manifest.json). No local cache paths
 | Module | Version | Copied notices |
 | --- | --- | --- |
 | github.com/ebitengine/purego | v0.11.1 | 1 |
-| github.com/egoist/mygo | v0.7.4 | 15 |
+| github.com/egoist/mygo | v0.8.4-0.20261108082913-9233663736ca | 16 |
 | github.com/go-text/typesetting | v0.3.5 | 3 |
 | github.com/golang/snappy | v1.0.0 | 2 |
 | github.com/klauspost/compress | v1.16.7 | 10 |
+| github.com/lobehub/lobe-mygo | v0.0.0-20261108200421-40d9ea87a3c0 | 2 |
 | github.com/xdg-go/pbkdf2 | v1.0.0 | 1 |
 | github.com/xdg-go/scram | v1.1.2 | 1 |
 | github.com/xdg-go/stringprep | v1.0.4 | 1 |

@@ -26,67 +26,71 @@
     },
     {
       "module": "github.com/egoist/mygo",
-      "version": "v0.7.4",
-      "sum": "h1:0qkDpDRo7C9g8PM8eu4V6FVouhLiTrUdqKD6I31Lv3Q=",
+      "version": "v0.8.4-0.20261108082913-9233663736ca",
+      "sum": "h1:qzxskAlbE5myNwExvNeOzDvV1NNAUeVdb8DKVMbBmuo=",
       "files": [
         {
-          "path": "third-party/github.com/egoist/mygo@v0.7.4/LICENSE",
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/LICENSE",
           "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
         },
         {
-          "path": "third-party/github.com/egoist/mygo@v0.7.4/internal/shader/LICENSE",
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/internal/shader/LICENSE",
           "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"
         },
         {
-          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/cli/LICENSE",
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/packages/cli/LICENSE",
           "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
         },
         {
-          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/cli/npm/darwin-arm64/LICENSE",
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/packages/cli/npm/darwin-arm64/LICENSE",
           "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
         },
         {
-          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/cli/npm/darwin-x64/LICENSE",
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/packages/cli/npm/darwin-x64/LICENSE",
           "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
         },
         {
-          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/cli/npm/linux-arm64/LICENSE",
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/packages/cli/npm/linux-arm64/LICENSE",
           "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
         },
         {
-          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/cli/npm/linux-x64/LICENSE",
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/packages/cli/npm/linux-x64/LICENSE",
           "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
         },
         {
-          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/cli/npm/win32-arm64/LICENSE",
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/packages/cli/npm/win32-arm64/LICENSE",
           "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
         },
         {
-          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/cli/npm/win32-x64/LICENSE",
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/packages/cli/npm/win32-x64/LICENSE",
           "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
         },
         {
-          "path": "third-party/github.com/egoist/mygo@v0.7.4/packages/runtime/LICENSE",
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/packages/runtime/LICENSE",
           "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
         },
         {
-          "path": "third-party/github.com/egoist/mygo@v0.7.4/plugins/fetch/LICENSE",
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/plugins/fetch/LICENSE",
           "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
         },
         {
-          "path": "third-party/github.com/egoist/mygo@v0.7.4/plugins/loading/NOTICE.md",
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/plugins/loading/NOTICE.md",
           "sha256": "181b45ef8039bdc3a938c013a0896f02cdd6cf703caaf26bf192d8ea36ac5986"
         },
         {
-          "path": "third-party/github.com/egoist/mygo@v0.7.4/plugins/sqlite/LICENSE",
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/plugins/permissionflow/NOTICE.md",
+          "sha256": "200cd660b32e8bb8296e0bbb8d60fa2d2d5091baa62c27710d09a45fafd7556d"
+        },
+        {
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/plugins/sqlite/LICENSE",
           "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
         },
         {
-          "path": "third-party/github.com/egoist/mygo@v0.7.4/plugins/watch/LICENSE",
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/plugins/watch/LICENSE",
           "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
         },
         {
-          "path": "third-party/github.com/egoist/mygo@v0.7.4/plugins/websocket/LICENSE",
+          "path": "third-party/github.com/egoist/mygo@v0.8.4-0.20261108082913-9233663736ca/plugins/websocket/LICENSE",
           "sha256": "f0b56f4ab53beb6e18c5e155219c2e2b6000b5475c0ae3ddb3af3894fd9349b4"
         }
       ]
@@ -169,6 +173,21 @@
         {
           "path": "third-party/github.com/klauspost/compress@v1.16.7/zstd/internal/xxhash/LICENSE.txt",
           "sha256": "f566a9f97bacdaf00d9f21dd991e81dc11201c4e016c86b470799429a1c9a79c"
+        }
+      ]
+    },
+    {
+      "module": "github.com/lobehub/lobe-mygo",
+      "version": "v0.0.0-20261108200421-40d9ea87a3c0",
+      "sum": "h1:rB7urqicU7ZWsyjqrg5qQfljaaF4Q3syLnslBgKWBUw=",
+      "files": [
+        {
+          "path": "third-party/github.com/lobehub/lobe-mygo@v0.0.0-20261108200421-40d9ea87a3c0/LICENSE",
+          "sha256": "972e42b5227a1a538de65f9473b6b238a1d637bcb1486caed9caf3841164fe23"
+        },
+        {
+          "path": "third-party/github.com/lobehub/lobe-mygo@v0.0.0-20261108200421-40d9ea87a3c0/pkg/lucide/LICENSE",
+          "sha256": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57"
         }
       ]
     },

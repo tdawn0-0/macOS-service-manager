@@ -39,7 +39,6 @@ func TestRuntimeCatalogs(t *testing.T) {
 	if _, e := resolveJava(ctx, "temurin-21.0.13"); e == nil {
 		t.Fatal("ignored cancellation")
 	}
-	m := testManager(t)
 	p, e := resolveJava(context.Background(), "temurin-21.0.13")
 	if e != nil || p.Binaries["java"] != "Contents/Home/bin/java" || len(p.SHA256) != 64 {
 		t.Fatal(p, e)
@@ -50,10 +49,6 @@ func TestRuntimeCatalogs(t *testing.T) {
 	checksum = "invalid"
 	if _, e := resolveJava(context.Background(), "temurin-21.0.13"); e == nil {
 		t.Fatal("accepted invalid upstream checksum")
-	}
-	rows, e := m.RuntimeVersions(context.Background(), "go")
-	if e != nil || len(rows) != 1 || rows[0] != "1.27.3" {
-		t.Fatal(rows, e)
 	}
 }
 func TestUVPythonManagement(t *testing.T) {
@@ -119,7 +114,6 @@ func TestAdditionalRuntimeSelection(t *testing.T) {
 	t.Run("installed-versions", additionalRuntimeInstalledVersions)
 	m := testManager(t)
 	m.Home = t.TempDir()
-	m.withState(context.Background(), func(s *State) error { s.RuntimeDefaults = map[string]string{"go": "keep"}; return nil })
 	if e := m.SetRuntimeDefault(context.Background(), "java", "missing"); e == nil {
 		t.Fatal("accepted missing runtime")
 	}
@@ -127,7 +121,7 @@ func TestAdditionalRuntimeSelection(t *testing.T) {
 		t.Fatal("enabled without default")
 	}
 	s, e := m.Read()
-	if e != nil || s.RuntimeDefaults["go"] != "keep" {
+	if e != nil {
 		t.Fatal(s, e)
 	}
 	rc := filepath.Join(m.Home, ".zshrc")
@@ -146,7 +140,7 @@ func additionalRuntimeInstalledVersions(t *testing.T) {
 	m.Home = t.TempDir()
 	ctx := context.Background()
 	var javaIDs []string
-	for _, pair := range [][2]string{{"java", "21.0.13_9.0.LTS"}, {"java", "25.0.1_8.0.LTS"}, {"go", "1.27.3"}} {
+	for _, pair := range [][2]string{{"java", "21.0.13_9.0.LTS"}, {"java", "25.0.1_8.0.LTS"}} {
 		p := Package{Name: pair[0], Version: pair[1], Arch: "arm64", Binaries: map[string]string{pair[0]: "bin/" + pair[0]}}
 		if p.Name == "java" {
 			p.Binaries["java"] = "Contents/Home/bin/java"
@@ -164,7 +158,7 @@ func additionalRuntimeInstalledVersions(t *testing.T) {
 	target := filepath.Join(m.Home, "user rc")
 	os.WriteFile(target, []byte("# user settings\n"), 0600)
 	os.Symlink(target, rc)
-	for _, name := range []string{"java", "go"} {
+	for _, name := range []string{"java"} {
 		if e := m.ConfigureRuntimeShell(ctx, name, true); e != nil {
 			t.Fatal(e)
 		}
@@ -184,22 +178,18 @@ func additionalRuntimeInstalledVersions(t *testing.T) {
 		t.Fatal(e)
 	}
 	s, _ := m.Read()
-	if s.RuntimeDefaults["java"] != javaIDs[0] || s.RuntimeDefaults["go"] != "go@1.27.3-arm64" {
+	if s.RuntimeDefaults["java"] != javaIDs[0] {
 		t.Fatal(s.RuntimeDefaults)
 	}
 	b, _ = os.ReadFile(m.runtimeScript("java"))
 	if !strings.Contains(string(b), "JAVA_HOME=") || !strings.Contains(string(b), filepath.Join(m.packageDir(s.Packages[javaIDs[0]]), "Contents/Home")) {
 		t.Fatal(string(b))
 	}
-	b, _ = os.ReadFile(m.runtimeScript("go"))
-	if strings.Contains(string(b), "GOROOT") || strings.Contains(string(b), "GOPATH") {
-		t.Fatal(string(b))
-	}
 	if e := m.ConfigureRuntimeShell(ctx, "java", false); e != nil {
 		t.Fatal(e)
 	}
 	b, _ = os.ReadFile(rc)
-	if strings.Contains(string(b), "Devbase java") || !strings.Contains(string(b), "Devbase go") {
+	if strings.Contains(string(b), "Devbase java") {
 		t.Fatal(string(b))
 	}
 	if e := m.Uninstall(ctx, javaIDs[0]); e != nil {

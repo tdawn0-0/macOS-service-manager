@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-func validAdditionalRuntime(name string) bool { return name == "java" || name == "go" }
+func validAdditionalRuntime(name string) bool { return name == "java" }
 func (m *Manager) runtimeScript(name string) string {
 	return filepath.Join(m.Root, "runtimes", name, "init.sh")
 }

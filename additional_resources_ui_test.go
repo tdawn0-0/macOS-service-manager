@@ -33,21 +33,17 @@ func resource018Screenshot(t *testing.T, tt *ui.Tester, name string) {
 	}
 }
 func TestUIAdditionalRuntimes(t *testing.T) {
-	for _, name := range []string{"java", "go", "python"} {
+	for _, name := range []string{"java", "python"} {
 		for _, size := range [][2]int{{900, 520}, {1120, 720}} {
 			for _, dark := range []bool{false, true} {
 				testName := fmt.Sprintf("%s-%dx%d-dark-%t", name, size[0], size[1], dark)
 				t.Run(testName, func(t *testing.T) {
 					a := designFixture(t)
-					a.dev.runtimeShell = map[string]int{"java": 2, "go": 2}
+					a.dev.runtimeShell = map[string]int{"java": 2}
 					a.dev.software = name
 					a.dev.version = "21.0.13_9.0.LTS"
-					a.dev.runtimeVersions = map[string][]string{"java": {"21.0.13_9.0.LTS", "25.0.1_8.0.LTS"}, "go": {"1.27.3", "1.26.8"}}
+					a.dev.runtimeVersions = map[string][]string{"java": {"21.0.13_9.0.LTS", "25.0.1_8.0.LTS"}}
 					p := devplatform.Package{Name: name, Version: a.dev.version, Arch: "arm64"}
-					if name == "go" {
-						p.Version = "1.27.3"
-						a.dev.version = p.Version
-					}
 					if name != "python" {
 						p.License = "BSD-3-Clause"
 						if name == "java" {

@@ -32,7 +32,7 @@ func TestBashFishRuntimeStartup(t *testing.T) {
 			m, bins, project := runtimeShellFixture(t)
 			m.shellAvailable = func(name string) bool { return name == "zsh" || name == "bash" || name == shell }
 			enableRuntimeShellFixture(t, m)
-			inspect := `node; command -v java; command -v go; printf '%s\n' "$JAVA_HOME" "$PATH" "$npm_config_prefix"`
+			inspect := `node; command -v java; printf '%s\n' "$JAVA_HOME" "$PATH" "$npm_config_prefix"`
 			for _, mode := range []string{"-c", "-lc", "-ic", "-lic"} {
 				for _, scenario := range []string{"default", "project", "cd", "nested", "nested-project", "from-zsh"} {
 					t.Run(mode+"/"+scenario, func(t *testing.T) {
@@ -73,29 +73,29 @@ func TestBashFishRuntimeStartup(t *testing.T) {
 							}
 						}
 						lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
-						if len(lines) != 6 || lines[0] != version || lines[1] != bins["java"] || lines[2] != bins["go"] || lines[3] != filepath.Dir(filepath.Dir(bins["java"])) || lines[5] != m.nodeGlobalPrefix(version) {
+						if len(lines) != 5 || lines[0] != version || lines[1] != bins["java"] || lines[2] != filepath.Dir(filepath.Dir(bins["java"])) || lines[4] != m.nodeGlobalPrefix(version) {
 							t.Fatalf("environment: %q", out)
 						}
-						for _, path := range []string{filepath.Dir(bins["java"]), filepath.Dir(bins["go"]), filepath.Join(m.Root, "packages", "node@"+version+"-arm64", "bin"), filepath.Join(m.nodeGlobalPrefix(version), "bin")} {
+						for _, path := range []string{filepath.Dir(bins["java"]), filepath.Join(m.Root, "packages", "node@"+version+"-arm64", "bin"), filepath.Join(m.nodeGlobalPrefix(version), "bin")} {
 							count := 0
-							for _, entry := range strings.Split(lines[4], ":") {
+							for _, entry := range strings.Split(lines[3], ":") {
 								if entry == path {
 									count++
 								}
 							}
 							if count != 1 {
-								t.Fatalf("%s occurs %d times: %s", path, count, lines[4])
+								t.Fatalf("%s occurs %d times: %s", path, count, lines[3])
 							}
 						}
-						if version == "20.19.0" && strings.Contains(lines[4], "22.14.0") {
-							t.Fatalf("stale Node: %s", lines[4])
+						if version == "20.19.0" && strings.Contains(lines[3], "22.14.0") {
+							t.Fatalf("stale Node: %s", lines[3])
 						}
 					})
 				}
 			}
 			// Disable cleans all shells even if none are installed any longer.
 			m.shellAvailable = func(string) bool { return false }
-			for _, name := range []string{"java", "go"} {
+			for _, name := range []string{"java"} {
 				if err := m.ConfigureRuntimeShell(context.Background(), name, false); err != nil {
 					t.Fatal(err)
 				}

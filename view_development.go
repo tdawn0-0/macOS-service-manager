@@ -474,7 +474,7 @@ func devNews(status string) string {
 	return status
 }
 func softwareTitle(name string) string {
-	if title, ok := map[string]string{"node": "Node.js", "java": "Java", "go": "Go", "python": "Python (uv)", "mysql": "MySQL", "postgresql": "PostgreSQL", "redis": "Redis", "mongodb": "MongoDB"}[name]; ok {
+	if title, ok := map[string]string{"node": "Node.js", "java": "Java", "python": "Python (uv)", "mysql": "MySQL", "postgresql": "PostgreSQL", "redis": "Redis", "mongodb": "MongoDB"}[name]; ok {
 		return title
 	}
 	return name
@@ -487,7 +487,7 @@ func (d *developmentState) softwareDefault(name string) string {
 	switch name {
 	case "node":
 		id = d.state.NodeDefault
-	case "java", "go":
+	case "java":
 		id = d.state.RuntimeDefaults[name]
 	}
 	if p, ok := d.state.Packages[id]; ok {
@@ -514,7 +514,7 @@ func (a *app) devMaster(c *ui.Context) {
 		groups := []struct {
 			title string
 			names []string
-		}{{"Runtimes", []string{"node", "java", "go", "python"}}, {"Database engines", []string{"mysql", "postgresql", "redis", "mongodb"}}}
+		}{{"Runtimes", []string{"node", "java", "python"}}, {"Database engines", []string{"mysql", "postgresql", "redis", "mongodb"}}}
 		for _, g := range groups {
 			masterGroup(c, g.title, nil)
 			for _, name := range g.names {
@@ -729,8 +729,6 @@ func (a *app) devSoftware(c *ui.Context) {
 			} else if d.nodeReleasesStale {
 				devHint(c, feedback.Warning, "nodejs.org could not be reached. Showing the last release list.", "")
 			}
-		} else if d.software == "go" {
-			a.devRuntimeCatalog(c)
 		} else {
 			devFieldGrid(c, func() {
 				devChoice(c, "Version", &d.version, devplatform.AvailableVersions(d.software))
@@ -741,9 +739,6 @@ func (a *app) devSoftware(c *ui.Context) {
 	})
 	if d.software == "node" {
 		devCardWith(c, icoTerminal, "Terminal", "", nil, func() { a.devNodeTerminal(c) })
-	}
-	if d.software == "go" {
-		devCardWith(c, icoTerminal, "Terminal", "", nil, func() { a.devAdditionalRuntimeShell(c) })
 	}
 }
 
@@ -762,7 +757,7 @@ func (a *app) devInstalledPackage(c *ui.Context, id string, p devplatform.Packag
 				if p.Name == "node" && id == d.state.NodeDefault {
 					display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
 				}
-				if (p.Name == "java" || p.Name == "go") && d.state.RuntimeDefaults[p.Name] == id {
+				if p.Name == "java" && d.state.RuntimeDefaults[p.Name] == id {
 					display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
 				}
 			})
@@ -777,7 +772,7 @@ func (a *app) devInstalledPackage(c *ui.Context, id string, p devplatform.Packag
 				if p.Name == "node" {
 					a.devNodeExecutable(c, id)
 				}
-				if p.Name == "java" || p.Name == "go" {
+				if p.Name == "java" {
 					a.devAdditionalRuntimeInstalled(c, id, p)
 				}
 			})

@@ -65,8 +65,6 @@ func softwareMeta(name string) (*ui.SVG, ui.Color) {
 		return icoHexagon, ui.RGB(95, 160, 78)
 	case "java":
 		return icoCoffee, ui.RGB(231, 111, 0)
-	case "go":
-		return icoRabbit, ui.RGB(0, 173, 216)
 	case "python":
 		return icoCode, ui.RGB(55, 118, 171)
 	case "mysql":

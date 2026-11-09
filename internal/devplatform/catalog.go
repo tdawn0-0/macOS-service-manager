@@ -98,27 +98,6 @@ func Resolve(ctx context.Context, name, version string) (Package, error) {
 		p.Binaries = map[string]string{"valkey-server": "bin/valkey-server", "valkey-cli": "bin/valkey-cli"}
 		return p, p.Validate()
 
-	case "go":
-		var releases []struct {
-			Version string
-			Files   []struct{ Filename, OS, Arch, SHA256 string }
-		}
-		if e := fetch(ctx, "https://go.dev/dl/?mode=json&include=all", &releases); e != nil {
-			return p, e
-		}
-		for _, r := range releases {
-			if strings.TrimPrefix(r.Version, "go") == p.Version {
-				for _, f := range r.Files {
-					if f.OS == "darwin" && f.Arch == arch && strings.HasSuffix(f.Filename, ".tar.gz") {
-						p.URL = "https://go.dev/dl/" + f.Filename
-						p.SHA256 = f.SHA256
-						p.Binaries = map[string]string{"go": "bin/go", "gofmt": "bin/gofmt"}
-						p.License = "BSD-3-Clause"
-						return p, p.Validate()
-					}
-				}
-			}
-		}
 	case "node":
 		if !exactRuntimeVersion.MatchString(p.Version) {
 			return p, errors.New("choose an exact Node.js version, for example 22.14.0; resolve 22, lts or latest first")

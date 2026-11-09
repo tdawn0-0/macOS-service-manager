@@ -62,7 +62,7 @@ func runtimeShellFixture(t *testing.T) (*Manager, map[string]string, string) {
 		t.Fatal(err)
 	}
 	bins := map[string]string{}
-	for _, name := range []string{"java", "go"} {
+	for _, name := range []string{"java"} {
 		p := Package{Name: name, Version: "21.0.1", Arch: "arm64", Binaries: map[string]string{name: "bin/" + name}}
 		if name == "java" {
 			p.Binaries[name] = "Contents/Home/bin/java"
@@ -100,7 +100,7 @@ func enableRuntimeShellFixture(t *testing.T, m *Manager) {
 		if _, err := m.EnableNodeShell(ctx); err != nil {
 			t.Fatal(err)
 		}
-		for _, name := range []string{"java", "go"} {
+		for _, name := range []string{"java"} {
 			if err := m.ConfigureRuntimeShell(ctx, name, true); err != nil {
 				t.Fatal(err)
 			}
@@ -112,7 +112,7 @@ func TestRuntimeShellStartupModes(t *testing.T) {
 	m, bins, project := runtimeShellFixture(t)
 	enableRuntimeShellFixture(t, m)
 	ctx := context.Background()
-	inspect := `node; command -v java; command -v go; printf '%s\n' "$JAVA_HOME" "$PATH" "$npm_config_prefix"`
+	inspect := `node; command -v java; printf '%s\n' "$JAVA_HOME" "$PATH" "$npm_config_prefix"`
 	for _, mode := range []string{"-c", "-lc", "-ic", "-lic"} {
 		for _, scenario := range []string{"default", "project", "cd", "nested", "nested-project"} {
 			t.Run(mode+"/"+scenario, func(t *testing.T) {
@@ -137,11 +137,11 @@ func TestRuntimeShellStartupModes(t *testing.T) {
 					t.Fatalf("%v stderr=%s stdout=%s", err, &stderr, out)
 				}
 				lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
-				if len(lines) != 6 || lines[0] != version || lines[1] != bins["java"] || lines[2] != bins["go"] || lines[3] != filepath.Dir(filepath.Dir(bins["java"])) || lines[5] != m.nodeGlobalPrefix(version) {
+				if len(lines) != 5 || lines[0] != version || lines[1] != bins["java"] || lines[2] != filepath.Dir(filepath.Dir(bins["java"])) || lines[4] != m.nodeGlobalPrefix(version) {
 					t.Fatalf("unexpected environment: %q", out)
 				}
-				entries := strings.Split(lines[4], ":")
-				for _, bin := range []string{filepath.Dir(bins["java"]), filepath.Dir(bins["go"]), filepath.Join(m.Root, "packages", "node@"+version+"-arm64", "bin"), filepath.Join(m.nodeGlobalPrefix(version), "bin")} {
+				entries := strings.Split(lines[3], ":")
+				for _, bin := range []string{filepath.Dir(bins["java"]), filepath.Join(m.Root, "packages", "node@"+version+"-arm64", "bin"), filepath.Join(m.nodeGlobalPrefix(version), "bin")} {
 					count := 0
 					for _, entry := range entries {
 						if entry == bin {
@@ -158,7 +158,7 @@ func TestRuntimeShellStartupModes(t *testing.T) {
 			})
 		}
 	}
-	for _, name := range []string{"java", "go"} {
+	for _, name := range []string{"java"} {
 		if err := m.ConfigureRuntimeShell(ctx, name, false); err != nil {
 			t.Fatal(err)
 		}

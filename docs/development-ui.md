@@ -7,7 +7,7 @@ The native MyGo window has three main entries: Software, Databases, and HTTPS. L
 The window follows the Lobe UI look through [Lobe MyGo](https://mygo.lobehub.com/) components, assembled by the helpers in `ui_kit.go`:
 
 - **Sidebar**: the *Workspace* entries (Software, Databases, HTTPS) with counts — installed packages, running/total instances, and rules — above the secondary system-service sources.
-- **Title bar**: the section and what it holds, the work in progress (Package or Database tasks, Cancel operation), then Refresh, Tasks and Diagnostics as icon buttons.
+- **Title bar**: the section's name (the sidebar holds its count), the work in progress (Package or Database tasks, Cancel operation), then Refresh, Tasks and Diagnostics as icon buttons.
 - **List** (Software and Databases only): Software groups *Runtimes* and *Database engines*, each with its icon and default or installed version. Databases lists instances with port and status dot, a `+` for a new instance, and the workspace-wide *Recovery* reviews (unfinished tasks, initializations, pending deletions). HTTPS has no list: it is a single page.
 - **Page**: a header with the subject's icon, name, facts and status tag, and its main actions at the end (Start/Restart/Stop and logs for an instance, Apply proxy for HTTPS). The controls below are grouped in outlined cards by concern; irreversible actions sit in a red *Remove* card.
 - **Status bar**: the last operation's result with a status dot, and Details for its full text.

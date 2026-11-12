@@ -82,9 +82,7 @@ func (a *app) devPortControls(c *ui.Context, value *string, scope string) {
 
 func (a *app) devDatabasePort(c *ui.Context, instance devplatform.Instance) {
 	d := &a.dev
-	devDivider(c, "Local endpoint")
 	if d.dbPort != strconv.Itoa(instance.Port) {
-		devSubtle(c, fmt.Sprintf("Current configured port: %d", instance.Port))
 		a.devPortResult(c, instance.Port)
 	}
 	devFieldGrid(c, func() {

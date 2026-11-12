@@ -98,7 +98,7 @@ func TestUIJavaDistributions(t *testing.T) {
 				tt.SetDark(dark)
 				tt.Frame()
 				shown := strings.Join(tt.Texts(), "\n")
-				for _, v := range []string{"IBM Corporation", "Eclipse Adoptium", "Oracle Corporation", "Move JDK to Trash", "JDK downloads from the JetBrains catalog"} {
+				for _, v := range []string{"IBM Corporation", "Eclipse Adoptium", "Oracle Corporation", "Move JDK to Trash", "Install a JDK from JetBrains"} {
 					if !strings.Contains(shown, v) {
 						t.Fatal("missing distribution/control", v, shown)
 					}

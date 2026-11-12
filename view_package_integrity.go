@@ -2,10 +2,11 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
+	"devbase/internal/devplatform"
 	"github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
-	"devbase/internal/devplatform"
 )
 
 func (a *app) storePackageCheck(id string, result devplatform.PackageIntegrityResult) {
@@ -18,7 +19,11 @@ func (a *app) storePackageCheck(id string, result devplatform.PackageIntegrityRe
 		info.IntegrityNote = "Checked " + result.CheckedAt.Local().Format("15:04:05")
 	}
 }
-func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Package) {
+
+// devPackageIntegrity shows what is known of a version's files and its
+// license on one line, then its actions in one row: lead's first, the
+// checks of its files, and trail's at the end.
+func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Package, lead, trail func()) {
 	d := &a.dev
 	status := "Not checked"
 	if d.state.PackageIntegrity[id] == "" {
@@ -34,18 +39,25 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 		checked = false
 	}
 	tk := theme.TokensOf(c)
-	ui.Row(c).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
-		ui.Row(c).Gap(6).AlignItems(ui.Center).Grow(1).MinWidth(200).Children(func() {
-			ui.Icon(c, icoFileCheck).FontSize(13).TextColor(tk.TextTertiary)
-			color := tk.TextDescription
-			if status == "Verified" {
-				color = tk.SuccessText
-			}
-			if status == "Needs repair" {
-				color = tk.ErrorText
-			}
-			ui.Text(c, "Installed files: "+status).FontSize(textSmall).FontWeight(500).TextColor(color).SingleLine().MinWidth(0)
-		})
+	ui.Row(c).Gap(6).AlignItems(ui.Center).MinWidth(0).Children(func() {
+		ui.Icon(c, icoFileCheck).FontSize(13).TextColor(tk.TextTertiary)
+		color := tk.TextDescription
+		if status == "Verified" {
+			color = tk.SuccessText
+		}
+		if status == "Needs repair" {
+			color = tk.ErrorText
+		}
+		ui.Text(c, "Files "+strings.ToLower(status)).FontSize(textSmall).TextColor(color).SingleLine().Shrink(0)
+		if p.License != "" {
+			ui.Text(c, "·").FontSize(textSmall).TextColor(tk.TextQuaternary).Shrink(0)
+			ui.Text(c, p.License).FontSize(textSmall).TextColor(tk.TextDescription).SingleLine().MinWidth(0).Tooltip("License")
+		}
+	})
+	ui.Row(c).Wrap().Gap(4).AlignItems(ui.Center).Margin(4, 0, 0).Children(func() {
+		if lead != nil {
+			lead()
+		}
 		if btn(c, "Check files", icoCheck, btnText).Tooltip(checkTip(p)).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				r, e := m.VerifyPackage(m.Context, id)
@@ -79,6 +91,10 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 				return "Revealed package folder: " + path, nil
 			})
 		}
+		if trail != nil {
+			ui.Spacer(c)
+			trail()
+		}
 	})
 	if checked {
 		devSubtle(c, fmt.Sprintf("%d entries · checked %s", result.Files, result.CheckedAt.Local().Format("2006-01-02 15:04:05")))
@@ -87,7 +103,7 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 		}
 	}
 	if p.Formula != "" {
-		devSubtle(c, "Shared Homebrew install · repair with brew reinstall "+p.Formula).Selectable()
+		mono(devSubtle(c, "brew reinstall "+p.Formula).Selectable()).Tooltip("Shared Homebrew install")
 	}
 }
 

@@ -243,7 +243,6 @@ func (a *app) devNewInstance(c *ui.Context) {
 	})
 	devCardWith(c, icoFolder, "Storage", "", nil, func() {
 		devField(c, "Data location", &d.dbDataDirectory, "Blank for app storage, or a new absolute directory")
-		devSubtle(c, "External locations keep data when the instance is removed. Existing data is not adopted.")
 	})
 	if btn(c, "Create instance", icoPlus, btnPrimary).AlignSelf(ui.Start).Disabled(d.busy || d.databaseTasks[d.dbID] != nil && d.databaseTasks[d.dbID].Running).Clicked() {
 		port, e := strconv.Atoi(d.dbPort)

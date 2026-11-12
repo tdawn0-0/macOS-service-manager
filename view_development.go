@@ -325,13 +325,10 @@ func (a *app) devTitle() (string, string) {
 // work going on, and the workspace-wide actions as icons.
 func (a *app) devTopBar(c *ui.Context) {
 	d := &a.dev
-	tk := theme.TokensOf(c)
-	title, meta := a.devTitle()
+	// The sidebar counts what the section holds: the bar only names it.
+	title, _ := a.devTitle()
 	ui.Row(c).Height(barHeight).Shrink(0).Padding(0, 12, 0, 20).AlignItems(ui.Center).Gap(8).DragWindow().Children(func() {
 		ui.Text(c, title).FontSize(15).FontWeight(600).SingleLine().Shrink(0)
-		if meta != "" {
-			ui.Text(c, meta).FontSize(textSmall).TextColor(tk.TextTertiary).SingleLine().MinWidth(0)
-		}
 		ui.Spacer(c)
 		if d.busy || a.backgroundTasksRunning() {
 			ui.Spinner(c).Size(14, 14)

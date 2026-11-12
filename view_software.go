@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"devbase/internal/devplatform"
 	"github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/display"
 	"github.com/lobehub/lobe-mygo/pkg/feedback"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
-	"devbase/internal/devplatform"
 )
 
 func softwareTitle(name string) string {
@@ -92,7 +92,7 @@ func (a *app) devSoftware(c *ui.Context) {
 	a.devPackageTasks(c)
 	if d.software == "java" {
 		a.devJavaInstallations(c)
-		devCardWith(c, icoDownload, "Install a JDK", "", nil, func() {
+		devCardWith(c, icoDownload, "Install a JDK from JetBrains", "", nil, func() {
 			a.devRuntimeCatalog(c)
 			a.devPackageReview(c)
 		})
@@ -137,49 +137,46 @@ func (a *app) devSoftware(c *ui.Context) {
 func (a *app) devInstalledPackage(c *ui.Context, id string, p devplatform.Package) {
 	d := &a.dev
 	devInset(c, func() {
-		ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Grow(1).MinWidth(160).Children(func() {
-				ui.Text(c, softwareTitle(p.Name)+" · "+p.Version).FontWeight(500).SingleLine().MinWidth(100)
-				if p.Formula != "" {
-					devTag(c, "Homebrew", display.TagColor(""))
-				}
-				if p.Name == "node" && id == d.state.NodeDefault {
-					display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
-				}
-				if p.Name == "java" && d.state.RuntimeDefaults[p.Name] == id {
-					display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
-				}
-			})
-			ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
-				if p.Name == "node" && id != d.state.NodeDefault {
-					if btn(c, "Set default", nil, btnDefault).Disabled(d.busy).Clicked() {
-						a.devTask(func(m *devplatform.Manager) (string, error) {
-							return "Default is Node.js " + p.Version, m.SetNodeDefault(m.Context, id)
-						})
-					}
-				}
-				if p.Name == "node" {
-					a.devNodeExecutable(c, id)
-				}
-				if p.Name == "java" {
-					a.devAdditionalRuntimeInstalled(c, id, p)
-				}
-			})
+		ui.Row(c).Gap(8).AlignItems(ui.Center).MinWidth(0).Children(func() {
+			ui.Text(c, softwareTitle(p.Name)+" · "+p.Version).FontWeight(500).SingleLine().MinWidth(100)
+			if p.Formula != "" {
+				devTag(c, "Homebrew", display.TagColor(""))
+			}
+			if p.Name == "node" && id == d.state.NodeDefault {
+				display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
+			}
+			if p.Name == "java" && d.state.RuntimeDefaults[p.Name] == id {
+				display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
+			}
 		})
-		devSubtle(c, "License: "+p.License)
-		a.devPackageIntegrity(c, id, p)
-		removeText := "Uninstall"
-		if p.Formula != "" {
-			removeText = "Remove from workspace"
-		}
-		if btn(c, removeText, icoTrash, btnDanger).AlignSelf(ui.Start).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
-			a.devTask(func(m *devplatform.Manager) (string, error) {
-				if p.Formula != "" {
-					return "Removed workspace registration. The shared Homebrew installation is kept.", m.Uninstall(m.Context, id)
+		a.devPackageIntegrity(c, id, p, func() {
+			if p.Name == "node" && id != d.state.NodeDefault {
+				if btn(c, "Set default", nil, btnDefault).Disabled(d.busy).Clicked() {
+					a.devTask(func(m *devplatform.Manager) (string, error) {
+						return "Default is Node.js " + p.Version, m.SetNodeDefault(m.Context, id)
+					})
 				}
-				return "Uninstalled " + p.Name, m.Uninstall(m.Context, id)
-			})
-		}
+			}
+			if p.Name == "node" {
+				a.devNodeExecutable(c, id)
+			}
+			if p.Name == "java" {
+				a.devAdditionalRuntimeInstalled(c, id, p)
+			}
+		}, func() {
+			removeText := "Uninstall"
+			if p.Formula != "" {
+				removeText = "Remove from workspace"
+			}
+			if btn(c, removeText, icoTrash, btnDanger).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					if p.Formula != "" {
+						return "Removed workspace registration. The shared Homebrew installation is kept.", m.Uninstall(m.Context, id)
+					}
+					return "Uninstalled " + p.Name, m.Uninstall(m.Context, id)
+				})
+			}
+		})
 	})
 }
 

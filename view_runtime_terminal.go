@@ -15,11 +15,10 @@ func (a *app) devNodeTerminal(c *ui.Context) {
 			d.nodeShell = 1
 		}
 	}
-	devSubtle(c, "Detects installed shells and enables new terminal and AI sessions.")
 	ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
 		if d.nodeShell == 1 {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Grow(1).MinWidth(0).Children(func() {
-				statusTag(c, "Enabled")
+				devStatusDot(c, "Succeeded")
 				ui.Text(c, "Enabled for detected shells").FontSize(textSmall).TextColor(c.Theme().Success).SingleLine().MinWidth(0)
 			})
 		} else if btn(c, "Enable in terminal", icoTerminal, btnPrimary).Tooltip("Configures installed zsh, Bash and fish, including non-interactive commands. Each folder runs its declared Node.js version, else the default.").Disabled(d.busy).Clicked() {

@@ -6,7 +6,6 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/display"
-	"github.com/lobehub/lobe-mygo/pkg/feedback"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"devbase/internal/devplatform"
 )
@@ -43,17 +42,6 @@ func (a *app) devHTTPS(c *ui.Context) {
 			})
 		}
 	})
-	devSubtle(c, "Each domain forwards to one local HTTP port. Save changes before Apply; upstream apps stay in your terminal or IDE.")
-	switch {
-	case dirty:
-		devHint(c, feedback.Warning, "Save or discard changes before applying the proxy.", "")
-	case state == "Pending":
-		devHint(c, feedback.Warning, "Saved changes are waiting for Apply proxy.", "")
-	case state == "Unknown":
-		devHint(c, feedback.Info, "Publication is unknown. Review and apply the saved configuration.", "")
-	case state == "Published":
-		devHint(c, feedback.Success, "Configuration published. Check DNS, certificates and upstream separately.", "")
-	}
 
 	devCardWith(c, icoRoute, "Rules", "", func() {
 		if btn(c, "Add rule", icoPlus, btnText).Clicked() {
@@ -63,12 +51,6 @@ func (a *app) devHTTPS(c *ui.Context) {
 		removeRule := -1
 		if len(d.proxyDraft) == 0 {
 			display.Empty(c, display.EmptyProps{Icon: icoRoute, Title: "No rules"})
-		} else {
-			ui.Row(c).Gap(8).Padding(0, 4).Children(func() {
-				ui.Text(c, "Domain name").FontSize(textCaption).FontWeight(500).TextColor(tk.TextTertiary).Grow(1).MinWidth(0)
-				ui.Text(c, "Forwards to").FontSize(textCaption).FontWeight(500).TextColor(tk.TextTertiary).Width(196).Shrink(0)
-				ui.Box(c).Width(64).Shrink(0)
-			})
 		}
 		for i := range d.proxyDraft {
 			row := &d.proxyDraft[i]
@@ -105,7 +87,6 @@ func (a *app) devHTTPS(c *ui.Context) {
 		if removeRule >= 0 {
 			d.proxyDraft = append(d.proxyDraft[:removeRule], d.proxyDraft[removeRule+1:]...)
 		}
-		devDivider(c, "Listener")
 		devFieldGrid(c, func() {
 			devField(c, "HTTPS listener port", &d.proxyListenerPort, "443")
 		})

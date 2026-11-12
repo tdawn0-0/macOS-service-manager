@@ -10,9 +10,6 @@ import (
 func (a *app) devRuntimeCatalog(c *ui.Context) {
 	d := &a.dev
 	name := d.software
-	if name == "java" {
-		devSubtle(c, "JDK downloads from the JetBrains catalog used by IDEA. Choose a distribution and version; review its source and license before installing.")
-	}
 	devFieldGrid(c, func() {
 		devChoice(c, "Version", &d.version, d.runtimeVersions[name])
 		devField(c, "Exact version", &d.version, "Refresh available versions")
@@ -46,7 +43,6 @@ func (a *app) devRuntimeCatalog(c *ui.Context) {
 func (a *app) devPython(c *ui.Context) {
 	d := &a.dev
 	devCardWith(c, icoTerminal, "uv", d.uvDescription, nil, func() {
-		devSubtle(c, "Python uses uv’s existing installation store. Uninstall removes the selected interpreter; virtual environments that reference it will need repair.")
 		devField(c, "uv executable", &d.uvPath, "/absolute/path/to/uv (optional)")
 		devButtonRow(c, func() {
 			if btn(c, "Use uv executable", icoCheck, btnDefault).Disabled(d.busy).Clicked() {
@@ -104,12 +100,7 @@ func (a *app) devPython(c *ui.Context) {
 			})
 		}
 	})
-	note := ""
-	if d.uvPin != "" {
-		note = "Global uv pin: " + d.uvPin
-	}
-	devCardWith(c, iconPackage, "Installed by uv", note, nil, func() {
-		devSubtle(c, "Set uv default updates the global uv Python pin. Directory pins and active virtual environments still take precedence; this does not replace the shell's python command.")
+	devCardWith(c, iconPackage, "Installed by uv", "", nil, func() {
 		if len(d.uvInstalled) == 0 {
 			devSubtle(c, "None installed")
 		}
@@ -183,11 +174,10 @@ func (a *app) devAdditionalRuntimeShell(c *ui.Context) {
 			d.runtimeShell[name] = 1
 		}
 	}
-	devSubtle(c, "Detects installed shells and enables new terminal and AI sessions.")
 	devButtonRow(c, func() {
 		if d.runtimeShell[name] == 1 {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Grow(1).MinWidth(0).Children(func() {
-				statusTag(c, "Enabled")
+				devStatusDot(c, "Succeeded")
 				ui.Text(c, "Enabled for detected shells").FontSize(textSmall).TextColor(c.Theme().Success).SingleLine().MinWidth(0)
 			})
 		} else if btn(c, "Enable in terminal", icoTerminal, btnPrimary).Disabled(a.dev.busy).Clicked() {

@@ -69,7 +69,7 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 				}
 				if row.Managed {
 					if p, ok := d.state.Packages[row.PackageID]; ok {
-						a.devPackageIntegrity(c, row.PackageID, p)
+						a.devPackageIntegrity(c, row.PackageID, p, nil, nil)
 					}
 				}
 				if selected := d.javaRemove; selected != nil && selected.ID == row.ID {

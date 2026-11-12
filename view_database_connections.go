@@ -124,7 +124,6 @@ func (a *app) devDatabaseConnections(c *ui.Context, instance devplatform.Instanc
 						}
 					}
 				})
-				devSubtle(c, "Connection profiles store no password. Enter credentials in your client.")
 				devButtonRow(c, func() {
 					if btn(c, "Save connection profile", icoSave, btnPrimary).Disabled(d.busy || a.databaseTaskRunning(instance.ID)).Clicked() {
 						p := d.profileDraft

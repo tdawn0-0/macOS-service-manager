@@ -125,7 +125,7 @@ func (a *app) devDiagnostics(c *ui.Context) {
 						color = display.TagSuccess
 					}
 					display.Tag(c, check.Status+" · "+check.Layer, display.TagProps{Color: color, Size: theme.Small})
-					ui.Text(c, check.Resource).FontWeight(600).SingleLine().Grow(1).MinWidth(0)
+					ui.Text(c, check.Resource).FontWeight(500).SingleLine().Grow(1).MinWidth(0)
 					if check.Target.Kind != "" && btn(c, "Open related setting", icoArrow, btnText).Disabled(d.busy).Clicked() {
 						a.openDiagnosticTarget(check.Target, false)
 					}

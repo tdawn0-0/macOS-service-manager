@@ -31,7 +31,7 @@ func (a *app) inspector(c *ui.Context) {
 func (a *app) bulkPane(c *ui.Context, n int) {
 	start, stop := a.bulkCounts()
 	ui.Column(c).Padding(0, 16).Gap(12).Children(func() {
-		ui.Text(c, fmt.Sprintf("%d items selected", n)).FontSize(16).FontWeight(650)
+		ui.Text(c, fmt.Sprintf("%d items selected", n)).FontSize(16).FontWeight(600)
 		ui.Row(c).Gap(8).Children(func() {
 			labeledButton(c, iconPlay, fmt.Sprintf("Start %d", start), true).Grow(1).Disabled(start == 0).OnClick(func() { a.bulk(true) })
 			labeledButton(c, iconStop, fmt.Sprintf("Stop %d", stop), false).Grow(1).Disabled(stop == 0).OnClick(func() { a.bulk(false) })
@@ -83,7 +83,7 @@ func (a *app) itemPane(c *ui.Context, it service.Item) {
 	ui.Column(c).Shrink(0).Padding(0, 16, 12).Gap(12).Children(func() {
 		// What it is.
 		ui.Column(c).MinWidth(0).Gap(2).Children(func() {
-			ui.Text(c, it.Name).FontSize(15).FontWeight(650).MaxLines(2).Selectable().Tooltip(it.Name)
+			ui.Text(c, it.Name).FontSize(15).FontWeight(600).MaxLines(2).Selectable().Tooltip(it.Name)
 			subtitle := it.Kind
 			if it.Owner != "" && it.Source == service.LoginItem {
 				if subtitle != "" {
@@ -304,7 +304,7 @@ func (a *app) infoGroup(c *ui.Context, title string, rows []service.Row) {
 	t := c.Theme()
 	ui.Column(c.Key(title)).Gap(6).Shrink(0).Children(func() {
 		if title != "" {
-			ui.Text(c, title).FontSize(textCaption).FontWeight(650).TextColor(t.TextMuted).Padding(0, 4)
+			ui.Text(c, title).FontSize(textCaption).FontWeight(600).TextColor(t.TextMuted).Padding(0, 4)
 		}
 		card(c).Gap(1).Dividers(1, hairline(t)).Children(func() {
 			for _, row := range rows {

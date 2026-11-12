@@ -31,7 +31,7 @@ func (a *app) editorDialog(c *ui.Context) {
 	ui.Modal(c, &e.open, func() {
 		ui.Column(c).Width(600).Gap(14).Children(func() {
 			ui.Column(c).Gap(2).Children(func() {
-				ui.Text(c, title).FontSize(16).FontWeight(650)
+				ui.Text(c, title).FontSize(16).FontWeight(600)
 				if subtitle != "" {
 					ui.Text(c, subtitle).FontSize(textSmall).TextColor(t.TextMuted).SingleLine()
 				}

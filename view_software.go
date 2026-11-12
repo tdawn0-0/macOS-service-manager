@@ -139,7 +139,7 @@ func (a *app) devInstalledPackage(c *ui.Context, id string, p devplatform.Packag
 	devInset(c, func() {
 		ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Grow(1).MinWidth(160).Children(func() {
-				ui.Text(c, softwareTitle(p.Name)+" · "+p.Version).FontWeight(600).SingleLine().MinWidth(100)
+				ui.Text(c, softwareTitle(p.Name)+" · "+p.Version).FontWeight(500).SingleLine().MinWidth(100)
 				if p.Formula != "" {
 					devTag(c, "Homebrew", display.TagColor(""))
 				}
@@ -287,7 +287,7 @@ func (a *app) devPackageReview(c *ui.Context) {
 		info := d.packagePreview
 		devInset(c, func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, softwareTitle(info.Package.Name)+" "+info.Package.Version).FontWeight(600).SingleLine().MinWidth(0)
+				ui.Text(c, softwareTitle(info.Package.Name)+" "+info.Package.Version).FontWeight(500).SingleLine().MinWidth(0)
 				if info.Installed {
 					statusTag(c, "Installed")
 				}

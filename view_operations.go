@@ -85,8 +85,8 @@ func (a *app) devOperations(c *ui.Context) {
 		if d.operationID == "" && len(d.operations) > 0 {
 			d.operationID = d.operations[0].ID
 		}
-		ui.Column(c).Width(228).Shrink(0).Background(tk.BgContainer).Children(func() {
-			ui.Scroll(c.Key("operations-list")).Grow(1).MinHeight(0).Padding(4, 8, 10).Children(func() {
+		ui.Column(c).Width(228).Shrink(0).Children(func() {
+			ui.Scroll(c.Key("operations-list")).Grow(1).MinHeight(0).Padding(4, 8, 12).Children(func() {
 				ui.Column(c).Gap(2).Children(func() {
 					masterGroup(c, "Tasks", nil)
 					if len(d.operations) == 0 {

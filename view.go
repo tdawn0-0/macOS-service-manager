@@ -34,13 +34,16 @@ func (a *app) view(c *ui.Context) {
 		c.After(logEvery)
 	}
 
+	// The whole window is frosted glass where the desktop shows through
+	// it; without, the theme's background stands in for the frost.
 	t := c.Theme()
+	g := glassOf(t)
 	if c.Vibrancy() {
 		c.Root().Background(ui.Transparent)
 	}
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
 		a.sidebar(c)
-		ui.Column(c).Grow(1).MinWidth(0).Background(t.Background).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 			if a.nav == navDevelopment {
 				a.developmentView(c)
 			} else {
@@ -49,7 +52,7 @@ func (a *app) view(c *ui.Context) {
 		})
 		if a.chosen.Len() > 0 {
 			ui.Column(c).Width(1).Background(hairline(t))
-			ui.Column(c).Width(336).Shrink(0).Background(t.Background).Children(func() { a.inspector(c) })
+			ui.Column(c).Width(336).Shrink(0).Background(g.sheet).Children(func() { a.inspector(c) })
 		}
 	})
 	a.editorDialog(c)
@@ -214,7 +217,7 @@ func plural(n int, one string) string {
 func (a *app) listPane(c *ui.Context) {
 	t := c.Theme()
 	ui.Row(c).Height(barHeight).Shrink(0).Padding(0, 10, 0, 18).AlignItems(ui.Center).Gap(6).DragWindow().Children(func() {
-		ui.Text(c, a.navTitle()).FontSize(15).FontWeight(650).SingleLine().Grow(1).MinWidth(0)
+		ui.Text(c, a.navTitle()).FontSize(15).FontWeight(600).SingleLine().Grow(1).MinWidth(0)
 		if a.loading() {
 			ui.Spinner(c).Label("Loading").Size(14, 14)
 		}
@@ -231,7 +234,7 @@ func (a *app) listPane(c *ui.Context) {
 	})
 	ui.Column(c).Height(1).Shrink(0).Background(hairline(t))
 	for _, e := range a.errors() {
-		ui.Row(c).Shrink(0).Margin(8, 12, 0).Padding(7, 10).Gap(8).Radius(8).Background(t.Danger.Alpha(0.1)).TextColor(t.Danger).Children(func() {
+		ui.Row(c).Shrink(0).Margin(8, 12, 0).Padding(8, 12).Gap(8).Radius(8).Background(t.Danger.Alpha(0.1)).TextColor(t.Danger).Children(func() {
 			ui.Icon(c, iconWarn).FontSize(13).AlignSelf(ui.Start).Margin(1, 0, 0)
 			ui.Text(c, e).FontSize(textSmall).Grow(1).MinWidth(0)
 		})
@@ -242,7 +245,7 @@ func (a *app) listPane(c *ui.Context) {
 		return
 	}
 	bulk := a.chosen.Len() > 1
-	ui.List(c, &a.list, len(a.rows)).Grow(1).MinHeight(0).Padding(4, 8, 10).Rows(func(r ui.ListRow) {
+	ui.List(c, &a.list, len(a.rows)).Grow(1).MinHeight(0).Padding(4, 8, 12).Background(glassOf(t).sheet).Rows(func(r ui.ListRow) {
 		e := a.rows[r.Index]
 		if e.header {
 			a.sectionHeader(r.Context, e)
@@ -261,7 +264,7 @@ func (a *app) restrictionNote(c *ui.Context) {
 		return
 	}
 	t := c.Theme()
-	ui.Column(c).Shrink(0).Margin(8, 12, 0).Padding(9, 10).Gap(8).Radius(8).Background(t.Text.Alpha(0.05)).Children(func() {
+	ui.Column(c).Shrink(0).Margin(8, 12, 0).Padding(8, 12).Gap(8).Radius(8).Background(glassOf(t).inset).Children(func() {
 		ui.Row(c).Gap(8).Children(func() {
 			ui.Icon(c, iconLock).FontSize(13).TextColor(t.TextMuted).AlignSelf(ui.Start).Margin(1, 0, 0)
 			ui.Text(c, st.limit.Text).FontSize(textSmall).TextColor(t.TextMuted).Grow(1).MinWidth(0)
@@ -298,10 +301,10 @@ func (a *app) addButton(c *ui.Context) {
 // sectionHeader heads the items of a source, in the list of all of them.
 func (a *app) sectionHeader(c *ui.Context, e listRow) {
 	t := c.Theme()
-	ui.Row(c).Height(30).Padding(0, 10).Gap(7).AlignItems(ui.Center).Background(t.Background).Children(func() {
+	ui.Row(c).Height(28).Padding(0, 10).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Icon(c, sourceIcon(e.src)).FontSize(12).TextColor(t.TextMuted)
-		ui.Text(c, e.src.Title()).FontSize(textCaption).FontWeight(650).TextColor(t.TextMuted).Grow(1)
-		ui.Text(c, fmt.Sprint(e.count)).FontSize(textCaption).TextColor(t.TextMuted).Opacity(0.8)
+		ui.Text(c, e.src.Title()).FontSize(textCaption).FontWeight(500).TextColor(t.TextMuted).Grow(1)
+		mono(ui.Text(c, fmt.Sprint(e.count)).FontSize(textCaption).TextColor(t.TextMuted).Opacity(0.8))
 	})
 }
 

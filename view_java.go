@@ -30,7 +30,7 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 			devInset(c, func() {
 				ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
 					ui.Row(c).Gap(8).AlignItems(ui.Center).Grow(1).MinWidth(160).Children(func() {
-						ui.Text(c, row.Label()).FontWeight(600).SingleLine().MinWidth(100)
+						ui.Text(c, row.Label()).FontWeight(500).SingleLine().MinWidth(100)
 						if d.state.RuntimeDefaults["java"] == row.ID || row.PackageID != "" && d.state.RuntimeDefaults["java"] == row.PackageID {
 							display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
 						}

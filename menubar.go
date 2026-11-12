@@ -90,7 +90,7 @@ func (a *app) menubarView(c *ui.Context, openWindow func()) {
 	c.Root().Background(ui.Transparent)
 	box := ui.Column(c).Grow(1).MinHeight(0)
 	if !c.Vibrancy() {
-		box.Background(tk.BgLayout).Radius(12).Border(1, tk.BorderSecondary)
+		box.Background(tk.BgLayout).Radius(12).Border(1, hairline(c.Theme()))
 	}
 	box.Children(func() {
 		a.panelHeader(c)
@@ -120,7 +120,7 @@ func (a *app) panelHeader(c *ui.Context) {
 	ui.Row(c).Shrink(0).Padding(12, 10, 10, 14).AlignItems(ui.Center).Gap(10).Children(func() {
 		iconTile(c, iconPackage, tk.Primary, 30)
 		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
-			ui.Text(c, "Devbase").FontSize(14).FontWeight(650).SingleLine()
+			ui.Text(c, "Devbase").FontSize(14).FontWeight(500).SingleLine()
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 				running := a.panelRunning()
 				status := "Stopped"
@@ -158,7 +158,7 @@ func (a *app) panelSection(c *ui.Context, key, title, count string, folds bool, 
 		}
 		head.Children(func() {
 			ui.Row(c).Grow(1).MinWidth(0).Gap(6).AlignItems(ui.Center).Justify(ui.Start).Children(func() {
-				ui.Text(c, title).FontSize(textSmall).FontWeight(600).TextColor(tk.TextSecondary).SingleLine().Shrink(0)
+				ui.Text(c, title).FontSize(textSmall).FontWeight(500).TextColor(tk.TextSecondary).SingleLine().Shrink(0)
 				if count != "" {
 					ui.Text(c, count).FontSize(textCaption).TextColor(tk.TextTertiary).SingleLine()
 				}
@@ -263,7 +263,8 @@ func (a *app) panelDatabase(c *ui.Context, instance devplatform.Instance, openWi
 	case "Unknown", "Starting", "Stopping", "Restarting":
 		busy = true
 	}
-	icon, tint := softwareMeta(instance.Kind)
+	icon, _ := softwareMeta(instance.Kind)
+	tint := theme.TokensOf(c).TextSecondary
 	sub := softwareTitle(instance.Kind) + " · :" + strconv.Itoa(instance.Port)
 	if news := devNews(status); news != "" {
 		sub = news + " · " + sub
@@ -356,7 +357,7 @@ func (a *app) panelProxy(c *ui.Context, openWindow func()) {
 	on := status == "Running"
 	panelRow(c, "menu-proxy", func() {
 		ui.Box(c).Size(26, 26).Shrink(0).Children(func() {
-			iconTile(c, icoShield, ui.RGB(22, 119, 255), 26)
+			iconTile(c, icoShield, theme.TokensOf(c).TextSecondary, 26)
 			ui.Box(c).Absolute().Right(-2).Bottom(-2).Size(10, 10).Radius(5).Center().Background(theme.TokensOf(c).BgContainer).Children(func() {
 				devStatusDot(c, status)
 			})

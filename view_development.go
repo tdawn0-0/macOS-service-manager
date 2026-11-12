@@ -249,30 +249,31 @@ func (a *app) developmentView(c *ui.Context) {
 	if d.tab < devTabSoftware || d.tab > devTabHTTPS {
 		d.tab = devTabSoftware
 	}
-	tk := theme.TokensOf(c)
-	ui.Column(c).Grow(1).MinWidth(0).Background(tk.BgLayout).Children(func() {
+	g := glassOf(c.Theme())
+	// The bars and the list lie on the window's frost, the page on a sheet.
+	ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 		a.devTopBar(c)
 		ui.Column(c).Height(1).Shrink(0).Background(hairline(c.Theme()))
 		switch {
 		case d.operationsOpen:
 			a.devOperations(c)
 		case d.diagnosticsOpen:
-			ui.Scroll(c.Key("development-diagnostics")).TrackScroll(&d.diagnosticScroll).Grow(1).MinHeight(0).Padding(22, 28, 28).Children(func() {
-				ui.Column(c).Gap(12).MaxWidth(880).Children(func() { a.devDiagnostics(c) })
+			ui.Scroll(c.Key("development-diagnostics")).TrackScroll(&d.diagnosticScroll).Grow(1).MinHeight(0).Padding(24, 28, 28).Background(g.sheet).Children(func() {
+				ui.Column(c).Gap(16).MaxWidth(880).Children(func() { a.devDiagnostics(c) })
 			})
 		default:
 			ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
 				// HTTPS is one table: it has no list beside it.
 				if d.tab != devTabHTTPS {
-					ui.Column(c).Width(228).Shrink(0).Background(tk.BgContainer).Children(func() {
-						ui.Scroll(c.Key("dev-master-"+strconv.Itoa(d.tab))).Grow(1).MinHeight(0).Padding(4, 8, 10).Children(func() {
+					ui.Column(c).Width(228).Shrink(0).Children(func() {
+						ui.Scroll(c.Key("dev-master-"+strconv.Itoa(d.tab))).Grow(1).MinHeight(0).Padding(4, 8, 12).Children(func() {
 							ui.Column(c).Gap(2).Children(func() { a.devMaster(c) })
 						})
 					})
 					ui.Column(c).Width(1).Background(hairline(c.Theme()))
 				}
-				ui.Scroll(c.Key(fmt.Sprintf("dev-detail-%d", d.tab))).TrackScroll(&d.detailScroll[d.tab]).Grow(1).MinWidth(0).MinHeight(0).Padding(22, 28, 28).Children(func() {
-					ui.Column(c).Gap(14).MaxWidth(880).Disabled(d.busy).Children(func() {
+				ui.Scroll(c.Key(fmt.Sprintf("dev-detail-%d", d.tab))).TrackScroll(&d.detailScroll[d.tab]).Grow(1).MinWidth(0).MinHeight(0).Padding(24, 28, 28).Background(g.sheet).Children(func() {
+					ui.Column(c).Gap(16).MaxWidth(880).Disabled(d.busy).Children(func() {
 						switch d.tab {
 						case devTabSoftware:
 							a.devSoftware(c)
@@ -326,8 +327,8 @@ func (a *app) devTopBar(c *ui.Context) {
 	d := &a.dev
 	tk := theme.TokensOf(c)
 	title, meta := a.devTitle()
-	ui.Row(c).Height(barHeight).Shrink(0).Padding(0, 12, 0, 20).AlignItems(ui.Center).Gap(8).Background(tk.BgContainer).DragWindow().Children(func() {
-		ui.Text(c, title).FontSize(15).FontWeight(650).SingleLine().Shrink(0)
+	ui.Row(c).Height(barHeight).Shrink(0).Padding(0, 12, 0, 20).AlignItems(ui.Center).Gap(8).DragWindow().Children(func() {
+		ui.Text(c, title).FontSize(15).FontWeight(600).SingleLine().Shrink(0)
 		if meta != "" {
 			ui.Text(c, meta).FontSize(textSmall).TextColor(tk.TextTertiary).SingleLine().MinWidth(0)
 		}
@@ -349,7 +350,7 @@ func (a *app) devTopBar(c *ui.Context) {
 				d.cancel()
 			}
 		}
-		ui.Box(c).Width(1).Height(16).Margin(0, 4).Background(tk.BorderSecondary)
+		ui.Box(c).Width(1).Height(16).Margin(0, 4).Background(hairline(c.Theme()))
 		muted := c.Theme().TextMuted
 		if iconButton(c, icoRotate, "Refresh", muted).Disabled(d.busy).Clicked() {
 			d.nodeReleasesTried, d.nodeReleasesRefresh = false, true
@@ -370,7 +371,7 @@ func (a *app) devStatusBar(c *ui.Context) {
 	d := &a.dev
 	tk := theme.TokensOf(c)
 	ui.Column(c).Height(1).Shrink(0).Background(hairline(c.Theme()))
-	ui.Row(c).Height(36).Shrink(0).Padding(0, 10, 0, 18).Gap(10).AlignItems(ui.Center).Background(tk.BgContainer).Children(func() {
+	ui.Row(c).Height(36).Shrink(0).Padding(0, 12, 0, 20).Gap(8).AlignItems(ui.Center).Children(func() {
 		status, kind := "", feedback.BadgeDefault
 		if a.backgroundTasksRunning() {
 			status, kind = "Background tasks", feedback.BadgeProcessing
@@ -392,7 +393,7 @@ func (a *app) devStatusBar(c *ui.Context) {
 		}
 	})
 	if d.showResult {
-		ui.Row(c).Shrink(0).Padding(0, 18, 12).Background(tk.BgContainer).Children(func() {
+		ui.Row(c).Shrink(0).Padding(0, 20, 12).Children(func() {
 			ui.TextArea(c, &d.output).Lines(3, 5).ReadOnly(true).Label("Operation result").Grow(1).MinWidth(0)
 		})
 	}
@@ -408,8 +409,8 @@ func devHeading(c *ui.Context, title, meta string) {
 func devDivider(c *ui.Context, title string) {
 	tk := theme.TokensOf(c)
 	ui.Row(c).Gap(10).AlignItems(ui.Center).Margin(8, 0, 0).Children(func() {
-		ui.Text(c, title).FontSize(textSmall).FontWeight(600).TextColor(tk.TextSecondary).SingleLine().Shrink(0)
-		ui.Box(c).Height(1).Grow(1).Background(tk.BorderSecondary)
+		ui.Text(c, title).FontSize(textSmall).FontWeight(500).TextColor(tk.TextSecondary).SingleLine().Shrink(0)
+		ui.Box(c).Height(1).Grow(1).Background(hairline(c.Theme()))
 	})
 }
 
@@ -417,7 +418,7 @@ func devDivider(c *ui.Context, title string) {
 // leave or refresh it at the end of the same row.
 func devPaneHeader(c *ui.Context, title string, buttons func()) {
 	ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Margin(0, 0, 6).Children(func() {
-		ui.Text(c, title).FontSize(20).FontWeight(650).TextColor(theme.TokensOf(c).TextHeading).Grow(1).MinWidth(220)
+		ui.Text(c, title).FontSize(20).FontWeight(600).TextColor(theme.TokensOf(c).TextHeading).Grow(1).MinWidth(220)
 		buttons()
 	})
 }
@@ -446,19 +447,20 @@ func devStatusDot(c *ui.Context, status string) {
 // it has one, its name, and a word at its end only when the word is news.
 func devListEntry(c *ui.Context, label, title, status, trailing string, selected bool) bool {
 	tk := theme.TokensOf(c)
-	b := ui.ButtonBase(c).Label(label).Height(34).Padding(0, 10).Radius(tk.BorderRadius).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+	g := glassOf(c.Theme())
+	b := ui.ButtonBase(c).Label(label).Height(32).Padding(0, 8).Radius(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 	switch {
 	case selected:
-		b.Background(tk.FillSecondary)
+		b.Background(g.selected)
 	case b.Hovered():
-		b.Background(tk.FillTertiary)
+		b.Background(g.hover)
 	}
 	b.Children(func() {
-		ui.Row(c).Grow(1).MinWidth(0).AlignItems(ui.Center).Gap(9).Children(func() {
+		ui.Row(c).Grow(1).MinWidth(0).AlignItems(ui.Center).Gap(8).Children(func() {
 			if status != "" {
 				devStatusDot(c, status)
 			}
-			ui.Text(c, title).FontWeight(map[bool]int{true: 600, false: 400}[selected]).SingleLine().Grow(1).MinWidth(0)
+			ui.Text(c, title).FontWeight(map[bool]int{true: 500, false: 400}[selected]).SingleLine().Grow(1).MinWidth(0)
 			if trailing != "" {
 				ui.Text(c, trailing).FontSize(textCaption).TextColor(tk.TextTertiary).SingleLine().Shrink(0)
 			}

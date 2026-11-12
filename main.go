@@ -55,11 +55,12 @@ func main() {
 			Height:    720,
 			MinWidth:  minWidth,
 			MinHeight: minHeight,
-			// The sidebar goes up under the window controls, over the
-			// desktop's material; the title bar is the top of each pane.
+			// The whole window is frosted glass over the desktop; the
+			// sidebar goes up under the window controls, and the title bar
+			// is the top of each pane.
 			TitleBarStyle:  mygo.TitleBarHiddenInset,
 			TitleBarHeight: barHeight,
-			Vibrancy:       mygo.VibrancySidebar,
+			Vibrancy:       mygo.VibrancyUnderWindow,
 			// Opens where the user left it last time.
 			StateKey: "main",
 			Content:  ui.View(a.view),

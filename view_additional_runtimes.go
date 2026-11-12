@@ -117,7 +117,7 @@ func (a *app) devPython(c *ui.Context) {
 			r := r
 			devInset(c, func() {
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, r.Key).FontWeight(600).SingleLine().MinWidth(0)
+					ui.Text(c, r.Key).FontWeight(500).SingleLine().MinWidth(0)
 					if d.uvPin == r.Key {
 						display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
 					}

@@ -364,7 +364,7 @@ func (a *app) guideWelcome(c *ui.Context) {
 	}
 	ui.Column(c).Grow(1).MinHeight(0).Padding(0, 28, 24).AlignItems(ui.Center).Children(func() {
 		ui.Image(c, guideIcon()).Size(84, 84).Shrink(0)
-		ui.Text(c, "Allow Full Disk Access").FontSize(20).FontWeight(700).Margin(10, 0, 4).TextAlign(ui.Center)
+		ui.Text(c, "Allow Full Disk Access").FontSize(20).FontWeight(600).Margin(10, 0, 4).TextAlign(ui.Center)
 		ui.Text(c, "Needed to list every login item").TextColor(t.TextMuted).TextAlign(ui.Center)
 		ui.Column(c).Grow(1)
 		action.Button(c, "Allow…", action.ButtonProps{Variant: action.Primary, Size: theme.Middle}).Margin(0, 0, 10).OnClick(func() { a.openRestrictionSettings(a.guide.src) })
@@ -378,10 +378,10 @@ func (a *app) guideSidecar(c *ui.Context) {
 	ui.Column(c).Grow(1).MinHeight(0).Padding(0, 20, 18).AlignItems(ui.Center).Children(func() {
 		if a.appPath != "" {
 			a.dragTile(c)
-			ui.Text(c, "Drag into the list").FontSize(15).FontWeight(650).Margin(14, 0, 4).TextAlign(ui.Center)
+			ui.Text(c, "Drag into the list").FontSize(15).FontWeight(600).Margin(14, 0, 4).TextAlign(ui.Center)
 		} else {
 			ui.Image(c, guideIcon()).Size(84, 84).Shrink(0)
-			ui.Text(c, "Add this app with the + button").FontSize(15).FontWeight(650).Margin(14, 0, 4).TextAlign(ui.Center)
+			ui.Text(c, "Add this app with the + button").FontSize(15).FontWeight(600).Margin(14, 0, 4).TextAlign(ui.Center)
 		}
 		ui.Column(c).Grow(1)
 		if a.guide.settingsOpen {
@@ -414,7 +414,7 @@ func (a *app) guideDone(c *ui.Context) {
 		ui.Row(c).Size(56, 56).Center().Radius(28).Background(t.Success).Children(func() {
 			ui.Icon(c, iconCheck).FontSize(30).TextColor(white)
 		})
-		ui.Text(c, "Full Disk Access is on").FontSize(15).FontWeight(650).Margin(14, 0, 4)
+		ui.Text(c, "Full Disk Access is on").FontSize(15).FontWeight(600).Margin(14, 0, 4)
 	})
 }
 

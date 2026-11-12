@@ -33,7 +33,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 	if listener == 0 {
 		listener = 443
 	}
-	pageHeader(c, icoShield, ui.RGB(22, 119, 255), "HTTPS proxy rules", fmt.Sprintf("%s · listener :%d", plural(len(d.state.ProxyRules), "rule"), listener), func() {
+	pageHeader(c, icoShield, ui.RGB(10, 132, 255), "HTTPS proxy rules", fmt.Sprintf("%s · listener :%d", plural(len(d.state.ProxyRules), "rule"), listener), func() {
 		statusTag(c, state)
 	}, func() {
 		if btn(c, "Apply proxy", icoPlay, btnPrimary).Disabled(d.busy || dirty).Clicked() {
@@ -64,9 +64,9 @@ func (a *app) devHTTPS(c *ui.Context) {
 		if len(d.proxyDraft) == 0 {
 			display.Empty(c, display.EmptyProps{Icon: icoRoute, Title: "No rules"})
 		} else {
-			ui.Row(c).Gap(8).Padding(0, 2).Children(func() {
+			ui.Row(c).Gap(8).Padding(0, 4).Children(func() {
 				ui.Text(c, "Domain name").FontSize(textCaption).FontWeight(500).TextColor(tk.TextTertiary).Grow(1).MinWidth(0)
-				ui.Text(c, "Forwards to 127.0.0.1:").FontSize(textCaption).FontWeight(500).TextColor(tk.TextTertiary).Width(150).Shrink(0)
+				ui.Text(c, "Forwards to").FontSize(textCaption).FontWeight(500).TextColor(tk.TextTertiary).Width(196).Shrink(0)
 				ui.Box(c).Width(64).Shrink(0)
 			})
 		}
@@ -74,8 +74,13 @@ func (a *app) devHTTPS(c *ui.Context) {
 			row := &d.proxyDraft[i]
 			ui.Column(c).Gap(6).Children(func() {
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					ui.TextInput(c, &row.Domain).Placeholder("app.test").Label("Domain").Grow(1).MinWidth(0)
-					ui.TextInput(c, &row.LocalPort).Placeholder("3000").Label("Local port").Width(150).Shrink(0)
+					mono(ui.TextInput(c, &row.Domain).Placeholder("app.test").Label("Domain").Grow(1).MinWidth(0))
+					// The route: the domain goes to a port of this Mac.
+					ui.Row(c).Width(196).Shrink(0).Gap(8).AlignItems(ui.Center).Children(func() {
+						ui.Icon(c, icoArrow).FontSize(14).TextColor(tk.TextQuaternary).Shrink(0)
+						mono(ui.Text(c, "127.0.0.1:").FontSize(textSmall).TextColor(tk.TextTertiary).SingleLine().Shrink(0))
+						mono(ui.TextInput(c, &row.LocalPort).Placeholder("3000").Label("Local port").Grow(1).MinWidth(0))
+					})
 					ui.Row(c).Width(64).Shrink(0).Gap(4).Justify(ui.End).Children(func() {
 						if !dirty && iconButton(c, icoLink, "Open HTTPS URL", tk.TextSecondary).Clicked() {
 							url := "https://" + row.Domain

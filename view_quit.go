@@ -114,7 +114,7 @@ func (a *app) quitDialog(c *ui.Context) {
 	width, height := c.Size()
 	if ui.Modal(c, &q.open, func() {
 		ui.Column(c).Width(min(float32(620), width-48)).Gap(12).Children(func() {
-			ui.Text(c, "Quit Devbase?").FontSize(18).FontWeight(650)
+			ui.Text(c, "Quit Devbase?").FontSize(18).FontWeight(600)
 			ui.Scroll(c).MaxHeight(height - 200).Children(func() {
 				ui.Column(c).Gap(8).Children(func() {
 					if a.dev.proxyDraftDirty() || a.editor.open {
@@ -133,7 +133,7 @@ func (a *app) quitDialog(c *ui.Context) {
 						}
 					}
 					if q.plan != nil {
-						ui.Text(c, fmt.Sprintf("Stop scope: %d managed databases", len(q.plan.Instances))).FontSize(textSmall).FontWeight(600)
+						ui.Text(c, fmt.Sprintf("Stop scope: %d managed databases", len(q.plan.Instances))).FontSize(textSmall).FontWeight(500)
 						for _, i := range q.plan.Instances {
 							ui.Text(c, "Database · "+i.ID+" · "+softwareTitle(i.Name)).FontSize(textSmall)
 						}

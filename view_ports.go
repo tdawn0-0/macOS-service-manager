@@ -32,7 +32,7 @@ func (a *app) devPortResult(c *ui.Context, port int) {
 	tk := theme.TokensOf(c)
 	devInset(c, func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, fmt.Sprintf("Port %d", port)).FontSize(textSmall).FontWeight(600)
+			ui.Text(c, fmt.Sprintf("Port %d", port)).FontSize(textSmall).FontWeight(500)
 			statusTag(c, r.Status)
 		})
 		for _, listener := range r.Listeners {

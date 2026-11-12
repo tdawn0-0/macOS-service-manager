@@ -132,6 +132,8 @@ func emptyState() State {
 type Manager struct {
 	shellAvailable func(string) bool // Test override of installed-shell detection.
 	brewCellar     string            // Test fixture override; production uses Apple Silicon Homebrew's Cellar.
+	// FetchNodeReleases overrides where the release index is read; tests set it.
+	FetchNodeReleases func(context.Context) ([]NodeRelease, error)
 	initialization *initializationContext
 	databaseWork   *databaseWorkContext
 	operation      *operationWriter

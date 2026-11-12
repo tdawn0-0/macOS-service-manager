@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,6 +11,26 @@ import (
 
 	"devbase/internal/devplatform"
 )
+// nodeFixtureReleases returns the fixed Node.js release list used by tests.
+func nodeFixtureReleases() []devplatform.NodeRelease {
+	return []devplatform.NodeRelease{
+		{Version: "24.1.0"},
+		{Version: "22.14.0", LTS: "Jod"},
+		{Version: "20.19.0", LTS: "Iron"},
+		{Version: "18.20.8", LTS: "Hydrogen"},
+	}
+}
+
+func stubNodeReleases(h *devUIHarness) {
+	base := h.a.dev.managerFactory
+	h.a.dev.managerFactory = func() *devplatform.Manager {
+		m := base()
+		m.FetchNodeReleases = func(context.Context) ([]devplatform.NodeRelease, error) {
+			return nodeFixtureReleases(), nil
+		}
+		return m
+	}
+}
 
 // seedNodeWorkspace writes installed Node.js versions and a fresh copy of
 // nodejs.org's release list, so that nothing here needs the network.
@@ -34,11 +55,8 @@ func seedNodeWorkspace(t *testing.T, h *devUIHarness, versions ...string) {
 		}
 	}
 	write("state.json", state)
-	write("cache/node-index.json", map[string]any{"fetchedAt": time.Now().UTC(), "releases": []devplatform.NodeRelease{
-		{Version: "24.1.0"}, {Version: "22.14.0", LTS: "Jod"}, {Version: "20.19.0", LTS: "Iron"}, {Version: "18.20.8", LTS: "Hydrogen"},
-	}})
+	write("cache/node-index.json", map[string]any{"fetchedAt": time.Now().UTC(), "releases": nodeFixtureReleases()})
 }
-
 // drain runs what background work posted, until cond holds.
 func (h *devUIHarness) drain(cond func() bool) {
 	h.t.Helper()
@@ -57,6 +75,7 @@ func (h *devUIHarness) drain(cond func() bool) {
 func TestUINodeVersionsListDefaultAliasesAndTerminal(t *testing.T) {
 	for _, size := range [][2]int{{1120, 720}, {900, 520}} {
 		h := newDevUIHarnessSize(t, size[0], size[1], false)
+		stubNodeReleases(h)
 		seedNodeWorkspace(t, h, "20.19.0", "22.14.0")
 		h.click("Refresh") // reads the state written above
 		h.a.dev.nodeReleasesTried, h.a.dev.nodeReleasesRefresh = false, false

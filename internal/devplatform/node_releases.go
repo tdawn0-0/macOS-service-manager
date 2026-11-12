@@ -112,7 +112,11 @@ func (m *Manager) NodeReleases(ctx context.Context, refresh bool) (releases []No
 			return cached.Releases, false, nil
 		}
 	}
-	fresh, e := fetchNodeReleases(ctx)
+	source := m.FetchNodeReleases
+	if source == nil {
+		source = fetchNodeReleases
+	}
+	fresh, e := source(ctx)
 	if e != nil {
 		if haveCache {
 			return cached.Releases, true, nil

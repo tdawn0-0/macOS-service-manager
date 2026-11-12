@@ -5,7 +5,6 @@ PostgreSQL 通过 Apple Silicon Homebrew core 的版本公式管理。Java 使�
 | 软件 | 当前目录版本 | 发行来源 | 目录记录的许可 |
 | --- | --- | --- | --- |
 | Java | JetBrains 列表中的 macOS arm64 非预览发行版 | [JetBrains JDK 列表](https://download.jetbrains.com/jdk/feed/v1/jdks.json)，下载链接指向相应发行方 | 各发行版许可不同，以源站条款及包内许可为准 |
-| Go | 官方 macOS arm64 稳定版本 | [Go 官方归档](https://go.dev/dl/) | BSD-3-Clause 及包内组件许可 |
 | Python | uv 目录提供的 macOS arm64 版本 | [uv Python 管理](https://docs.astral.sh/uv/guides/install-python/) | 以解释器发行包内许可为准 |
 | Node.js | 22.14.0、20.19.0 等精确版本 | [Node.js 官方归档](https://nodejs.org/dist/) | MIT 及包内组件许可 |
 | MySQL | 8.4.4 | [MySQL 官方归档](https://cdn.mysql.com/archives/mysql-8.4/) | GPL-2.0 及包内组件许可 |

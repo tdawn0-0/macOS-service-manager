@@ -178,7 +178,7 @@ func TestRuntimeShellRemembersCustomLocations(t *testing.T) {
 	if _, err := m.DisableNodeShell(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{filepath.Join(zdot, ".zshenv"), filepath.Join(zdot, ".zprofile"), filepath.Join(zdot, ".zshrc"), filepath.Join(xdg, "fish", "conf.d", "service-manager.fish")} {
+	for _, path := range []string{filepath.Join(zdot, ".zshenv"), filepath.Join(zdot, ".zprofile"), filepath.Join(zdot, ".zshrc"), filepath.Join(xdg, "fish", "conf.d", "devbase.fish")} {
 		b, err := os.ReadFile(path)
 		if err != nil || bytes.Contains(b, []byte(nodeBlockBegin)) {
 			t.Fatalf("left stale config %s: %s %v", path, b, err)
@@ -239,5 +239,83 @@ func TestBashNodeToolsFollowDirectoryChanges(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil || string(out) != strings.Repeat("20.19.0\n", 3) {
 		t.Fatalf("%v %q", err, out)
+	}
+}
+
+func TestFishMigratesLegacyServiceManagerSnippetAndCleansRetiredGoBlocks(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := shellLinkFixture(t)
+	m.shellAvailable = func(s string) bool { return s == "fish" }
+
+	fishConfDir := filepath.Join(m.Home, ".config", "fish", "conf.d")
+	if err := os.MkdirAll(fishConfDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	legacyFishPath := filepath.Join(fishConfDir, "service-manager.fish")
+	devbaseFishPath := filepath.Join(fishConfDir, "devbase.fish")
+
+	legacyNodeBlock := "# BEGIN Service Manager node\nsome legacy node\n# END Service Manager node\n"
+	legacyGoBlock := "# BEGIN Devbase go\nsome legacy go\n# END Devbase go\n"
+	userKeepLine := "set -gx USER_FISH_KEEP 1\n"
+
+	initialLegacyContent := legacyNodeBlock + legacyGoBlock + userKeepLine
+	if err := os.WriteFile(legacyFishPath, []byte(initialLegacyContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Also create a dummy init.sh and init.fish in runtimes/go to verify ConfigureRuntimeShell(ctx, "go", false) cleans them
+	goRuntimeDir := filepath.Join(m.Root, "runtimes", "go")
+	if err := os.MkdirAll(goRuntimeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	goInitSh := filepath.Join(goRuntimeDir, "init.sh")
+	goInitFish := filepath.Join(goRuntimeDir, "init.fish")
+	if err := os.WriteFile(goInitSh, []byte("# dummy go init\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(goInitFish, []byte("# dummy go fish\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. EnableNodeShell should populate devbase.fish and strip node block from service-manager.fish
+	if _, err := m.EnableNodeShell(ctx); err != nil {
+		t.Fatalf("EnableNodeShell failed: %v", err)
+	}
+
+	devbaseFishBytes, err := os.ReadFile(devbaseFishPath)
+	if err != nil {
+		t.Fatalf("failed reading devbase.fish: %v", err)
+	}
+	if !bytes.Contains(devbaseFishBytes, []byte(nodeBlockBegin)) {
+		t.Fatalf("devbase.fish missing active node block: %s", devbaseFishBytes)
+	}
+
+	// 2. ConfigureRuntimeShell(ctx, "go", false) should clean go block from service-manager.fish and delete runtimes/go scripts
+	if err := m.ConfigureRuntimeShell(ctx, "go", false); err != nil {
+		t.Fatalf("ConfigureRuntimeShell(go, false) failed: %v", err)
+	}
+
+	legacyFishBytes, err := os.ReadFile(legacyFishPath)
+	if err != nil {
+		t.Fatalf("failed reading service-manager.fish: %v", err)
+	}
+	if bytes.Contains(legacyFishBytes, []byte("node")) || bytes.Contains(legacyFishBytes, []byte("go")) {
+		t.Fatalf("service-manager.fish still contains managed blocks: %s", legacyFishBytes)
+	}
+	if !bytes.Contains(legacyFishBytes, []byte("set -gx USER_FISH_KEEP 1")) {
+		t.Fatalf("service-manager.fish lost user keep line: %s", legacyFishBytes)
+	}
+
+	if _, err := os.Stat(goInitSh); !os.IsNotExist(err) {
+		t.Fatalf("expected go init.sh to be removed, got err: %v", err)
+	}
+	if _, err := os.Stat(goInitFish); !os.IsNotExist(err) {
+		t.Fatalf("expected go init.fish to be removed, got err: %v", err)
+	}
+
+	// 3. ConfigureRuntimeShell(ctx, "go", true) must still fail with "unsupported runtime"
+	if err := m.ConfigureRuntimeShell(ctx, "go", true); err == nil || !strings.Contains(err.Error(), "unsupported runtime") {
+		t.Fatalf("expected unsupported runtime error for go enable, got %v", err)
 	}
 }

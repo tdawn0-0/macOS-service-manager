@@ -31,6 +31,10 @@ func (a *app) pollDevStatus() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		result := m.Snapshot(ctx, s)
+		pubState, pubErr := m.ProxyPublicationState()
+		if pubErr != nil || pubState == "" {
+			pubState = "Unknown"
+		}
 		a.post(func() {
 			a.dev.statusPolling = false
 			a.dev.statusLast = time.Now()
@@ -38,6 +42,7 @@ func (a *app) pollDevStatus() {
 				return
 			}
 			a.dev.statuses = result.States
+			a.dev.proxyPublicationState = pubState
 			a.applyDatabaseTaskPhases()
 		})
 	})

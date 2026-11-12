@@ -93,37 +93,50 @@ func redisRead(r *bufio.Reader, depth int) (any, error) {
 	}
 	return nil, errors.New("unknown Redis response")
 }
-func (m *Manager) redisCommand(ctx context.Context, i Instance, db int, args ...[]byte) (any, error) {
+func (m *Manager) withRedisSession(ctx context.Context, i Instance, db int, fn func(call func(args ...[]byte) (any, error)) error) error {
 	password, e := os.ReadFile(filepath.Join(m.Root, "instances", i.ID, "password"))
 	if e != nil {
-		return nil, e
+		return e
 	}
 	conn, e := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", i.Port))
 	if e != nil {
-		return nil, e
+		return e
 	}
 	defer conn.Close()
-	deadline := time.Now().Add(30 * time.Second)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
-	}
-	conn.SetDeadline(deadline)
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
-	r := bufio.NewReader(io.LimitReader(conn, 512<<20))
-	command := func(a ...[]byte) (any, error) {
-		if e := redisWrite(conn, a); e != nil {
+	r := bufio.NewReader(conn)
+	call := func(args ...[]byte) (any, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		deadline := time.Now().Add(30 * time.Second)
+		if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+			deadline = d
+		}
+		conn.SetDeadline(deadline)
+		if e := redisWrite(conn, args); e != nil {
 			return nil, e
 		}
 		return redisRead(r, 0)
 	}
-	if _, e = command([]byte("AUTH"), password); e != nil {
-		return nil, errors.New("Redis authentication failed")
+	if _, e = call([]byte("AUTH"), password); e != nil {
+		return errors.New("Redis authentication failed")
 	}
-	if _, e = command([]byte("SELECT"), []byte(strconv.Itoa(db))); e != nil {
-		return nil, e
+	if _, e = call([]byte("SELECT"), []byte(strconv.Itoa(db))); e != nil {
+		return e
 	}
-	return command(args...)
+	return fn(call)
+}
+
+func (m *Manager) redisCommand(ctx context.Context, i Instance, db int, args ...[]byte) (any, error) {
+	var res any
+	e := m.withRedisSession(ctx, i, db, func(call func(args ...[]byte) (any, error)) error {
+		var err error
+		res, err = call(args...)
+		return err
+	})
+	return res, e
 }
 
 type redisEntry struct {
@@ -137,35 +150,137 @@ type redisBackup struct {
 	Entries []redisEntry `json:"entries"`
 }
 
-const redisSnapshotScript = `local out={}; for _,key in ipairs(redis.call('KEYS','*')) do local value=redis.call('DUMP',key); if value then table.insert(out,key); table.insert(out,value); table.insert(out,redis.call('PTTL',key)); end; end; return out`
+const redisDumpBatchScript = `local out={}
+for i=1,#KEYS do
+  local value=redis.call('DUMP',KEYS[i])
+  if value then
+    table.insert(out,KEYS[i])
+    table.insert(out,value)
+    table.insert(out,redis.call('PTTL',KEYS[i]))
+  end
+end
+return out`
 
 func (m *Manager) redisBackup(ctx context.Context, i Instance, name, path string) error {
 	db, e := redisDB(name)
 	if e != nil {
 		return e
 	}
-	response, e := m.redisCommand(ctx, i, db, []byte("EVAL"), []byte(redisSnapshotScript), []byte("0"))
+	f, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if e != nil {
 		return e
 	}
-	rows, ok := response.([]any)
-	if !ok || len(rows)%3 != 0 {
-		return errors.New("invalid Redis snapshot")
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	defer w.Flush()
+
+	header := fmt.Sprintf(`{"schema":1,"created":%d,"entries":[`, time.Now().UnixMilli())
+	if _, e = io.WriteString(w, header); e != nil {
+		return e
 	}
-	backup := redisBackup{Schema: 1, Created: time.Now().UnixMilli()}
-	for n := 0; n < len(rows); n += 3 {
-		key, kok := rows[n].([]byte)
-		value, vok := rows[n+1].([]byte)
-		ttl, tok := rows[n+2].(int64)
-		if !kok || !vok || !tok {
-			return errors.New("invalid Redis snapshot entry")
+
+	seen := make(map[string]struct{})
+	first := true
+
+	sessionErr := m.withRedisSession(ctx, i, db, func(call func(args ...[]byte) (any, error)) error {
+		cursor := []byte("0")
+		for {
+			res, err := call([]byte("SCAN"), cursor, []byte("COUNT"), []byte("500"))
+			if err != nil {
+				return err
+			}
+			scanParts, ok := res.([]any)
+			if !ok || len(scanParts) != 2 {
+				return errors.New("invalid SCAN response")
+			}
+			nextCursorBytes, ok := scanParts[0].([]byte)
+			if !ok {
+				return errors.New("invalid SCAN cursor")
+			}
+			cursor = nextCursorBytes
+
+			rawKeys, ok := scanParts[1].([]any)
+			if !ok {
+				return errors.New("invalid SCAN keys array")
+			}
+
+			var batch [][]byte
+			for _, rk := range rawKeys {
+				kb, ok := rk.([]byte)
+				if !ok {
+					continue
+				}
+				ks := string(kb)
+				if _, exists := seen[ks]; exists {
+					continue
+				}
+				seen[ks] = struct{}{}
+				batch = append(batch, kb)
+			}
+
+			if len(batch) > 0 {
+				evalArgs := make([][]byte, 0, 3+len(batch))
+				evalArgs = append(evalArgs, []byte("EVAL"), []byte(redisDumpBatchScript), []byte(strconv.Itoa(len(batch))))
+				evalArgs = append(evalArgs, batch...)
+
+				dumpRes, err := call(evalArgs...)
+				if err != nil {
+					return err
+				}
+				triples, ok := dumpRes.([]any)
+				if !ok || len(triples)%3 != 0 {
+					return errors.New("invalid DUMP batch response")
+				}
+
+				for n := 0; n < len(triples); n += 3 {
+					key, kok := triples[n].([]byte)
+					val, vok := triples[n+1].([]byte)
+					ttl, tok := triples[n+2].(int64)
+					if !kok || !vok || !tok {
+						return errors.New("invalid DUMP batch entry")
+					}
+					entryData, err := json.Marshal(redisEntry{Key: key, Value: val, TTL: ttl})
+					if err != nil {
+						return err
+					}
+					if !first {
+						if _, err := w.WriteString(","); err != nil {
+							return err
+						}
+					}
+					first = false
+					if _, err := w.Write(entryData); err != nil {
+						return err
+					}
+				}
+			}
+
+			if string(cursor) == "0" {
+				break
+			}
 		}
-		backup.Entries = append(backup.Entries, redisEntry{key, value, ttl})
+		return nil
+	})
+
+	if sessionErr != nil {
+		return sessionErr
 	}
-	return writeJSON(path, backup)
+
+	if _, e = io.WriteString(w, "]}\n"); e != nil {
+		return e
+	}
+	return w.Flush()
 }
 
-const redisRestoreScript = `if redis.call('DBSIZE')~=0 then return redis.error_reply('restore target must be empty') end; local restored={}; for i=1,#ARGV,3 do local result=redis.pcall('RESTORE',ARGV[i],ARGV[i+1],ARGV[i+2]); if type(result)=='table' and result.err then for _,key in ipairs(restored) do redis.call('DEL',key) end; return redis.error_reply(result.err) end; table.insert(restored,ARGV[i]); end; return #restored`
+const redisRestoreBatchScript = `local restored={}
+for i=1,#ARGV,3 do
+  local result=redis.pcall('RESTORE',ARGV[i],ARGV[i+1],ARGV[i+2])
+  if type(result)=='table' and result.err then
+    return redis.error_reply(result.err)
+  end
+  table.insert(restored,ARGV[i])
+end
+return #restored`
 
 func (m *Manager) redisRestore(ctx context.Context, i Instance, name, path string) error {
 	db, e := redisDB(name)
@@ -177,28 +292,116 @@ func (m *Manager) redisRestore(ctx context.Context, i Instance, name, path strin
 		return e
 	}
 	defer f.Close()
-	var backup redisBackup
-	if e = json.NewDecoder(io.LimitReader(f, 512<<20)).Decode(&backup); e != nil {
-		return e
-	}
-	if backup.Schema != 1 || backup.Created <= 0 || len(backup.Entries) > 100000 {
+
+	dec := json.NewDecoder(f)
+	t, e := dec.Token()
+	if e != nil || t != json.Delim('{') {
 		return errors.New("unsupported Redis backup")
 	}
-	elapsed := time.Now().UnixMilli() - backup.Created
-	if elapsed < 0 {
-		elapsed = 0
-	}
-	args := [][]byte{[]byte("EVAL"), []byte(redisRestoreScript), []byte("0")}
-	for _, entry := range backup.Entries {
-		ttl := int64(0)
-		if entry.TTL >= 0 {
-			ttl = entry.TTL - elapsed
-			if ttl <= 0 {
-				continue
+
+	var schema int
+	var created int64
+	var entriesFound bool
+
+	sessionErr := m.withRedisSession(ctx, i, db, func(call func(args ...[]byte) (any, error)) error {
+		dbsize, err := call([]byte("DBSIZE"))
+		if err != nil {
+			return err
+		}
+		size, ok := dbsize.(int64)
+		if !ok || size != 0 {
+			return errors.New("restore target must be empty")
+		}
+
+		rollback := func(origErr error) error {
+			_, _ = call([]byte("FLUSHDB"))
+			return origErr
+		}
+
+		for dec.More() {
+			token, err := dec.Token()
+			if err != nil {
+				return rollback(err)
+			}
+			prop, ok := token.(string)
+			if !ok {
+				return rollback(errors.New("unsupported Redis backup"))
+			}
+			switch prop {
+			case "schema":
+				if err := dec.Decode(&schema); err != nil {
+					return rollback(err)
+				}
+			case "created":
+				if err := dec.Decode(&created); err != nil {
+					return rollback(err)
+				}
+			case "entries":
+				entriesFound = true
+				if schema != 1 || created <= 0 {
+					return rollback(errors.New("unsupported Redis backup"))
+				}
+				elapsed := time.Now().UnixMilli() - created
+				if elapsed < 0 {
+					elapsed = 0
+				}
+				arrToken, err := dec.Token()
+				if err != nil || arrToken != json.Delim('[') {
+					return rollback(errors.New("unsupported Redis backup"))
+				}
+				var batchArgs [][]byte
+				for dec.More() {
+					var entry redisEntry
+					if err := dec.Decode(&entry); err != nil {
+						return rollback(err)
+					}
+					ttl := int64(0)
+					if entry.TTL >= 0 {
+						ttl = entry.TTL - elapsed
+						if ttl <= 0 {
+							continue
+						}
+					}
+					batchArgs = append(batchArgs, entry.Key, []byte(strconv.FormatInt(ttl, 10)), entry.Value)
+					if len(batchArgs) >= 500*3 {
+						evalArgs := make([][]byte, 0, 3+len(batchArgs))
+						evalArgs = append(evalArgs, []byte("EVAL"), []byte(redisRestoreBatchScript), []byte("0"))
+						evalArgs = append(evalArgs, batchArgs...)
+						if _, err := call(evalArgs...); err != nil {
+							return rollback(err)
+						}
+						batchArgs = batchArgs[:0]
+					}
+				}
+				closeToken, err := dec.Token()
+				if err != nil || closeToken != json.Delim(']') {
+					return rollback(errors.New("unsupported Redis backup"))
+				}
+				if len(batchArgs) > 0 {
+					evalArgs := make([][]byte, 0, 3+len(batchArgs))
+					evalArgs = append(evalArgs, []byte("EVAL"), []byte(redisRestoreBatchScript), []byte("0"))
+					evalArgs = append(evalArgs, batchArgs...)
+					if _, err := call(evalArgs...); err != nil {
+						return rollback(err)
+					}
+				}
+			default:
+				var dummy any
+				if err := dec.Decode(&dummy); err != nil {
+					return rollback(err)
+				}
 			}
 		}
-		args = append(args, entry.Key, []byte(strconv.FormatInt(ttl, 10)), entry.Value)
-	}
-	_, e = m.redisCommand(ctx, i, db, args...)
-	return e
+
+		closeDelim, err := dec.Token()
+		if err != nil || closeDelim != json.Delim('}') {
+			return rollback(errors.New("unsupported Redis backup"))
+		}
+		if !entriesFound || schema != 1 || created <= 0 {
+			return rollback(errors.New("unsupported Redis backup"))
+		}
+		return nil
+	})
+
+	return sessionErr
 }

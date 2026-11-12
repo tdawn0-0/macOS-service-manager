@@ -5,7 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -200,7 +200,10 @@ func (m *Manager) ServeProxy(ctx context.Context) error {
 	var servers []*http.Server
 	var listeners []net.Listener
 	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
 		for _, server := range servers {
+			_ = server.Shutdown(shutdownCtx)
 			_ = server.Close()
 		}
 		for _, l := range listeners {
@@ -227,6 +230,11 @@ func (m *Manager) ServeProxy(ctx context.Context) error {
 			if h, _, e := net.SplitHostPort(host); e == nil {
 				host = h
 			}
+			host = strings.ToLower(strings.TrimSpace(host))
+			if r.TLS == nil || r.TLS.ServerName == "" || !strings.EqualFold(host, strings.TrimSpace(r.TLS.ServerName)) {
+				http.Error(w, "misdirected request: Host does not match TLS server name", http.StatusMisdirectedRequest)
+				return
+			}
 			if route := current.routes[net.JoinHostPort(host, fmt.Sprint(port))]; route != nil {
 				route.proxy.ServeHTTP(w, r)
 				return
@@ -234,7 +242,8 @@ func (m *Manager) ServeProxy(ctx context.Context) error {
 			http.NotFound(w, r)
 		}), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			current := routes.snapshot()
-			if route := current.routes[net.JoinHostPort(hello.ServerName, fmt.Sprint(port))]; route != nil {
+			sni := strings.ToLower(strings.TrimSpace(hello.ServerName))
+			if route := current.routes[net.JoinHostPort(sni, fmt.Sprint(port))]; route != nil {
 				cert, e := m.leaf(route.site.Domain)
 				return &cert, e
 			}
@@ -261,12 +270,22 @@ func HostsContent(old string, sites []proxyRoute) (string, error) {
 		return "", e
 	}
 	for _, pair := range [][2]string{{legacyHostsBegin, legacyHostsEnd}, {hostsBegin, hostsEnd}} {
+		if strings.Count(old, pair[0]) > 1 || strings.Count(old, pair[1]) > 1 {
+			return "", errors.New("malformed managed hosts block")
+		}
 		start, end := strings.Index(old, pair[0]), strings.Index(old, pair[1])
 		if (start < 0) != (end < 0) || end < start {
 			return "", errors.New("malformed managed hosts block")
 		}
 		if start >= 0 {
-			old = old[:start] + old[end+len(pair[1]):]
+			if start > 0 && old[start-1] != '\n' {
+				return "", errors.New("malformed managed hosts block")
+			}
+			finish := end + len(pair[1])
+			if finish < len(old) && old[finish] != '\n' && old[finish] != '\r' {
+				return "", errors.New("malformed managed hosts block")
+			}
+			old = old[:start] + old[finish:]
 		}
 	}
 	domains := map[string]bool{}
@@ -348,8 +367,8 @@ func hostsInstallScript(old, updated []byte) (string, error) {
 	if len(updated) > 64<<10 {
 		return "", errors.New("hosts configuration exceeds authorized command size limit")
 	}
-	sum := sha1.Sum(old)
-	check := "[ -f /etc/hosts ] && [ ! -L /etc/hosts ] && test \"$(/usr/bin/shasum /etc/hosts | /usr/bin/cut -d ' ' -f 1)\" = " + system.ShellQuote(hex.EncodeToString(sum[:]))
+	sum := sha256.Sum256(old)
+	check := "[ -f /etc/hosts ] && [ ! -L /etc/hosts ] && test \"$(/usr/bin/shasum -a 256 /etc/hosts | /usr/bin/cut -d ' ' -f 1)\" = " + system.ShellQuote(hex.EncodeToString(sum[:]))
 	return check + " && tmp=$(/usr/bin/mktemp /etc/.msm-hosts.XXXXXX) && trap '/bin/rm -f \"$tmp\"' EXIT && /usr/bin/printf '%s' " + system.ShellQuote(base64.StdEncoding.EncodeToString(updated)) + " | /usr/bin/base64 -D > \"$tmp\" && set -- $(/usr/bin/stat -f '%u %g %Lp' /etc/hosts) && /usr/sbin/chown \"$1:$2\" \"$tmp\" && /bin/chmod \"$3\" \"$tmp\" && " + check + " && /bin/mv -f \"$tmp\" /etc/hosts && /usr/bin/dscacheutil -flushcache", nil
 }
 

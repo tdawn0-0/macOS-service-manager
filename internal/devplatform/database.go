@@ -215,6 +215,33 @@ func (m *Manager) checkInstanceAction(ctx context.Context, s State, id, action s
 	}
 	return ctx.Err()
 }
+func cleanDatabaseEnv(extra ...string) []string {
+	ambient := os.Environ()
+	filtered := make([]string, 0, len(ambient)+len(extra))
+	for _, entry := range ambient {
+		if strings.HasPrefix(entry, "PG") || strings.HasPrefix(entry, "MYSQL_") {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return append(filtered, extra...)
+}
+
+func validDatabasePassword(password string) error {
+	if password == "" {
+		return errors.New("password is required")
+	}
+	if len(password) > 256 {
+		return errors.New("password exceeds maximum length")
+	}
+	for _, r := range password {
+		if r < 0x20 || r == 0x7f {
+			return errors.New("password cannot contain newline or control characters")
+		}
+	}
+	return nil
+}
+
 func (m *Manager) databaseCommand(ctx context.Context, s *State, id, tool string, args ...string) (string, error) {
 	i, ok := s.Instances[id]
 	if !ok || i.Kind != "postgresql" {
@@ -228,9 +255,9 @@ func (m *Manager) databaseCommand(ctx context.Context, s *State, id, tool string
 	if e != nil {
 		return "", e
 	}
-	base := []string{"-h", "127.0.0.1", "-p", fmt.Sprint(i.Port), "-U", "devmanager"}
+	base := []string{"-w", "-h", "127.0.0.1", "-p", fmt.Sprint(i.Port), "-U", "devmanager"}
 	c := exec.CommandContext(ctx, bin, append(base, args...)...)
-	c.Env = append(os.Environ(), "PGPASSWORD="+string(password))
+	c.Env = cleanDatabaseEnv("PGPASSWORD=" + string(password))
 	b, e := c.CombinedOutput()
 	if e != nil {
 		return "", fmt.Errorf("%s failed: %w: %s", tool, e, b)
@@ -330,8 +357,8 @@ func (m *Manager) createUser(ctx context.Context, id, name, password, database s
 	if e := validID(database); e != nil {
 		return e
 	}
-	if password == "" || strings.ContainsRune(password, 0) {
-		return errors.New("password is required")
+	if e := validDatabasePassword(password); e != nil {
+		return e
 	}
 	return m.withDatabaseOperation(ctx, id, func(s *State) error {
 		i, ok := s.Instances[id]
@@ -353,8 +380,8 @@ func (m *Manager) createUser(ctx context.Context, id, name, password, database s
 		literal := func(v string) string { return `'` + strings.ReplaceAll(v, `'`, `''`) + `'` }
 		role := identifier(name)
 		sql := "BEGIN; CREATE ROLE " + role + " LOGIN PASSWORD " + literal(password) + "; GRANT ALL PRIVILEGES ON DATABASE " + identifier(database) + " TO " + role + "; GRANT USAGE, CREATE ON SCHEMA public TO " + role + "; GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO " + role + "; GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO " + role + "; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO " + role + "; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO " + role + "; COMMIT;"
-		c := exec.CommandContext(ctx, bin, "-h", "127.0.0.1", "-p", fmt.Sprint(i.Port), "-U", "devmanager", "-d", database, "--set", "ON_ERROR_STOP=1")
-		c.Env = append(os.Environ(), "PGPASSWORD="+string(admin))
+		c := exec.CommandContext(ctx, bin, "-X", "-w", "-h", "127.0.0.1", "-p", fmt.Sprint(i.Port), "-U", "devmanager", "-d", database, "--set", "ON_ERROR_STOP=1")
+		c.Env = cleanDatabaseEnv("PGPASSWORD=" + string(admin))
 		c.Stdin = strings.NewReader(sql)
 		if e = c.Run(); e != nil {
 			return fmt.Errorf("create user failed: %w", e)

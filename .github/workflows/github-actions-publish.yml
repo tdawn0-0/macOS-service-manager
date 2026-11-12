@@ -89,7 +89,9 @@ jobs:
         run: |
           set -euo pipefail
           test "$(uname -m)" = arm64
-          go test ./...
+          go vet ./...
+          go mod verify
+          go test -race ./...
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'
           python3 scripts/collect-third-party-notices.py --check
 

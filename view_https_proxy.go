@@ -25,8 +25,8 @@ func (a *app) devHTTPS(c *ui.Context) {
 	}
 	tk := theme.TokensOf(c)
 	dirty := d.proxyDraftDirty()
-	state, stateErr := a.devManager().ProxyPublicationState()
-	if stateErr != nil {
+	state := d.proxyPublicationState
+	if state == "" {
 		state = "Unknown"
 	}
 	listener := d.state.ProxyListenerPort

@@ -2,6 +2,7 @@ package devplatform
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -196,5 +197,106 @@ func TestDatabaseToolCancellationDoesNotCancelIndependentBackup(t *testing.T) {
 	}
 	if e := m.CreateDatabase(ctx, "first", "after-cancel"); e != nil {
 		t.Fatal("cancelled task retained the instance lease", e)
+	}
+}
+
+func TestCreateUserRejectsControlCharactersAndIsolatesPsqlEnvironment(t *testing.T) {
+	m := testManager(t)
+	recordDir := t.TempDir()
+	p := Package{
+		Name:     "psql-recorder-fixture",
+		Version:  "1.0.0",
+		Arch:     "universal",
+		Binaries: map[string]string{"psql": "psql"},
+	}
+	script := fmt.Sprintf("#!/usr/bin/python3\nimport json, os, sys\nrecord_dir = %q\nwith open(os.path.join(record_dir, 'argv.json'), 'w') as f:\n    json.dump(sys.argv[1:], f)\nwith open(os.path.join(record_dir, 'env.json'), 'w') as f:\n    json.dump(dict(os.environ), f)\nsys.exit(0)\n", recordDir)
+	if err := os.MkdirAll(m.packageDir(p), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(m.packageDir(p), "psql"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	instanceDir := filepath.Join(m.Root, "instances", "first")
+	if err := os.MkdirAll(instanceDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	const adminPassword = "fixture-admin-pass"
+	if err := os.WriteFile(filepath.Join(instanceDir, "password"), []byte(adminPassword), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.withState(context.Background(), func(s *State) error {
+		s.Packages[p.ID()] = p
+		s.Instances["first"] = Instance{ID: "first", Kind: "postgresql", Package: p.ID(), Port: integrationPort(t)}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PGHOST", "192.0.2.99")
+	t.Setenv("PGOPTIONS", "-c log_statement=all")
+	t.Setenv("PGPASSFILE", "/tmp/untrusted-pgpass")
+	t.Setenv("MYSQL_PWD", "ambient-value")
+
+	ctx := context.Background()
+	badPassErr := m.CreateUser(ctx, "first", "app_user", "bad\n\\! touch /tmp/pwn", "first")
+	if badPassErr == nil {
+		t.Fatal("expected CreateUser to reject password with newline")
+	}
+	if !strings.Contains(badPassErr.Error(), "newline or control characters") {
+		t.Fatalf("expected error mentioning control characters or newline, got: %v", badPassErr)
+	}
+
+	// Verify psql was not invoked for the rejected password.
+	if _, err := os.Stat(filepath.Join(recordDir, "argv.json")); !os.IsNotExist(err) {
+		t.Fatal("psql should not have been executed when password validation fails")
+	}
+
+	// Call with valid password.
+	if err := m.CreateUser(ctx, "first", "app_user", "valid-test-passphrase", "first"); err != nil {
+		t.Fatalf("expected CreateUser to succeed, got: %v", err)
+	}
+
+	argvBytes, err := os.ReadFile(filepath.Join(recordDir, "argv.json"))
+	if err != nil {
+		t.Fatal("failed to read recorded argv:", err)
+	}
+	var argv []string
+	if err := json.Unmarshal(argvBytes, &argv); err != nil {
+		t.Fatal("failed to unmarshal argv:", err)
+	}
+
+	hasX := false
+	hasW := false
+	for _, arg := range argv {
+		if arg == "-X" {
+			hasX = true
+		}
+		if arg == "-w" {
+			hasW = true
+		}
+	}
+	if !hasX {
+		t.Errorf("expected argv to contain '-X', got %v", argv)
+	}
+	if !hasW {
+		t.Errorf("expected argv to contain '-w', got %v", argv)
+	}
+
+	envBytes, err := os.ReadFile(filepath.Join(recordDir, "env.json"))
+	if err != nil {
+		t.Fatal("failed to read recorded env:", err)
+	}
+	var recordedEnv map[string]string
+	if err := json.Unmarshal(envBytes, &recordedEnv); err != nil {
+		t.Fatal("failed to unmarshal recorded env:", err)
+	}
+
+	if recordedEnv["PGPASSWORD"] != adminPassword {
+		t.Errorf("expected PGPASSWORD %q, got %q", adminPassword, recordedEnv["PGPASSWORD"])
+	}
+	for _, blocked := range []string{"PGHOST", "PGOPTIONS", "PGPASSFILE", "MYSQL_PWD"} {
+		if val, exists := recordedEnv[blocked]; exists {
+			t.Errorf("expected environment to strip %s, but found with value %q", blocked, val)
+		}
 	}
 }

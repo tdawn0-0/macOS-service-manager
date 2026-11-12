@@ -163,3 +163,101 @@ func TestHTTPSProxyWebSocketStreamingAndUpload(t *testing.T) {
 		t.Fatal("proxy did not stop")
 	}
 }
+
+func TestHTTPSProxyRejectsMismatchedHostAndSNI(t *testing.T) {
+	var alphaServed, betaServed bool
+	upstreamAlpha := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		alphaServed = true
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("alpha"))
+	}))
+	defer upstreamAlpha.Close()
+	upstreamBeta := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		betaServed = true
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("beta"))
+	}))
+	defer upstreamBeta.Close()
+
+	m := testManager(t)
+	port := integrationPort(t)
+	alphaPort := upstreamAlpha.Listener.Addr().(*net.TCPAddr).Port
+	betaPort := upstreamBeta.Listener.Addr().(*net.TCPAddr).Port
+	config := proxyPublishedConfig{
+		SchemaVersion: 1,
+		ListenerPort:  port,
+		Rules: []ProxyRule{
+			{Domain: "alpha.test", LocalPort: alphaPort},
+			{Domain: "beta.test", LocalPort: betaPort},
+		},
+	}
+	if e := writeJSON(filepath.Join(m.Root, "proxy", "rules.json"), config); e != nil {
+		t.Fatal(e)
+	}
+	ca, _, e := m.ca()
+	if e != nil {
+		t.Fatal(e)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- m.ServeProxy(ctx) }()
+	if e = m.verifyProxyTLS(ctx, proxyRoute{Domain: "alpha.test", LocalPort: alphaPort, Port: port}); e != nil {
+		t.Fatal(e)
+	}
+	if e = m.verifyProxyTLS(ctx, proxyRoute{Domain: "beta.test", LocalPort: betaPort, Port: port}); e != nil {
+		t.Fatal(e)
+	}
+
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	// Client negotiates TLS with ServerName: "alpha.test"
+	tlsConfig := &tls.Config{RootCAs: roots, ServerName: "alpha.test", MinVersion: tls.VersionTLS12}
+	transport := &http.Transport{
+		TLSClientConfig: tlsConfig,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		},
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
+
+	// 1. Mismatch: TLS ServerName is "alpha.test", but request Host is "beta.test"
+	reqMismatch, err := http.NewRequest("GET", fmt.Sprintf("https://127.0.0.1:%d/", port), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqMismatch.Host = "beta.test"
+	resMismatch, err := client.Do(reqMismatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resMismatch.Body.Close()
+	if resMismatch.StatusCode != http.StatusMisdirectedRequest {
+		t.Fatalf("expected status 421 Misdirected Request, got %d", resMismatch.StatusCode)
+	}
+	if betaServed {
+		t.Fatal("beta upstream handler was invoked on mismatched SNI/Host request")
+	}
+	if alphaServed {
+		t.Fatal("alpha upstream handler was invoked on mismatched SNI/Host request")
+	}
+
+	// 2. Case variation matching SNI: req.Host = "ALPHA.test"
+	reqMatch, err := http.NewRequest("GET", fmt.Sprintf("https://127.0.0.1:%d/", port), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqMatch.Host = "ALPHA.test"
+	resMatch, err := client.Do(reqMatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resMatch.Body.Close()
+	if resMatch.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200 OK for case-insensitive match, got %d", resMatch.StatusCode)
+	}
+	if !alphaServed {
+		t.Fatal("alpha upstream handler was not invoked for matching host")
+	}
+}

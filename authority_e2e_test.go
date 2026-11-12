@@ -234,6 +234,9 @@ func TestUIAuthorityRepairTrustCancellationActivationRollbackAndTLS(t *testing.T
 				t.Fatal("GUI rollback did not restore the selected authority", h.a.dev.output)
 			}
 			h.click("Remove trust")
+			if trust.deleteCount != 1 {
+				t.Fatalf("expected 1 certificate deletion, got %d", trust.deleteCount)
+			}
 			h.click("Apply proxy")
 			check()
 			if strings.Contains(h.a.dev.output, "Error:") {

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -518,6 +519,7 @@ func (m *Manager) AuthorityStatus(ctx context.Context) (AuthorityStatus, error) 
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return status, err
 	}
+	var archived []authorityMaterial
 	for _, entry := range entries {
 		if !entry.IsDir() || validID(entry.Name()) != nil || entry.Name() == active.info.ID || entry.Name() == preparedID {
 			continue
@@ -526,11 +528,37 @@ func (m *Manager) AuthorityStatus(ctx context.Context) (AuthorityStatus, error) 
 		if itemErr != nil {
 			continue
 		}
-		status.Archives = append(status.Archives, item.info)
+		archived = append(archived, item)
 		if entry.Name() == previousID {
 			info := item.info
 			status.Previous = &info
 		}
+	}
+	slices.SortFunc(archived, func(a, b authorityMaterial) int {
+		aIsPrev := a.info.ID == previousID
+		bIsPrev := b.info.ID == previousID
+		if aIsPrev != bIsPrev {
+			if aIsPrev {
+				return -1
+			}
+			return 1
+		}
+		if !a.record.CreatedAt.Equal(b.record.CreatedAt) {
+			if a.record.CreatedAt.After(b.record.CreatedAt) {
+				return -1
+			}
+			return 1
+		}
+		if !a.info.NotAfter.Equal(b.info.NotAfter) {
+			if a.info.NotAfter.After(b.info.NotAfter) {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.info.ID, b.info.ID)
+	})
+	for _, item := range archived {
+		status.Archives = append(status.Archives, item.info)
 	}
 	return status, ctx.Err()
 }

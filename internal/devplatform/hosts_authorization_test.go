@@ -2,7 +2,7 @@ package devplatform
 
 import (
 	"bytes"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"devbase/internal/system"
@@ -32,12 +32,12 @@ func TestAuthorizedHostsPayload(t *testing.T) {
 	if strings.Contains(script, "msm-hosts-") {
 		t.Fatal("user staging read")
 	}
-	for _, want := range []string{"/etc/.msm-hosts.", "/usr/bin/shasum /etc/hosts", "/bin/mv", "trap"} {
+	for _, want := range []string{"/etc/.msm-hosts.", "/usr/bin/shasum -a 256 /etc/hosts", "/bin/mv", "trap"} {
 		if !strings.Contains(script, want) {
 			t.Fatal("missing protection", want)
 		}
 	}
-	sum := sha1.Sum(old)
+	sum := sha256.Sum256(old)
 	hash := system.ShellQuote(hex.EncodeToString(sum[:]))
 	if strings.Count(script, hash) != 2 {
 		t.Fatal("old content hash not checked twice")

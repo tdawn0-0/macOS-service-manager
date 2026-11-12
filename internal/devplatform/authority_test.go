@@ -514,3 +514,88 @@ func TestAuthorityRemovalDoesNotDeleteCertificateAfterOtherTrustErrors(t *testin
 		t.Fatal("authorization failure hidden")
 	}
 }
+
+func TestAuthorityStatusOrdersPreviousFirstThenNewestArchive(t *testing.T) {
+	m := testManager(t)
+	fakeAuthorityTrust(t, m)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	makeGen := func(id string, notBefore, notAfter, createdAt time.Time) {
+		dir := filepath.Join(m.authorityRoot(), "ca-generations", id)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		template := &x509.Certificate{
+			SerialNumber:          serial(),
+			Subject:               pkix.Name{CommonName: authorityName},
+			NotBefore:             notBefore,
+			NotAfter:              notAfter,
+			IsCA:                  true,
+			BasicConstraintsValid: true,
+			KeyUsage:              x509.KeyUsageCertSign,
+		}
+		der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encodedKey, err := x509.MarshalECPrivateKey(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+		keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: encodedKey})
+		if err := os.WriteFile(filepath.Join(dir, "ca.pem"), certPEM, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "ca-key.pem"), keyPEM, 0600); err != nil {
+			t.Fatal(err)
+		}
+		record := authorityRecord{
+			Schema:     1,
+			ID:         id,
+			Kind:       "legacy",
+			CreatedAt:  createdAt,
+			PairDigest: authorityPairDigest(certPEM, keyPEM),
+		}
+		if err := writeJSON(filepath.Join(dir, "metadata.json"), record); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 1. Expired authority with lexicographically smallest ID and oldest CreatedAt
+	makeGen("0000000000000001", now.Add(-48*time.Hour), now.Add(-24*time.Hour), now.Add(-48*time.Hour))
+	// 2. Middle archived generation with newer CreatedAt than 0000000000000001
+	makeGen("4444444444444444", now.Add(-24*time.Hour), now.Add(24*time.Hour), now.Add(-12*time.Hour))
+	// 3. Active authority
+	makeGen("8888888888888888", now.Add(-12*time.Hour), now.Add(48*time.Hour), now.Add(-6*time.Hour))
+	// 4. Valid previous authority with lexicographically largest ID
+	makeGen("ffffffffffffffff", now.Add(-36*time.Hour), now.Add(36*time.Hour), now.Add(-24*time.Hour))
+
+	if err := m.writeAuthorityPointer(authorityCurrent, "8888888888888888"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.writeAuthorityPointer(authorityPrevious, "ffffffffffffffff"); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := m.AuthorityStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.Archives) != 3 {
+		t.Fatalf("expected 3 archives, got %d", len(status.Archives))
+	}
+	if status.Archives[0].ID != "ffffffffffffffff" {
+		t.Errorf("expected archive[0] to be previous ('ffffffffffffffff'), got %q", status.Archives[0].ID)
+	}
+	if status.Archives[1].ID != "4444444444444444" {
+		t.Errorf("expected archive[1] to be newest non-previous ('4444444444444444'), got %q", status.Archives[1].ID)
+	}
+	if status.Archives[2].ID != "0000000000000001" {
+		t.Errorf("expected archive[2] to be oldest non-previous ('0000000000000001'), got %q", status.Archives[2].ID)
+	}
+}

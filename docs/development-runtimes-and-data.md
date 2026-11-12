@@ -1,12 +1,12 @@
-# Java, Go, uv Python, and database data locations
+# Java, uv Python, and database data locations
 
 ## Runtime versions
 
-Software now includes Node.js, Java, Go, Python (uv), MySQL, PostgreSQL, Redis, and MongoDB. The original five-software native release gate remains unchanged; additional runtime fixtures and UI tests are separate evidence.
+Software now includes Node.js, Java, Python (uv), MySQL, PostgreSQL, Redis, and MongoDB. The original five-software native release gate remains unchanged; additional runtime fixtures and UI tests are separate evidence.
 
-For Java or Go, choose **Refresh available versions**, select an exact entry, then review and install the package. Java uses the [JetBrains JDK catalog](https://download.jetbrains.com/jdk/feed/v1/jdks.json) used by IDEA, filtered to listed, non-preview macOS arm64 archives with supported layouts. The selection key includes the distribution/flavour and version (for example `temurin-21.0.13` or `semeru-25.0.4.15`), so equal Java versions from different vendors do not share a package identity. Download review shows the vendor/product/flavour, version, archive URL, SHA256, license notice and destination. Go lists stable official macOS arm64 archives. Installed versions remain selectable if a catalog request fails.
+For Java, choose **Refresh available versions**, select an exact entry, then review and install the package. Java uses the [JetBrains JDK catalog](https://download.jetbrains.com/jdk/feed/v1/jdks.json) used by IDEA, filtered to listed, non-preview macOS arm64 archives with supported layouts. The selection key includes the distribution/flavour and version (for example `temurin-21.0.13` or `semeru-25.0.4.15`), so equal Java versions from different vendors do not share a package identity. Download review shows the vendor/product/flavour, version, archive URL, SHA256, license notice and destination. Installed versions remain selectable if a catalog request fails.
 
-**Set default** changes only that runtime’s selection. **Enable in terminal** detects installed zsh, Bash, and fish and writes only their required startup entries. **Disable in terminal** removes that runtime’s marked blocks from every supported shell, including recorded locations for shells that have since been uninstalled or moved. Other settings, permissions, and dotfile symlinks are preserved. Java sets `JAVA_HOME` and prepends its `bin` directory to PATH. Go prepends its `bin` directory without setting global `GOROOT` or `GOPATH`. Running processes keep their original environment. Removing the selected package clears its default and both shell-format setup scripts; select another installed version before enabling it again.
+**Set default** changes only that runtime’s selection. **Enable in terminal** detects installed zsh, Bash, and fish and writes only their required startup entries. **Disable in terminal** removes that runtime’s marked blocks from every supported shell, including recorded locations for shells that have since been uninstalled or moved. Other settings, permissions, and dotfile symlinks are preserved. Java sets `JAVA_HOME` and prepends its `bin` directory to PATH. Running processes keep their original environment. Removing the selected package clears its default and both shell-format setup scripts; select another installed version before enabling it again.
 
 ## Storage layout
 
@@ -18,7 +18,7 @@ With the normal application storage root, paths are:
 | Java home | `<installation>/Contents/Home` or `<installation>` | Uses the archive layout declared by the catalog and preserves upstream metadata |
 | Downloaded archives | `~/Library/Caches/Devbase/Development/downloads` | Downloadable files can be purged without removing installed versions |
 | Node release catalog | `~/Library/Caches/Devbase/Development/node-index.json` | Re-fetchable version metadata |
-| Go, Node, MySQL, Redis, MongoDB and Caddy archives after installation | `~/Library/Application Support/Devbase/Development/packages/<package-id>` | App-managed exact versions; these are durable installations, not caches |
+| Node, MySQL, Redis, and MongoDB archives after installation | `~/Library/Application Support/Devbase/Development/packages/<package-id>` | App-managed exact versions; these are durable installations, not caches |
 | Python interpreters and uv caches | uv's own resolved locations | Shares uv's installation store and respects uv storage settings |
 | PostgreSQL binaries | Homebrew's exact Cellar keg | Homebrew owns the installation and its dependencies |
 | Database data | App instance storage or the explicitly selected directory | Durable data stays separate from package versions and downloadable caches |
@@ -92,7 +92,7 @@ Enable detects executable shells through PATH, the configured login shell, and t
 |---|---|---|
 | zsh | `.zshenv`, `.zprofile`, `.zshrc` under exported `ZDOTDIR`, otherwise home | Covers `zsh -c` and `zsh -lc`; login setup reapplies PATH after macOS `path_helper`. |
 | Bash | `.bashrc` and the first existing `.bash_profile`, `.bash_login`, or `.profile`; creates `.bash_profile` only if none exists | Login commands load the selected profile. Plain `bash -c` reads the managed `BASH_ENV` inherited from a configured shell. |
-| fish | `fish/conf.d/service-manager.fish` under exported `XDG_CONFIG_HOME`, otherwise `~/.config` | fish reads this snippet for interactive, non-interactive, login, and non-login sessions. No universal variables are changed. |
+| fish | `fish/conf.d/devbase.fish` under exported `XDG_CONFIG_HOME`, otherwise `~/.config` | fish reads this snippet for interactive, non-interactive, login, and non-login sessions. No universal variables are changed. |
 
 The Bash environment is exported from configured zsh, Bash, and fish sessions. An existing literal `BASH_ENV` filename is retained and sourced before managed runtimes. Dynamic `BASH_ENV` expressions containing variable or command expansions remain untouched; use Copy Bash command to explicitly select managed startup in that case. No existing startup file is replaced wholesale. Node resolves the working directory at startup; zsh and fish also update on directory changes. Bash refreshes Node selection when `node`, `npm`, `npx`, or `corepack` is invoked, without replacing existing user functions, `cd`, or traps. Explicit executable paths, `command node`, and `exec node` bypass those Bash functions; use the intended working directory when starting the shell for those forms.
 

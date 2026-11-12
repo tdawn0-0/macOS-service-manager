@@ -16,7 +16,7 @@ Buttons whose accessible name repeats their subject (for example `Check files no
 
 ## Behavior
 
-Software shows the installed package, default Node version, and whether Node is enabled for new zsh terminals. Installation and terminal setup are separate actions. Databases shows independently managed instances, data work, deletion review, administrator connection, and instance-owned password-free business connection profiles. Editing one instance must not overwrite another instance's draft.
+Software shows the installed package, default Node version, and whether Node is enabled for new zsh, Bash, and fish terminals. Installation and terminal setup are separate actions. Databases shows independently managed instances, data work, deletion review, administrator connection, and instance-owned password-free business connection profiles. Editing one instance must not overwrite another instance's draft.
 
 HTTPS is a single rule table. Each row has Domain and Local port; the global listener port is separate. Save/Discard act on the whole draft, Apply publishes the saved configuration, and local domains/CA trust have their own explicit actions. Published means the routing snapshot matches saved intent; it does not mean Chrome can connect. DNS, listener TLS, upstream TCP, and the optional explicit HTTP response check have separate results. The HTTP check never runs automatically.
 
@@ -30,6 +30,6 @@ These representative images come from the synthetic UI layout tests:
 - [HTTPS diagnostics at 1120×720, dark](images/development/https-diagnostics-1120x720-dark.png)
 - [Database connection profiles at 1120×720, dark](images/development/database-profiles-1120x720-dark.png)
 
-## Java, Go, Python and external database locations
+## Java, Python and external database locations
 
-The software list contains eight entries. Java and Go list exact releases on explicit refresh; installed versions remain usable when the catalog fails. Python has a uv-specific page showing the selected executable, managed installed versions, installation requests and global-pin actions. New database instances select an exact installed package, a port, and an optional new absolute data location. Existing instance details show the package version and resolved data path. External permanent deletion is disabled with its path and retention reason. These views have 900×520 and 1120×720 light/dark layout tests in `TestUIAdditionalRuntimes` and `TestUIDatabaseLocations`.
+The software list contains seven entries. Java lists exact releases on explicit refresh; installed versions remain usable when the catalog fails. Python has a uv-specific page showing the selected executable, managed installed versions, installation requests and global-pin actions. New database instances select an exact installed package, a port, and an optional new absolute data location. Existing instance details show the package version and resolved data path. External permanent deletion is disabled with its path and retention reason. These views have 900×520 and 1120×720 light/dark layout tests in `TestUIAdditionalRuntimes` and `TestUIDatabaseLocations`.

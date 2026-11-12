@@ -386,7 +386,7 @@ func TestAJobLaunchdWillNotUnloadIsNotRemoved(t *testing.T) {
 	if err := os.WriteFile(path, []byte(vendorJob), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	p := &Provider{Config{Source: service.Daemon, Domain: "system", Elevated: true}}
+	p := &Provider{Config{Source: service.Daemon, Dir: filepath.Dir(path), Domain: "system", Elevated: true}}
 	err := p.Do(service.Item{Name: "com.vendor.helper", Path: path}, service.Remove)
 	if err == nil || !strings.Contains(err.Error(), "bootout failed") {
 		t.Errorf("err = %v", err)
@@ -444,7 +444,7 @@ func TestRemovingARootJobKeepsItIfAnythingFails(t *testing.T) {
 	if err := os.WriteFile(path, []byte(vendorJob), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	p := &Provider{Config{Source: service.Daemon, Domain: "system", Elevated: true}}
+	p := &Provider{Config{Source: service.Daemon, Dir: filepath.Dir(path), Domain: "system", Elevated: true}}
 	it := service.Item{Name: "com.vendor.helper", Path: path}
 
 	// The script unloads first, and goes no further if launchd refuses.
@@ -460,6 +460,12 @@ func TestRemovingARootJobKeepsItIfAnythingFails(t *testing.T) {
 	}
 	if bootout, mv := strings.Index(script, "bootout 'system/com.vendor.helper' || exit $?"), strings.Index(script, "/bin/mv"); bootout < 0 || mv < bootout {
 		t.Errorf("script:\n%s", script)
+	}
+	if !strings.Contains(script, "/usr/sbin/chown -h ") {
+		t.Errorf("script does not use chown -h: %s", script)
+	}
+	if !strings.Contains(script, "[ ! -L ") {
+		t.Errorf("script does not check for symlinks: %s", script)
 	}
 
 	trashed = 0
@@ -559,5 +565,49 @@ func TestAuthorizedJobPayloadSizeLimit(t *testing.T) {
 	_, e := p.SaveAsRoot(Spec{Label: "com.example.large", Args: []string{"/bin/echo", strings.Repeat("x", 65<<10)}}, "", true)
 	if e == nil || !strings.Contains(e.Error(), "size limit") || len(*admin) != 0 {
 		t.Fatal("oversized configuration reached authorization", e)
+	}
+}
+
+func TestRootOperationsRejectPathsOutsideProviderDirectory(t *testing.T) {
+	_, admin := stubRoot(t)
+	dir := t.TempDir()
+	p := &Provider{Config{Source: service.Daemon, Dir: dir, Domain: "system", Elevated: true}}
+
+	otherDir := t.TempDir()
+	outsidePath := filepath.Join(otherDir, "outside.plist")
+	if err := os.WriteFile(outsidePath, []byte(vendorJob), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. SaveAsRoot with existing pointing to a regular .plist in a different directory.
+	spec, err := LoadSpec(outsidePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.SaveAsRoot(spec, outsidePath, false); err == nil || len(*admin) != 0 {
+		t.Fatalf("expected error and 0 admin calls for outside path, err: %v, admin calls: %d", err, len(*admin))
+	}
+
+	// 2. SaveAsRoot with existing pointing to a symlink inside p.Dir.
+	targetPath := filepath.Join(dir, "target.plist")
+	if err := os.WriteFile(targetPath, []byte(vendorJob), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	symlinkPath := filepath.Join(dir, "link.plist")
+	if err := os.Symlink(targetPath, symlinkPath); err != nil {
+		t.Fatal(err)
+	}
+	spec, err = LoadSpec(symlinkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.SaveAsRoot(spec, symlinkPath, false); err == nil || len(*admin) != 0 {
+		t.Fatalf("expected error and 0 admin calls for symlink path, err: %v, admin calls: %d", err, len(*admin))
+	}
+
+	// 3. p.Do with service.Remove pointing outside p.Dir.
+	it := service.Item{Name: "com.vendor.helper", Path: outsidePath}
+	if err := p.Do(it, service.Remove); err == nil || len(*admin) != 0 {
+		t.Fatalf("expected error and 0 admin calls for remove outside path, err: %v, admin calls: %d", err, len(*admin))
 	}
 }

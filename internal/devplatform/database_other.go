@@ -82,6 +82,7 @@ func (m *Manager) mysqlSQL(ctx context.Context, s *State, i Instance, sql string
 		return "", e
 	}
 	c := exec.CommandContext(ctx, bin, "--defaults-file="+filepath.Join(m.instanceDirectory(i.ID), "client.cnf"), "--batch", "--skip-column-names")
+	c.Env = cleanDatabaseEnv()
 	c.Stdin = strings.NewReader(sql)
 	out, e := c.CombinedOutput()
 	if e != nil {
@@ -135,6 +136,7 @@ func (m *Manager) otherBackup(ctx context.Context, s *State, i Instance, name, p
 		}
 		defer f.Close()
 		c := exec.CommandContext(ctx, bin, "--defaults-file="+filepath.Join(m.instanceDirectory(i.ID), "client.cnf"), "--single-transaction", "--set-gtid-purged=OFF", name)
+		c.Env = cleanDatabaseEnv()
 		c.Stdout = f
 		return c.Run()
 	}
@@ -178,6 +180,7 @@ func (m *Manager) mysqlRestoreInput(ctx context.Context, s *State, i Instance, n
 		return e
 	}
 	c := exec.CommandContext(ctx, bin, "--defaults-file="+filepath.Join(m.instanceDirectory(i.ID), "client.cnf"), "--batch", "--skip-column-names")
+	c.Env = cleanDatabaseEnv()
 	c.Stdin = io.MultiReader(strings.NewReader("USE "+sqlIdentifier(name)+";\n"), contextReader{ctx, source})
 	c.Stdout = io.Discard
 	c.Stderr = io.Discard

@@ -77,14 +77,15 @@ func (a *app) devAuthority(c *ui.Context) {
 	if r == nil {
 		return
 	}
-	a.authorityInfo(c, "Active authority", r.Active, func() {
-		if btn(c, "Trust local CA", icoShield, btnPrimary).Tooltip("Uses your login keychain and may ask for macOS authorization.").Disabled(d.busy || !r.Active.Usable && r.Active.Status != "Not created").Clicked() {
+	kcActive := c.Key("authority-active")
+	a.authorityInfo(kcActive, "Active authority", r.Active, func() {
+		if btn(kcActive, "Trust local CA", icoShield, btnPrimary).Tooltip("Uses your login keychain and may ask for macOS authorization.").Disabled(d.busy || !r.Active.Usable && r.Active.Status != "Not created").Clicked() {
 			a.authorityTask(func(m *devplatform.Manager) error { return m.ConfigureTrust(m.Context, false) })
 		}
-		if btn(c, "Copy fingerprint", icoCopy, btnText).Disabled(r.Active.Fingerprint == "" || a.copy == nil).Clicked() {
+		if btn(kcActive, "Copy fingerprint", icoCopy, btnText).Disabled(r.Active.Fingerprint == "" || a.copy == nil).Clicked() {
 			a.copy(r.Active.Fingerprint)
 		}
-		if btn(c, "Remove CA trust", nil, btnText).Disabled(d.busy || r.Active.Fingerprint == "").Clicked() {
+		if btn(kcActive, "Remove CA trust", nil, btnText).Disabled(d.busy || r.Active.Fingerprint == "").Clicked() {
 			a.authorityTask(func(m *devplatform.Manager) error { return m.ConfigureTrust(m.Context, true) })
 		}
 	})
@@ -102,8 +103,9 @@ func (a *app) devAuthority(c *ui.Context) {
 		})
 	})
 	if r.Prepared != nil {
-		a.authorityInfo(c, "Prepared replacement", *r.Prepared, func() {
-			if btn(c, "Trust prepared CA", icoShield, btnPrimary).Disabled(d.busy || !r.Prepared.Usable).Clicked() {
+		kcPrepared := c.Key("authority-prepared")
+		a.authorityInfo(kcPrepared, "Prepared replacement", *r.Prepared, func() {
+			if btn(kcPrepared, "Trust prepared CA", icoShield, btnPrimary).Disabled(d.busy || !r.Prepared.Usable).Clicked() {
 				revision := r.Revision
 				a.authorityTask(func(m *devplatform.Manager) error { return m.TrustPreparedAuthority(m.Context, revision) })
 			}
@@ -111,14 +113,14 @@ func (a *app) devAuthority(c *ui.Context) {
 			if r.PreparedIsActive {
 				label = "Finish CA activation"
 			}
-			if btn(c, label, icoCheck, btnPrimary).Disabled(d.busy || !r.Prepared.Usable || !r.PreparedIsActive && r.Prepared.Trust != "Trusted").Clicked() {
+			if btn(kcPrepared, label, icoCheck, btnPrimary).Disabled(d.busy || !r.Prepared.Usable || !r.PreparedIsActive && r.Prepared.Trust != "Trusted").Clicked() {
 				revision := r.Revision
 				a.authorityTask(func(m *devplatform.Manager) error { return m.ActivateAuthority(m.Context, revision) })
 			}
-			if btn(c, "Copy fingerprint", icoCopy, btnText).Disabled(a.copy == nil || r.Prepared.Fingerprint == "").Clicked() {
+			if btn(kcPrepared, "Copy fingerprint", icoCopy, btnText).Disabled(a.copy == nil || r.Prepared.Fingerprint == "").Clicked() {
 				a.copy(r.Prepared.Fingerprint)
 			}
-			if btn(c, "Discard prepared CA", icoTrash, btnDanger).Tooltip("The saved certificate stays listed below, so any trust granted to it can still be removed.").Disabled(d.busy).Clicked() {
+			if btn(kcPrepared, "Discard prepared CA", icoTrash, btnDanger).Tooltip("The saved certificate stays listed below, so any trust granted to it can still be removed.").Disabled(d.busy).Clicked() {
 				revision := r.Revision
 				a.authorityTask(func(m *devplatform.Manager) error { return m.DiscardPreparedAuthority(m.Context, revision) })
 			}
@@ -133,16 +135,17 @@ func (a *app) devAuthority(c *ui.Context) {
 			title = "Previous authority · " + saved.ID[:8]
 		}
 		id, fingerprint, revision := saved.ID, saved.Fingerprint, r.Revision
-		a.authorityInfo(c, title, saved, func() {
-			if btn(c, "Use this CA", icoCheck, btnPrimary).Disabled(d.busy || !saved.Usable || r.Prepared != nil).Clicked() {
+		kcArchive := c.Key("authority-archive-" + saved.ID)
+		a.authorityInfo(kcArchive, title, saved, func() {
+			if btn(kcArchive, "Use this CA", icoCheck, btnPrimary).Disabled(d.busy || !saved.Usable || r.Prepared != nil).Clicked() {
 				a.authorityTask(func(m *devplatform.Manager) error { return m.RestoreAuthority(m.Context, id, fingerprint, revision) })
 			}
-			if btn(c, "Trust", icoShield, btnDefault).Disabled(d.busy || !saved.Usable).Clicked() {
+			if btn(kcArchive, "Trust", icoShield, btnDefault).Disabled(d.busy || !saved.Usable).Clicked() {
 				a.authorityTask(func(m *devplatform.Manager) error {
 					return m.ConfigureSavedAuthorityTrust(m.Context, id, fingerprint, false)
 				})
 			}
-			if btn(c, "Remove trust", nil, btnText).Tooltip("Affects that exact certificate wherever it is used on this Mac.").Disabled(d.busy).Clicked() {
+			if btn(kcArchive, "Remove trust", nil, btnText).Tooltip("Affects that exact certificate wherever it is used on this Mac.").Disabled(d.busy).Clicked() {
 				a.authorityTask(func(m *devplatform.Manager) error { return m.RemoveArchivedAuthorityTrust(m.Context, id, fingerprint) })
 			}
 		})

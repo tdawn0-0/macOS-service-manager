@@ -29,9 +29,6 @@ func TestRuntimeCatalogs(t *testing.T) {
 			return nil, e
 		}
 		body := `{"jdks":[{"vendor":"Eclipse","product":"Temurin","jdk_version":"21.0.13","packages":[{"os":"macOS","arch":"aarch64","url":"https://example.test/jdk.tar.gz","sha256":"` + checksum + `","package_type":"targz","package_root_prefix":"jdk-21.0.13+9","package_to_java_home_prefix":"Contents/Home","install_folder_name":"temurin-21.0.13"}]}]}`
-		if r.URL.Host == "go.dev" {
-			body = `[{"version":"go1.27.3","stable":true,"files":[{"os":"darwin","arch":"arm64","kind":"archive"}]}]`
-		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
 	})}
 	ctx, cancel := context.WithCancel(context.Background())

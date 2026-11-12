@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import re
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -114,6 +115,13 @@ def collect():
         modules.append({'module': module['Path'], 'version': module['Version'], 'sum': module.get('Sum', ''), 'files': entries})
     goroot = Path(command('go', 'env', 'GOROOT'))
     version = command('go', 'env', 'GOVERSION')
+    go_mod_path = ROOT / 'go.mod'
+    if go_mod_path.is_file():
+        match = re.search(r'(?m)^go\s+(\d+\.\d+(?:\.\d+)?)', go_mod_path.read_text())
+        if match:
+            mod_ver = 'go' + match.group(1)
+            if go_minor_series(mod_ver) == go_minor_series(version):
+                version = mod_ver
     entries = []
     for name in ('LICENSE', 'PATENTS'):
         data = toolchain_notice(goroot, name)
@@ -143,6 +151,44 @@ def collect():
     return files, modules
 
 
+def go_minor_series(version: str) -> str | None:
+    match = re.match(r'^(go\d+\.\d+)(?:\.\d+)?$', version)
+    return match.group(1) if match else None
+
+
+def verify_inventory(files: dict, target: Path, runtime_go_version: str) -> None:
+    expected = dict(files)
+    manifest_path = target / 'manifest.json'
+    if manifest_path.is_file():
+        try:
+            recorded_manifest = json.loads(manifest_path.read_text())
+            recorded_go = recorded_manifest.get('go')
+            if isinstance(recorded_go, str):
+                rec_series = go_minor_series(recorded_go)
+                run_series = go_minor_series(runtime_go_version)
+                if rec_series and run_series and rec_series == run_series:
+                    if 'manifest.json' in expected:
+                        manifest_data = json.loads(expected['manifest.json'].decode())
+                        manifest_data['go'] = recorded_go
+                        expected['manifest.json'] = (json.dumps(manifest_data, indent=2, ensure_ascii=False) + '\n').encode()
+                    if 'README.md' in expected:
+                        readme_text = expected['README.md'].decode()
+                        readme_text = re.sub(
+                            r'Go toolchain: go\d+\.\d+(?:\.\d+)?;',
+                            f'Go toolchain: {recorded_go};',
+                            readme_text,
+                            count=1,
+                        )
+                        expected['README.md'] = readme_text.encode()
+        except json.JSONDecodeError:
+            pass
+
+    mismatches = [name for name, content in expected.items() if not (target / name).is_file() or (target / name).read_bytes() != content]
+    extra = [p.relative_to(target).as_posix() for p in target.rglob('*') if p.is_file() and p.relative_to(target).as_posix() not in expected] if target.exists() else []
+    if mismatches or extra:
+        raise ValueError('Notice inventory differs; regenerate and review: ' + ', '.join(mismatches + extra))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true')
@@ -150,10 +196,8 @@ def main():
     files, modules = collect()
     target = ROOT / 'licenses'
     if args.check:
-        mismatches = [name for name, content in files.items() if not (target / name).is_file() or (target / name).read_bytes() != content]
-        extra = [p.relative_to(target).as_posix() for p in target.rglob('*') if p.is_file() and p.relative_to(target).as_posix() not in files] if target.exists() else []
-        if mismatches or extra:
-            raise ValueError('Notice inventory differs; regenerate and review: ' + ', '.join(mismatches + extra))
+        runtime_version = command('go', 'env', 'GOVERSION')
+        verify_inventory(files, target, runtime_version)
     else:
         if target.exists():
             # Do not erase unrecognized files. A maintainer reviews removed modules explicitly.

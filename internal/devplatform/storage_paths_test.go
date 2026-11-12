@@ -35,7 +35,7 @@ func TestUserStorageLocations(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(m.Root, "downloads")); !os.IsNotExist(err) {
 		t.Fatal("created download cache in persistent application storage", err)
 	}
-	for _, name := range []string{"go", "node", "mysql", "redis", "mongodb", "caddy"} {
+	for _, name := range []string{"node", "mysql", "redis", "mongodb"} {
 		pkg := Package{Name: name, Version: "1.2.3", Arch: "arm64"}
 		if m.PackageDirectory(pkg) != filepath.Join(m.Root, "packages", pkg.ID()) {
 			t.Fatalf("unexpected location for %s", name)

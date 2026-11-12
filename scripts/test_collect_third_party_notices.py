@@ -72,5 +72,69 @@ class NoticeCollectionTests(unittest.TestCase):
                 notices.asset_notices(root)
 
 
+    def test_check_allows_same_minor_go_patch_when_toolchain_digests_match(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            license_bytes = b'Go Toolchain License Content\n'
+            (target / 'go-toolchain').mkdir(parents=True)
+            (target / 'go-toolchain/LICENSE').write_bytes(license_bytes)
+
+            manifest_target = {
+                'schema': 1,
+                'go': 'go1.27.3',
+                'scope': 'app and CLI production Go modules and attributed assets for darwin arm64; copied notices retain their original terms',
+                'toolchain': [{'path': 'go-toolchain/LICENSE', 'sha256': hashlib.sha256(license_bytes).hexdigest()}],
+                'modules': [],
+                'assets': [],
+            }
+            (target / 'manifest.json').write_bytes((json.dumps(manifest_target, indent=2, ensure_ascii=False) + '\n').encode())
+            (target / 'README.md').write_text('# Notices\n\nGo toolchain: go1.27.3; see [license](go-toolchain/LICENSE).\n')
+
+            manifest_runtime = dict(manifest_target, go='go1.27.4')
+            files = {
+                'go-toolchain/LICENSE': license_bytes,
+                'manifest.json': (json.dumps(manifest_runtime, indent=2, ensure_ascii=False) + '\n').encode(),
+                'README.md': b'# Notices\n\nGo toolchain: go1.27.4; see [license](go-toolchain/LICENSE).\n',
+            }
+
+            # Should not raise
+            notices.verify_inventory(files, target, 'go1.27.4')
+
+    def test_check_rejects_different_go_minor_or_modified_toolchain_license(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            license_bytes = b'Go Toolchain License Content\n'
+            (target / 'go-toolchain').mkdir(parents=True)
+            (target / 'go-toolchain/LICENSE').write_bytes(license_bytes)
+
+            manifest_target = {
+                'schema': 1,
+                'go': 'go1.27.3',
+                'scope': 'app and CLI production Go modules and attributed assets for darwin arm64; copied notices retain their original terms',
+                'toolchain': [{'path': 'go-toolchain/LICENSE', 'sha256': hashlib.sha256(license_bytes).hexdigest()}],
+                'modules': [],
+                'assets': [],
+            }
+            (target / 'manifest.json').write_bytes((json.dumps(manifest_target, indent=2, ensure_ascii=False) + '\n').encode())
+            (target / 'README.md').write_text('# Notices\n\nGo toolchain: go1.27.3; see [license](go-toolchain/LICENSE).\n')
+
+            manifest_different_minor = dict(manifest_target, go='go1.28.0')
+            files_diff_minor = {
+                'go-toolchain/LICENSE': license_bytes,
+                'manifest.json': (json.dumps(manifest_different_minor, indent=2, ensure_ascii=False) + '\n').encode(),
+                'README.md': b'# Notices\n\nGo toolchain: go1.28.0; see [license](go-toolchain/LICENSE).\n',
+            }
+            with self.assertRaisesRegex(ValueError, 'Notice inventory differs'):
+                notices.verify_inventory(files_diff_minor, target, 'go1.28.0')
+
+            # Mutated license bytes under same-minor
+            files_mutated_license = {
+                'go-toolchain/LICENSE': b'Modified License Content\n',
+                'manifest.json': (json.dumps(dict(manifest_target, go='go1.27.4'), indent=2, ensure_ascii=False) + '\n').encode(),
+                'README.md': b'# Notices\n\nGo toolchain: go1.27.4; see [license](go-toolchain/LICENSE).\n',
+            }
+            with self.assertRaisesRegex(ValueError, 'Notice inventory differs'):
+                notices.verify_inventory(files_mutated_license, target, 'go1.27.4')
+
 if __name__ == '__main__':
     unittest.main()

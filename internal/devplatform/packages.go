@@ -326,9 +326,6 @@ func (m *Manager) Uninstall(ctx context.Context, id string) error {
 				return fmt.Errorf("package is used by instance %s", i.ID)
 			}
 		}
-		if p.Name == "caddy" && len(s.ProxyRules) > 0 {
-			return errors.New("Caddy is used by configured HTTPS proxy rules")
-		}
 		// Refuse packages referenced by generated launchd jobs, including interrupted operations.
 		files, _ := filepath.Glob(filepath.Join(m.Root, "jobs", "*.plist"))
 		for _, file := range files {

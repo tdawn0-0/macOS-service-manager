@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"github.com/egoist/mygo/ui"
 	"image/png"
@@ -25,18 +26,28 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 		if len(h.a.dev.proxyDraft) != 0 {
 			t.Fatal("discard retained row")
 		}
-		h.fill("HTTPS listener port", "8443")
+		port := freeUIPort(t)
+		h.fill("HTTPS listener port", fmt.Sprint(port))
 		h.click("Add rule")
 		h.fill("Domain", "app.test")
 		h.fill("Local port", "3000")
 		h.click("Save HTTPS rules")
+		if h.a.dev.proxyPublicationState != "Unknown" {
+			t.Fatalf("expected Unknown publication state before initial publish, got %q", h.a.dev.proxyPublicationState)
+		}
 		state, err := devplatform.New(h.root).Read()
-		if err != nil || state.ProxyListenerPort != 8443 || len(state.ProxyRules) != 1 || state.ProxyRules[0].Domain != "app.test" {
+		if err != nil || state.ProxyListenerPort != port || len(state.ProxyRules) != 1 || state.ProxyRules[0].Domain != "app.test" {
 			t.Fatal(state, err)
 		}
+		defer devplatform.New(h.root).StopProxy(context.Background())
+		h.click("Apply proxy")
+		if h.a.dev.proxyPublicationState != "Published" {
+			t.Fatalf("expected Published publication state after Apply proxy, got %q (output: %q)", h.a.dev.proxyPublicationState, h.a.dev.output)
+		}
 		h.click("Open HTTPS URL")
-		if len(h.opened) != 1 || h.opened[0] != "https://app.test:8443" {
-			t.Fatal("wrong saved URL", h.opened)
+		expectedURL := fmt.Sprintf("https://app.test:%d", port)
+		if len(h.opened) != 1 || h.opened[0] != expectedURL {
+			t.Fatal("wrong saved URL", h.opened, "want", expectedURL)
 		}
 		h.click("Add rule")
 		h.a.dev.proxyDraft[1] = proxyRuleDraft{Domain: "APP.test", LocalPort: "4000"}
@@ -57,6 +68,11 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 		}
 		if _, ok := h.ui.Find("Open HTTPS URL"); !ok {
 			t.Fatal("saved rule cannot open")
+		}
+		h.fill("HTTPS listener port", "9443")
+		h.click("Save HTTPS rules")
+		if h.a.dev.proxyPublicationState != "Pending" {
+			t.Fatalf("expected Pending publication state after modifying rule, got %q", h.a.dev.proxyPublicationState)
 		}
 	})
 	t.Run("revision-conflict", func(t *testing.T) {

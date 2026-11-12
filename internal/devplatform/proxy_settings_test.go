@@ -128,3 +128,35 @@ func TestProxyHeaderTimeoutAndLocalPortRules(t *testing.T) {
 		t.Fatal("accepted arbitrary HTTPS upstream")
 	}
 }
+
+func TestHostsContentRejectsDuplicateOrMalformedBlocks(t *testing.T) {
+	site := proxyRoute{Domain: "site.test", LocalPort: 3000, Port: 8443}
+	validOld := "127.0.0.1 localhost\n"
+
+	// Duplicate modern block markers
+	dupBlock := fmt.Sprintf("127.0.0.1 localhost\n%s\n127.0.0.1 site1.test\n%s\n%s\n127.0.0.1 site2.test\n%s\n", hostsBegin, hostsEnd, hostsBegin, hostsEnd)
+	if _, err := HostsContent(dupBlock, []proxyRoute{site}); err == nil {
+		t.Fatal("accepted duplicate managed hosts blocks")
+	}
+
+	// Duplicate legacy block markers
+	dupLegacy := fmt.Sprintf("127.0.0.1 localhost\n%s\n127.0.0.1 site1.test\n%s\n%s\n127.0.0.1 site2.test\n%s\n", legacyHostsBegin, legacyHostsEnd, legacyHostsBegin, legacyHostsEnd)
+	if _, err := HostsContent(dupLegacy, []proxyRoute{site}); err == nil {
+		t.Fatal("accepted duplicate legacy managed hosts blocks")
+	}
+
+	// Marker embedded mid-line
+	midLine := fmt.Sprintf("127.0.0.1 localhost # %s\n%s\n", hostsBegin, hostsEnd)
+	if _, err := HostsContent(midLine, []proxyRoute{site}); err == nil {
+		t.Fatal("accepted mid-line marker")
+	}
+
+	// Valid content succeeds
+	out, err := HostsContent(validOld, []proxyRoute{site})
+	if err != nil {
+		t.Fatalf("unexpected error on valid hosts: %v", err)
+	}
+	if !strings.Contains(out, "127.0.0.1 site.test") {
+		t.Fatalf("missing route in output: %s", out)
+	}
+}

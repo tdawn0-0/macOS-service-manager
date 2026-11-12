@@ -370,6 +370,33 @@ func writeChecked(dir string, data []byte) (string, error) {
 // authentication. To edit the file at existing, pass its path, and a loaded job
 // loads again; to make a new one, "", which fails if the label is taken. An error
 // with a path says the job was saved but did not load.
+func (p *Provider) checkManagedPath(path string) (string, error) {
+	if p.Dir == "" || !filepath.IsAbs(p.Dir) || !filepath.IsAbs(path) {
+		return "", fmt.Errorf("path is not within managed directory")
+	}
+	clean := filepath.Clean(path)
+	dir := filepath.Clean(p.Dir)
+	base := filepath.Base(clean)
+	if filepath.Dir(clean) != dir || !strings.HasSuffix(base, ".plist") || base == ".plist" {
+		return "", fmt.Errorf("path is not within managed directory")
+	}
+	dirInfo, err := os.Lstat(dir)
+	if err != nil {
+		return "", err
+	}
+	if !dirInfo.IsDir() || dirInfo.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("managed directory is not a directory or is a symlink")
+	}
+	info, err := os.Lstat(clean)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular file", base)
+	}
+	return clean, nil
+}
+
 func (p *Provider) SaveAsRoot(s Spec, existing string, load bool) (string, error) {
 	s.Existing = existing != ""
 	if err := s.Validate(); err != nil {
@@ -378,20 +405,23 @@ func (p *Provider) SaveAsRoot(s Spec, existing string, load bool) (string, error
 	path := existing
 	var current []byte
 	if existing == "" {
-		path = filepath.Join(p.Dir, s.Label+".plist")
+		if p.Dir == "" || !filepath.IsAbs(p.Dir) {
+			return "", fmt.Errorf("provider directory is not configured")
+		}
+		path = filepath.Join(filepath.Clean(p.Dir), s.Label+".plist")
+		if filepath.Dir(path) != filepath.Clean(p.Dir) {
+			return "", fmt.Errorf("target path is outside provider directory")
+		}
 		if _, err := os.Stat(path); err == nil {
 			return "", fmt.Errorf("%s already exists", filepath.Base(path))
 		}
 	} else {
-		info, err := os.Lstat(existing)
+		var err error
+		path, err = p.checkManagedPath(existing)
 		if err != nil {
 			return "", err
 		}
-		// Installing over a link would replace the link, not what it points at.
-		if !info.Mode().IsRegular() {
-			return "", fmt.Errorf("%s is not a regular file", filepath.Base(existing))
-		}
-		if current, err = os.ReadFile(existing); err != nil {
+		if current, err = os.ReadFile(path); err != nil {
 			return "", err
 		}
 	}
@@ -482,14 +512,22 @@ func unloadScript(target string) string {
 // the Trash keeps a copy and is no undo: the file left its directory for a
 // temporary one, which is where Put Back would look, and it is no longer root's.
 func (p *Provider) removeAsRoot(it service.Item) error {
+	sourcePath, err := p.checkManagedPath(it.Path)
+	if err != nil {
+		return err
+	}
 	dir, err := os.MkdirTemp("", "msm-removed-")
 	if err != nil {
 		return err
 	}
-	moved := filepath.Join(dir, filepath.Base(it.Path))
+	_ = os.Chmod(dir, 0o700)
+	moved := filepath.Join(dir, filepath.Base(sourcePath))
 	script := unloadScript(p.Domain+"/"+it.Name) +
-		" /bin/mv " + system.ShellQuote(it.Path) + " " + system.ShellQuote(moved) +
-		" && /usr/sbin/chown " + strconv.Itoa(os.Getuid()) + " " + system.ShellQuote(moved)
+		" [ -f " + system.ShellQuote(sourcePath) + " ] && [ ! -L " + system.ShellQuote(sourcePath) + " ] && " +
+		"[ -d " + system.ShellQuote(dir) + " ] && [ ! -L " + system.ShellQuote(dir) + " ] && " +
+		"[ ! -e " + system.ShellQuote(moved) + " ] && [ ! -L " + system.ShellQuote(moved) + " ] && " +
+		"/bin/mv -n " + system.ShellQuote(sourcePath) + " " + system.ShellQuote(moved) +
+		" && /usr/sbin/chown -h " + strconv.Itoa(os.Getuid()) + " " + system.ShellQuote(moved)
 	if _, err := system.RunAdmin("/bin/sh", "-c", script); err != nil {
 		os.Remove(dir)
 		return err

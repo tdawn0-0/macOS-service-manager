@@ -20,9 +20,24 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+var sharedDevmgrBinary = sync.OnceValues(func() (string, error) {
+	dir, err := os.MkdirTemp("", "devbase-test-devmgr-*")
+	if err != nil {
+		return "", err
+	}
+	binary := filepath.Join(dir, "devmgr")
+	c := exec.Command("go", "build", "-o", binary, "./cmd/devmgr")
+	if out, err := c.CombinedOutput(); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("%v %s", err, out)
+	}
+	return binary, nil
+})
 
 type devUIHarness struct {
 	foregroundOnly bool
@@ -47,10 +62,9 @@ func newDevUIHarnessSize(t *testing.T, width, height int, dark bool) *devUIHarne
 	}
 	t.Cleanup(func() { system.RunAdmin = oldAdmin })
 	root := t.TempDir()
-	binary := filepath.Join(t.TempDir(), "devmgr")
-	c := exec.Command("go", "build", "-o", binary, "./cmd/devmgr")
-	if out, e := c.CombinedOutput(); e != nil {
-		t.Fatalf("build app entry point: %v %s", e, out)
+	binary, buildErr := sharedDevmgrBinary()
+	if buildErr != nil {
+		t.Fatalf("build app entry point: %v", buildErr)
 	}
 	h := &devUIHarness{t: t, root: root, posted: make(chan func(), 256), width: width, height: height}
 	a := newAppWith(nil, nil, t.TempDir())

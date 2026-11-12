@@ -26,4 +26,4 @@ See [development-verification.md](development-verification.md). Unit, isolated-n
 
 ## Additional runtimes and database locations
 
-Software also includes Java, Go, and Python (uv). The [runtime and data-location guide](development-runtimes-and-data.md) explains exact versions, terminal defaults, existing uv storage, and custom database paths. Database versions are selected per instance; changing the major version requires a separate instance and an explicit data migration outside this feature.
+Software also includes Java and Python (uv). The [runtime and data-location guide](development-runtimes-and-data.md) explains exact versions, terminal defaults, existing uv storage, and custom database paths. Database versions are selected per instance; changing the major version requires a separate instance and an explicit data migration outside this feature.

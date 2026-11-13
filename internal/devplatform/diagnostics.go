@@ -32,9 +32,6 @@ func (m *Manager) Snapshot(ctx context.Context, s State) RuntimeSnapshot {
 	if m.HasCloudflareToken() {
 		out.States["tunnel:token"] = "Configured"
 	}
-	if m.HasTunnelSecret() {
-		out.States["tunnel:secret"] = "Configured"
-	}
 	type observation struct {
 		key, status string
 	}
@@ -180,12 +177,6 @@ func (m *Manager) formatTunnelDetail() string {
 				return "Connected · 1 worker"
 			}
 			return fmt.Sprintf("Connected · %d/%d workers", st.Connected, st.Total)
-		}
-		if len(st.Accepted) == 1 {
-			return "Connected · 1 worker"
-		}
-		if len(st.Accepted) > 1 {
-			return fmt.Sprintf("Connected · %d workers", len(st.Accepted))
 		}
 		return "Connected"
 	case "AuthFailed":

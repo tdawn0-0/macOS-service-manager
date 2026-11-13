@@ -137,8 +137,8 @@ export class TunnelGateway extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(CONTROL_PING, CONTROL_PONG));
-    this.agents = new Map();
-    this.routes = new Map();
+    this.agentWs = null;
+    this.agentClientId = "";
     this.httpStreams = new Map();
     this.wsPending = new Map();
     this.wsVisitors = new Map();
@@ -147,12 +147,9 @@ export class TunnelGateway extends DurableObject {
 
     for (const ws of this.ctx.getWebSockets("agent")) {
       const att = ws.deserializeAttachment() || {};
-      if (!att.clientId) continue;
-      this.agents.set(att.clientId, ws);
-      if (Array.isArray(att.routes)) {
-        for (const host of att.routes) {
-          this.routes.set(host, att.clientId);
-        }
+      if (att.active && att.clientId && ws.readyState === WS_OPEN) {
+        this.agentWs = ws;
+        this.agentClientId = att.clientId;
       }
     }
     for (const ws of this.ctx.getWebSockets("visitor")) {
@@ -169,38 +166,25 @@ export class TunnelGateway extends DurableObject {
     return id;
   }
 
-  cleanupClient(clientId, keepWs) {
-    if (!clientId) return;
-    const prev = this.agents.get(clientId);
-    if (prev && prev !== keepWs) {
-      try { prev.close(1000, "superseded"); } catch {}
+  cleanupAgent(keepWs) {
+    if (this.agentWs && this.agentWs !== keepWs) {
+      try { this.agentWs.close(1000, "superseded"); } catch {}
     }
-    if (!keepWs || prev === keepWs) {
-      this.agents.delete(clientId);
+    if (!keepWs) {
+      this.agentWs = null;
+      this.agentClientId = "";
     }
-    for (const [host, owner] of this.routes.entries()) {
-      if (owner === clientId) {
-        this.routes.delete(host);
-      }
-    }
-    for (const [streamId, st] of this.httpStreams.entries()) {
-      if (st.clientId === clientId) {
-        this.failHTTPStream(streamId, "Tunnel client disconnected");
-      }
+    for (const streamId of [...this.httpStreams.keys()]) {
+      this.failHTTPStream(streamId, "Tunnel client disconnected");
     }
     for (const [streamId, pending] of this.wsPending.entries()) {
-      if (pending.clientId === clientId) {
-        this.wsPending.delete(streamId);
-        pending.reject(new Error("Tunnel client disconnected"));
-      }
+      this.wsPending.delete(streamId);
+      pending.reject(new Error("Tunnel client disconnected"));
     }
     for (const [streamId, vws] of this.wsVisitors.entries()) {
-      const att = vws.deserializeAttachment() || {};
-      if (att.clientId === clientId) {
-        this.wsVisitors.delete(streamId);
-        this.wsInboundChunks.delete(streamId);
-        try { vws.close(1001, "Tunnel disconnected"); } catch {}
-      }
+      this.wsVisitors.delete(streamId);
+      this.wsInboundChunks.delete(streamId);
+      try { vws.close(1001, "Tunnel disconnected"); } catch {}
     }
   }
 
@@ -236,24 +220,22 @@ export class TunnelGateway extends DurableObject {
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
       this.ctx.acceptWebSocket(server, ["agent"]);
-      server.serializeAttachment({ clientId, routes: [] });
+      server.serializeAttachment({ clientId, active: false });
       return new Response(null, { status: 101, webSocket: client });
     }
 
-    const host = url.hostname.toLowerCase();
-    const clientId = this.routes.get(host) || this.routes.get("*");
-    const agentWs = clientId ? this.agents.get(clientId) : null;
-    if (!agentWs || agentWs.readyState !== WS_OPEN) {
-      return new Response("Devbase tunnel offline for " + host, { status: 502 });
+    if (!this.agentWs || this.agentWs.readyState !== WS_OPEN) {
+      return new Response("Devbase tunnel offline", { status: 502 });
     }
 
+    const host = url.hostname.toLowerCase();
     if ((request.headers.get("Upgrade") || "").toLowerCase() === "websocket") {
-      return this.handleVisitorWebSocket(request, url, host, clientId, agentWs);
+      return this.handleVisitorWebSocket(request, url, host, this.agentWs);
     }
-    return this.handleVisitorHTTP(request, url, host, clientId, agentWs);
+    return this.handleVisitorHTTP(request, url, host, this.agentWs);
   }
 
-  async handleVisitorHTTP(request, url, host, clientId, agentWs) {
+  async handleVisitorHTTP(request, url, host, agentWs) {
     const streamId = this.allocStreamId();
     const headers = [];
     for (const [k, v] of request.headers.entries()) {
@@ -266,7 +248,6 @@ export class TunnelGateway extends DurableObject {
       resolveResp = resolve;
     });
     this.httpStreams.set(streamId, {
-      clientId,
       method: request.method,
       responded: false,
       resolve: resolveResp,
@@ -314,7 +295,7 @@ export class TunnelGateway extends DurableObject {
     return respPromise;
   }
 
-  async handleVisitorWebSocket(request, url, host, clientId, agentWs) {
+  async handleVisitorWebSocket(request, url, host, agentWs) {
     const streamId = this.allocStreamId();
     const protoHeader = request.headers.get("Sec-WebSocket-Protocol") || "";
     const protocols = protoHeader
@@ -332,7 +313,6 @@ export class TunnelGateway extends DurableObject {
         reject(new Error("WebSocket upstream timed out"));
       }, 15000);
       this.wsPending.set(streamId, {
-        clientId,
         resolve: (val) => { clearTimeout(timer); resolve(val); },
         reject: (err) => { clearTimeout(timer); reject(err); },
       });
@@ -354,7 +334,7 @@ export class TunnelGateway extends DurableObject {
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
       this.ctx.acceptWebSocket(server, ["visitor"]);
-      server.serializeAttachment({ streamId, clientId });
+      server.serializeAttachment({ streamId });
       this.wsVisitors.set(streamId, server);
       const respHeaders = new Headers();
       if (ack.protocol) {
@@ -370,7 +350,7 @@ export class TunnelGateway extends DurableObject {
     const tags = this.ctx.getTags(ws);
     if (tags.includes("visitor")) {
       const att = ws.deserializeAttachment() || {};
-      const agentWs = this.agents.get(att.clientId);
+      const agentWs = this.agentWs;
       if (!agentWs || agentWs.readyState !== WS_OPEN) {
         try { ws.close(1001, "Tunnel offline"); } catch {}
         return;
@@ -410,26 +390,15 @@ export class TunnelGateway extends DurableObject {
         const att = ws.deserializeAttachment() || {};
         const clientId = req.clientId || att.clientId;
         if (!clientId) return;
-        this.cleanupClient(clientId, ws);
-        this.agents.set(clientId, ws);
-        const accepted = [];
-        const conflicts = [];
-        for (const rawHost of req.routes || []) {
-          const host = String(rawHost).toLowerCase().trim();
-          if (!host) continue;
-          const owner = this.routes.get(host);
-          if (owner && owner !== clientId) {
-            const ownerWs = this.agents.get(owner);
-            if (ownerWs && ownerWs.readyState === WS_OPEN) {
-              conflicts.push({ host, owner });
-              continue;
-            }
-          }
-          this.routes.set(host, clientId);
-          accepted.push(host);
+        if (this.agentClientId && this.agentClientId !== clientId && this.agentWs && this.agentWs.readyState === WS_OPEN) {
+          ws.send(encodeFrame(FRAME_REGISTER_ACK, FLAG_FIN, 0, 0, { ok: false, conflictOwner: this.agentClientId }));
+          return;
         }
-        ws.serializeAttachment({ clientId, routes: accepted });
-        ws.send(encodeFrame(FRAME_REGISTER_ACK, FLAG_FIN, 0, 0, { accepted, conflicts }));
+        this.cleanupAgent(ws);
+        this.agentWs = ws;
+        this.agentClientId = clientId;
+        ws.serializeAttachment({ clientId, active: true });
+        ws.send(encodeFrame(FRAME_REGISTER_ACK, FLAG_FIN, 0, 0, { ok: true }));
         break;
       }
       case FRAME_HTTP_RES_HEAD: {
@@ -543,13 +512,15 @@ export class TunnelGateway extends DurableObject {
     if (tags.includes("visitor")) {
       this.wsVisitors.delete(att.streamId);
       this.wsInboundChunks.delete(att.streamId);
-      const agentWs = this.agents.get(att.clientId);
+      const agentWs = this.agentWs;
       if (agentWs && agentWs.readyState === WS_OPEN) {
         agentWs.send(encodeFrame(FRAME_WS_CLOSE, FLAG_FIN, att.streamId, code || 1000, reason || ""));
       }
       return;
     }
-    this.cleanupClient(att.clientId, null);
+    if (ws === this.agentWs || (att.active && (!this.agentWs || this.agentWs === ws))) {
+      this.cleanupAgent(null);
+    }
   }
 
   async webSocketError(ws) {

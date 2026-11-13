@@ -2,7 +2,6 @@ package devplatform
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -137,16 +136,6 @@ func (m *Manager) writeCloudflareToken(token string) error {
 	return atomicWrite(m.cloudflareTokenPath(), []byte(cleaned), 0600)
 }
 
-// HasTunnelSecret checks whether a valid tunnel secret file is stored without
-// exposing its bytes.
-func (m *Manager) HasTunnelSecret() bool {
-	info, err := os.Stat(m.tunnelKeyPath())
-	if err != nil || !info.Mode().IsRegular() {
-		return false
-	}
-	return info.Size() >= 16 && info.Size() <= 4096
-}
-
 // ReadTunnelSecret reads the internal Worker shared HMAC secret from disk.
 func (m *Manager) ReadTunnelSecret() (string, error) {
 	return readSecretFile(m.tunnelKeyPath(), validateTunnelSecret, "tunnel secret")
@@ -189,25 +178,6 @@ func (m *Manager) ensureTunnelSecret() (string, error) {
 		return "", err
 	}
 	return secret, nil
-}
-
-// GenerateTunnelSecret creates a fresh 256-bit hex secret in proxy/tunnel.key
-// and refreshes the published tunnel snapshot if the tunnel is active.
-func (m *Manager) GenerateTunnelSecret(ctx context.Context) error {
-	var raw [32]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return err
-	}
-	secret := hex.EncodeToString(raw[:])
-	return m.withState(ctx, func(s *State) error {
-		if err := m.writeTunnelSecret(secret); err != nil {
-			return err
-		}
-		if m.tunnelPublishedExists() || m.loaded(ctx, "tunnel") {
-			return m.writePublishedTunnelConfig(s)
-		}
-		return nil
-	})
 }
 
 // TunnelRoute maps a single deployed Cloudflare Worker to a local loopback port.
@@ -365,7 +335,6 @@ type TunnelStatusSnapshot struct {
 	Phase     string           `json:"phase"`
 	Connected int              `json:"connected"`
 	Total     int              `json:"total"`
-	Accepted  []string         `json:"accepted,omitempty"`
 	Conflicts []TunnelConflict `json:"conflicts,omitempty"`
 	UpdatedAt time.Time        `json:"updatedAt"`
 }

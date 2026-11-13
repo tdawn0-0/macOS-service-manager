@@ -328,10 +328,8 @@ func (s *tunnelSupervisor) reconcile(ctx context.Context) {
 			runner.loop(rCtx)
 		}()
 	}
-	snap := s.buildStatusLocked()
+	s.manager.writeTunnelStatus(s.buildStatusLocked())
 	s.mu.Unlock()
-
-	s.manager.writeTunnelStatus(snap)
 }
 
 func (s *tunnelSupervisor) stopAll() {
@@ -357,9 +355,8 @@ func (s *tunnelSupervisor) updateStatus(workerName string, st tunnelWorkerStatus
 		return
 	}
 	s.statuses[workerName] = st
-	snap := s.buildStatusLocked()
+	s.manager.writeTunnelStatus(s.buildStatusLocked())
 	s.mu.Unlock()
-	s.manager.writeTunnelStatus(snap)
 }
 
 func (s *tunnelSupervisor) buildStatusLocked() TunnelStatusSnapshot {
@@ -368,27 +365,25 @@ func (s *tunnelSupervisor) buildStatusLocked() TunnelStatusSnapshot {
 		return TunnelStatusSnapshot{PID: os.Getpid(), Phase: "Stopped", Total: 0}
 	}
 	var connected, connecting, authFailed int
-	var accepted []string
 	var conflicts []TunnelConflict
-	for name, mr := range s.runners {
+	for name := range s.runners {
 		st := s.statuses[name]
 		switch st.phase {
 		case "Connected":
-			connected++
-			if h := mr.route.PublicHost(); h != "" {
-				accepted = append(accepted, h)
+			if len(st.conflicts) > 0 {
+				conflicts = append(conflicts, st.conflicts...)
+			} else {
+				connected++
 			}
-			conflicts = append(conflicts, st.conflicts...)
 		case "AuthFailed":
 			authFailed++
 		case "Connecting":
 			connecting++
 		}
 	}
-	sort.Strings(accepted)
 	phase := "Reconnecting"
 	switch {
-	case connected > 0:
+	case connected > 0 || len(conflicts) > 0:
 		phase = "Connected"
 	case authFailed > 0:
 		phase = "AuthFailed"
@@ -400,7 +395,6 @@ func (s *tunnelSupervisor) buildStatusLocked() TunnelStatusSnapshot {
 		Phase:     phase,
 		Connected: connected,
 		Total:     total,
-		Accepted:  accepted,
 		Conflicts: conflicts,
 	}
 }
@@ -545,7 +539,6 @@ type tunnelSession struct {
 func (s *tunnelSession) sendRegister(clientID string) error {
 	frame, err := encodeTunnelJSONFrame(frameRegister, tunnelFlagFIN, 0, 0, tunnelRegisterPayload{
 		ClientID: clientID,
-		Routes:   []string{"*"},
 	})
 	if err != nil {
 		return err
@@ -596,11 +589,9 @@ func (s *tunnelSession) readLoop(ctx context.Context) error {
 		case frameRegisterAck:
 			var ack tunnelRegisterAckPayload
 			if err := json.Unmarshal(frame.Payload, &ack); err == nil {
-				conflicts := append([]TunnelConflict(nil), ack.Conflicts...)
-				for i := range conflicts {
-					if conflicts[i].Host == "*" {
-						conflicts[i].Host = s.runner.route.PublicHost()
-					}
+				var conflicts []TunnelConflict
+				if !ack.OK && ack.ConflictOwner != "" {
+					conflicts = []TunnelConflict{{Host: s.runner.route.PublicHost(), Owner: ack.ConflictOwner}}
 				}
 				s.runner.sup.updateStatus(s.runner.route.WorkerName, tunnelWorkerStatus{
 					phase:     "Connected",

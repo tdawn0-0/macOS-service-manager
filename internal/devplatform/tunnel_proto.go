@@ -75,13 +75,12 @@ func decodeTunnelFrame(raw []byte) (tunnelFrame, error) {
 }
 
 type tunnelRegisterPayload struct {
-	ClientID string   `json:"clientId"`
-	Routes   []string `json:"routes"`
+	ClientID string `json:"clientId"`
 }
 
 type tunnelRegisterAckPayload struct {
-	Accepted  []string         `json:"accepted"`
-	Conflicts []TunnelConflict `json:"conflicts,omitempty"`
+	OK            bool   `json:"ok"`
+	ConflictOwner string `json:"conflictOwner,omitempty"`
 }
 
 type tunnelHTTPReqHead struct {

@@ -30,13 +30,7 @@ func TestTunnelConfigValidationAndSecretIsolation(t *testing.T) {
 	m := testManager(t)
 	ctx := context.Background()
 
-	if err := m.GenerateTunnelSecret(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if !m.HasTunnelSecret() {
-		t.Fatal("expected tunnel secret to be present")
-	}
-	secret, err := m.ReadTunnelSecret()
+	secret, err := m.ensureTunnelSecret()
 	if err != nil || len(secret) != 64 {
 		t.Fatalf("unexpected secret: len=%d err=%v", len(secret), err)
 	}
@@ -237,18 +231,18 @@ func TestTunnelAuthAndWebSocketFraming(t *testing.T) {
 }
 
 type mockGatewayServer struct {
-	t        *testing.T
-	secret   string
-	server   *httptest.Server
-	mu       sync.Mutex
-	agents   map[string]*wsConn
-	routes   map[string]string
-	claimed  map[string]string // externally owned hosts for conflict testing
-	httpWait map[uint32]*mockHTTPWaiter
-	wsWait   map[uint32]chan tunnelWSOpenAckResult
-	visitors map[uint32]*wsConn
-	nextID   atomic.Uint32
-	conns    atomic.Int32
+	t            *testing.T
+	secret       string
+	server       *httptest.Server
+	mu           sync.Mutex
+	agentWS      *wsConn
+	ownerID      string
+	claimedOwner string // externally owned worker for conflict testing
+	httpWait     map[uint32]*mockHTTPWaiter
+	wsWait       map[uint32]chan tunnelWSOpenAckResult
+	visitors     map[uint32]*wsConn
+	nextID       atomic.Uint32
+	conns        atomic.Int32
 }
 
 type mockHTTPWaiter struct {
@@ -267,9 +261,6 @@ func newMockGatewayServer(t *testing.T, secret string) *mockGatewayServer {
 	g := &mockGatewayServer{
 		t:        t,
 		secret:   secret,
-		agents:   map[string]*wsConn{},
-		routes:   map[string]string{},
-		claimed:  map[string]string{},
 		httpWait: map[uint32]*mockHTTPWaiter{},
 		wsWait:   map[uint32]chan tunnelWSOpenAckResult{},
 		visitors: map[uint32]*wsConn{},
@@ -287,7 +278,10 @@ func (g *mockGatewayServer) tlsConfig() *tls.Config {
 
 func (g *mockGatewayServer) dropClient(clientID string) {
 	g.mu.Lock()
-	ws := g.agents[clientID]
+	var ws *wsConn
+	if g.ownerID == clientID {
+		ws = g.agentWS
+	}
 	g.mu.Unlock()
 	if ws != nil {
 		_ = ws.Close()
@@ -318,11 +312,7 @@ func (g *mockGatewayServer) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		host = h
 	}
 	g.mu.Lock()
-	owner := g.routes[host]
-	if owner == "" {
-		owner = g.routes["*"]
-	}
-	agentWS := g.agents[owner]
+	agentWS := g.agentWS
 	g.mu.Unlock()
 	if agentWS == nil {
 		http.Error(w, "tunnel offline", http.StatusBadGateway)
@@ -340,13 +330,9 @@ func (g *mockGatewayServer) serveAgent(clientID string, ws *wsConn) {
 	defer func() {
 		ws.Close()
 		g.mu.Lock()
-		if g.agents[clientID] == ws {
-			delete(g.agents, clientID)
-			for h, owner := range g.routes {
-				if owner == clientID {
-					delete(g.routes, h)
-				}
-			}
+		if g.agentWS == ws {
+			g.agentWS = nil
+			g.ownerID = ""
 		}
 		g.mu.Unlock()
 	}()
@@ -372,27 +358,18 @@ func (g *mockGatewayServer) serveAgent(clientID string, ws *wsConn) {
 				return
 			}
 			g.mu.Lock()
-			g.agents[reg.ClientID] = ws
-			for h, owner := range g.routes {
-				if owner == reg.ClientID {
-					delete(g.routes, h)
-				}
-			}
-			var accepted []string
-			var conflicts []TunnelConflict
-			for _, h := range reg.Routes {
-				if other, taken := g.claimed[h]; taken && other != reg.ClientID {
-					conflicts = append(conflicts, TunnelConflict{Host: h, Owner: other})
-					continue
-				}
-				g.routes[h] = reg.ClientID
-				accepted = append(accepted, h)
+			var ackPayload tunnelRegisterAckPayload
+			if g.claimedOwner != "" && g.claimedOwner != reg.ClientID {
+				ackPayload.ConflictOwner = g.claimedOwner
+			} else if g.ownerID != "" && g.ownerID != reg.ClientID && g.agentWS != nil {
+				ackPayload.ConflictOwner = g.ownerID
+			} else {
+				g.agentWS = ws
+				g.ownerID = reg.ClientID
+				ackPayload.OK = true
 			}
 			g.mu.Unlock()
-			ack, _ := encodeTunnelJSONFrame(frameRegisterAck, tunnelFlagFIN, 0, 0, tunnelRegisterAckPayload{
-				Accepted:  accepted,
-				Conflicts: conflicts,
-			})
+			ack, _ := encodeTunnelJSONFrame(frameRegisterAck, tunnelFlagFIN, 0, 0, ackPayload)
 			_ = ws.WriteBinary(ack)
 		case frameHTTPResHead:
 			var head tunnelHTTPResHead
@@ -990,10 +967,7 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 
 	m := testManager(t)
 	ctx := context.Background()
-	if err := m.GenerateTunnelSecret(ctx); err != nil {
-		t.Fatal(err)
-	}
-	secret, err := m.ReadTunnelSecret()
+	secret, err := m.ensureTunnelSecret()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1001,7 +975,7 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 	gwApp := newMockGatewayServer(t, secret)
 	gwAdmin := newMockGatewayServer(t, secret)
 	gwConflict := newMockGatewayServer(t, secret)
-	gwConflict.claimed["*"] = "other-mac"
+	gwConflict.claimedOwner = "other-mac"
 
 	pool := x509.NewCertPool()
 	pool.AddCert(gwApp.server.Certificate())
@@ -1061,7 +1035,7 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 	}
 
 	waitForTunnel(func(st TunnelStatusSnapshot) bool {
-		return st.Phase == "Connected" && st.Connected == 1 && st.Total == 1 && len(st.Accepted) == 1 && st.Accepted[0] == "devbase-app.demo.workers.dev"
+		return st.Phase == "Connected" && st.Connected == 1 && st.Total == 1 && len(st.Conflicts) == 0
 	})
 
 	visitorClient := gwApp.server.Client()
@@ -1164,7 +1138,7 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := waitForTunnel(func(st TunnelStatusSnapshot) bool {
-		return st.Phase == "Connected" && st.Connected == 3 && st.Total == 3 && len(st.Conflicts) == 1
+		return st.Phase == "Connected" && st.Connected == 2 && st.Total == 3 && len(st.Conflicts) == 1
 	})
 	if st.Conflicts[0].Host != "conflict.example.com" || st.Conflicts[0].Owner != "other-mac" {
 		t.Fatalf("unexpected conflict report: %+v", st.Conflicts)
@@ -1197,7 +1171,7 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 		t.Fatal("ServeTunnel did not reconnect after connection drop")
 	}
 	waitForTunnel(func(st TunnelStatusSnapshot) bool {
-		return st.Phase == "Connected" && st.Connected == 3 && st.Total == 3
+		return st.Phase == "Connected" && st.Connected == 2 && st.Total == 3
 	})
 
 	// 7. Removing a worker from tunnel.json closes its WS cleanly while keeping others connected.
@@ -1220,8 +1194,8 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 }
 
 func TestTunnelWorkerScriptSyntax(t *testing.T) {
-	if !strings.Contains(cloudflareWorkerIndexMJS, "TunnelGateway") || !strings.Contains(cloudflareWorkerIndexMJS, `this.routes.get("*")`) {
-		t.Fatal("worker script missing expected TunnelGateway or wildcard route fallback")
+	if !strings.Contains(cloudflareWorkerIndexMJS, "TunnelGateway") || strings.Contains(cloudflareWorkerIndexMJS, "this.routes") {
+		t.Fatal("worker script should have TunnelGateway without legacy multi-route map")
 	}
 	scriptPath := filepath.Join(t.TempDir(), "index.mjs")
 	if err := os.WriteFile(scriptPath, []byte(cloudflareWorkerIndexMJS), 0600); err != nil {

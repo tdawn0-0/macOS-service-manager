@@ -41,7 +41,7 @@ func TestUIIndependentResourceLifecycle(t *testing.T) {
 	t.Run("quit", func(t *testing.T) {
 		a := designFixture(t)
 		a.quit.open = true
-		a.quit.plan = &devplatform.ShutdownPlan{Instances: []devplatform.ShutdownResource{{ID: "db", Name: "redis"}}, PrivilegedProxy: true}
+		a.quit.plan = &devplatform.ShutdownPlan{Instances: []devplatform.ShutdownResource{{ID: "db", Name: "redis"}}}
 		a.dev.proxyDraftLoaded = true
 		a.dev.proxyDraft = []proxyRuleDraft{{Domain: "unsaved.test", LocalPort: "3000"}}
 		quitCount := 0
@@ -49,10 +49,13 @@ func TestUIIndependentResourceLifecycle(t *testing.T) {
 		tt := ui.NewTester(a.view, 900, 520)
 		tt.Frame()
 		shown := strings.Join(tt.Texts(), " ")
-		for _, want := range []string{"Stop scope: 1 managed databases", "Unsaved edits will be discarded", "Stop local HTTPS proxy", "Stop managed databases and quit"} {
+		for _, want := range []string{"Stop scope: 1 managed databases", "Unsaved edits will be discarded", "Stop managed databases and quit"} {
 			if !strings.Contains(shown, want) {
 				t.Fatalf("missing %q: %s", want, shown)
 			}
+		}
+		if strings.Contains(shown, "Stop local HTTPS proxy") {
+			t.Fatalf("quit dialog should not ask about HTTPS proxy: %s", shown)
 		}
 		if err := tt.Click("Cancel quit"); err != nil || a.quit.open || quitCount != 0 {
 			t.Fatal("cancel quit mutated state", err)

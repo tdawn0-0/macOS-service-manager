@@ -69,6 +69,9 @@ func (a *app) panelRunning() int {
 	if a.dev.statuses["proxy"] == "Running" {
 		running++
 	}
+	if a.dev.statuses["tunnel"] == "Running" {
+		running++
+	}
 	for _, src := range panelSources {
 		for _, it := range a.panelItems(src) {
 			if it.Up() {
@@ -376,6 +379,54 @@ func (a *app) panelProxy(c *ui.Context, openWindow func()) {
 			})
 		}
 	})
+	if a.tunnelConfigured() {
+		tunnelStatus := d.statuses["tunnel"]
+		if tunnelStatus == "" {
+			tunnelStatus = "Stopped"
+		}
+		tunnelSub := d.state.TunnelDomain
+		if tunnelSub == "" {
+			tunnelSub = "Cloudflare Worker"
+		}
+		if detail := d.statuses["tunnel:detail"]; tunnelStatus == "Running" && detail != "" {
+			tunnelSub = detail
+		}
+		tunnelOn := tunnelStatus == "Running"
+		panelRow(c, "menu-tunnel", func() {
+			ui.Box(c).Size(26, 26).Shrink(0).Children(func() {
+				iconTile(c, icoGlobe, theme.TokensOf(c).TextSecondary, 26)
+				ui.Box(c).Absolute().Right(-2).Bottom(-2).Size(10, 10).Radius(5).Center().Background(theme.TokensOf(c).BgContainer).Children(func() {
+					devStatusDot(c, tunnelStatus)
+				})
+			})
+		}, "Tunnel · "+tunnelStatus, tunnelSub, "Open Cloudflare tunnel settings", openSettings, nil, func() {
+			label := "Apply tunnel"
+			if tunnelOn {
+				label = "Stop tunnel"
+			}
+			if choice.Switch(c, &tunnelOn, choice.SwitchProps{Size: theme.Small}).Label(label).Disabled(d.busy || a.quit.open || (d.state.TunnelDomain == "" && d.state.TunnelEndpoint == "" && !tunnelOn)).Changed() {
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					if tunnelOn {
+						return "Cloudflare tunnel started.", m.ApplyTunnel(m.Context)
+					}
+					return "Stopped Cloudflare tunnel", m.StopTunnel(m.Context)
+				})
+			}
+		})
+	}
+}
+
+func (a *app) tunnelConfigured() bool {
+	d := &a.dev
+	if d.state.TunnelDomain != "" || d.state.TunnelEndpoint != "" || d.statuses["tunnel"] == "Running" {
+		return true
+	}
+	for _, rule := range d.state.ProxyRules {
+		if rule.Tunnel {
+			return true
+		}
+	}
+	return false
 }
 
 // panelServices lists the services of a source, under a heading that folds.
@@ -472,6 +523,9 @@ func (a *app) panelHeight() int {
 	height := header + footer + 16
 	height += heading + max(len(a.dev.state.Instances), 1)*row
 	height += heading + row // The single HTTPS proxy.
+	if a.tunnelConfigured() {
+		height += row
+	}
 	for _, src := range panelSources {
 		if n := len(a.panelItems(src)); n > 0 {
 			height += heading

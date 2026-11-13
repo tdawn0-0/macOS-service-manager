@@ -17,8 +17,40 @@ import (
 // ProxyRule is configuration for one local HTTP port. It has no independent
 // process, identity, or lifecycle.
 type ProxyRule struct {
-	Domain    string `json:"domain"`
-	LocalPort int    `json:"localPort"`
+	Domain          string `json:"domain"`
+	LocalPort       int    `json:"localPort"`
+	Tunnel          bool   `json:"tunnel,omitempty"`
+	TunnelSubdomain string `json:"tunnelSubdomain,omitempty"`
+}
+
+// DefaultTunnelSubdomain derives a single DNS label from a .test local domain
+// so wildcard TLS certificates (*.tunnelDomain) cover multi-level local names.
+func DefaultTunnelSubdomain(domain string) string {
+	d := strings.ToLower(strings.TrimSpace(domain))
+	d = strings.TrimSuffix(d, ".test")
+	return strings.ReplaceAll(d, ".", "-")
+}
+
+// ResolvedTunnelSubdomain returns the effective DNS label for tunnel routing.
+func (r ProxyRule) ResolvedTunnelSubdomain() string {
+	if sub := strings.ToLower(strings.TrimSpace(r.TunnelSubdomain)); sub != "" {
+		return sub
+	}
+	return DefaultTunnelSubdomain(r.Domain)
+}
+
+// PublicHost returns the full public hostname when tunneling is enabled and a
+// wildcard tunnel domain is configured.
+func (r ProxyRule) PublicHost(tunnelDomain string) string {
+	d := strings.ToLower(strings.TrimSpace(tunnelDomain))
+	if !r.Tunnel || d == "" {
+		return ""
+	}
+	sub := r.ResolvedTunnelSubdomain()
+	if sub == "" {
+		return ""
+	}
+	return sub + "." + d
 }
 
 // proxyRoute is a derived transport entry, never a saved resource.
@@ -37,6 +69,8 @@ func (r proxyRoute) Validate() error {
 	return err
 }
 
+const reservedTunnelSubdomain = "devbase-gateway"
+
 var proxyDomainPart = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
 func normalizeProxyRules(listenerPort int, rules []ProxyRule) ([]ProxyRule, error) {
@@ -48,6 +82,7 @@ func normalizeProxyRules(listenerPort int, rules []ProxyRule) ([]ProxyRule, erro
 	}
 	normalized := make([]ProxyRule, len(rules))
 	seen := make(map[string]bool, len(rules))
+	seenSubdomains := make(map[string]bool, len(rules))
 	for i, rule := range rules {
 		rule.Domain = strings.ToLower(strings.TrimSpace(rule.Domain))
 		if len(rule.Domain) > 253 || !strings.HasSuffix(rule.Domain, ".test") {
@@ -65,6 +100,28 @@ func normalizeProxyRules(listenerPort int, rules []ProxyRule) ([]ProxyRule, erro
 			return nil, fmt.Errorf("duplicate proxy domain %s", rule.Domain)
 		}
 		seen[rule.Domain] = true
+		rule.TunnelSubdomain = strings.ToLower(strings.TrimSpace(rule.TunnelSubdomain))
+		if rule.TunnelSubdomain != "" {
+			if !proxyDomainPart.MatchString(rule.TunnelSubdomain) {
+				return nil, fmt.Errorf("rule %d: tunnel prefix must be a single DNS label", i+1)
+			}
+			if rule.TunnelSubdomain == reservedTunnelSubdomain {
+				return nil, fmt.Errorf("rule %d: tunnel prefix %q is reserved", i+1, reservedTunnelSubdomain)
+			}
+		}
+		if rule.Tunnel {
+			resolved := rule.ResolvedTunnelSubdomain()
+			if !proxyDomainPart.MatchString(resolved) {
+				return nil, fmt.Errorf("rule %d: invalid tunnel prefix %q", i+1, resolved)
+			}
+			if resolved == reservedTunnelSubdomain {
+				return nil, fmt.Errorf("rule %d: tunnel prefix %q is reserved", i+1, reservedTunnelSubdomain)
+			}
+			if seenSubdomains[resolved] {
+				return nil, fmt.Errorf("duplicate tunnel subdomain %s", resolved)
+			}
+			seenSubdomains[resolved] = true
+		}
 		normalized[i] = rule
 	}
 	return normalized, nil

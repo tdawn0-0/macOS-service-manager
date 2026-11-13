@@ -20,6 +20,7 @@ import (
 // person does is in the window.
 var internalCommands = map[string]bool{
 	"serve":           true, // the HTTPS proxy
+	"tunnel":          true, // the Cloudflare tunnel agent
 	"maintain":        true, // log rotation
 	"database-worker": true, // database work that outlives the window
 	"node":            true, // the Node.js version for a directory, for the shell setup
@@ -91,7 +92,10 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
  connection <id>                  Show endpoint and credential file
  log-rotation <on|off>            Configure the scheduled user log maintenance task
  maintain <root>                 Internal finite log rotation task
- serve <root>                     Internal launchd proxy entry point`)
+ serve <root>                     Internal launchd proxy entry point
+ tunnel <root>                    Internal launchd Cloudflare tunnel entry point
+ tunnel-start|tunnel-stop|tunnel-restart Manage the background Cloudflare tunnel
+ tunnel-export                    Write Cloudflare Worker template into workspace`)
 		return nil
 	case "node":
 		return runNode(ctx, m, args[1:], out)
@@ -306,6 +310,23 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 			return e
 		}
 		return devplatform.New(args[1]).ServeProxy(ctx)
+	case "tunnel":
+		if e := need(2); e != nil {
+			return e
+		}
+		return devplatform.New(args[1]).ServeTunnel(ctx)
+	case "tunnel-start":
+		return m.ApplyTunnel(ctx)
+	case "tunnel-stop":
+		return m.StopTunnel(ctx)
+	case "tunnel-restart":
+		return m.RestartTunnel(ctx)
+	case "tunnel-export":
+		dir, e := m.ExportTunnelWorker(ctx)
+		if e == nil {
+			fmt.Fprintln(out, dir)
+		}
+		return e
 	case "doctor":
 		if len(args) > 2 || (len(args) == 2 && args[1] != "--json" && args[1] != "--export") {
 			return errors.New("use doctor [--json|--export]")

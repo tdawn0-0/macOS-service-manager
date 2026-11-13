@@ -23,8 +23,10 @@ const (
 )
 
 type proxyRuleDraft struct {
-	Domain    string
-	LocalPort string
+	Domain          string
+	LocalPort       string
+	Tunnel          bool
+	TunnelSubdomain string
 }
 
 type developmentState struct {
@@ -87,6 +89,8 @@ type developmentState struct {
 	proxyListenerPort                                                                                   string
 	proxyDraftRevision                                                                                  uint64
 	proxyDraftLoaded                                                                                    bool
+	tunnelDomain, tunnelClientID, tunnelEndpoint, tunnelSecretDraft                                     string
+	tunnelDraftLoaded                                                                                   bool
 	proxyPublicationState                                                                               string
 	proxyChecks                                                                                         map[string]devplatform.ProxyHTTPResult
 	proxyChecking                                                                                       map[string]bool
@@ -180,6 +184,9 @@ func (a *app) devTaskKeepingDraft(fn func(*devplatform.Manager) (string, error),
 			}
 			if !a.dev.proxyDraftLoaded || a.dev.proxyDraftRevision != s.ProxyRulesRevision && !a.dev.proxyDraftDirty() {
 				a.dev.loadProxyDraft(s)
+			}
+			if !a.dev.tunnelDraftLoaded || (!keepDraft && !a.dev.tunnelDraftDirty()) {
+				a.dev.loadTunnelDraft(s)
 			}
 			for id := range a.dev.packageChecks {
 				if _, ok := s.Packages[id]; !ok {
@@ -556,7 +563,12 @@ func (a *app) devMaster(c *ui.Context) {
 func (d *developmentState) loadProxyDraft(s devplatform.State) {
 	d.proxyDraft = make([]proxyRuleDraft, len(s.ProxyRules))
 	for i, rule := range s.ProxyRules {
-		d.proxyDraft[i] = proxyRuleDraft{Domain: rule.Domain, LocalPort: strconv.Itoa(rule.LocalPort)}
+		d.proxyDraft[i] = proxyRuleDraft{
+			Domain:          rule.Domain,
+			LocalPort:       strconv.Itoa(rule.LocalPort),
+			Tunnel:          rule.Tunnel,
+			TunnelSubdomain: rule.TunnelSubdomain,
+		}
 	}
 	port := s.ProxyListenerPort
 	if port == 0 {
@@ -574,11 +586,28 @@ func (d *developmentState) proxyDraftDirty() bool {
 		return true
 	}
 	for i, row := range d.proxyDraft {
-		if row.Domain != d.state.ProxyRules[i].Domain || row.LocalPort != strconv.Itoa(d.state.ProxyRules[i].LocalPort) {
+		rule := d.state.ProxyRules[i]
+		if row.Domain != rule.Domain || row.LocalPort != strconv.Itoa(rule.LocalPort) || row.Tunnel != rule.Tunnel || row.TunnelSubdomain != rule.TunnelSubdomain {
 			return true
 		}
 	}
 	return false
+}
+func (d *developmentState) loadTunnelDraft(s devplatform.State) {
+	d.tunnelDomain = s.TunnelDomain
+	d.tunnelClientID = s.TunnelClientID
+	d.tunnelEndpoint = s.TunnelEndpoint
+	d.tunnelSecretDraft = ""
+	d.tunnelDraftLoaded = true
+}
+func (d *developmentState) tunnelDraftDirty() bool {
+	if !d.tunnelDraftLoaded {
+		return false
+	}
+	return d.tunnelDomain != d.state.TunnelDomain ||
+		d.tunnelClientID != d.state.TunnelClientID ||
+		d.tunnelEndpoint != d.state.TunnelEndpoint ||
+		d.tunnelSecretDraft != ""
 }
 
 func (a *app) devManager() *devplatform.Manager {

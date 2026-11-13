@@ -74,6 +74,65 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 		if h.a.dev.proxyPublicationState != "Pending" {
 			t.Fatalf("expected Pending publication state after modifying rule, got %q", h.a.dev.proxyPublicationState)
 		}
+		// Toggle HTTPS proxy service switch on/off.
+		h.fill("HTTPS listener port", fmt.Sprint(port))
+		h.click("Save HTTPS rules")
+		if err := devplatform.New(h.root).StopProxy(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		h.click("Refresh")
+		h.click("HTTPS proxy service")
+		if h.a.dev.statuses["proxy"] != "Running" {
+			t.Fatalf("HTTPS proxy service switch did not start proxy: %q (output: %q)", h.a.dev.statuses["proxy"], h.a.dev.output)
+		}
+		h.click("HTTPS proxy service")
+		if h.a.dev.statuses["proxy"] != "Stopped" {
+			t.Fatalf("HTTPS proxy service switch did not stop proxy: %q (output: %q)", h.a.dev.statuses["proxy"], h.a.dev.output)
+		}
+	})
+	t.Run("tunnel-controls", func(t *testing.T) {
+		h := newDevUIHarness(t)
+		h.click("HTTPS")
+		h.fill("Wildcard domain", "dev.example.com")
+		h.fill("Client ID", "mac-ui")
+		h.fill("Worker URL", "https://gw.dev.example.com")
+		h.click("Save tunnel settings")
+		state, err := devplatform.New(h.root).Read()
+		if err != nil || state.TunnelDomain != "dev.example.com" || state.TunnelClientID != "mac-ui" || state.TunnelEndpoint != "https://gw.dev.example.com" {
+			t.Fatalf("tunnel settings not saved: %+v err=%v output=%q", state, err, h.a.dev.output)
+		}
+		h.click("Generate secret")
+		if h.a.dev.statuses["tunnel:secret"] != "Configured" {
+			t.Fatalf("secret status not updated: %v output=%q", h.a.dev.statuses, h.a.dev.output)
+		}
+		h.click("Copy secret")
+		secret, err := devplatform.New(h.root).ReadTunnelSecret()
+		if err != nil || len(h.copied) == 0 || h.copied[len(h.copied)-1] != secret || strings.Contains(h.a.dev.output, secret) {
+			t.Fatalf("copy secret failed or leaked secret in output: err=%v output=%q", err, h.a.dev.output)
+		}
+		h.click("Export Worker")
+		workerDir := filepath.Join(h.root, "cloudflare-worker")
+		if _, err := os.Stat(filepath.Join(workerDir, "src", "index.mjs")); err != nil {
+			t.Fatalf("worker template not exported: %v", err)
+		}
+		h.click("Add rule")
+		h.fill("Domain", "api.app.test")
+		h.fill("Local port", "3000")
+		h.click("Tunnel rule 1")
+		h.fill("Tunnel prefix 1", "api")
+		h.click("Save HTTPS rules")
+		state, err = devplatform.New(h.root).Read()
+		if err != nil || len(state.ProxyRules) != 1 || !state.ProxyRules[0].Tunnel || state.ProxyRules[0].TunnelSubdomain != "api" {
+			t.Fatalf("tunnel rule not saved: %+v err=%v output=%q", state.ProxyRules, err, h.a.dev.output)
+		}
+		h.click("Copy tunnel URL")
+		if len(h.copied) == 0 || h.copied[len(h.copied)-1] != "https://api.dev.example.com" {
+			t.Fatalf("wrong copied tunnel URL: %v", h.copied)
+		}
+		// Verify Cloudflare tunnel service switch renders and reports cleanly on mocked launchctl.
+		if _, ok := h.ui.Find("Cloudflare tunnel service"); !ok {
+			t.Fatal("Cloudflare tunnel service switch missing")
+		}
 	})
 	t.Run("revision-conflict", func(t *testing.T) {
 		h := newDevUIHarness(t)
@@ -100,11 +159,11 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 			a.dev.tab = devTabHTTPS
 			a.dev.proxyDraftLoaded = true
 			a.dev.proxyListenerPort = "8443"
-			a.dev.proxyDraft = []proxyRuleDraft{{Domain: "a-very-long-but-valid-local-development-name.test", LocalPort: "12345"}, {Domain: "another-long-local-development-name.test", LocalPort: "54321"}}
+			a.dev.proxyDraft = []proxyRuleDraft{{Domain: "a-very-long-but-valid-local-development-name.test", LocalPort: "12345", Tunnel: true, TunnelSubdomain: "long-app"}, {Domain: "another-long-local-development-name.test", LocalPort: "54321"}}
 			tester := ui.NewTester(a.view, tc.width, tc.height)
 			tester.SetDark(tc.dark)
 			tester.Frame()
-			for _, label := range []string{"HTTPS proxy rules", "Domain", "Local port", "Save HTTPS rules", "Apply proxy"} {
+			for _, label := range []string{"HTTPS proxy rules", "Domain", "Local port", "Save HTTPS rules", "Apply proxy", "HTTPS proxy service", "Cloudflare tunnel service", "Wildcard domain", "Export Worker"} {
 				if _, ok := tester.Find(label); !ok {
 					t.Fatalf("%dx%d %s missing", tc.width, tc.height, label)
 				}

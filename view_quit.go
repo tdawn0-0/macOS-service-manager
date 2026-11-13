@@ -5,19 +5,21 @@ import (
 	"fmt"
 	"time"
 
+	"devbase/internal/devplatform"
 	"github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/action"
-	"github.com/lobehub/lobe-mygo/pkg/choice"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
-	"devbase/internal/devplatform"
 )
 
 type quitState struct {
 	open, allow, loading, stopping bool
-	stopProxy                      bool
 	sequence                       uint64
 	plan                           *devplatform.ShutdownPlan
 	err                            string
+}
+
+func (a *app) hasUnsavedQuitEdits() bool {
+	return a.dev.proxyDraftDirty() || a.dev.tunnelDraftDirty() || a.editor.open || a.connectionProfileDirty()
 }
 
 func (a *app) requestQuit() {
@@ -30,7 +32,6 @@ func (a *app) requestQuit() {
 	a.quit.sequence++
 	a.quit.loading = false
 	a.quit.open = true
-	a.quit.stopProxy = true
 	a.quit.err = ""
 	a.quit.plan = nil
 	a.loadQuitPreview()
@@ -62,6 +63,9 @@ func (a *app) loadQuitPreview() {
 				return
 			}
 			a.quit.plan = &plan
+			if len(plan.Instances) == 0 && !a.quitOperationBusy() && !a.hasUnsavedQuitEdits() {
+				a.finishQuit()
+			}
 		})
 	})
 }
@@ -76,7 +80,7 @@ func (a *app) stopForQuit() {
 	if a.quitOperationBusy() || a.quit.plan == nil || a.quit.stopping {
 		return
 	}
-	plan, options := *a.quit.plan, devplatform.ShutdownOptions{StopProxy: a.quit.stopProxy}
+	plan, options := *a.quit.plan, devplatform.ShutdownOptions{}
 	a.quit.stopping = true
 	a.quit.err = ""
 	a.devTaskThen(func(m *devplatform.Manager) (string, error) {
@@ -117,7 +121,7 @@ func (a *app) quitDialog(c *ui.Context) {
 			ui.Text(c, "Quit Devbase?").FontSize(18).FontWeight(600)
 			ui.Scroll(c).MaxHeight(height - 200).Children(func() {
 				ui.Column(c).Gap(8).Children(func() {
-					if a.dev.proxyDraftDirty() || a.editor.open {
+					if a.hasUnsavedQuitEdits() {
 						ui.Text(c, "Unsaved edits will be discarded when the app exits.").FontSize(textSmall).TextColor(c.Theme().Warning)
 					}
 					if q.loading {
@@ -132,14 +136,10 @@ func (a *app) quitDialog(c *ui.Context) {
 							a.dev.cancel()
 						}
 					}
-					if q.plan != nil {
+					if q.plan != nil && len(q.plan.Instances) > 0 {
 						ui.Text(c, fmt.Sprintf("Stop scope: %d managed databases", len(q.plan.Instances))).FontSize(textSmall).FontWeight(500)
 						for _, i := range q.plan.Instances {
 							ui.Text(c, "Database · "+i.ID+" · "+softwareTitle(i.Name)).FontSize(textSmall)
-						}
-						choice.Checkbox(c, &q.stopProxy, "Stop local HTTPS proxy", choice.CheckboxProps{}).Disabled(q.stopping)
-						if q.plan.PrivilegedProxy && q.stopProxy {
-							ui.Text(c, "Stopping the system HTTPS listener may require macOS administrator authorization.").FontSize(textSmall).TextColor(c.Theme().Warning)
 						}
 					}
 					if q.stopping {
@@ -163,11 +163,17 @@ func (a *app) quitDialog(c *ui.Context) {
 					q.sequence++
 				}
 				ui.Spacer(c)
-				if action.Button(c, "Keep services and quit", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(a.quitOperationBusy()).Clicked() {
-					a.finishQuit()
-				}
-				if action.Button(c, "Stop managed databases and quit", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Tooltip("Stops the selected app-owned resources. If HTTPS is kept, its log maintenance continues. Data, settings, CA trust and domain mappings are kept.").Disabled(a.quitOperationBusy() || q.loading || q.plan == nil).Clicked() {
-					a.stopForQuit()
+				if q.plan != nil && len(q.plan.Instances) > 0 {
+					if action.Button(c, "Keep services and quit", action.ButtonProps{Variant: action.Default, Size: theme.Small}).Disabled(a.quitOperationBusy()).Clicked() {
+						a.finishQuit()
+					}
+					if action.Button(c, "Stop managed databases and quit", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Tooltip("Stops the managed databases. Background HTTPS proxy and tunnel services continue running. Data, settings, CA trust and domain mappings are kept.").Disabled(a.quitOperationBusy() || q.loading || q.plan == nil).Clicked() {
+						a.stopForQuit()
+					}
+				} else {
+					if action.Button(c, "Quit", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).Disabled(a.quitOperationBusy() || q.loading).Clicked() {
+						a.finishQuit()
+					}
 				}
 			})
 		})

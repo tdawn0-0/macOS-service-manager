@@ -3,6 +3,7 @@ package devplatform
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,9 @@ func (m *Manager) Snapshot(ctx context.Context, s State) RuntimeSnapshot {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	out := RuntimeSnapshot{States: map[string]string{}}
+	if m.HasTunnelSecret() {
+		out.States["tunnel:secret"] = "Configured"
+	}
 	type observation struct {
 		key, status string
 	}
@@ -76,6 +80,33 @@ func (m *Manager) Snapshot(ctx context.Context, s State) RuntimeSnapshot {
 			return observation{key: "proxy", status: status}
 		}})
 	}
+	_, tunnelJobError := os.Stat(filepath.Join(m.Root, "jobs", m.label("tunnel")+".plist"))
+	anyTunnelRule := false
+	for _, rule := range s.ProxyRules {
+		if rule.Tunnel {
+			anyTunnelRule = true
+			break
+		}
+	}
+	observeTunnel := s.TunnelDomain != "" || s.TunnelEndpoint != "" || anyTunnelRule || tunnelJobError == nil
+	if observeTunnel {
+		tasks = append(tasks, task{"tunnel", func(check context.Context) observation {
+			job, err := m.readJobState(check, "tunnel")
+			status := "Unknown"
+			if err == nil {
+				status = "Failed"
+				if job.Running {
+					status = "Running"
+				}
+			} else if strings.Contains(err.Error(), "Could not find service") || strings.Contains(err.Error(), "Could not find specified service") {
+				status = "Stopped"
+			}
+			if check.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				status = "Unknown"
+			}
+			return observation{key: "tunnel", status: status}
+		}})
+	}
 	// A fixed worker pool bounds launchctl/probe concurrency. Divide the available
 	// time across worst-case queue batches, reserving 10% for collection. Every
 	// queued item gets a budget, rather than later items inheriting an empty one.
@@ -116,7 +147,44 @@ func (m *Manager) Snapshot(ctx context.Context, s State) RuntimeSnapshot {
 	if observeProxy {
 		out.States["proxy"] = observed["proxy"].status
 	}
+	if observeTunnel {
+		st := observed["tunnel"].status
+		out.States["tunnel"] = st
+		if st == "Running" {
+			if detail := m.formatTunnelDetail(); detail != "" {
+				out.States["tunnel:detail"] = detail
+			}
+		}
+	}
 	return out
+}
+
+func (m *Manager) formatTunnelDetail() string {
+	st, ok := m.readTunnelStatus()
+	if !ok {
+		return ""
+	}
+	switch st.Phase {
+	case "Connected":
+		if len(st.Conflicts) > 0 {
+			if len(st.Conflicts) == 1 {
+				return "Conflict: 1 route"
+			}
+			return fmt.Sprintf("Conflict: %d routes", len(st.Conflicts))
+		}
+		if len(st.Accepted) == 1 {
+			return "Connected · 1 route"
+		}
+		if len(st.Accepted) > 1 {
+			return fmt.Sprintf("Connected · %d routes", len(st.Accepted))
+		}
+		return "Connected"
+	case "AuthFailed":
+		return "Auth failed"
+	case "Reconnecting", "Connecting":
+		return st.Phase
+	}
+	return ""
 }
 func (m *Manager) Statuses(ctx context.Context, s State) map[string]string {
 	return m.Snapshot(ctx, s).States

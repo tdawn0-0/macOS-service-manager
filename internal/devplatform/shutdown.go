@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,20 +13,19 @@ import (
 
 type ShutdownResource struct{ ID, Name string }
 type ShutdownPlan struct {
-	Instances       []ShutdownResource
-	Fingerprint     string
-	PrivilegedProxy bool
+	Instances   []ShutdownResource
+	Fingerprint string
 }
-type ShutdownOptions struct{ StopProxy bool }
+type ShutdownOptions struct{}
 
 func (m *Manager) shutdownFingerprint(s State) string {
 	b, _ := json.Marshal(s)
 	return fmt.Sprintf("%x", sha256.Sum256(append([]byte(filepath.Clean(m.Root)+"\x00"), b...)))
 }
 
-// Preview includes all configured resources, including currently stopped ones:
-// another client may start one before shutdown acquires the state lock. It does
-// not inspect or modify keychain trust, hosts, or any external service.
+// Preview includes all configured database resources, including currently stopped ones:
+// another client may start one before shutdown acquires the state lock. Background HTTPS
+// proxy and tunnel services are managed independently by launchd and are not stopped on quit.
 func (m *Manager) PreviewShutdown(ctx context.Context) (ShutdownPlan, error) {
 	if err := ctx.Err(); err != nil {
 		return ShutdownPlan{}, err
@@ -36,21 +34,16 @@ func (m *Manager) PreviewShutdown(ctx context.Context) (ShutdownPlan, error) {
 	if err != nil {
 		return ShutdownPlan{}, err
 	}
-	p := ShutdownPlan{Fingerprint: m.shutdownFingerprint(s), Instances: []ShutdownResource{}, PrivilegedProxy: len(s.ProxyRules) > 0 && s.ProxyListenerPort < 1024}
+	p := ShutdownPlan{Fingerprint: m.shutdownFingerprint(s), Instances: []ShutdownResource{}}
 	for _, id := range diagnosticKeys(s.Instances) {
 		p.Instances = append(p.Instances, ShutdownResource{id, s.Instances[id].Kind})
-	}
-	if _, err = os.Stat(m.socketJobPath()); err == nil {
-		p.PrivilegedProxy = true
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return ShutdownPlan{}, err
 	}
 	return p, nil
 }
 
-// Shutdown stops only jobs derived from this storage root's managed records.
-// A failed/cancelled stop leaves the caller open to report or retry. Data,
-// configuration, login preferences and CA/hosts state remain available.
+// Shutdown stops only managed database jobs derived from this storage root's
+// records. Background HTTPS proxy, Cloudflare tunnel, and log maintenance jobs
+// remain running under launchd.
 func (m *Manager) Shutdown(ctx context.Context, plan ShutdownPlan, options ShutdownOptions) error {
 	return m.withState(ctx, func(s *State) error {
 		if plan.Fingerprint == "" || plan.Fingerprint != m.shutdownFingerprint(*s) {
@@ -68,26 +61,11 @@ func (m *Manager) Shutdown(ctx context.Context, plan ShutdownPlan, options Shutd
 				return fmt.Errorf("stop database %s: %w", id, err)
 			}
 		}
-		if options.StopProxy {
-			m.emit("Stopping local HTTPS proxy")
-			if err := m.stopProxy(ctx); err != nil {
-				return fmt.Errorf("stop HTTPS proxy: %w", err)
-			}
-		}
-		if options.StopProxy {
-			m.emit("Stopping scheduled log maintenance")
-			if err := m.stopLogMaintenance(ctx); err != nil {
-				return err
-			}
-		}
 		// A failed launchctl read is not proof that a job is absent. Verify the
 		// full chosen scope before allowing the GUI to finish quitting.
 		var targets []string
 		for _, id := range diagnosticKeys(s.Instances) {
 			targets = append(targets, domain()+"/"+m.label("db-"+id))
-		}
-		if options.StopProxy {
-			targets = append(targets, domain()+"/"+m.label("maintenance"), domain()+"/"+m.label("proxy"), m.socketTarget())
 		}
 		for _, target := range targets {
 			if err := m.verifyShutdownTarget(ctx, target); err != nil {

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -117,6 +118,9 @@ type State struct {
 	ProxyRules          []ProxyRule                  `json:"proxyRules"`
 	ProxyListenerPort   int                          `json:"proxyListenerPort"`
 	ProxyRulesRevision  uint64                       `json:"proxyRulesRevision"`
+	TunnelDomain        string                       `json:"tunnelDomain,omitempty"`
+	TunnelEndpoint      string                       `json:"tunnelEndpoint,omitempty"`
+	TunnelClientID      string                       `json:"tunnelClientId,omitempty"`
 	PackageIntegrity    map[string]string            `json:"packageIntegrity,omitempty"`
 	LogRotationDisabled bool                         `json:"logRotationDisabled,omitempty"`
 	NodeDefault         string                       `json:"nodeDefault,omitempty"`
@@ -133,7 +137,10 @@ type Manager struct {
 	shellAvailable func(string) bool // Test override of installed-shell detection.
 	brewCellar     string            // Test fixture override; production uses Apple Silicon Homebrew's Cellar.
 	// FetchNodeReleases overrides where the release index is read; tests set it.
-	FetchNodeReleases func(context.Context) ([]NodeRelease, error)
+	FetchNodeReleases  func(context.Context) ([]NodeRelease, error)
+	tunnelTLSConfig    *tls.Config   // Test override for mock TLS tunnel gateway servers.
+	tunnelReadTimeout  time.Duration // Test override for tunnel keepalive timeout.
+	tunnelPingInterval time.Duration // Test override for tunnel keepalive ping interval.
 	initialization *initializationContext
 	databaseWork   *databaseWorkContext
 	operation      *operationWriter
@@ -284,6 +291,9 @@ func (m *Manager) Read() (State, error) {
 	}
 	if _, e = normalizeProxyRules(decoded.ProxyListenerPort, decoded.ProxyRules); e != nil {
 		return s, fmt.Errorf("invalid state proxy rules: %w", e)
+	}
+	if e = validateTunnelSettings(decoded.TunnelDomain, decoded.TunnelEndpoint, decoded.TunnelClientID); e != nil {
+		return s, fmt.Errorf("invalid state tunnel settings: %w", e)
 	}
 	s = decoded
 	return s, nil

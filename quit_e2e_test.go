@@ -2,10 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/egoist/mygo/ui"
-	"devbase/internal/devplatform"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +13,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"devbase/internal/devplatform"
+	"github.com/egoist/mygo/ui"
 )
 
 func TestUIQuitKeepsServicesOrStopsOwnedScopeAndRetriesFailure(t *testing.T) {
@@ -34,11 +36,19 @@ func TestUIQuitKeepsServicesOrStopsOwnedScopeAndRetriesFailure(t *testing.T) {
 	if strings.Contains(h.a.dev.output, "Error:") {
 		t.Fatal(h.a.dev.output)
 	}
-	h.fill("Domain", "unsaved-quit.test")
+	assertListening := func(p int) {
+		t.Helper()
+		c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", p), time.Second)
+		if err != nil {
+			t.Fatal("expected service listening", p, err)
+		}
+		c.Close()
+	}
+
 	quitCalls, showCalls := 0, 0
 	h.a.quitApp = func() { quitCalls++ }
 	h.a.showQuit = func() { showCalls++ }
-	request := func() {
+	triggerQuit := func() {
 		t.Helper()
 		panel := ui.NewTester(func(c *ui.Context) { h.a.menubarView(c, func() {}) }, 320, h.a.panelHeight())
 		panel.Frame()
@@ -48,70 +58,112 @@ func TestUIQuitKeepsServicesOrStopsOwnedScopeAndRetriesFailure(t *testing.T) {
 		panel.Frame()
 		h.waitIdle()
 		h.ui.Frame()
-		if !h.a.quit.open || h.a.quit.plan == nil {
-			t.Fatal("quit did not open a reviewed scope", h.a.quit.err)
-		}
 	}
-	assertListening := func(port int) {
-		t.Helper()
-		c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
-		if err != nil {
-			t.Fatal("expected service stopped", port, err)
-		}
-		c.Close()
+
+	// With no databases and no unsaved edits, quit completes immediately and keeps background HTTPS proxy running.
+	triggerQuit()
+	if h.a.quit.open || quitCalls != 1 || !h.a.quit.allow {
+		t.Fatalf("clean quit with only background proxy did not exit immediately: open=%v calls=%d allow=%v err=%s", h.a.quit.open, quitCalls, h.a.quit.allow, h.a.quit.err)
 	}
-	request()
+	assertListening(port)
+	assertListening(httpsPort)
+
+	// Re-enter and add unsaved edits: quit prompts once about unsaved edits.
+	h.a.quit.allow = false
+	h.fill("Domain", "unsaved-quit.test")
+	triggerQuit()
+	if !h.a.quit.open || quitCalls != 1 {
+		t.Fatal("unsaved edits did not open quit confirmation")
+	}
 	if !strings.Contains(strings.Join(h.ui.Texts(), " "), "Unsaved edits will be discarded") {
 		t.Fatal("quit hid unsaved changes")
 	}
 	h.click("Cancel quit")
-	if h.a.quit.open || quitCalls != 0 {
+	if h.a.quit.open || quitCalls != 1 {
 		t.Fatal("cancel quit exited the application")
 	}
-	assertListening(port)
-	request()
+
+	// Add a managed database instance to verify database stop/keep/retry scope,
+	// while ensuring the background HTTPS proxy is never stopped on quit.
+	state, err := m.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Instances["quitdb"] = devplatform.Instance{ID: "quitdb", Kind: "redis", Port: freeUIPort(t)}
+	rawState, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.root, "state.json"), rawState, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	dbLoaded := true
+	refuseDBStop := true
+	originalFactory := h.a.dev.managerFactory
+	h.a.dev.managerFactory = func() *devplatform.Manager {
+		mgr := originalFactory()
+		run := mgr.Run
+		mgr.Run = func(ctx context.Context, name string, args ...string) (string, error) {
+			if name == "launchctl" && len(args) >= 2 && strings.HasSuffix(args[len(args)-1], ".db-quitdb") {
+				switch args[0] {
+				case "print":
+					if dbLoaded {
+						return "state = running\npid = 0", nil
+					}
+					return "", errors.New("Could not find service")
+				case "bootout":
+					if refuseDBStop {
+						return "", errors.New("simulated stop refusal")
+					}
+					dbLoaded = false
+					return "", nil
+				}
+			}
+			return run(ctx, name, args...)
+		}
+		return mgr
+	}
+
+	triggerQuit()
+	if !h.a.quit.open || h.a.quit.plan == nil || len(h.a.quit.plan.Instances) != 1 {
+		t.Fatalf("quit did not open database scope: open=%v plan=%+v err=%s", h.a.quit.open, h.a.quit.plan, h.a.quit.err)
+	}
+	if strings.Contains(strings.Join(h.ui.Texts(), " "), "Stop local HTTPS proxy") {
+		t.Fatal("quit dialog unexpectedly offered HTTPS proxy checkbox")
+	}
+
 	h.click("Keep services and quit")
-	if quitCalls != 1 || !h.a.quit.allow {
+	if quitCalls != 2 || !h.a.quit.allow {
 		t.Fatal("keep did not finish quit")
 	}
 	assertListening(port)
 	assertListening(httpsPort)
-	state, err := m.Read()
+	state, err = m.Read()
 	if err != nil || len(state.ProxyRules) != 1 || state.ProxyRules[0].Domain != "quit.test" {
 		t.Fatal("quit saved an unsaved form", err)
 	}
-	// Re-enter as if the app was reopened, while launchd keeps the service.
+
 	h.a.quit.allow = false
-	originalFactory := h.a.dev.managerFactory
-	h.a.dev.managerFactory = func() *devplatform.Manager {
-		m := originalFactory()
-		run := m.Run
-		m.Run = func(ctx context.Context, name string, args ...string) (string, error) {
-			if len(args) > 1 && args[0] == "bootout" && strings.HasSuffix(args[1], ".proxy") {
-				return "", errors.New("simulated stop refusal")
-			}
-			return run(ctx, name, args...)
-		}
-		return m
-	}
-	request()
+	triggerQuit()
 	h.click("Stop managed databases and quit")
-	if !h.a.quit.open || quitCalls != 1 || !strings.Contains(h.a.quit.err, "simulated stop refusal") {
+	if !h.a.quit.open || quitCalls != 2 || !strings.Contains(h.a.quit.err, "simulated stop refusal") {
 		t.Fatal("failed stop quit anyway", h.a.quit.err, quitCalls)
 	}
 	assertListening(port)
-	h.a.dev.managerFactory = originalFactory
+	assertListening(httpsPort)
+
+	refuseDBStop = false
 	h.click("Review updated quit scope")
 	h.click("Stop managed databases and quit")
-	if quitCalls != 2 || h.a.quit.open || showCalls != 3 {
+	if quitCalls != 3 || h.a.quit.open || showCalls != 4 {
 		t.Fatal("retry did not complete reviewed quit", quitCalls, showCalls, h.a.quit.err)
 	}
-	for _, p := range []int{httpsPort} {
-		if c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", p), time.Second); err == nil {
-			c.Close()
-			t.Fatal("stop and quit left a listener", p)
-		}
+	if dbLoaded {
+		t.Fatal("database job remained loaded after stop and quit")
 	}
+	// Background HTTPS proxy and external upstream remain untouched.
+	assertListening(httpsPort)
 	res, err := http.Get(external.URL)
 	if err != nil {
 		t.Fatal("stopped an unmanaged external process", err)

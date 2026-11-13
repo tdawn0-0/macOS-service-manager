@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/egoist/mygo/ui"
 	"image/png"
@@ -54,6 +55,13 @@ func TestQuitPreviewReopenAndBusyDismissal(t *testing.T) {
 	a.spawn = func(f func()) { work = append(work, f) }
 	a.post = func(f func()) { f() }
 	root := t.TempDir()
+	rawState, err := json.MarshalIndent(a.dev.state, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "state.json"), rawState, 0600); err != nil {
+		t.Fatal(err)
+	}
 	a.dev.managerFactory = func() *devplatform.Manager { return devplatform.New(root) }
 	a.requestQuit()
 	a.quit.open = false

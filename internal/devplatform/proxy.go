@@ -172,7 +172,15 @@ func (m *Manager) startProxy(ctx context.Context, s *State) error {
 	return e
 }
 func (m *Manager) ApplyProxy(ctx context.Context) error {
-	return m.withState(ctx, func(s *State) error { return m.startProxy(ctx, s) })
+	return m.withState(ctx, func(s *State) error {
+		if err := m.startProxy(ctx, s); err != nil {
+			return err
+		}
+		if (m.tunnelPublishedExists() || m.loaded(ctx, "tunnel")) && (s.TunnelDomain != "" || s.TunnelEndpoint != "") {
+			return m.writePublishedTunnelConfig(s)
+		}
+		return nil
+	})
 }
 
 // ServeProxy reloads validated routing snapshots and certificates without exposing

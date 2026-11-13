@@ -76,7 +76,7 @@ func TestNativeResourceProduct(t *testing.T) {
 		if err != nil || len(plan.Instances) != 1 || plan.Instances[0].ID != "quit-native" {
 			t.Fatalf("quit scope missed managed database: %v %+v", err, plan.Instances)
 		}
-		if err := m.Shutdown(context.Background(), plan, devplatform.ShutdownOptions{StopProxy: true}); err != nil {
+		if err := m.Shutdown(context.Background(), plan, devplatform.ShutdownOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		state, err := m.Read()

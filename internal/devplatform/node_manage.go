@@ -364,7 +364,12 @@ func (m *Manager) WriteNodeShell() error {
 	if e = os.MkdirAll(m.nodeHome(), 0700); e != nil {
 		return e
 	}
-	wrapper := "#!/bin/sh\nexec " + shellQuote(exe) + " --dev \"$@\"\n"
+	wrapper := "#!/bin/sh\nif [ -x " + shellQuote(exe) + " ]; then exec " + shellQuote(exe) + " --dev \"$@\"; fi\n"
+	if m.usesUserStorage() {
+		fallback := "/Applications/Devbase.app/Contents/MacOS/Devbase"
+		wrapper += "if [ -x " + shellQuote(fallback) + " ]; then exec " + shellQuote(fallback) + " --dev \"$@\"; fi\n"
+	}
+	wrapper += "exit 1\n"
 	if e = atomicWrite(m.nodeWrapperPath(), []byte(wrapper), 0700); e != nil {
 		return e
 	}

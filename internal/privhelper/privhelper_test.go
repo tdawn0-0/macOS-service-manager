@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -453,4 +454,109 @@ func TestIdleTimeoutPreservesSocketFile(t *testing.T) {
 		t.Fatalf("socket file %s should remain present after idle shutdown: %v", sockPath, err)
 	}
 	_ = json.Marshal
+}
+
+func TestInstallWaitsForDelayedSocketCreation(t *testing.T) {
+	dir := t.TempDir()
+	sockDir := shortSocketDir(t)
+	sockPath := filepath.Join(sockDir, "delayed.sock")
+	helperDir := filepath.Join(dir, "helper")
+	plistPath := filepath.Join(dir, Label+".plist")
+	fakeExe := filepath.Join(dir, "Devbase")
+	if err := os.WriteFile(fakeExe, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	srvDone := make(chan error, 1)
+	var lnMu sync.Mutex
+	var ln net.Listener
+	t.Cleanup(func() {
+		cancel()
+		lnMu.Lock()
+		l := ln
+		lnMu.Unlock()
+		if l != nil {
+			_ = l.Close()
+		}
+		select {
+		case <-srvDone:
+		case <-time.After(2 * time.Second):
+		}
+	})
+
+	var gotScript string
+	client := NewClient(ClientConfig{
+		SocketPath: sockPath,
+		PlistPath:  plistPath,
+		HelperDir:  helperDir,
+		Expected: BinaryInfo{
+			Version:    "v-new",
+			Executable: fakeExe,
+			OwnerUID:   os.Geteuid(),
+		},
+		HealthTimeout:      2 * time.Second,
+		HealthPollInterval: 20 * time.Millisecond,
+		RunAdmin: func(name string, args ...string) (string, error) {
+			if name != "/bin/sh" || len(args) != 2 || args[0] != "-c" {
+				t.Fatalf("unexpected RunAdmin invocation: %s %v", name, args)
+			}
+			gotScript = args[1]
+			go func() {
+				time.Sleep(120 * time.Millisecond)
+				l, err := net.Listen("unix", sockPath)
+				if err != nil {
+					srvDone <- err
+					return
+				}
+				lnMu.Lock()
+				ln = l
+				lnMu.Unlock()
+				srv := NewServer(ServerConfig{
+					OwnerUID:        os.Geteuid(),
+					ExpectedVersion: "v-new",
+				})
+				srvDone <- srv.Serve(ctx, l)
+			}()
+			return "", nil
+		},
+	})
+
+	if err := client.Install(context.Background()); err != nil {
+		t.Fatalf("Install should succeed after delayed socket creation: %v", err)
+	}
+	if !strings.Contains(gotScript, "bootstrap system") || !strings.Contains(gotScript, sockPath) {
+		t.Fatalf("expected install script to bootstrap and wait for socket %q, got %q", sockPath, gotScript)
+	}
+}
+
+func TestInstallFailsWhenHealthCheckTimesOut(t *testing.T) {
+	dir := t.TempDir()
+	sockDir := shortSocketDir(t)
+	sockPath := filepath.Join(sockDir, "missing.sock")
+	fakeExe := filepath.Join(dir, "Devbase")
+	if err := os.WriteFile(fakeExe, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	client := NewClient(ClientConfig{
+		SocketPath: sockPath,
+		PlistPath:  filepath.Join(dir, Label+".plist"),
+		HelperDir:  filepath.Join(dir, "helper"),
+		Expected: BinaryInfo{
+			Version:    "v-missing",
+			Executable: fakeExe,
+			OwnerUID:   os.Geteuid(),
+		},
+		HealthTimeout:      120 * time.Millisecond,
+		HealthPollInterval: 15 * time.Millisecond,
+		RunAdmin: func(string, ...string) (string, error) {
+			return "", nil
+		},
+	})
+
+	err := client.Install(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "helper installed, but health check failed") {
+		t.Fatalf("expected health check timeout failure, got %v", err)
+	}
 }

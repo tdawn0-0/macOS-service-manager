@@ -374,6 +374,19 @@ func (m *Manager) WriteNodeShell() error {
 	return atomicWrite(filepath.Join(m.nodeHome(), "init.fish"), []byte(m.nodeFishScript()), 0600)
 }
 
+// RefreshNodeShellIfPresent updates an existing Node.js command wrapper and
+// setup scripts to point at the current helper executable without creating
+// them when Node shell integration has never been written or touching dotfiles.
+func (m *Manager) RefreshNodeShellIfPresent() error {
+	if _, err := os.Stat(m.nodeWrapperPath()); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return m.WriteNodeShell()
+}
+
 // nodeShellConfiguration keeps the observed identity separate from the path
 // replaced by atomicWrite, so a dotfile symlink remains intact.
 type nodeShellConfiguration struct {

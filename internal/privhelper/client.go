@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -91,11 +92,13 @@ func computeArtifactVersion(exe, bundle string) string {
 
 // ClientConfig configures a privileged helper RPC client.
 type ClientConfig struct {
-	SocketPath string
-	PlistPath  string
-	HelperDir  string
-	Expected   BinaryInfo
-	RunAdmin   func(name string, args ...string) (string, error)
+	SocketPath         string
+	PlistPath          string
+	HelperDir          string
+	Expected           BinaryInfo
+	RunAdmin           func(name string, args ...string) (string, error)
+	HealthTimeout      time.Duration
+	HealthPollInterval time.Duration
 }
 
 // Client communicates with the launchd-managed privileged helper over a Unix domain socket.
@@ -162,9 +165,15 @@ func NewClient(cfg ClientConfig) *Client {
 	if cfg.RunAdmin == nil {
 		cfg.RunAdmin = system.RunAdmin
 	}
+	if cfg.HealthTimeout <= 0 {
+		cfg.HealthTimeout = 8 * time.Second
+	}
+	if cfg.HealthPollInterval <= 0 {
+		cfg.HealthPollInterval = 50 * time.Millisecond
+	}
 	tr := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", cfg.SocketPath)
+			return dialUnixWithRetry(ctx, cfg.SocketPath)
 		},
 	}
 	return &Client{
@@ -173,6 +182,37 @@ func NewClient(cfg ClientConfig) *Client {
 			Transport: tr,
 			Timeout:   30 * time.Second,
 		},
+	}
+}
+
+func dialUnixWithRetry(ctx context.Context, sockPath string) (net.Conn, error) {
+	backoffs := []time.Duration{15 * time.Millisecond, 30 * time.Millisecond, 60 * time.Millisecond}
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	for attempt := 0; ; attempt++ {
+		conn, err := dialer.DialContext(ctx, "unix", sockPath)
+		if err == nil {
+			return conn, nil
+		}
+		if attempt >= len(backoffs) || ctx.Err() != nil {
+			return nil, err
+		}
+		if !errors.Is(err, syscall.ENOENT) && !errors.Is(err, syscall.ECONNREFUSED) {
+			return nil, err
+		}
+		if !sleepWithContext(ctx, backoffs[attempt]) {
+			return nil, ctx.Err()
+		}
+	}
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
@@ -345,7 +385,7 @@ func (c *Client) Install(ctx context.Context) error {
 		return err
 	}
 
-	script := installHelperScript(expected, c.cfg.HelperDir, c.cfg.PlistPath, tmpPlist, tmpVersion, stagedExe)
+	script := installHelperScript(expected, c.cfg.HelperDir, c.cfg.PlistPath, c.cfg.SocketPath, tmpPlist, tmpVersion, stagedExe)
 	if out, err := c.cfg.RunAdmin("/bin/sh", "-c", script); err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg != "" {
@@ -354,14 +394,55 @@ func (c *Client) Install(ctx context.Context) error {
 		return err
 	}
 
-	resp, err := c.Ping(ctx)
-	if err != nil {
-		return fmt.Errorf("helper installed, but health check failed: %w", err)
+	return c.waitForHealthy(ctx)
+}
+
+func (c *Client) waitForHealthy(ctx context.Context) error {
+	timeout := c.cfg.HealthTimeout
+	if timeout <= 0 {
+		timeout = 8 * time.Second
 	}
-	if resp.OwnerUID != expected.OwnerUID {
-		return fmt.Errorf("helper owner UID mismatch: got %d, want %d", resp.OwnerUID, expected.OwnerUID)
+	pollInterval := c.cfg.HealthPollInterval
+	if pollInterval <= 0 {
+		pollInterval = 50 * time.Millisecond
 	}
-	return nil
+	expected := c.cfg.Expected
+	healthCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var lastErr error
+	for {
+		attemptCtx, attemptCancel := context.WithTimeout(healthCtx, 2*time.Second)
+		resp, err := c.Ping(attemptCtx)
+		attemptCancel()
+		if err == nil {
+			if resp.OwnerUID != expected.OwnerUID {
+				return fmt.Errorf("helper owner UID mismatch: got %d, want %d", resp.OwnerUID, expected.OwnerUID)
+			}
+			if expected.Version != "" && resp.Version != "" && resp.Version != expected.Version {
+				lastErr = fmt.Errorf("helper version mismatch: got %q, want %q", resp.Version, expected.Version)
+			} else {
+				return nil
+			}
+		} else {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if strings.Contains(err.Error(), "not authorized") {
+				return fmt.Errorf("helper installed, but health check failed: %w", err)
+			}
+			lastErr = err
+		}
+		if !sleepWithContext(healthCtx, pollInterval) {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if lastErr == nil {
+				lastErr = healthCtx.Err()
+			}
+			return fmt.Errorf("helper installed, but health check failed: %w", lastErr)
+		}
+	}
 }
 
 // Uninstall stops and removes the helper launchd job, plist, staged files, and socket.
@@ -411,11 +492,13 @@ func buildHelperPlist(stagedExe string, ownerUID int, sockPath string) ([]byte, 
 	return plist.MarshalIndent(doc, plist.XMLFormat, "\t")
 }
 
-func installHelperScript(info BinaryInfo, helperDir, plistPath, tmpPlist, tmpVersion, stagedExe string) string {
+func installHelperScript(info BinaryInfo, helperDir, plistPath, sockPath, tmpPlist, tmpVersion, stagedExe string) string {
 	parentDir := filepath.Dir(helperDir)
+	quotedSock := system.ShellQuote(sockPath)
 	lines := []string{
 		"set -eu",
 		"/bin/launchctl bootout " + system.ShellQuote("system/"+Label) + " >/dev/null 2>&1 || true",
+		"/bin/rm -f " + quotedSock,
 		"/bin/mkdir -p " + system.ShellQuote(parentDir),
 		"/usr/sbin/chown root:wheel " + system.ShellQuote(parentDir),
 		"/bin/chmod 0755 " + system.ShellQuote(parentDir),
@@ -440,6 +523,7 @@ func installHelperScript(info BinaryInfo, helperDir, plistPath, tmpPlist, tmpVer
 		"/usr/bin/install -m 0644 "+system.ShellQuote(tmpPlist)+" "+system.ShellQuote(plistPath),
 		"/usr/sbin/chown root:wheel "+system.ShellQuote(plistPath),
 		"/bin/launchctl bootstrap system "+system.ShellQuote(plistPath),
+		"i=0; while [ ! -S "+quotedSock+" ] && [ \"$i\" -lt 50 ]; do /bin/sleep 0.1; i=$((i + 1)); done",
 	)
 	return strings.Join(lines, "; ")
 }

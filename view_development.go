@@ -147,6 +147,7 @@ func (a *app) devTaskKeepingDraft(fn func(*devplatform.Manager) (string, error),
 		var maintenanceError error
 		if initialize {
 			maintenanceError = m.EnsureLogMaintenance(ctx)
+			_ = m.RefreshNodeShellIfPresent()
 		}
 		out, e := fn(m)
 		var contention *devplatform.PackageBusyError

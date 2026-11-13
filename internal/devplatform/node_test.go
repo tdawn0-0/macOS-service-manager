@@ -3,6 +3,7 @@ package devplatform
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -573,5 +574,41 @@ func TestNodeTerminalConfiguration(t *testing.T) {
 	}
 	if m.NodeShellEnabled() {
 		t.Fatal("shell remains enabled")
+	}
+}
+
+func TestRefreshNodeShellIfPresentRepairsStaleWrapper(t *testing.T) {
+	m := New(t.TempDir())
+	m.Home = t.TempDir()
+	m.Program = filepath.Join(t.TempDir(), "Devbase")
+	if err := os.WriteFile(m.Program, []byte("#!/bin/sh\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.RefreshNodeShellIfPresent(); err != nil {
+		t.Fatalf("RefreshNodeShellIfPresent missing: %v", err)
+	}
+	if _, err := os.Stat(m.nodeWrapperPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected %s to remain absent, stat err=%v", m.nodeWrapperPath(), err)
+	}
+
+	if err := os.MkdirAll(m.nodeHome(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	stale := "#!/bin/sh\nexec '/nonexistent/old/bundle/Devbase' --dev \"$@\"\n"
+	if err := os.WriteFile(m.nodeWrapperPath(), []byte(stale), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.RefreshNodeShellIfPresent(); err != nil {
+		t.Fatalf("RefreshNodeShellIfPresent stale: %v", err)
+	}
+	got, err := os.ReadFile(m.nodeWrapperPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantExe := filepath.Join(m.Root, "helpers", "cli")
+	if !strings.Contains(string(got), wantExe) || strings.Contains(string(got), "/nonexistent/old/bundle/Devbase") {
+		t.Fatalf("wrapper not refreshed: got %q, want %q", string(got), wantExe)
 	}
 }

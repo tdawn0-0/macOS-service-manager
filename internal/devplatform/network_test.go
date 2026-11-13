@@ -1,8 +1,13 @@
 package devplatform
 
 import (
+	"context"
+	"devbase/internal/privhelper"
+	"errors"
 	"howett.net/plist"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -33,14 +38,83 @@ func TestSocketJobBindsLoopbackAndDropsPrivileges(t *testing.T) {
 		t.Fatal("allowed root proxy")
 	}
 }
-func TestAuthorizedSocketInstallEmbedsImmutableConfiguration(t *testing.T) {
-	payload := []byte("config with 'quoted' names and $(shell)")
-	script := socketInstallScript(payload, "/Library/LaunchDaemons/example.plist", "system/example")
-	if strings.Contains(script, "$(shell)") || strings.Contains(script, "config with") {
-		t.Fatal("configuration injected into shell")
+func TestSocketJobInstallAndStopDelegateToPrivilegedHelper(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("normal-user job")
 	}
-	if !strings.Contains(script, "/Library/LaunchDaemons/.msm-socket.") || !strings.Contains(script, "root:wheel") || !strings.Contains(script, "bootstrap system") {
-		t.Fatal("missing secure root install steps")
+	m := testManager(t)
+	exe := filepath.Join(t.TempDir(), "devbase")
+	if err := os.WriteFile(exe, []byte("bin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m.Program = exe
+	sockDir := t.TempDir()
+	m.SocketJobDir = sockDir
+	loaded := false
+	m.Run = func(_ context.Context, name string, args ...string) (string, error) {
+		if filepath.Base(name) == "id" {
+			return "developer\n", nil
+		}
+		if filepath.Base(name) == "launchctl" && len(args) > 0 && args[0] == "print" {
+			if loaded {
+				return "active", nil
+			}
+			return "", errors.New("not loaded")
+		}
+		return "", nil
+	}
+	sites := []proxyRoute{{Domain: "web.test", LocalPort: 3000, Port: 443}}
+
+	if err := m.installSocketJob(context.Background(), sites); !errors.Is(err, privhelper.ErrNotInstalled) {
+		t.Fatalf("expected ErrNotInstalled without helper, got %v", err)
+	}
+
+	var ran [][]string
+	privhelper.InstallTestHelper(t, privhelper.ServerConfig{
+		SocketJobDirs: []string{sockDir},
+		Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			ran = append(ran, append([]string{name}, args...))
+			if len(args) > 0 && args[0] == "print" && !loaded {
+				return []byte("not loaded"), errors.New("exit 113")
+			}
+			if len(args) > 0 && args[0] == "bootstrap" {
+				loaded = true
+			}
+			if len(args) > 0 && args[0] == "bootout" {
+				loaded = false
+			}
+			return nil, nil
+		},
+	})
+
+	if err := m.installSocketJob(context.Background(), sites); err != nil {
+		t.Fatalf("installSocketJob: %v", err)
+	}
+	jobPath := m.socketJobPath()
+	data, err := os.ReadFile(jobPath)
+	if err != nil {
+		t.Fatalf("expected socket plist written at %s: %v", jobPath, err)
+	}
+	var job map[string]any
+	if _, err := plist.Unmarshal(data, &job); err != nil {
+		t.Fatal(err)
+	}
+	if job["Label"] != m.label("proxy-sockets") || job["UserName"] != "developer" {
+		t.Fatalf("unexpected socket job plist: %+v", job)
+	}
+	if !strings.HasPrefix(job["Label"].(string), "xyz.jyeu.devbase.") {
+		t.Fatalf("expected devbase label prefix, got %v", job["Label"])
+	}
+
+	if err := m.stopSocketJob(context.Background()); err != nil {
+		t.Fatalf("stopSocketJob: %v", err)
+	}
+	if _, err := os.Stat(jobPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected socket job plist removed, stat err=%v", err)
+	}
+	wantBoot := []string{"/bin/launchctl", "bootstrap", "system", jobPath}
+	if !slices.ContainsFunc(ran, func(cmd []string) bool { return slices.Equal(cmd, wantBoot) }) {
+		t.Fatalf("expected helper bootstrap %v in %v", wantBoot, ran)
 	}
 }
 func TestSocketListenerRequiresLaunchd(t *testing.T) {

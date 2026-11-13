@@ -1,6 +1,8 @@
 package launchd
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +11,7 @@ import (
 
 	"howett.net/plist"
 
+	"devbase/internal/privhelper"
 	"devbase/internal/service"
 	"devbase/internal/system"
 )
@@ -119,16 +122,12 @@ func testProvider(t *testing.T) *Provider {
 
 func stubRun(t *testing.T, out string) *[][]string {
 	t.Helper()
-	old, oldAdmin := system.Run, system.RunAdmin
-	t.Cleanup(func() { system.Run, system.RunAdmin = old, oldAdmin })
+	old := system.Run
+	t.Cleanup(func() { system.Run = old })
 	var calls [][]string
 	system.Run = func(name string, args ...string) (string, error) {
 		calls = append(calls, append([]string{name}, args...))
 		return out, nil
-	}
-	system.RunAdmin = func(name string, args ...string) (string, error) {
-		calls = append(calls, append([]string{"ADMIN", name}, args...))
-		return "", nil
 	}
 	return &calls
 }
@@ -208,48 +207,87 @@ func TestActions(t *testing.T) {
 
 func TestDo(t *testing.T) {
 	calls := stubRun(t, "")
+	var helperCalls [][]string
+	daemonDir := t.TempDir()
 	user := &Provider{Config{service.UserAgent, "/x", "gui/501", false}}
-	daemon := &Provider{Config{service.Daemon, "/x", "system", true}}
+	daemon := &Provider{Config{service.Daemon, daemonDir, "system", true}}
 	it := service.Item{Name: "lbl", Path: "/x/lbl.plist"}
 	off := service.Item{Name: "lbl", Path: "/x/lbl.plist", Autostart: service.AutostartOff}
+
+	// Without the privileged helper, elevated actions return ErrNotInstalled.
+	if err := daemon.Do(it, service.Unload); !errors.Is(err, privhelper.ErrNotInstalled) {
+		t.Fatalf("expected ErrNotInstalled without helper, got %v", err)
+	}
+
+	privhelper.InstallTestHelper(t, privhelper.ServerConfig{
+		ManagedLaunchdDirs: []string{daemonDir},
+		Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			helperCalls = append(helperCalls, append([]string{name}, args...))
+			return nil, nil
+		},
+	})
+
 	for _, c := range []struct {
-		p    *Provider
-		it   service.Item
-		a    service.Action
-		want [][]string
+		p          *Provider
+		it         service.Item
+		a          service.Action
+		wantUser   [][]string
+		wantHelper [][]string
 	}{
-		{user, it, service.Load, [][]string{{"launchctl", "bootstrap", "gui/501", "/x/lbl.plist"}}},
-		{user, off, service.Load, [][]string{{"launchctl", "enable", "gui/501/lbl"}, {"launchctl", "bootstrap", "gui/501", "/x/lbl.plist"}}},
-		{user, it, service.Unload, [][]string{{"launchctl", "bootout", "gui/501/lbl"}}},
-		{user, it, service.Start, [][]string{{"launchctl", "kickstart", "gui/501/lbl"}}},
-		{user, it, service.Restart, [][]string{{"launchctl", "kickstart", "-k", "gui/501/lbl"}}},
-		{user, it, service.Stop, [][]string{{"launchctl", "kill", "SIGTERM", "gui/501/lbl"}}},
-		{user, it, service.Disable, [][]string{{"launchctl", "disable", "gui/501/lbl"}}},
-		{daemon, it, service.Unload, [][]string{{"ADMIN", "launchctl", "bootout", "system/lbl"}}},
-		// Two commands as root run under one authentication.
-		{daemon, off, service.Load, [][]string{{"ADMIN", "/bin/sh", "-c",
-			"'launchctl' 'enable' 'system/lbl' && 'launchctl' 'bootstrap' 'system' '/x/lbl.plist'"}}},
+		{user, it, service.Load, [][]string{{"launchctl", "bootstrap", "gui/501", "/x/lbl.plist"}}, nil},
+		{user, off, service.Load, [][]string{{"launchctl", "enable", "gui/501/lbl"}, {"launchctl", "bootstrap", "gui/501", "/x/lbl.plist"}}, nil},
+		{user, it, service.Unload, [][]string{{"launchctl", "bootout", "gui/501/lbl"}}, nil},
+		{user, it, service.Start, [][]string{{"launchctl", "kickstart", "gui/501/lbl"}}, nil},
+		{user, it, service.Restart, [][]string{{"launchctl", "kickstart", "-k", "gui/501/lbl"}}, nil},
+		{user, it, service.Stop, [][]string{{"launchctl", "kill", "SIGTERM", "gui/501/lbl"}}, nil},
+		{user, it, service.Disable, [][]string{{"launchctl", "disable", "gui/501/lbl"}}, nil},
+		{daemon, it, service.Unload, nil, [][]string{{"/bin/launchctl", "bootout", "system/lbl"}}},
+		{daemon, it, service.Stop, nil, [][]string{{"/bin/launchctl", "kill", "SIGTERM", "system/lbl"}}},
+		{daemon, off, service.Load, nil, [][]string{
+			{"/bin/launchctl", "enable", "system/lbl"},
+			{"/bin/launchctl", "bootstrap", "system", filepath.Join(daemonDir, "lbl.plist")},
+		}},
 	} {
 		*calls = nil
-		if err := c.p.Do(c.it, c.a); err != nil {
+		helperCalls = nil
+		itCase := c.it
+		if c.p.Elevated {
+			itCase.Path = filepath.Join(daemonDir, "lbl.plist")
+		}
+		if err := c.p.Do(itCase, c.a); err != nil {
 			t.Fatal(err)
 		}
-		if !slices.EqualFunc(*calls, c.want, slices.Equal) {
-			t.Errorf("%s: calls %q, want %q", c.a, *calls, c.want)
+		if !slices.EqualFunc(*calls, c.wantUser, slices.Equal) {
+			t.Errorf("%s: user calls %q, want %q", c.a, *calls, c.wantUser)
+		}
+		if !slices.EqualFunc(helperCalls, c.wantHelper, slices.Equal) {
+			t.Errorf("%s: helper calls %q, want %q", c.a, helperCalls, c.wantHelper)
 		}
 	}
 }
 
 func TestDoAllAsksOnce(t *testing.T) {
-	calls := stubRun(t, "")
-	daemon := &Provider{Config{service.Daemon, "/x", "system", true}}
+	stubRun(t, "")
+	var helperCalls [][]string
+	daemonDir := t.TempDir()
+	privhelper.InstallTestHelper(t, privhelper.ServerConfig{
+		ManagedLaunchdDirs: []string{daemonDir},
+		Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			helperCalls = append(helperCalls, append([]string{name}, args...))
+			return nil, nil
+		},
+	})
+	daemon := &Provider{Config{service.Daemon, daemonDir, "system", true}}
 	items := []service.Item{{Name: "a"}, {Name: "b"}}
 	if err := daemon.DoAll(items, service.Start); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{{"ADMIN", "/bin/sh", "-c", "'launchctl' 'kickstart' 'system/a' && 'launchctl' 'kickstart' 'system/b'"}}
-	if !slices.EqualFunc(*calls, want, slices.Equal) {
-		t.Errorf("calls %q, want %q", *calls, want)
+	want := [][]string{
+		{"/bin/launchctl", "kickstart", "system/a"},
+		{"/bin/launchctl", "kickstart", "system/b"},
+	}
+	if !slices.EqualFunc(helperCalls, want, slices.Equal) {
+		t.Errorf("helper calls %q, want %q", helperCalls, want)
 	}
 }
 
@@ -283,10 +321,13 @@ func TestConfirm(t *testing.T) {
 	}
 	for _, p := range []*Provider{daemon, {Config{Source: service.SystemAgent}}} {
 		msg := p.Confirm(it, service.Remove)
-		for _, want := range []string{"password", "may stop working", "not an undo", "Put Back cannot return it to the a folder", "reinstall"} {
+		for _, want := range []string{"may stop working", "not an undo", "Put Back cannot return it to the a folder", "reinstall"} {
 			if !strings.Contains(msg, want) {
 				t.Errorf("%s lacks %q: %q", p.Config.Source, want, msg)
 			}
+		}
+		if strings.Contains(msg, "password") {
+			t.Errorf("%s unexpectedly mentions password: %q", p.Config.Source, msg)
 		}
 	}
 	if strings.Contains(user.Confirm(it, service.Remove), "password") {

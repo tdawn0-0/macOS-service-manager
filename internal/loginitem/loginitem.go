@@ -154,7 +154,7 @@ type Provider struct {
 func New() *Provider {
 	cache := ""
 	if dir, err := os.UserCacheDir(); err == nil {
-		cache = filepath.Join(dir, "xyz.jyeu.msm.app", "login-items.json")
+		cache = filepath.Join(dir, "xyz.jyeu.devbase", "login-items.json")
 	}
 	return &Provider{
 		Dir:       "/private/var/db/com.apple.backgroundtaskmanagement",

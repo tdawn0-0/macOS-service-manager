@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"image"
 	"os"
@@ -17,6 +19,7 @@ import (
 	"devbase/internal/launchd"
 	"devbase/internal/loginitem"
 	"devbase/internal/logs"
+	"devbase/internal/privhelper"
 	"devbase/internal/service"
 	"devbase/internal/system"
 )
@@ -240,10 +243,17 @@ type app struct {
 	visible []service.Item // the items listed, built for each frame
 	rows    []listRow      // the rows of the list: the items, under headers
 
-	detail detailState
-	log    logState
-	ask    askState
-	editor editorState
+	detail         detailState
+	log            logState
+	ask            askState
+	editor         editorState
+	helperStatus   privhelper.HelperStatus
+	helperBusy     bool
+	settingsScroll ui.ScrollState
+	settingsLoaded bool
+	settingsBusy   bool
+	fdaNeedsAccess bool
+	workspaceRoot  string
 }
 
 func newApp() *app {
@@ -366,10 +376,14 @@ func (a *app) refreshAll() {
 // Reading legacy login items can trigger System Events consent. Development
 // has its own controller and only reads legacy sources when requested.
 func (a *app) refreshNavigation() {
-	if a.nav == "development" {
+	if a.nav == navDevelopment {
 		if !a.dev.busy {
 			a.devTask(func(m *devplatform.Manager) (string, error) { return "Workspace refreshed.", nil })
 		}
+		return
+	}
+	if a.nav == navSettings {
+		a.refreshSettings()
 		return
 	}
 	if a.nav == navAll {
@@ -595,6 +609,9 @@ func (a *app) do(it service.Item, act service.Action) {
 			delete(a.busy, it.ID)
 			if err != nil {
 				a.toast("%s: %s", it.Name, err)
+				if errors.Is(err, privhelper.ErrNotInstalled) {
+					a.promptInstallHelper(func() { a.do(it, act) })
+				}
 			} else {
 				a.toast("%s %s", it.Name, act.Past())
 			}
@@ -697,6 +714,9 @@ func (a *app) doAll(src service.Source, items []service.Item, act service.Action
 			}
 			if err != nil {
 				a.toast("%s", err)
+				if errors.Is(err, privhelper.ErrNotInstalled) {
+					a.promptInstallHelper(func() { a.doAll(src, items, act) })
+				}
 			} else {
 				a.toast("%d items %s", len(items), act.Past())
 			}
@@ -1037,8 +1057,148 @@ type rootSaver interface {
 	SaveAsRoot(s launchd.Spec, existing string, load bool) (string, error)
 }
 
-// saveJob saves the form. Changing a job only root can write asks first, saying
-// what changes, and asks nothing at all if nothing does.
+func (a *app) helperReady() bool {
+	return a.helperStatus.State == privhelper.StateInstalled
+}
+
+func (a *app) refreshHelperStatus() {
+	a.spawn(func() {
+		st := privhelper.Default().Status()
+		a.post(func() {
+			a.helperStatus = st
+		})
+	})
+}
+
+func (a *app) refreshSettings() {
+	if a.settingsBusy {
+		return
+	}
+	a.settingsBusy = true
+	providers := make([]service.Restricted, 0, len(a.providers))
+	for _, p := range a.providers {
+		if r, ok := p.(service.Restricted); ok {
+			providers = append(providers, r)
+		}
+	}
+	root := a.devManager().Root
+	a.spawn(func() {
+		st := privhelper.Default().Status()
+		needsAccess := false
+		for _, r := range providers {
+			if r.NeedsAccess() {
+				needsAccess = true
+				break
+			}
+		}
+		a.post(func() {
+			a.settingsBusy = false
+			a.settingsLoaded = true
+			a.helperStatus = st
+			a.fdaNeedsAccess = needsAccess
+			a.workspaceRoot = root
+		})
+	})
+}
+
+func (a *app) openFullDiskAccess() {
+	a.spawn(func() {
+		if err := system.OpenFullDiskAccessSettings(); err != nil {
+			a.post(func() { a.toast("%s", err) })
+		}
+	})
+}
+
+func (a *app) setLogRotation(enabled bool) {
+	a.devTask(func(m *devplatform.Manager) (string, error) {
+		msg := "Automatic log rotation disabled."
+		if enabled {
+			msg = "Automatic log rotation enabled."
+		}
+		return msg, m.SetLogRotation(m.Context, enabled)
+	})
+}
+
+func (a *app) installHelper() {
+	a.installHelperThen(nil)
+}
+
+func (a *app) installHelperThen(after func()) {
+	if a.helperBusy {
+		return
+	}
+	a.helperBusy = true
+	a.spawn(func() {
+		err := privhelper.Default().Install(context.Background())
+		st := privhelper.Default().Status()
+		a.post(func() {
+			a.helperBusy = false
+			a.helperStatus = st
+			if err != nil {
+				a.toast("Could not install privileged helper: %s", err)
+				return
+			}
+			a.toast("Privileged helper installed")
+			if after != nil {
+				after()
+			}
+		})
+	})
+}
+
+func (a *app) promptInstallHelper(retry func()) {
+	title := "Privileged helper required"
+	button := "Install Helper"
+	msg := "Install the Devbase privileged helper once to run root operations such as local HTTPS port 443, /etc/hosts updates, and system launchd jobs without repeated macOS password prompts."
+	if a.helperStatus.State == privhelper.StateOutdated {
+		title = "Privileged helper update required"
+		button = "Update Helper"
+		msg = "The installed privileged helper is out of date for this build of Devbase. Update it once to continue."
+	}
+	a.ask = askState{
+		open:    true,
+		title:   title,
+		message: msg,
+		button:  button,
+		run:     func() { a.installHelperThen(retry) },
+	}
+}
+
+func (a *app) uninstallHelper() {
+	if a.helperBusy {
+		return
+	}
+	a.ask = askState{
+		open:    true,
+		title:   "Remove privileged helper?",
+		message: "Privileged operations like local HTTPS port 443, /etc/hosts updates, and system launchd jobs require the privileged helper and will remain unavailable until you install it again.",
+		button:  "Remove Helper",
+		run:     a.runUninstallHelper,
+	}
+}
+
+func (a *app) runUninstallHelper() {
+	if a.helperBusy {
+		return
+	}
+	a.helperBusy = true
+	a.spawn(func() {
+		err := privhelper.Default().Uninstall(context.Background())
+		st := privhelper.Default().Status()
+		a.post(func() {
+			a.helperBusy = false
+			a.helperStatus = st
+			if err != nil {
+				a.toast("Could not remove privileged helper: %s", err)
+				return
+			}
+			a.toast("Privileged helper removed")
+		})
+	})
+}
+
+// saveJob saves the form. Creating or changing a system job only root can write
+// asks for in-app confirmation first, and editing asks nothing if nothing changes.
 func (a *app) saveJob() {
 	e := &a.editor
 	spec, err := e.spec()
@@ -1047,8 +1207,19 @@ func (a *app) saveJob() {
 		return
 	}
 	e.err = ""
-	if e.existing == "" || e.source() == service.UserAgent {
+	src := e.source()
+	if src == service.UserAgent {
 		a.writeJob(spec)
+		return
+	}
+	if e.existing == "" {
+		a.ask = askState{
+			open:    true,
+			title:   fmt.Sprintf("Create system job %s?", spec.Label),
+			message: createWarning(src, e.apply),
+			button:  "Create Job",
+			run:     func() { a.writeJob(spec) },
+		}
 		return
 	}
 	current, err := os.ReadFile(e.existing)
@@ -1075,13 +1246,26 @@ func (a *app) saveJob() {
 	}
 }
 
+func createWarning(src service.Source, load bool) string {
+	target := "/Library/LaunchAgents"
+	if src == service.Daemon {
+		target = "/Library/LaunchDaemons"
+	}
+	msg := fmt.Sprintf("This creates a root-owned plist file in %s. ", target)
+	if load {
+		msg += "It also loads the job now. "
+	}
+	return msg + "The privileged helper will save it without a macOS password prompt."
+}
+
 // changeWarning says what saving an edit of a job only root can write does.
 func changeWarning(changes []string, reload bool) string {
 	msg := "This changes " + strings.Join(changes, ", ") + ". "
 	if reload {
 		msg += "The job loads again, which restarts it if it runs. "
 	}
-	return msg + "The software that installed it may depend on what it says, or undo this when it updates. macOS will ask for your password."
+	msg += "The software that installed it may depend on what it says, or undo this when it updates. "
+	return msg + "The privileged helper will save it without a macOS password prompt."
 }
 
 // writeJob writes the job, then loads it, or loads it again.
@@ -1118,6 +1302,8 @@ func (a *app) writeJob(spec launchd.Spec) {
 					// The file was saved; only loading failed. Saving again edits it.
 					a.editor.existing = path
 					a.refresh(src)
+				} else if errors.Is(err, privhelper.ErrNotInstalled) {
+					a.promptInstallHelper(func() { a.writeJob(spec) })
 				}
 				return
 			}

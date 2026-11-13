@@ -2,6 +2,7 @@
 package brew
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"devbase/internal/launchd"
+	"devbase/internal/privhelper"
 	"devbase/internal/service"
 	"devbase/internal/system"
 )
@@ -314,29 +316,45 @@ func (p *Provider) unregister(it service.Item) error {
 	return os.Remove(path)
 }
 
-// doAsRoot changes a service registered as root. Homebrew's commands, run as
-// the user, cannot reach it, and launchctl is all they would run.
+// doAsRoot changes a service registered as root via the privileged helper.
+// Homebrew's commands, run as the user, cannot reach it.
 func doAsRoot(it service.Item, a service.Action) error {
-	target := "system/" + labelOf(it.Path)
-	admin := func(args ...string) error {
-		_, err := system.RunAdmin("launchctl", args...)
+	hc, err := privhelper.Require()
+	if err != nil {
 		return err
 	}
+	return doAsRootViaHelper(hc, it, "system/"+labelOf(it.Path), a)
+}
+
+func doAsRootViaHelper(hc *privhelper.Client, it service.Item, target string, a service.Action) error {
+	ctx := context.Background()
 	switch a {
 	case service.Start:
 		if it.State == service.StateStopped {
-			return admin("bootstrap", "system", it.Path)
+			return hc.LaunchdControl(ctx, [][]string{{"bootstrap", "system", it.Path}})
 		}
-		return admin("kickstart", target)
+		return hc.LaunchdControl(ctx, [][]string{{"kickstart", target}})
 	case service.Stop:
-		return admin("bootout", target)
+		return hc.LaunchdControl(ctx, [][]string{{"bootout", target}})
 	case service.Restart:
-		return admin("kickstart", "-k", target)
+		return hc.LaunchdControl(ctx, [][]string{{"kickstart", "-k", target}})
 	case service.Disable:
 		// Not loaded is fine too.
-		script := "launchctl bootout " + system.ShellQuote(target) + "; rm -f " + system.ShellQuote(it.Path)
-		_, err := system.RunAdmin("/bin/sh", "-c", script)
-		return err
+		_ = hc.LaunchdControl(ctx, [][]string{{"bootout", target}})
+		if _, err := os.Lstat(it.Path); os.IsNotExist(err) {
+			return nil
+		}
+		tmpDir, err := os.MkdirTemp("", "msm-brew-disabled-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(tmpDir)
+		_ = os.Chmod(tmpDir, 0o700)
+		return hc.LaunchdRemove(ctx, privhelper.LaunchdRemoveRequest{
+			Path:     it.Path,
+			Target:   target,
+			TrashDir: tmpDir,
+		})
 	}
 	return fmt.Errorf("brew: %s does not apply to a service of root", a)
 }

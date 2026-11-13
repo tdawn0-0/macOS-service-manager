@@ -17,7 +17,11 @@ const logLimit int64 = 5 << 20
 func (m *Manager) maintenancePath() string {
 	dir := m.LoginDir
 	if dir == "" {
-		dir = launchd.UserAgents().Dir
+		if m.usesUserStorage() {
+			dir = launchd.UserAgents().Dir
+		} else {
+			dir = filepath.Join(m.Root, "jobs")
+		}
 	}
 	return filepath.Join(dir, m.label("maintenance")+".plist")
 }

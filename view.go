@@ -8,6 +8,7 @@ import (
 	"github.com/lobehub/lobe-mygo/pkg/action"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 
+	"devbase/internal/privhelper"
 	"devbase/internal/service"
 )
 
@@ -44,9 +45,12 @@ func (a *app) view(c *ui.Context) {
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
 		a.sidebar(c)
 		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
-			if a.nav == navDevelopment {
+			switch a.nav {
+			case navDevelopment:
 				a.developmentView(c)
-			} else {
+			case navSettings:
+				a.settingsView(c)
+			default:
 				a.listPane(c)
 			}
 		})
@@ -169,6 +173,20 @@ func (a *app) sidebar(c *ui.Context) {
 					navItem(string(src), sourceIcon(src), src.Title())
 				}
 			})
+			ui.SidebarSection(c, "System", nil, func() {
+				ui.SidebarItem(c, navSettings, icoSettings, "Settings").Children(func() {
+					badge := ""
+					switch a.helperStatus.State {
+					case privhelper.StateNotInstalled:
+						badge = "Setup"
+					case privhelper.StateOutdated:
+						badge = "Update"
+					}
+					if badge != "" {
+						ui.Text(c, badge).FontSize(textCaption).TextColor(t.Warning).SingleLine()
+					}
+				})
+			})
 		}).Grow(1).MinHeight(0).Background(ui.Transparent).Changed() {
 			a.chosen.Clear()
 			a.list.ScrollTo(0, ui.Start)
@@ -189,6 +207,8 @@ func (a *app) sidebar(c *ui.Context) {
 						a.refresh(src)
 					}
 				}
+			} else if a.nav == navSettings {
+				a.refreshSettings()
 			} else if a.nav != navDevelopment {
 				if st := a.sources[service.Source(a.nav)]; st != nil && !st.loaded && !st.loading {
 					a.refresh(service.Source(a.nav))
@@ -240,6 +260,7 @@ func (a *app) listPane(c *ui.Context) {
 		})
 	}
 	a.restrictionNote(c)
+	a.helperNote(c)
 	if len(a.visible) == 0 {
 		a.emptyList(c)
 		return
@@ -274,6 +295,35 @@ func (a *app) restrictionNote(c *ui.Context) {
 				labeledButton(c, iconOpen, "Allow Full Disk Access…", false).OnClick(func() { a.openGuide(src, false) })
 			}
 			labeledButton(c, iconLock, "Read Once with Password", false).Disabled(st.reading).OnClick(func() { a.readRestricted(src) })
+		})
+	})
+}
+
+// helperNote offers a one-click privileged helper install/update banner on root service lists.
+func (a *app) helperNote(c *ui.Context) {
+	if a.nav != string(service.SystemAgent) && a.nav != string(service.Daemon) {
+		return
+	}
+	if a.helperStatus.State == "" || a.helperReady() {
+		return
+	}
+	t := c.Theme()
+	btnLabel := "Install Privileged Helper…"
+	if a.helperStatus.State == privhelper.StateOutdated {
+		btnLabel = "Update Privileged Helper…"
+	}
+	ui.Column(c).Shrink(0).Margin(8, 12, 0).Padding(8, 12).Gap(8).Radius(8).Background(glassOf(t).inset).Children(func() {
+		ui.Row(c).Gap(8).Children(func() {
+			ui.Icon(c, iconLock).FontSize(13).TextColor(t.TextMuted).AlignSelf(ui.Start).Margin(1, 0, 0)
+			ui.Text(c, a.helperStatus.Message).FontSize(textSmall).TextColor(t.TextMuted).Grow(1).MinWidth(0)
+		})
+		ui.Row(c).Wrap().Gap(6).Children(func() {
+			labeledButton(c, iconLock, btnLabel, false).Disabled(a.helperBusy).OnClick(a.installHelper)
+			labeledButton(c, icoSettings, "Open Settings", false).OnClick(func() {
+				a.chosen.Clear()
+				a.nav = navSettings
+				a.refreshSettings()
+			})
 		})
 	})
 }
@@ -388,7 +438,11 @@ func (a *app) row(r ui.ListRow, it service.Item, bulk bool) {
 			ui.Text(c, it.Owner).TextColor(muted).FontSize(textCaption).SingleLine().MaxWidth(150)
 		}
 		if it.Admin {
-			ui.Icon(c, iconLock).FontSize(11).TextColor(muted).Shrink(0).Tooltip("Changing it asks for your password")
+			tip := "Requires the privileged helper"
+			if a.helperReady() {
+				tip = "Managed by the privileged helper"
+			}
+			ui.Icon(c, iconLock).FontSize(11).TextColor(muted).Shrink(0).Tooltip(tip)
 		}
 		if note := autostartNote(it); note != "" {
 			ui.Text(c, note).TextColor(muted).FontSize(textCaption).SingleLine().Shrink(0)

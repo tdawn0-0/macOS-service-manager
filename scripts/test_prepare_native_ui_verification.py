@@ -67,7 +67,7 @@ class NativePreparationTests(unittest.TestCase):
                 run.assert_not_called()
                 self.assertTrue(base.exists())
             (jobs / 'external-job.plist').unlink()
-            prefix = 'xyz.jyeu.msm.dev.' + hashlib.sha256(str(root).encode()).hexdigest()[:8] + '.'
+            prefix = 'xyz.jyeu.devbase.dev.' + hashlib.sha256(str(root).encode()).hexdigest()[:8] + '.'
             (jobs / (prefix + 'test.plist')).write_text('fixture')
             with mock.patch.object(module, 'run_fixture_command'), mock.patch.object(module.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, b'', b'observation denied')):
                 with self.assertRaisesRegex(RuntimeError, 'retained private directory'):

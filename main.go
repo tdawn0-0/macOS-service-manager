@@ -116,6 +116,7 @@ func main() {
 		if a.nav != "development" {
 			a.welcome()
 		}
+		a.refreshHelperStatus()
 		a.refreshNavigation()
 	})
 	if err := mygo.App.Run(); err != nil {

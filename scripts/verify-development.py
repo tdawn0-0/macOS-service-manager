@@ -132,7 +132,7 @@ def main():
                 for instance_id in reversed(instances):
                     cli('db', 'remove', instance_id)
                 cli('maintenance-stop')
-            prefix = 'xyz.jyeu.msm.dev.' + hashlib.sha256(str(root).encode()).hexdigest()[:8] + '.'
+            prefix = 'xyz.jyeu.devbase.dev.' + hashlib.sha256(str(root).encode()).hexdigest()[:8] + '.'
             for job in (root / 'jobs').glob('*.plist'):
                 if job.stem.startswith(prefix):
                     subprocess.run(['launchctl', 'bootout', f'gui/{os.getuid()}/' + job.stem], capture_output=True, timeout=40)

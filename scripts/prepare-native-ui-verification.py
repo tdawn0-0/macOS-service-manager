@@ -37,7 +37,7 @@ def cleanup_fixture(base, root, devmgr):
     # Only this freshly allocated root can own the jobs being cleaned up.
     try:
         run_fixture_command(devmgr, root, 'maintenance-stop')
-        prefix = 'xyz.jyeu.msm.dev.' + hashlib.sha256(str(root).encode()).hexdigest()[:8] + '.'
+        prefix = 'xyz.jyeu.devbase.dev.' + hashlib.sha256(str(root).encode()).hexdigest()[:8] + '.'
         for job in (root / 'jobs').glob('*.plist'):
             if not job.stem.startswith(prefix):
                 raise RuntimeError('Unexpected fixture job identity')
@@ -198,7 +198,7 @@ def _main(argv=None):
                       proxyRules=[{'domain':'service-manager-verify.test','localPort':web_port}],
                       externalPID=external_process.pid, externalBinary=str(node_binary), appDirectory=str(app_dir),
                       webPort=web_port,redisPort=redis_port,httpsPort=https_port,url=f'https://service-manager-verify.test:{https_port}/',
-                      labelPrefix='xyz.jyeu.msm.dev.'+hashlib.sha256(str(root).encode()).hexdigest()[:8]+'.',identifier=info['CFBundleIdentifier'])
+                      labelPrefix='xyz.jyeu.devbase.dev.'+hashlib.sha256(str(root).encode()).hexdigest()[:8]+'.',identifier=info['CFBundleIdentifier'])
         (base/'native-ui.json').write_text(json.dumps(record,indent=2)+'\n')
         print(json.dumps(record,indent=2))
     except BaseException:

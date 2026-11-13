@@ -2,17 +2,17 @@ package launchd
 
 import (
 	"bytes"
-	"encoding/base64"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 
 	"howett.net/plist"
 
+	"devbase/internal/privhelper"
 	"devbase/internal/service"
 	"devbase/internal/system"
 )
@@ -451,18 +451,26 @@ func (p *Provider) SaveAsRoot(s Spec, existing string, load bool) (string, error
 	// Agents load into the user's domain, for which the user needs no root.
 	inScript := load && p.Elevated
 	target := p.Domain + "/" + s.Label
-	script := installScript(data, path, p.Domain, inScript)
-	if existing != "" {
-		script = replaceScript(data, path, p.Domain, target, inScript)
-	}
-	if _, err := system.RunAdmin("/bin/sh", "-c", script); err != nil {
-		// Root may have saved it and failed to load it.
-		if inScript {
-			if saved, readErr := os.ReadFile(path); readErr == nil && bytes.Equal(saved, data) {
-				return path, fmt.Errorf("saved, but it did not load: %w", err)
-			}
-		}
+	hc, err := privhelper.Require()
+	if err != nil {
 		return "", err
+	}
+	resp, err := hc.LaunchdSave(context.Background(), privhelper.LaunchdSaveRequest{
+		Plist:        data,
+		Path:         path,
+		Domain:       p.Domain,
+		Target:       target,
+		ExistingPath: existing,
+		Load:         inScript,
+	})
+	if err != nil {
+		return "", err
+	}
+	if resp.Error != "" {
+		if resp.Saved {
+			return path, fmt.Errorf("saved, but it did not load: %s", resp.Error)
+		}
+		return "", fmt.Errorf("%s", resp.Error)
 	}
 	if load && !p.Elevated {
 		if existing != "" {
@@ -476,38 +484,8 @@ func (p *Provider) SaveAsRoot(s Spec, existing string, load bool) (string, error
 	return path, nil
 }
 
-// approvedJobStage embeds reviewed bytes and stages them in the protected target directory.
-func approvedJobStage(data []byte, path string) string {
-	return "/bin/mkdir -p " + system.ShellQuote(filepath.Dir(path)) + " && tmp=$(/usr/bin/mktemp " + system.ShellQuote(filepath.Join(filepath.Dir(path), ".msm-approved.XXXXXX")) + ") && trap '/bin/rm -f \"$tmp\"' EXIT && /usr/bin/printf '%s' " + system.ShellQuote(base64.StdEncoding.EncodeToString(data)) + " | /usr/bin/base64 -D > \"$tmp\" && /usr/bin/plutil -lint \"$tmp\" >/dev/null && "
-}
-
-// installScript is what root runs for a new job: it never replaces a job that
-// appeared since the check, and launchd refuses a file that root does not own.
-func installScript(data []byte, path, domain string, load bool) string {
-	script := "[ ! -e " + system.ShellQuote(path) + " ] && [ ! -L " + system.ShellQuote(path) + " ] && " + approvedJobStage(data, path) + "[ ! -e " + system.ShellQuote(path) + " ] && [ ! -L " + system.ShellQuote(path) + " ] && /usr/bin/install -S -m 644 -o root -g wheel \"$tmp\" " + system.ShellQuote(path)
-	if load {
-		script += " && /bin/launchctl bootstrap " + system.ShellQuote(domain) + " " + system.ShellQuote(path)
-	}
-	return script
-}
-func replaceScript(data []byte, path, domain, target string, load bool) string {
-	check := "[ -f " + system.ShellQuote(path) + " ] && [ ! -L " + system.ShellQuote(path) + " ] && "
-	script := check + approvedJobStage(data, path) + check + "/usr/bin/install -S -m 644 -o root -g wheel \"$tmp\" " + system.ShellQuote(path)
-	if load {
-		script += " && { " + unloadScript(target) + " /bin/launchctl bootstrap " + system.ShellQuote(domain) + " " + system.ShellQuote(path) + "; }"
-	}
-	return script
-}
-
-// unloadScript unloads a job if launchd has it loaded, and ends the script if it
-// cannot: what follows must not leave behind a job that still runs.
-func unloadScript(target string) string {
-	quoted := system.ShellQuote(target)
-	return "if /bin/launchctl print " + quoted + " >/dev/null 2>&1; then /bin/launchctl bootout " + quoted + " || exit $?; fi;"
-}
-
-// removeAsRoot unloads a job that only root can remove and moves its file to the
-// user's Trash, under one authentication. Root hands the file to the user, since
+// removeAsRoot unloads a job that only root can remove via the privileged helper
+// and moves its file to the user's Trash. Root hands the file to the user, since
 // only the user can reach their Trash, whichever access macOS gave this app. So
 // the Trash keeps a copy and is no undo: the file left its directory for a
 // temporary one, which is where Put Back would look, and it is no longer root's.
@@ -522,13 +500,16 @@ func (p *Provider) removeAsRoot(it service.Item) error {
 	}
 	_ = os.Chmod(dir, 0o700)
 	moved := filepath.Join(dir, filepath.Base(sourcePath))
-	script := unloadScript(p.Domain+"/"+it.Name) +
-		" [ -f " + system.ShellQuote(sourcePath) + " ] && [ ! -L " + system.ShellQuote(sourcePath) + " ] && " +
-		"[ -d " + system.ShellQuote(dir) + " ] && [ ! -L " + system.ShellQuote(dir) + " ] && " +
-		"[ ! -e " + system.ShellQuote(moved) + " ] && [ ! -L " + system.ShellQuote(moved) + " ] && " +
-		"/bin/mv -n " + system.ShellQuote(sourcePath) + " " + system.ShellQuote(moved) +
-		" && /usr/sbin/chown -h " + strconv.Itoa(os.Getuid()) + " " + system.ShellQuote(moved)
-	if _, err := system.RunAdmin("/bin/sh", "-c", script); err != nil {
+	hc, err := privhelper.Require()
+	if err != nil {
+		os.Remove(dir)
+		return err
+	}
+	if err := hc.LaunchdRemove(context.Background(), privhelper.LaunchdRemoveRequest{
+		Path:     sourcePath,
+		Target:   p.Domain + "/" + it.Name,
+		TrashDir: dir,
+	}); err != nil {
 		os.Remove(dir)
 		return err
 	}

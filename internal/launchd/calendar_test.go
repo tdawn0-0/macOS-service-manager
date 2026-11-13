@@ -1,13 +1,15 @@
 package launchd
 
 import (
+	"context"
+	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"devbase/internal/privhelper"
 	"devbase/internal/system"
 )
 
@@ -177,26 +179,35 @@ func TestServiceOptionsRoundTrip(t *testing.T) {
 	}
 }
 
-func stubRoot(t *testing.T) (runs *[]string, admin *[][]string) {
+func stubRoot(t *testing.T, managedDirs ...string) (runs *[]string, helperRuns *[][]string) {
 	t.Helper()
-	oldRun, oldAdmin := system.Run, system.RunAdmin
-	t.Cleanup(func() { system.Run, system.RunAdmin = oldRun, oldAdmin })
-	runs, admin = new([]string), new([][]string)
+	oldRun := system.Run
+	t.Cleanup(func() { system.Run = oldRun })
+	runs, helperRuns = new([]string), new([][]string)
 	system.Run = func(name string, args ...string) (string, error) {
 		*runs = append(*runs, name+" "+strings.Join(args, " "))
 		return "", nil
 	}
-	system.RunAdmin = func(name string, args ...string) (string, error) {
-		*admin = append(*admin, append([]string{name}, args...))
-		return "", nil
+	if len(managedDirs) > 0 {
+		privhelper.InstallTestHelper(t, privhelper.ServerConfig{
+			ManagedLaunchdDirs: managedDirs,
+			Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+				*helperRuns = append(*helperRuns, append([]string{name}, args...))
+				return nil, nil
+			},
+		})
 	}
-	return runs, admin
+	return runs, helperRuns
 }
 
 func TestADaemonInstallsAndLoadsUnderOneAuthentication(t *testing.T) {
-	runs, admin := stubRoot(t)
 	dir := t.TempDir()
-	p := &Provider{Config{Dir: filepath.Join(dir, "my jobs"), Domain: "system", Elevated: true}}
+	jobDir := filepath.Join(dir, "my jobs")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runs, helperRuns := stubRoot(t, jobDir)
+	p := &Provider{Config{Dir: jobDir, Domain: "system", Elevated: true}}
 	path, err := p.SaveAsRoot(Spec{Label: "com.example.d", Args: ShellArgs("date"), UserName: "me", GroupName: "staff"}, "", true)
 	if err != nil {
 		t.Fatal(err)
@@ -204,22 +215,12 @@ func TestADaemonInstallsAndLoadsUnderOneAuthentication(t *testing.T) {
 	if want := filepath.Join(p.Dir, "com.example.d.plist"); path != want {
 		t.Errorf("path = %q, want %q", path, want)
 	}
-	if len(*admin) != 1 {
-		t.Fatalf("authentications = %v", *admin)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("plist was not written: %v", err)
 	}
-	script := (*admin)[0][2]
-	// As a shell reads it, with a space in the path.
-	if out, err := exec.Command("/bin/sh", "-n", "-c", script).CombinedOutput(); err != nil {
-		t.Errorf("the script does not parse: %v %s\n%s", err, out, script)
-	}
-	for _, want := range []string{
-		"[ ! -e '" + path + "' ]",
-		"/usr/bin/install -S -m 644 -o root -g wheel",
-		"/bin/launchctl bootstrap 'system' '" + path + "'",
-	} {
-		if !strings.Contains(script, want) {
-			t.Errorf("script lacks %q:\n%s", want, script)
-		}
+	wantBoot := []string{"/bin/launchctl", "bootstrap", "system", path}
+	if !slices.ContainsFunc(*helperRuns, func(c []string) bool { return slices.Equal(c, wantBoot) }) {
+		t.Errorf("helperRuns = %v, want %v", *helperRuns, wantBoot)
 	}
 	for _, want := range []string{"id -u me", "dscl . -read /Groups/staff PrimaryGroupID", "plutil -lint"} {
 		if !slices.ContainsFunc(*runs, func(r string) bool { return strings.HasPrefix(r, want) }) {
@@ -229,14 +230,15 @@ func TestADaemonInstallsAndLoadsUnderOneAuthentication(t *testing.T) {
 }
 
 func TestASystemAgentLoadsWithoutSecondAuthentication(t *testing.T) {
-	runs, admin := stubRoot(t)
-	p := &Provider{Config{Dir: t.TempDir(), Domain: "gui/501", Elevated: false}}
+	dir := t.TempDir()
+	runs, helperRuns := stubRoot(t, dir)
+	p := &Provider{Config{Dir: dir, Domain: "gui/501", Elevated: false}}
 	path, err := p.SaveAsRoot(Spec{Label: "com.example.a", Args: ShellArgs("date")}, "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(*admin) != 1 || strings.Contains((*admin)[0][2], "bootstrap") {
-		t.Fatalf("root only installs: %v", *admin)
+	if len(*helperRuns) != 0 {
+		t.Fatalf("root only installs system agent file without helper launchctl: %v", *helperRuns)
 	}
 	if !slices.Contains(*runs, "launchctl bootstrap gui/501 "+path) {
 		t.Errorf("the user loads it: %v", *runs)
@@ -244,11 +246,11 @@ func TestASystemAgentLoadsWithoutSecondAuthentication(t *testing.T) {
 }
 
 func TestSaveAsRootChecksBeforeAsking(t *testing.T) {
-	_, admin := stubRoot(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "com.example.taken.plist"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	runs, _ := stubRoot(t) // no helper installed; validation errors must fail before Require()
 	p := &Provider{Config{Dir: dir, Domain: "system", Elevated: true}}
 	if _, err := p.SaveAsRoot(Spec{Label: "com.example.taken", Args: ShellArgs("date")}, "", false); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("err = %v", err)
@@ -268,7 +270,8 @@ func TestSaveAsRootChecksBeforeAsking(t *testing.T) {
 	if _, err := p.SaveAsRoot(Spec{Label: "ok", Args: ShellArgs("date"), UserName: "nobody-here"}, "", false); err == nil || !strings.Contains(err.Error(), `no user "nobody-here"`) {
 		t.Errorf("err = %v", err)
 	}
-	if len(*admin) != 0 {
-		t.Errorf("asked for a password for what could not work: %v", *admin)
+	if _, err := p.SaveAsRoot(Spec{Label: "com.example.ok", Args: ShellArgs("date")}, "", false); !errors.Is(err, privhelper.ErrNotInstalled) {
+		t.Errorf("expected ErrNotInstalled after checks pass, got %v", err)
 	}
+	_ = runs
 }

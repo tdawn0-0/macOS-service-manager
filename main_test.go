@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"image"
 	"image/png"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,6 +19,7 @@ import (
 
 	"devbase/internal/brew"
 	"devbase/internal/launchd"
+	"devbase/internal/privhelper"
 	"devbase/internal/service"
 	"devbase/internal/system"
 )
@@ -1152,6 +1155,8 @@ func TestANewDaemonGoesToRootWithItsUser(t *testing.T) {
 	h.typeInto("Command", "/usr/local/bin/backup")
 	h.typeInto("User", "_backup")
 	h.click("Save")
+	h.wantText("Create system job com.example.nightly?")
+	h.click("Create Job")
 	if len(jobs.made) != 1 || !jobs.loads[0] {
 		t.Fatalf("made %+v, loads %v, error %q", jobs.made, jobs.loads, h.a.editor.err)
 	}
@@ -1185,8 +1190,8 @@ func TestASystemAgentHasNoUserAndNoDefaultLog(t *testing.T) {
 	h.a.providers[service.SystemAgent] = jobs
 	h.click("System Agents")
 	h.click("New Job…")
-	h.wantText("Starts at login", "Saving asks for your password")
-	h.wantNoText("Runs as", "Root directory", "if no log file is set")
+	h.wantText("Starts at login", "Asks for in-app confirmation before saving")
+	h.wantNoText("Runs as", "Root directory", "if no log file is set", "password")
 	h.a.editor.label, h.a.editor.args = "com.example.all", "/bin/date"
 	got, err := h.a.editor.spec()
 	if err != nil || got.StdOut != "" {
@@ -1202,6 +1207,8 @@ func TestAFailureToCreateARootJobKeepsTheForm(t *testing.T) {
 	h.typeInto("Label", "com.example.nightly")
 	h.typeInto("Command", "/bin/date")
 	h.click("Save")
+	h.wantText("Create system job com.example.nightly?")
+	h.click("Create Job")
 	if !h.a.editor.open || !h.tt.HasText("authorization canceled") {
 		t.Errorf("open %v, %q", h.a.editor.open, h.tt.Texts())
 	}
@@ -1318,7 +1325,8 @@ func TestEditingARootJobSaysWhatChangesBeforeThePassword(t *testing.T) {
 	h.a.providers[service.Daemon] = jobs
 	h.a.editJob(service.Item{Name: "com.vendor.helper", Path: path, Source: service.Daemon, State: service.StateRunning})
 	h.tt.Frame()
-	h.wantText("Edit Job", "Saving asks for your password", "Runs as", "Reload it after saving")
+	h.wantText("Edit Job", "Asks for in-app confirmation before saving", "Runs as", "Reload it after saving")
+	h.wantNoText("Saving asks for your password")
 	if got := h.a.editor.user; got != "_vendor" {
 		t.Errorf("user = %q", got)
 	}
@@ -1334,7 +1342,8 @@ func TestEditingARootJobSaysWhatChangesBeforeThePassword(t *testing.T) {
 	h.a.editor.user = "_other"
 	h.a.editor.runAtLoad = true
 	h.click("Save")
-	h.wantText("Save changes to com.vendor.helper?", "This changes RunAtLoad, UserName.", "restarts it if it runs", "macOS will ask for your password")
+	h.wantText("Save changes to com.vendor.helper?", "This changes RunAtLoad, UserName.", "restarts it if it runs", "without a macOS password prompt")
+	h.wantNoText("macOS will ask for your password")
 	if len(jobs.made) != 0 {
 		t.Fatal("saved before the answer")
 	}
@@ -1373,6 +1382,8 @@ func TestAJobSavedButNotLoadedIsEditedNext(t *testing.T) {
 	h.a.editor.label, h.a.editor.args = "com.example.d", "/bin/date"
 	h.tt.Frame()
 	h.click("Save")
+	h.wantText("Create system job com.example.d?")
+	h.click("Create Job")
 	h.wantText("saved, but it did not load")
 	if want := "/Library/LaunchDaemons/com.example.d.plist"; h.a.editor.existing != want {
 		t.Errorf("existing = %q, want %q", h.a.editor.existing, want)
@@ -1415,10 +1426,204 @@ func TestAnyKindOfJobCanBeEditedAndRemoved(t *testing.T) {
 			t.Fatal(err)
 		}
 		h.tt.Frame()
-		h.wantText("Remove com.example.job?", "not an undo", "may stop working", "macOS will ask for your password")
+		h.wantText("Remove com.example.job?", "not an undo", "may stop working")
+		h.wantNoText("macOS will ask for your password")
 		h.click("Cancel")
 		if h.a.ask.open {
 			t.Errorf("%s: the question stays open", c.src)
 		}
 	}
+}
+
+func TestPrivilegedHelperCreatesAndEditsRootJobWithInAppConfirmationAndNoPassword(t *testing.T) {
+	oldRun, oldAdmin := system.Run, system.RunAdmin
+	defer func() {
+		system.Run = oldRun
+		system.RunAdmin = oldAdmin
+	}()
+	system.Run = func(string, ...string) (string, error) { return "", nil }
+	adminCalled := false
+	system.RunAdmin = func(string, ...string) (string, error) {
+		adminCalled = true
+		return "", errors.New("unexpected RunAdmin call while privileged helper is ready")
+	}
+
+	sockDir, err := os.MkdirTemp("/tmp", "msm-ph-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "h.sock")
+
+	managedDir := t.TempDir()
+	helperDir := t.TempDir()
+	stagedExe := filepath.Join(helperDir, "devbase-helper")
+	if err := os.WriteFile(stagedExe, []byte("bin"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(helperDir, "version"), []byte("test-v1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	helperPlistPath := filepath.Join(t.TempDir(), privhelper.Label+".plist")
+	ownerUID := os.Geteuid()
+	plistXML := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>%s</string>
+<key>ProgramArguments</key><array><string>%s</string><string>--dev</string><string>helper</string><string>--owner-uid</string><string>%d</string></array>
+<key>Sockets</key><dict><key>%s</key><dict><key>SockPathName</key><string>%s</string><key>SockPathMode</key><integer>438</integer></dict></dict>
+</dict></plist>`, privhelper.Label, stagedExe, ownerUID, privhelper.SocketName, sockPath)
+	if err := os.WriteFile(helperPlistPath, []byte(plistXML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ul, ok := ln.(*net.UnixListener); ok {
+		ul.SetUnlinkOnClose(false)
+	}
+	var launchctlCalls [][]string
+	srv := privhelper.NewServer(privhelper.ServerConfig{
+		OwnerUID:           ownerUID,
+		ExpectedVersion:    "test-v1",
+		ManagedLaunchdDirs: []string{managedDir},
+		Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			launchctlCalls = append(launchctlCalls, append([]string{name}, args...))
+			return nil, nil
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	srvDone := make(chan error, 1)
+	go func() { srvDone <- srv.Serve(ctx, ln) }()
+	t.Cleanup(func() {
+		cancel()
+		_ = ln.Close()
+		<-srvDone
+	})
+
+	client := privhelper.NewClient(privhelper.ClientConfig{
+		SocketPath: sockPath,
+		PlistPath:  helperPlistPath,
+		HelperDir:  helperDir,
+		Expected: privhelper.BinaryInfo{
+			Version:    "test-v1",
+			Executable: "/Applications/Devbase.app/Contents/MacOS/Devbase",
+			OwnerUID:   ownerUID,
+		},
+	})
+	restoreClient := privhelper.SetDefaultForTest(client)
+	defer restoreClient()
+
+	h := newHarness(t)
+	prov := launchd.Daemons()
+	prov.Dir = managedDir
+	h.a.providers[service.Daemon] = prov
+	h.a.refreshHelperStatus()
+	if !h.a.helperReady() {
+		t.Fatalf("expected helperReady(), status=%+v", h.a.helperStatus)
+	}
+
+	h.click("Daemons")
+	h.click("New Job…")
+	h.wantText("Asks for in-app confirmation before saving")
+	h.typeInto("Label", "com.example.helperjob")
+	h.typeInto("Command", "/bin/date")
+	h.click("Save")
+
+	if !h.a.ask.open {
+		t.Fatalf("expected in-app secondary confirmation on create")
+	}
+	h.wantText("Create system job com.example.helperjob?", "without a macOS password prompt")
+	h.wantNoText("macOS will ask for your password")
+	h.click("Create Job")
+
+	plistPath := filepath.Join(managedDir, "com.example.helperjob.plist")
+	if _, err := os.Stat(plistPath); err != nil {
+		t.Fatalf("expected helper to write plist at %s: %v", plistPath, err)
+	}
+	if adminCalled {
+		t.Fatal("RunAdmin must not be called when privileged helper is active")
+	}
+
+	h.a.sources[service.Daemon].items = []service.Item{{
+		ID:     "daemon:" + plistPath,
+		Source: service.Daemon,
+		Name:   "com.example.helperjob",
+		Path:   plistPath,
+		State:  service.StateLoaded,
+		Admin:  true,
+	}}
+	h.tt.Frame()
+	if err := h.tt.RightClick("com.example.helperjob"); err != nil {
+		t.Fatal(err)
+	}
+	h.tt.Frame()
+	if err := h.tt.ChooseMenuItem("Edit…"); err != nil {
+		t.Fatal(err)
+	}
+	h.tt.Frame()
+	h.typeInto("Command", "/bin/echo")
+	h.click("Save")
+
+	if !h.a.ask.open {
+		t.Fatalf("expected in-app secondary confirmation on edit")
+	}
+	h.wantText("Save changes to com.example.helperjob?", "without a macOS password prompt")
+	h.wantNoText("macOS will ask for your password")
+	h.click("Save Changes")
+
+	if h.a.editor.open {
+		t.Fatalf("expected editor to close after edit, err=%q", h.a.editor.err)
+	}
+	updated, err := os.ReadFile(plistPath)
+	if err != nil || !strings.Contains(string(updated), "/bin/echo") {
+		t.Fatalf("expected updated plist to contain /bin/echo, got %q, err=%v", string(updated), err)
+	}
+	if adminCalled {
+		t.Fatal("RunAdmin must not be called on edit while privileged helper is active")
+	}
+
+	if err := h.tt.RightClick("com.example.helperjob"); err != nil {
+		t.Fatal(err)
+	}
+	h.tt.Frame()
+	if err := h.tt.ChooseMenuItem("Remove…"); err != nil {
+		t.Fatal(err)
+	}
+	h.tt.Frame()
+	h.wantText("Remove com.example.helperjob?")
+	h.wantNoText("macOS will ask for your password")
+	h.click("Cancel")
+	_ = launchctlCalls
+}
+
+func TestSettingsPageConsolidatesPrivilegedHelperAndWorkspaceSettings(t *testing.T) {
+	t.Setenv("MSM_DEV_HOME", t.TempDir())
+	h := newHarness(t)
+	h.tt.SetSize(1120, 900)
+	h.a.dev.loaded = true
+
+	// HTTPS proxy view no longer hosts the Privileged helper card.
+	h.click("HTTPS")
+	h.tt.Frame()
+	h.wantText("HTTPS proxy rules", "Local domains & trust")
+	h.wantNoText("Privileged helper")
+
+	// Clicking Settings opens navSettings with all three system/workspace cards.
+	h.click("Settings")
+	h.tt.Frame()
+	if h.a.nav != navSettings {
+		t.Fatalf("expected nav %q, got %q", navSettings, h.a.nav)
+	}
+	h.wantText("Settings", "Privileged helper", "macOS permissions", "Workspace & maintenance", "Automatic log rotation")
+
+	// With helper installed, refreshing Settings updates badge to Installed.
+	privhelper.InstallTestHelper(t, privhelper.ServerConfig{})
+	h.click("Refresh status")
+	h.tt.Frame()
+	if !h.a.helperReady() {
+		t.Fatalf("expected helperReady(), status=%+v", h.a.helperStatus)
+	}
+	h.wantText("Installed", "Remove helper")
 }

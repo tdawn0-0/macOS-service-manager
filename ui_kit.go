@@ -232,11 +232,11 @@ func devInset(c *ui.Context, children func()) {
 // statusKind sorts the workspace's status words into Lobe's status colors.
 func statusKind(status string) feedback.BadgeStatus {
 	switch status {
-	case "Healthy", "Running", "Succeeded", "Verified", "Published", "Ready", "Trusted", "Available", "Enabled":
+	case "Healthy", "Running", "Succeeded", "Verified", "Published", "Ready", "Trusted", "Available", "Enabled", "Installed", "Allowed":
 		return feedback.BadgeSuccess
 	case "Failed", "Needs repair":
 		return feedback.BadgeError
-	case "Not ready", "Partly running", "Restarting", "Unknown", "Interrupted", "Pending", "In use":
+	case "Not ready", "Partly running", "Restarting", "Unknown", "Interrupted", "Pending", "In use", "Update available", "Not installed", "Restricted":
 		return feedback.BadgeWarning
 	case "Starting", "Stopping", "Working", "Checking":
 		return feedback.BadgeProcessing

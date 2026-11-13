@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"devbase/internal/devplatform"
+	"devbase/internal/privhelper"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,6 +25,7 @@ var internalCommands = map[string]bool{
 	"maintain":        true, // log rotation
 	"database-worker": true, // database work that outlives the window
 	"node":            true, // the Node.js version for a directory, for the shell setup
+	"helper":          true, // the launchd-managed privileged helper
 }
 
 // RunInternal is what the app executable runs for --dev.
@@ -454,8 +456,25 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		text, e := m.Connection(args[1])
 		fmt.Fprintln(out, text)
 		return e
+	case "helper":
+		return runHelper(ctx, args[1:])
 	}
 	return fmt.Errorf("unknown command %q", args[0])
+}
+
+func runHelper(ctx context.Context, args []string) error {
+	ownerUID := -1
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--owner-uid" && i+1 < len(args) {
+			uid, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				return fmt.Errorf("invalid --owner-uid %q: %w", args[i+1], err)
+			}
+			ownerUID = uid
+			i++
+		}
+	}
+	return privhelper.ServeActivated(ctx, ownerUID)
 }
 func read(path string, v any) error {
 	b, e := os.ReadFile(path)

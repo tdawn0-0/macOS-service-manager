@@ -14,6 +14,7 @@ import (
 	"github.com/lobehub/lobe-mygo/pkg/feedback"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"devbase/internal/devplatform"
+	"devbase/internal/privhelper"
 )
 
 const (
@@ -177,8 +178,10 @@ func (a *app) devTaskKeepingDraft(fn func(*devplatform.Manager) (string, error),
 		if pubErr != nil || pubState == "" {
 			pubState = "Unknown"
 		}
+		helperStatus := privhelper.Default().Status()
 		a.post(func() {
 			a.dev.busy = false
+			a.helperStatus = helperStatus
 			if oe == nil {
 				a.dev.operations = operations
 				a.dev.operationsError = ""
@@ -218,6 +221,9 @@ func (a *app) devTaskKeepingDraft(fn func(*devplatform.Manager) (string, error),
 			a.dev.statusLast = time.Now()
 			if e != nil {
 				out += "\nError: " + e.Error()
+				if errors.Is(e, privhelper.ErrNotInstalled) {
+					a.promptInstallHelper(nil)
+				}
 			}
 			if se != nil {
 				out += "\nError: Could not read saved settings. " + se.Error()

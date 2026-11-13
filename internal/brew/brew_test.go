@@ -1,6 +1,7 @@
 package brew
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"devbase/internal/privhelper"
 	"devbase/internal/service"
 	"devbase/internal/system"
 )
@@ -29,8 +31,8 @@ const systemPrint = `system = {
 
 func stub(t *testing.T, out string, fail map[string]error) *[][]string {
 	t.Helper()
-	oldRun, oldAdmin := system.Run, system.RunAdmin
-	t.Cleanup(func() { system.Run, system.RunAdmin = oldRun, oldAdmin })
+	oldRun := system.Run
+	t.Cleanup(func() { system.Run = oldRun })
 	var calls [][]string
 	system.Run = func(name string, args ...string) (string, error) {
 		call := append([]string{name}, args...)
@@ -42,10 +44,6 @@ func stub(t *testing.T, out string, fail map[string]error) *[][]string {
 			return "", err
 		}
 		return out, nil
-	}
-	system.RunAdmin = func(name string, args ...string) (string, error) {
-		calls = append(calls, append([]string{"ADMIN", name}, args...))
-		return "", nil
 	}
 	return &calls
 }
@@ -242,27 +240,61 @@ func TestAutostartMovesThePropertyListOnly(t *testing.T) {
 }
 
 func TestARootServiceChangesThroughLaunchctl(t *testing.T) {
-	root := service.Item{Name: "php", State: service.StateRunning, Admin: true, Autostart: service.AutostartOn, Path: "/L/homebrew.mxcl.php.plist"}
+	stub(t, "", nil)
+	daemonDir := t.TempDir()
+	plistPath := filepath.Join(daemonDir, "homebrew.mxcl.php.plist")
+	root := service.Item{Name: "php", State: service.StateRunning, Admin: true, Autostart: service.AutostartOn, Path: plistPath}
 	off := root
 	off.State = service.StateStopped
+
+	// Without privileged helper, root service changes fail with ErrNotInstalled.
+	if err := provider(t).Do(root, service.Stop); !errors.Is(err, privhelper.ErrNotInstalled) {
+		t.Fatalf("expected ErrNotInstalled without helper, got %v", err)
+	}
+
+	var helperCalls [][]string
+	privhelper.InstallTestHelper(t, privhelper.ServerConfig{
+		ManagedLaunchdDirs: []string{daemonDir},
+		Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			helperCalls = append(helperCalls, append([]string{name}, args...))
+			return nil, nil
+		},
+	})
+
 	for _, c := range []struct {
 		it   service.Item
 		a    service.Action
-		want []string
+		want [][]string
 	}{
-		{root, service.Stop, []string{"ADMIN", "launchctl", "bootout", "system/homebrew.mxcl.php"}},
-		{root, service.Restart, []string{"ADMIN", "launchctl", "kickstart", "-k", "system/homebrew.mxcl.php"}},
-		{off, service.Start, []string{"ADMIN", "launchctl", "bootstrap", "system", "/L/homebrew.mxcl.php.plist"}},
-		{root, service.Disable, []string{"ADMIN", "/bin/sh", "-c", "launchctl bootout 'system/homebrew.mxcl.php'; rm -f '/L/homebrew.mxcl.php.plist'"}},
+		{root, service.Stop, [][]string{{"/bin/launchctl", "bootout", "system/homebrew.mxcl.php"}}},
+		{root, service.Restart, [][]string{{"/bin/launchctl", "kickstart", "-k", "system/homebrew.mxcl.php"}}},
+		{off, service.Start, [][]string{{"/bin/launchctl", "bootstrap", "system", plistPath}}},
 	} {
-		calls := stub(t, "", nil)
+		helperCalls = nil
 		if err := provider(t).Do(c.it, c.a); err != nil {
 			t.Fatal(err)
 		}
-		if len(*calls) != 1 || !slices.Equal((*calls)[0], c.want) {
-			t.Errorf("%s: %q, want %q", c.a, *calls, c.want)
+		if !slices.EqualFunc(helperCalls, c.want, slices.Equal) {
+			t.Errorf("%s: helperCalls %q, want %q", c.a, helperCalls, c.want)
 		}
 	}
+
+	// Disable boots out and removes the plist via helper.
+	if err := os.WriteFile(plistPath, []byte("<plist version=\"1.0\"><dict><key>Label</key><string>homebrew.mxcl.php</string></dict></plist>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	helperCalls = nil
+	if err := provider(t).Do(root, service.Disable); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(plistPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected %s removed on disable, err=%v", plistPath, err)
+	}
+	wantBootout := []string{"/bin/launchctl", "bootout", "system/homebrew.mxcl.php"}
+	if !slices.ContainsFunc(helperCalls, func(cmd []string) bool { return slices.Equal(cmd, wantBootout) }) {
+		t.Errorf("Disable did not bootout via helper: %q", helperCalls)
+	}
+
 	if err := provider(t).Do(root, service.Enable); err == nil {
 		t.Error("a root service has no way to be registered again")
 	}

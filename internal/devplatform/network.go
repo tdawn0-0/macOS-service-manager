@@ -5,13 +5,12 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"howett.net/plist"
 	"io"
-	"devbase/internal/system"
+	"devbase/internal/privhelper"
 	"net"
 	"os"
 	"path/filepath"
@@ -19,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -43,7 +43,11 @@ func privilegedPorts(sites []proxyRoute) bool {
 	return false
 }
 func (m *Manager) socketJobPath() string {
-	return filepath.Join("/Library/LaunchDaemons", m.label("proxy-sockets")+".plist")
+	dir := m.SocketJobDir
+	if dir == "" {
+		dir = "/Library/LaunchDaemons"
+	}
+	return filepath.Join(dir, m.label("proxy-sockets")+".plist")
 }
 func (m *Manager) socketTarget() string { return "system/" + m.label("proxy-sockets") }
 func (m *Manager) socketLoaded(ctx context.Context) bool {
@@ -74,12 +78,6 @@ func equivalentPlists(a, b []byte) bool {
 	}
 	return reflect.DeepEqual(x, y)
 }
-func socketInstallScript(data []byte, path, target string) string {
-	// Embed immutable bytes in the authorized command. No user-writable staging
-	// file is read as root after the authorization dialog.
-	encoded := base64.StdEncoding.EncodeToString(data)
-	return "set -eu; tmp=$(/usr/bin/mktemp /Library/LaunchDaemons/.msm-socket.XXXXXX); trap '/bin/rm -f \"$tmp\"' EXIT; /usr/bin/printf '%s' " + system.ShellQuote(encoded) + " | /usr/bin/base64 -D > \"$tmp\"; /usr/bin/plutil -lint \"$tmp\" >/dev/null; /usr/sbin/chown root:wheel \"$tmp\"; /bin/chmod 644 \"$tmp\"; if /bin/launchctl print " + system.ShellQuote(target) + " >/dev/null 2>&1; then /bin/launchctl bootout " + system.ShellQuote(target) + "; fi; /bin/mv -f \"$tmp\" " + system.ShellQuote(path) + "; /bin/launchctl bootstrap system " + system.ShellQuote(path)
-}
 func (m *Manager) installSocketJob(ctx context.Context, sites []proxyRoute) error {
 	exe, e := m.proxyExecutable()
 	if e != nil {
@@ -100,9 +98,16 @@ func (m *Manager) installSocketJob(ctx context.Context, sites []proxyRoute) erro
 	if e = ctx.Err(); e != nil {
 		return e
 	}
-	m.emit("Authorizing local HTTPS ports; the proxy runs as your user")
-	_, e = system.RunAdmin("/bin/sh", "-c", socketInstallScript(data, m.socketJobPath(), m.socketTarget()))
-	return e
+	hc, e := privhelper.Require()
+	if e != nil {
+		return e
+	}
+	m.emit("Configuring local HTTPS ports via privileged helper; the proxy runs as your user")
+	return hc.InstallProxySocket(ctx, privhelper.ProxySocketInstallRequest{
+		Plist:   data,
+		JobPath: m.socketJobPath(),
+		Target:  m.socketTarget(),
+	})
 }
 func (m *Manager) stopSocketJob(ctx context.Context) error {
 	_, e := os.Stat(m.socketJobPath())
@@ -115,9 +120,14 @@ func (m *Manager) stopSocketJob(ctx context.Context) error {
 	if e = ctx.Err(); e != nil {
 		return e
 	}
-	script := "set -eu; if /bin/launchctl print " + system.ShellQuote(m.socketTarget()) + " >/dev/null 2>&1; then /bin/launchctl bootout " + system.ShellQuote(m.socketTarget()) + "; fi; /bin/rm -f " + system.ShellQuote(m.socketJobPath())
-	_, e = system.RunAdmin("/bin/sh", "-c", script)
-	return e
+	hc, e := privhelper.Require()
+	if e != nil {
+		return e
+	}
+	return hc.StopProxySocket(ctx, privhelper.ProxySocketStopRequest{
+		JobPath: m.socketJobPath(),
+		Target:  m.socketTarget(),
+	})
 }
 func (m *Manager) stopProxy(ctx context.Context) error {
 	if e := m.stopJob(ctx, "proxy"); e != nil {
@@ -148,7 +158,17 @@ func (m *Manager) startSocketProxy(ctx context.Context, sites, old []proxyRoute)
 			if equivalentPlists(current, oldJob) && m.socketLoaded(context.Background()) {
 				return
 			}
-			if _, restoreErr := system.RunAdmin("/bin/sh", "-c", socketInstallScript(oldJob, m.socketJobPath(), m.socketTarget())); restoreErr != nil {
+			var restoreErr error
+			if hc, reqErr := privhelper.Require(); reqErr != nil {
+				restoreErr = reqErr
+			} else {
+				restoreErr = hc.InstallProxySocket(context.Background(), privhelper.ProxySocketInstallRequest{
+					Plist:   oldJob,
+					JobPath: m.socketJobPath(),
+					Target:  m.socketTarget(),
+				})
+			}
+			if restoreErr != nil {
 				err = fmt.Errorf("%w; restoring previous socket job: %v", err, restoreErr)
 			}
 		} else {
@@ -207,7 +227,11 @@ func (m *Manager) RestartProxy(ctx context.Context) error {
 			return errors.New("no HTTPS proxy rules configured")
 		}
 		if m.socketLoaded(ctx) {
-			if _, e := system.RunAdmin("/bin/launchctl", "kickstart", "-k", m.socketTarget()); e != nil {
+			hc, e := privhelper.Require()
+			if e != nil {
+				return e
+			}
+			if e := hc.KickstartProxySocket(ctx, m.socketTarget()); e != nil {
 				return e
 			}
 			for _, site := range sites {
@@ -269,22 +293,20 @@ func (m *Manager) helperExecutable(name string) (string, error) {
 	return dest, nil
 }
 
-// VerifySocketLifecycle batches the complete privileged test into one macOS
-// authorization. Its trap restores the existing job even if a check fails.
+// VerifySocketLifecycle delegates the privileged socket lifecycle verification
+// to the privileged helper. Its cleanup restores the existing job even if a check fails.
 func (m *Manager) VerifySocketLifecycle(ctx context.Context) error {
 	return m.withState(ctx, func(s *State) error {
 		sites := proxyRoutesFromState(s)
 		if !m.socketLoaded(ctx) || len(sites) == 0 {
 			return errors.New("start the socket-activated HTTPS proxy before running this test")
 		}
-		target, path := system.ShellQuote(m.socketTarget()), system.ShellQuote(m.socketJobPath())
-		script := "set -eu; restore(){ /bin/launchctl print " + target + " >/dev/null 2>&1 || /bin/launchctl bootstrap system " + path + "; }; trap restore EXIT; pid=$(/bin/launchctl print " + target + " | /usr/bin/awk '$1 == \"pid\" && $2 == \"=\" {print $3; exit}'); /bin/launchctl bootout " + target + "; count=0; if [ -n \"$pid\" ]; then while /bin/kill -0 \"$pid\" 2>/dev/null; do count=$((count+1)); if [ \"$count\" -gt 100 ]; then echo 'proxy did not stop' >&2; exit 1; fi; /bin/sleep 0.1; done; fi; "
-		for _, port := range proxyListenerPorts(sites) {
-			script += fmt.Sprintf("if /usr/bin/nc -z -G 1 127.0.0.1 %d >/dev/null 2>&1; then echo 'HTTPS port was not released' >&2; exit 1; fi; ", port)
+		hc, err := privhelper.Require()
+		if err != nil {
+			return err
 		}
-		script += "/bin/launchctl bootstrap system " + path + "; /bin/launchctl kickstart -k " + target
-		if _, e := system.RunAdmin("/bin/sh", "-c", script); e != nil {
-			return e
+		if err := m.verifySocketLifecycleViaHelper(ctx, hc, sites); err != nil {
+			return err
 		}
 		for _, site := range sites {
 			if e := m.verifyProxyTLS(ctx, site); e != nil {
@@ -293,4 +315,61 @@ func (m *Manager) VerifySocketLifecycle(ctx context.Context) error {
 		}
 		return nil
 	})
+}
+
+func (m *Manager) verifySocketLifecycleViaHelper(ctx context.Context, hc *privhelper.Client, sites []proxyRoute) error {
+	target, jobPath := m.socketTarget(), m.socketJobPath()
+	printResp, _ := hc.PrintProxySocket(ctx, target)
+	pid := parseLaunchctlPID(string(printResp.Output))
+
+	restored := false
+	defer func() {
+		if !restored {
+			_ = hc.LaunchdControl(context.Background(), [][]string{{"bootstrap", "system", jobPath}})
+		}
+	}()
+
+	if err := hc.LaunchdControl(ctx, [][]string{{"bootout", target}}); err != nil {
+		return err
+	}
+	if pid > 0 {
+		deadline := time.Now().Add(10 * time.Second)
+		for syscall.Kill(pid, 0) == nil {
+			if time.Now().After(deadline) {
+				return errors.New("proxy did not stop")
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}
+	for _, port := range proxyListenerPorts(sites) {
+		conn, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
+		if err == nil {
+			conn.Close()
+			return errors.New("HTTPS port was not released")
+		}
+	}
+	if err := hc.LaunchdControl(ctx, [][]string{
+		{"bootstrap", "system", jobPath},
+		{"kickstart", "-k", target},
+	}); err != nil {
+		return err
+	}
+	restored = true
+	return nil
+}
+
+func parseLaunchctlPID(out string) int {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 3 && fields[0] == "pid" && fields[1] == "=" {
+			if pid, err := strconv.Atoi(fields[2]); err == nil && pid > 0 {
+				return pid
+			}
+		}
+	}
+	return 0
 }

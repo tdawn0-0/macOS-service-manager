@@ -2,6 +2,7 @@
 package launchd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"howett.net/plist"
 
+	"devbase/internal/privhelper"
 	"devbase/internal/service"
 	"devbase/internal/system"
 )
@@ -351,7 +353,7 @@ func (p *Provider) Confirm(it service.Item, a service.Action) string {
 	case a == service.Remove && p.Config.Source == service.UserAgent:
 		return fmt.Sprintf("Unload %s and move %s to the Trash?", it.Name, filepath.Base(it.Path))
 	case a == service.Remove:
-		return fmt.Sprintf("This unloads the job and moves its file to the Trash, which is not an undo: Put Back cannot return it to the %s folder. To get it back, reinstall the software it came from, or install the file again as root. Until then that software may stop working. macOS will ask for your password.", filepath.Base(filepath.Dir(it.Path)))
+		return fmt.Sprintf("This unloads the job and moves its file to the Trash, which is not an undo: Put Back cannot return it to the %s folder. To get it back, reinstall the software it came from, or install the file again as root. Until then that software may stop working.", filepath.Base(filepath.Dir(it.Path)))
 	case p.Elevated && (a == service.Unload || a == service.Disable):
 		return fmt.Sprintf("%s is a system daemon. Changing it can affect the software that depends on it. Continue?", it.Name)
 	}
@@ -372,22 +374,11 @@ func (p *Provider) launchctls(commands ...[]string) error {
 		}
 		return nil
 	}
-	if len(commands) == 1 {
-		_, err := system.RunAdmin("launchctl", commands[0]...)
+	hc, err := privhelper.Require()
+	if err != nil {
 		return err
 	}
-	script := make([]string, len(commands))
-	for i, args := range commands {
-		quoted := make([]string, len(args)+1)
-		quoted[0] = "launchctl"
-		copy(quoted[1:], args)
-		for j, a := range quoted {
-			quoted[j] = system.ShellQuote(a)
-		}
-		script[i] = strings.Join(quoted, " ")
-	}
-	_, err := system.RunAdmin("/bin/sh", "-c", strings.Join(script, " && "))
-	return err
+	return hc.LaunchdControl(context.Background(), commands)
 }
 
 // commands returns what launchctl runs for an action on an item.

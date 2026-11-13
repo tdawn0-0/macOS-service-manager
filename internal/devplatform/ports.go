@@ -2,6 +2,7 @@ package devplatform
 
 import (
 	"context"
+	"devbase/internal/privhelper"
 	"errors"
 	"fmt"
 	"io"
@@ -247,6 +248,13 @@ func (m *Manager) InspectPort(ctx context.Context, port int) (PortInspection, er
 	}
 	if lookupErr == nil {
 		r.Listeners = parsePortListeners(output)
+	}
+	if len(r.Listeners) == 0 {
+		if hc := privhelper.Default(); hc.Ready() {
+			if rawOut, hErr := hc.InspectPort(query, port); hErr == nil {
+				r.Listeners = parsePortListeners(string(rawOut))
+			}
+		}
 	}
 	if len(r.Listeners) == 0 {
 		netstatOut, netstatErr := m.Run(query, "/usr/sbin/netstat", "-anv", "-p", "tcp")

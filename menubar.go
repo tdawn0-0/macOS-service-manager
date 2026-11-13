@@ -51,7 +51,7 @@ func (a *app) panelItems(src service.Source) []service.Item {
 	}
 	var items []service.Item
 	for _, it := range st.items {
-		if a.shown(it) && !strings.HasPrefix(it.Name, "xyz.jyeu.msm.dev.") {
+		if a.shown(it) && !strings.HasPrefix(it.Name, "xyz.jyeu.devbase.dev.") {
 			items = append(items, it)
 		}
 	}

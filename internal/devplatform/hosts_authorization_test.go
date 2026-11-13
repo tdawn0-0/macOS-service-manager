@@ -1,109 +1,118 @@
 package devplatform
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
-	"devbase/internal/system"
+	"context"
+	"devbase/internal/privhelper"
+	"errors"
+	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
 
-func TestAuthorizedHostsPayload(t *testing.T) {
-	old := []byte("127.0.0.1 localhost\n")
-	updated := []byte("127.0.0.1 localhost\n# quoted ' 字段\n127.0.0.1 app.test\n")
-	script, err := hostsInstallScript(old, updated)
-	if err != nil {
+func setTestProxyRules(t *testing.T, m *Manager, rules []ProxyRule) {
+	t.Helper()
+	if err := m.withState(context.Background(), func(s *State) error {
+		s.ProxyListenerPort = 443
+		s.ProxyRules = rules
+		return nil
+	}); err != nil {
 		t.Fatal(err)
-	}
-	m := regexp.MustCompile(`/usr/bin/printf '%s' '([A-Za-z0-9+/=]+)'`).FindStringSubmatch(script)
-	if len(m) != 2 {
-		t.Fatal("missing fixed payload")
-	}
-	b, e := base64.StdEncoding.DecodeString(m[1])
-	if e != nil || !bytes.Equal(b, updated) {
-		t.Fatal("payload changed", e)
-	}
-	if strings.Contains(script, "msm-hosts-") {
-		t.Fatal("user staging read")
-	}
-	for _, want := range []string{"/etc/.msm-hosts.", "/usr/bin/shasum -a 256 /etc/hosts", "/bin/mv", "trap"} {
-		if !strings.Contains(script, want) {
-			t.Fatal("missing protection", want)
-		}
-	}
-	sum := sha256.Sum256(old)
-	hash := system.ShellQuote(hex.EncodeToString(sum[:]))
-	if strings.Count(script, hash) != 2 {
-		t.Fatal("old content hash not checked twice")
-	}
-	if strings.LastIndex(script, hash) > strings.Index(script, "/bin/mv") {
-		t.Fatal("replacement precedes final conflict check")
-	}
-	if out, e := exec.Command("/bin/sh", "-n", "-c", script).CombinedOutput(); e != nil {
-		t.Fatal(e, string(out))
 	}
 }
 
-func TestAuthorizedHostsPayloadRejectsOversize(t *testing.T) {
-	if _, e := hostsInstallScript(nil, []byte(strings.Repeat("x", 65<<10))); e == nil {
-		t.Fatal("accepted oversized command")
+func TestHostsSyncRequiresPrivilegedHelper(t *testing.T) {
+	m := testManager(t)
+	hostsPath := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(hostsPath, []byte("127.0.0.1 localhost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.HostsPath = hostsPath
+	setTestProxyRules(t, m, []ProxyRule{{Domain: "app.test", LocalPort: 3000}})
+
+	err := m.ConfigureHosts(context.Background())
+	if !errors.Is(err, privhelper.ErrNotInstalled) {
+		t.Fatalf("expected ErrNotInstalled without helper, got %v", err)
 	}
 }
-func TestAuthorizedHostsPayloadConflictAndPermissions(t *testing.T) {
-	for _, conflict := range []string{"none", "before", "after-stage"} {
-		t.Run(conflict, func(t *testing.T) {
-			dir := t.TempDir()
-			path := filepath.Join(dir, "hosts")
-			old := []byte("127.0.0.1 localhost\n")
-			updated := []byte("127.0.0.1 localhost\n127.0.0.1 app.test\n")
-			if e := os.WriteFile(path, old, 0640); e != nil {
-				t.Fatal(e)
-			}
-			script, e := hostsInstallScript(old, updated)
-			if e != nil {
-				t.Fatal(e)
-			}
-			// Execute only against a private fixture, with ownership/cache operations stubbed.
-			script = strings.ReplaceAll(script, "/etc/hosts", system.ShellQuote(path))
-			script = strings.ReplaceAll(script, "/etc/.msm-hosts.XXXXXX", system.ShellQuote(filepath.Join(dir, ".msm-hosts.XXXXXX")))
-			script = strings.ReplaceAll(script, "/usr/sbin/chown", "/usr/bin/true")
-			script = strings.ReplaceAll(script, "/usr/bin/dscacheutil -flushcache", "/usr/bin/true")
-			foreign := []byte("# separately edited\n")
-			if conflict == "before" {
-				if e = os.WriteFile(path, foreign, 0640); e != nil {
-					t.Fatal(e)
-				}
-			}
-			if conflict == "after-stage" {
-				at := strings.LastIndex(script, "[ -f ")
-				script = script[:at] + "/usr/bin/printf '%s' '# separately edited\n' > " + system.ShellQuote(path) + " && " + script[at:]
-			}
-			out, e := exec.Command("/bin/sh", "-c", script).CombinedOutput()
-			got, readErr := os.ReadFile(path)
-			if readErr != nil {
-				t.Fatal(readErr)
-			}
-			if conflict == "none" {
-				if e != nil || !bytes.Equal(got, updated) {
-					t.Fatal("fixture update failed", e, string(out))
-				}
-			} else if e == nil || !bytes.Equal(got, foreign) {
-				t.Fatal("conflicting update overwritten", e)
-			}
-			st, e := os.Stat(path)
-			if e != nil || st.Mode().Perm() != 0640 {
-				t.Fatal("permissions changed", e)
-			}
-			left, e := filepath.Glob(filepath.Join(dir, ".msm-hosts.*"))
-			if e != nil || len(left) != 0 {
-				t.Fatal("stage leaked", e)
-			}
+
+func TestHostsSyncPreservesPermissionsFlushesDNSAndDetectsConflicts(t *testing.T) {
+	m := testManager(t)
+	hostsPath := filepath.Join(t.TempDir(), "hosts")
+	initial := "127.0.0.1 localhost\n# quoted ' 字段\n"
+	if err := os.WriteFile(hostsPath, []byte(initial), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	m.HostsPath = hostsPath
+	setTestProxyRules(t, m, []ProxyRule{{Domain: "app.test", LocalPort: 3000}})
+
+	var ran [][]string
+	client := privhelper.InstallTestHelper(t, privhelper.ServerConfig{
+		HostsPath: hostsPath,
+		Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			ran = append(ran, append([]string{name}, args...))
+			return nil, nil
+		},
+	})
+
+	if err := m.ConfigureHosts(context.Background()); err != nil {
+		t.Fatalf("ConfigureHosts: %v", err)
+	}
+	got, err := os.ReadFile(hostsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "127.0.0.1 app.test\n") || !strings.Contains(string(got), "# quoted ' 字段") {
+		t.Fatalf("unexpected hosts content: %q", string(got))
+	}
+	st, err := os.Stat(hostsPath)
+	if err != nil || st.Mode().Perm() != 0o640 {
+		t.Fatalf("expected 0640 mode preserved, got %v (err=%v)", st.Mode().Perm(), err)
+	}
+	backup, err := os.ReadFile(filepath.Join(m.Root, "hosts.backup"))
+	if err != nil || string(backup) != initial {
+		t.Fatalf("expected hosts.backup %q, got %q (err=%v)", initial, string(backup), err)
+	}
+	wantFlush := []string{"/usr/bin/dscacheutil", "-flushcache"}
+	if !slices.ContainsFunc(ran, func(cmd []string) bool { return slices.Equal(cmd, wantFlush) }) {
+		t.Fatalf("expected dscacheutil flush in %v", ran)
+	}
+
+	// Reject stale ExpectedOld without overwriting foreign content.
+	foreign := "# separately edited\n"
+	if err := os.WriteFile(hostsPath, []byte(foreign), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SyncHosts(context.Background(), privhelper.HostsSyncRequest{
+		ExpectedOld: initial,
+		NewContent:  "127.0.0.1 overwrite.test\n",
+	}); err == nil {
+		t.Fatal("expected conflict error when hosts file changed concurrently")
+	}
+	afterConflict, err := os.ReadFile(hostsPath)
+	if err != nil || string(afterConflict) != foreign {
+		t.Fatalf("foreign hosts content overwritten: %q, err=%v", string(afterConflict), err)
+	}
+}
+
+func TestHostsSyncRejectsOversize(t *testing.T) {
+	m := testManager(t)
+	hostsPath := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(hostsPath, []byte("127.0.0.1 localhost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.HostsPath = hostsPath
+	var rules []ProxyRule
+	for i := 0; i < 1600; i++ {
+		rules = append(rules, ProxyRule{
+			Domain:    fmt.Sprintf("very-long-development-service-domain-%s-%04d.test", strings.Repeat("x", 20), i),
+			LocalPort: 3000,
 		})
+	}
+	setTestProxyRules(t, m, rules)
+	if err := m.ConfigureHosts(context.Background()); err == nil || !strings.Contains(err.Error(), "size limit") {
+		t.Fatalf("expected size limit error, got %v", err)
 	}
 }

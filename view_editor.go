@@ -24,7 +24,7 @@ func (a *app) editorDialog(c *ui.Context) {
 		if subtitle != "" {
 			subtitle += " · "
 		}
-		subtitle += "Saving asks for your password"
+		subtitle += "Asks for in-app confirmation before saving"
 	}
 	// The form scrolls, leaving room for the title and the buttons.
 	_, windowHeight := c.Size()

@@ -5,15 +5,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"devbase/internal/system"
+	"devbase/internal/privhelper"
 	"math/big"
 	"net"
 	"net/http"
@@ -347,9 +344,15 @@ func (m *Manager) ConfigureTrust(ctx context.Context, remove bool) error {
 		})
 	})
 }
+func (m *Manager) hostsFilePath() string {
+	if m.HostsPath != "" {
+		return m.HostsPath
+	}
+	return "/etc/hosts"
+}
 func (m *Manager) ConfigureHosts(ctx context.Context) error {
 	return m.withState(ctx, func(s *State) error {
-		old, e := os.ReadFile("/etc/hosts")
+		old, e := os.ReadFile(m.hostsFilePath())
 		if e != nil {
 			return e
 		}
@@ -360,26 +363,21 @@ func (m *Manager) ConfigureHosts(ctx context.Context) error {
 		if updated == string(old) {
 			return nil
 		}
+		if len(updated) > 64<<10 {
+			return errors.New("hosts configuration exceeds authorized command size limit")
+		}
 		if e = atomicWrite(filepath.Join(m.Root, "hosts.backup"), old, 0600); e != nil {
 			return e
 		}
-		script, e := hostsInstallScript(old, []byte(updated))
+		hc, e := privhelper.Require()
 		if e != nil {
 			return e
 		}
-		_, e = system.RunAdmin("/bin/sh", "-c", script)
-		return e
+		return hc.SyncHosts(ctx, privhelper.HostsSyncRequest{
+			ExpectedOld: string(old),
+			NewContent:  updated,
+		})
 	})
-}
-
-// hostsInstallScript freezes the reviewed bytes before the authorization dialog.
-func hostsInstallScript(old, updated []byte) (string, error) {
-	if len(updated) > 64<<10 {
-		return "", errors.New("hosts configuration exceeds authorized command size limit")
-	}
-	sum := sha256.Sum256(old)
-	check := "[ -f /etc/hosts ] && [ ! -L /etc/hosts ] && test \"$(/usr/bin/shasum -a 256 /etc/hosts | /usr/bin/cut -d ' ' -f 1)\" = " + system.ShellQuote(hex.EncodeToString(sum[:]))
-	return check + " && tmp=$(/usr/bin/mktemp /etc/.msm-hosts.XXXXXX) && trap '/bin/rm -f \"$tmp\"' EXIT && /usr/bin/printf '%s' " + system.ShellQuote(base64.StdEncoding.EncodeToString(updated)) + " | /usr/bin/base64 -D > \"$tmp\" && set -- $(/usr/bin/stat -f '%u %g %Lp' /etc/hosts) && /usr/sbin/chown \"$1:$2\" \"$tmp\" && /bin/chmod \"$3\" \"$tmp\" && " + check + " && /bin/mv -f \"$tmp\" /etc/hosts && /usr/bin/dscacheutil -flushcache", nil
 }
 
 func (m *Manager) publishedProxyRoutes() ([]proxyRoute, error) {

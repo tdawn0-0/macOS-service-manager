@@ -1,13 +1,11 @@
 package launchd
 
 import (
-	"encoding/base64"
+	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -15,6 +13,7 @@ import (
 
 	"howett.net/plist"
 
+	"devbase/internal/privhelper"
 	"devbase/internal/service"
 	"devbase/internal/system"
 )
@@ -170,11 +169,11 @@ func TestTurningAnOptionOffKeepsItFalse(t *testing.T) {
 }
 
 func TestEditingADaemonReplacesThenLoadsAgainUnderOneAuthentication(t *testing.T) {
-	_, admin := stubRoot(t)
 	dir := filepath.Join(t.TempDir(), "my jobs")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	_, helperRuns := stubRoot(t, dir)
 	path := filepath.Join(dir, "com.vendor.helper.plist")
 	if err := os.WriteFile(path, []byte(vendorJob), 0o644); err != nil {
 		t.Fatal(err)
@@ -188,33 +187,19 @@ func TestEditingADaemonReplacesThenLoadsAgainUnderOneAuthentication(t *testing.T
 	if got, err := p.SaveAsRoot(spec, path, true); err != nil || got != path {
 		t.Fatalf("path %q, err %v", got, err)
 	}
-	if len(*admin) != 1 {
-		t.Fatalf("authentications = %v", *admin)
+	want := [][]string{
+		{"/bin/launchctl", "print", "system/com.vendor.helper"},
+		{"/bin/launchctl", "bootout", "system/com.vendor.helper"},
+		{"/bin/launchctl", "bootstrap", "system", path},
 	}
-	script := (*admin)[0][2]
-	if out, err := exec.Command("/bin/sh", "-n", "-c", script).CombinedOutput(); err != nil {
-		t.Errorf("the script does not parse: %v %s\n%s", err, out, script)
-	}
-	// The job stays as it is until the file is in place.
-	last := -1
-	for _, want := range []string{
-		"[ -f '" + path + "' ]",
-		"/usr/bin/install -S -m 644 -o root -g wheel",
-		"/bin/launchctl print 'system/com.vendor.helper'",
-		"/bin/launchctl bootout 'system/com.vendor.helper' || exit $?",
-		"/bin/launchctl bootstrap 'system' '" + path + "'",
-	} {
-		at := strings.Index(script, want)
-		if at <= last {
-			t.Errorf("%q is not in its place:\n%s", want, script)
-		}
-		last = at
+	if !slices.EqualFunc(*helperRuns, want, slices.Equal) {
+		t.Fatalf("helperRuns = %v, want %v", *helperRuns, want)
 	}
 }
 
 func TestEditingASystemAgentLoadsAgainAsTheUser(t *testing.T) {
-	runs, admin := stubRoot(t)
 	dir := t.TempDir()
+	runs, helperRuns := stubRoot(t, dir)
 	path := filepath.Join(dir, "a.plist")
 	if err := os.WriteFile(path, []byte(vendorJob), 0o644); err != nil {
 		t.Fatal(err)
@@ -227,8 +212,8 @@ func TestEditingASystemAgentLoadsAgainAsTheUser(t *testing.T) {
 	if _, err := p.SaveAsRoot(spec, path, true); err != nil {
 		t.Fatal(err)
 	}
-	if len(*admin) != 1 || strings.Contains((*admin)[0][2], "launchctl") {
-		t.Fatalf("root only installs: %v", *admin)
+	if len(*helperRuns) != 0 {
+		t.Fatalf("root only installs system agent without helper launchctl: %v", *helperRuns)
 	}
 	bootout := slices.Index(*runs, "launchctl bootout gui/501/com.vendor.helper")
 	bootstrap := slices.Index(*runs, "launchctl bootstrap gui/501 "+path)
@@ -238,7 +223,7 @@ func TestEditingASystemAgentLoadsAgainAsTheUser(t *testing.T) {
 }
 
 func TestSavingOverWhatIsNotAFileAsksNothing(t *testing.T) {
-	_, admin := stubRoot(t)
+	stubRoot(t) // no helper installed; checkManagedPath rejects before Require()
 	dir := t.TempDir()
 	real := filepath.Join(dir, "real.plist")
 	if err := os.WriteFile(real, []byte(vendorJob), 0o644); err != nil {
@@ -253,17 +238,13 @@ func TestSavingOverWhatIsNotAFileAsksNothing(t *testing.T) {
 	if _, err := p.SaveAsRoot(s, link, true); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 		t.Errorf("err = %v", err)
 	}
-	if _, err := p.SaveAsRoot(s, filepath.Join(dir, "gone.plist"), true); err == nil {
-		t.Error("a file that is gone")
-	}
-	if len(*admin) != 0 {
-		t.Errorf("asked for a password for what could not work: %v", *admin)
+	if _, err := p.SaveAsRoot(s, filepath.Join(dir, "gone.plist"), true); err == nil || errors.Is(err, privhelper.ErrNotInstalled) {
+		t.Errorf("expected path error before helper requirement, got %v", err)
 	}
 }
 
 // A failure after the file is in place says so, and one before it does not.
 func TestAFailureSaysWhetherTheFileWasSaved(t *testing.T) {
-	stubRoot(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "a.plist")
 	if err := os.WriteFile(path, []byte(vendorJob), 0o644); err != nil {
@@ -276,43 +257,45 @@ func TestAFailureSaysWhetherTheFileWasSaved(t *testing.T) {
 	}
 	spec.RunAtLoad = true
 
-	system.RunAdmin = func(string, ...string) (string, error) { return "", errors.New("authorization canceled") }
-	if got, err := p.SaveAsRoot(spec, path, true); got != "" || err == nil || err.Error() != "authorization canceled" {
-		t.Errorf("canceled: path %q, err %v", got, err)
+	oldRun := system.Run
+	t.Cleanup(func() { system.Run = oldRun })
+	system.Run = func(string, ...string) (string, error) { return "", nil }
+
+	// Without helper, returns ErrNotInstalled and leaves path untouched.
+	if got, err := p.SaveAsRoot(spec, path, true); got != "" || !errors.Is(err, privhelper.ErrNotInstalled) {
+		t.Errorf("without helper: path %q, err %v", got, err)
 	}
 
-	// As root would: the file goes in place, and launchd refuses it.
-	system.RunAdmin = func(name string, args ...string) (string, error) {
-		script := args[1]
-		data := approvedJobBytes(t, script)
-		if err := os.WriteFile(path, data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return "", errors.New("Bootstrap failed: 5: Input/output error")
-	}
+	// With helper where bootstrap fails, the file goes in place and reports saved-not-loaded.
+	privhelper.InstallTestHelper(t, privhelper.ServerConfig{
+		ManagedLaunchdDirs: []string{dir},
+		Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			if len(args) > 0 && args[0] == "bootstrap" {
+				return []byte("Bootstrap failed: 5: Input/output error"), errors.New("exit 5")
+			}
+			return nil, nil
+		},
+	})
 	got, err := p.SaveAsRoot(spec, path, true)
 	if got != path || err == nil || !strings.Contains(err.Error(), "saved, but it did not load") {
 		t.Errorf("not loaded: path %q, err %v", got, err)
 	}
 }
 
-// runAsUser runs what root would, as far as the user can: on files of the
-// user's, and with launchd's answer for a job that is not loaded.
-func runAsUser(t *testing.T) {
-	t.Helper()
-	old := system.RunAdmin
-	t.Cleanup(func() { system.RunAdmin = old })
-	system.RunAdmin = func(name string, args ...string) (string, error) {
-		out, err := exec.Command(name, args...).CombinedOutput()
-		if err != nil {
-			return "", errors.New(string(out) + err.Error())
-		}
-		return string(out), nil
-	}
-}
-
 func TestRemovingARootJobPutsItInTheTrash(t *testing.T) {
-	runAsUser(t)
+	dir := filepath.Join(t.TempDir(), "my jobs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	privhelper.InstallTestHelper(t, privhelper.ServerConfig{
+		ManagedLaunchdDirs: []string{dir},
+		Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			if len(args) > 0 && args[0] == "print" {
+				return nil, errors.New("Could not find service")
+			}
+			return nil, nil
+		},
+	})
 	oldTrash := system.Trash
 	t.Cleanup(func() { system.Trash = oldTrash })
 	var trashed []string
@@ -323,10 +306,6 @@ func TestRemovingARootJobPutsItInTheTrash(t *testing.T) {
 		return os.Remove(path)
 	}
 
-	dir := filepath.Join(t.TempDir(), "my jobs")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	path := filepath.Join(dir, "com.vendor.it's.plist")
 	if err := os.WriteFile(path, []byte(vendorJob), 0o644); err != nil {
 		t.Fatal(err)
@@ -348,45 +327,40 @@ func TestRemovingARootJobPutsItInTheTrash(t *testing.T) {
 	}
 }
 
-// runWithLaunchctl runs what root would, as the user, with a launchctl that says a
-// job is loaded and exits with the status given for each of its commands.
-func runWithLaunchctl(t *testing.T, status map[string]int) {
+// installLaunchdFailureHelper installs a test helper whose launchctl fails for status codes > 0.
+func installLaunchdFailureHelper(t *testing.T, dir string, status map[string]int) {
 	t.Helper()
-	fake := filepath.Join(t.TempDir(), "launchctl")
-	script := "#!/bin/sh\ncase \"$1\" in\n"
-	for command, code := range status {
-		script += command + ") echo " + command + " failed >&2; exit " + strconv.Itoa(code) + ";;\n"
-	}
-	script += "esac\nexit 0\n"
-	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	old := system.RunAdmin
-	t.Cleanup(func() { system.RunAdmin = old })
-	system.RunAdmin = func(name string, args ...string) (string, error) {
-		line := strings.ReplaceAll(args[1], "/bin/launchctl", fake)
-		line = strings.ReplaceAll(line, " -o root -g wheel", "")
-		out, err := exec.Command(name, args[0], line).CombinedOutput()
-		if err != nil {
-			return "", errors.New(strings.TrimSpace(string(out)))
-		}
-		return string(out), nil
-	}
+	oldRun := system.Run
+	t.Cleanup(func() { system.Run = oldRun })
+	system.Run = func(string, ...string) (string, error) { return "", nil }
+	privhelper.InstallTestHelper(t, privhelper.ServerConfig{
+		ManagedLaunchdDirs: []string{dir},
+		Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			if len(args) > 0 {
+				if code := status[args[0]]; code != 0 {
+					msg := fmt.Sprintf("%s failed", args[0])
+					return []byte(msg), errors.New(msg)
+				}
+			}
+			return nil, nil
+		},
+	})
 }
 
 // A job left running without a file could never be managed again.
 func TestAJobLaunchdWillNotUnloadIsNotRemoved(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
-	runWithLaunchctl(t, map[string]int{"bootout": 36})
+	dir := t.TempDir()
+	installLaunchdFailureHelper(t, dir, map[string]int{"bootout": 36})
 	oldTrash := system.Trash
 	t.Cleanup(func() { system.Trash = oldTrash })
 	system.Trash = func(string) error { t.Error("nothing goes to the Trash"); return nil }
 
-	path := filepath.Join(t.TempDir(), "a.plist")
+	path := filepath.Join(dir, "a.plist")
 	if err := os.WriteFile(path, []byte(vendorJob), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	p := &Provider{Config{Source: service.Daemon, Dir: filepath.Dir(path), Domain: "system", Elevated: true}}
+	p := &Provider{Config{Source: service.Daemon, Dir: dir, Domain: "system", Elevated: true}}
 	err := p.Do(service.Item{Name: "com.vendor.helper", Path: path}, service.Remove)
 	if err == nil || !strings.Contains(err.Error(), "bootout failed") {
 		t.Errorf("err = %v", err)
@@ -399,9 +373,8 @@ func TestAJobLaunchdWillNotUnloadIsNotRemoved(t *testing.T) {
 	}
 }
 
-// As the real script runs, whichever step fails.
+// As the real helper runs, whichever step fails.
 func TestAReplacedFileIsSavedWhetherOrNotTheJobLoadsAgain(t *testing.T) {
-	stubRoot(t)
 	for _, c := range []struct {
 		name string
 		fail map[string]int
@@ -410,8 +383,9 @@ func TestAReplacedFileIsSavedWhetherOrNotTheJobLoadsAgain(t *testing.T) {
 		{"launchd will not load it", map[string]int{"bootstrap": 5}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			runWithLaunchctl(t, c.fail)
-			path := filepath.Join(t.TempDir(), "a.plist")
+			dir := t.TempDir()
+			installLaunchdFailureHelper(t, dir, c.fail)
+			path := filepath.Join(dir, "a.plist")
 			if err := os.WriteFile(path, []byte(vendorJob), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -420,7 +394,7 @@ func TestAReplacedFileIsSavedWhetherOrNotTheJobLoadsAgain(t *testing.T) {
 				t.Fatal(err)
 			}
 			spec.RunAtLoad = true
-			p := &Provider{Config{Dir: filepath.Dir(path), Domain: "system", Elevated: true}}
+			p := &Provider{Config{Dir: dir, Domain: "system", Elevated: true}}
 			got, err := p.SaveAsRoot(spec, path, true)
 			if got != path || err == nil || !strings.Contains(err.Error(), "saved, but it did not load") {
 				t.Fatalf("path %q, err %v", got, err)
@@ -434,50 +408,38 @@ func TestAReplacedFileIsSavedWhetherOrNotTheJobLoadsAgain(t *testing.T) {
 
 func TestRemovingARootJobKeepsItIfAnythingFails(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
-	_, admin := stubRoot(t)
 	oldTrash := system.Trash
 	t.Cleanup(func() { system.Trash = oldTrash })
 	trashed := 0
 	system.Trash = func(string) error { trashed++; return errors.New("no Trash") }
 
-	path := filepath.Join(t.TempDir(), "a.plist")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.plist")
 	if err := os.WriteFile(path, []byte(vendorJob), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	p := &Provider{Config{Source: service.Daemon, Dir: filepath.Dir(path), Domain: "system", Elevated: true}}
+	p := &Provider{Config{Source: service.Daemon, Dir: dir, Domain: "system", Elevated: true}}
 	it := service.Item{Name: "com.vendor.helper", Path: path}
 
-	// The script unloads first, and goes no further if launchd refuses.
+	// Without helper, returns ErrNotInstalled and does not touch file or Trash.
+	if err := p.Do(it, service.Remove); !errors.Is(err, privhelper.ErrNotInstalled) {
+		t.Errorf("err = %v, want ErrNotInstalled", err)
+	}
+	if trashed != 0 {
+		t.Error("nothing to put in the Trash without helper")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("missing helper keeps the file: %v", err)
+	}
+
+	// With helper, if Trash fails after move, error reports temporary location.
+	_, helperRuns := stubRoot(t, dir)
 	if err := p.Do(it, service.Remove); err == nil || !strings.Contains(err.Error(), "not in the Trash") {
 		t.Errorf("err = %v", err)
 	}
-	if len(*admin) != 1 {
-		t.Fatalf("authentications = %v", *admin)
-	}
-	script := (*admin)[0][2]
-	if out, err := exec.Command("/bin/sh", "-n", "-c", script).CombinedOutput(); err != nil {
-		t.Errorf("the script does not parse: %v %s\n%s", err, out, script)
-	}
-	if bootout, mv := strings.Index(script, "bootout 'system/com.vendor.helper' || exit $?"), strings.Index(script, "/bin/mv"); bootout < 0 || mv < bootout {
-		t.Errorf("script:\n%s", script)
-	}
-	if !strings.Contains(script, "/usr/sbin/chown -h ") {
-		t.Errorf("script does not use chown -h: %s", script)
-	}
-	if !strings.Contains(script, "[ ! -L ") {
-		t.Errorf("script does not check for symlinks: %s", script)
-	}
-
-	trashed = 0
-	system.RunAdmin = func(string, ...string) (string, error) { return "", errors.New("authorization canceled") }
-	if err := p.Do(it, service.Remove); err == nil || err.Error() != "authorization canceled" {
-		t.Errorf("err = %v", err)
-	}
-	if trashed != 0 {
-		t.Error("nothing to put in the Trash")
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Errorf("canceling keeps the file: %v", err)
+	wantBootout := []string{"/bin/launchctl", "bootout", "system/com.vendor.helper"}
+	if !slices.ContainsFunc(*helperRuns, func(c []string) bool { return slices.Equal(c, wantBootout) }) {
+		t.Errorf("helperRuns missing bootout: %v", *helperRuns)
 	}
 }
 
@@ -501,28 +463,17 @@ func TestOptionalThrottlePreservesExistingJobPolicy(t *testing.T) {
 	}
 }
 
-func approvedJobBytes(t *testing.T, script string) []byte {
-	t.Helper()
-	m := regexp.MustCompile(`/usr/bin/printf '%s' '([A-Za-z0-9+/=]+)'`).FindStringSubmatch(script)
-	if len(m) != 2 {
-		t.Fatal("authorized command does not embed approved bytes")
-	}
-	b, err := base64.StdEncoding.DecodeString(m[1])
-	if err != nil {
-		t.Fatal(err)
-	}
-	return b
-}
 func TestAuthorizedJobPayload(t *testing.T) {
 	for _, edit := range []bool{false, true} {
 		for _, load := range []bool{false, true} {
 			t.Run(fmt.Sprintf("edit-%t-load-%t", edit, load), func(t *testing.T) {
-				_, admin := stubRoot(t)
 				dir := t.TempDir()
+				_, helperRuns := stubRoot(t, dir)
 				existing := ""
 				spec := Spec{Label: "com.example.fixed", Args: []string{"/bin/echo", "quoted ' Unicode 字段"}}
+				targetPath := filepath.Join(dir, "com.example.fixed.plist")
 				if edit {
-					existing = filepath.Join(dir, "com.example.fixed.plist")
+					existing = targetPath
 					b, e := spec.Marshal(nil)
 					if e != nil {
 						t.Fatal(e)
@@ -535,8 +486,10 @@ func TestAuthorizedJobPayload(t *testing.T) {
 				if _, e := p.SaveAsRoot(spec, existing, load); e != nil {
 					t.Fatal(e)
 				}
-				line := (*admin)[0][2]
-				b := approvedJobBytes(t, line)
+				b, e := os.ReadFile(targetPath)
+				if e != nil {
+					t.Fatal(e)
+				}
 				var decoded map[string]any
 				if _, e := plist.Unmarshal(b, &decoded); e != nil {
 					t.Fatal(e)
@@ -548,11 +501,11 @@ func TestAuthorizedJobPayload(t *testing.T) {
 				if args[1] != spec.Args[1] {
 					t.Fatal("approved arguments changed")
 				}
-				if strings.Contains(line, os.TempDir()+"/.msm-") {
-					t.Fatal("reads user staging file")
-				}
-				if out, e := exec.Command("/bin/sh", "-n", "-c", line).CombinedOutput(); e != nil {
-					t.Fatal(e, string(out))
+				if load {
+					wantBoot := []string{"/bin/launchctl", "bootstrap", "system", targetPath}
+					if !slices.ContainsFunc(*helperRuns, func(c []string) bool { return slices.Equal(c, wantBoot) }) {
+						t.Fatalf("expected bootstrap in %v", *helperRuns)
+					}
 				}
 			})
 		}
@@ -560,17 +513,18 @@ func TestAuthorizedJobPayload(t *testing.T) {
 }
 
 func TestAuthorizedJobPayloadSizeLimit(t *testing.T) {
-	_, admin := stubRoot(t)
-	p := &Provider{Config{Dir: t.TempDir(), Domain: "system", Elevated: true}}
+	dir := t.TempDir()
+	_, helperRuns := stubRoot(t, dir)
+	p := &Provider{Config{Dir: dir, Domain: "system", Elevated: true}}
 	_, e := p.SaveAsRoot(Spec{Label: "com.example.large", Args: []string{"/bin/echo", strings.Repeat("x", 65<<10)}}, "", true)
-	if e == nil || !strings.Contains(e.Error(), "size limit") || len(*admin) != 0 {
-		t.Fatal("oversized configuration reached authorization", e)
+	if e == nil || !strings.Contains(e.Error(), "size limit") || len(*helperRuns) != 0 {
+		t.Fatal("oversized configuration reached helper", e)
 	}
 }
 
 func TestRootOperationsRejectPathsOutsideProviderDirectory(t *testing.T) {
-	_, admin := stubRoot(t)
 	dir := t.TempDir()
+	_, helperRuns := stubRoot(t, dir)
 	p := &Provider{Config{Source: service.Daemon, Dir: dir, Domain: "system", Elevated: true}}
 
 	otherDir := t.TempDir()
@@ -584,8 +538,8 @@ func TestRootOperationsRejectPathsOutsideProviderDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.SaveAsRoot(spec, outsidePath, false); err == nil || len(*admin) != 0 {
-		t.Fatalf("expected error and 0 admin calls for outside path, err: %v, admin calls: %d", err, len(*admin))
+	if _, err := p.SaveAsRoot(spec, outsidePath, false); err == nil || len(*helperRuns) != 0 {
+		t.Fatalf("expected error and 0 helper calls for outside path, err: %v, calls: %d", err, len(*helperRuns))
 	}
 
 	// 2. SaveAsRoot with existing pointing to a symlink inside p.Dir.
@@ -601,13 +555,13 @@ func TestRootOperationsRejectPathsOutsideProviderDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.SaveAsRoot(spec, symlinkPath, false); err == nil || len(*admin) != 0 {
-		t.Fatalf("expected error and 0 admin calls for symlink path, err: %v, admin calls: %d", err, len(*admin))
+	if _, err := p.SaveAsRoot(spec, symlinkPath, false); err == nil || len(*helperRuns) != 0 {
+		t.Fatalf("expected error and 0 helper calls for symlink path, err: %v, calls: %d", err, len(*helperRuns))
 	}
 
 	// 3. p.Do with service.Remove pointing outside p.Dir.
 	it := service.Item{Name: "com.vendor.helper", Path: outsidePath}
-	if err := p.Do(it, service.Remove); err == nil || len(*admin) != 0 {
-		t.Fatalf("expected error and 0 admin calls for remove outside path, err: %v, admin calls: %d", err, len(*admin))
+	if err := p.Do(it, service.Remove); err == nil || len(*helperRuns) != 0 {
+		t.Fatalf("expected error and 0 helper calls for remove outside path, err: %v, calls: %d", err, len(*helperRuns))
 	}
 }

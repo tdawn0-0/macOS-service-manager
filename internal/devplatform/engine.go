@@ -27,7 +27,7 @@ func runCommand(ctx context.Context, name string, args ...string) (string, error
 }
 func (m *Manager) label(id string) string {
 	sum := sha256.Sum256([]byte(filepath.Clean(m.Root)))
-	return fmt.Sprintf("xyz.jyeu.msm.dev.%x.%s", sum[:4], id)
+	return fmt.Sprintf("xyz.jyeu.devbase.dev.%x.%s", sum[:4], id)
 }
 func domain() string { return fmt.Sprintf("gui/%d", os.Getuid()) }
 func (m *Manager) loaded(ctx context.Context, id string) bool {

@@ -344,8 +344,16 @@ func TestUISoftwareCatalogAllFive(t *testing.T) {
 			}
 			if pkg.Formula != "" {
 				h.click("Remove from workspace")
+				if _, ok := h.a.dev.state.Packages[pkg.ID()]; !ok {
+					t.Fatal("software was removed before confirming")
+				}
+				h.click("Remove Version")
 			} else {
 				h.click("Uninstall")
+				if _, ok := h.a.dev.state.Packages[pkg.ID()]; !ok {
+					t.Fatal("software was uninstalled before confirming")
+				}
+				h.click("Uninstall Version")
 			}
 			if _, ok := h.a.dev.state.Packages[pkg.ID()]; ok {
 				t.Fatal("software was not uninstalled through the UI", h.a.dev.output)

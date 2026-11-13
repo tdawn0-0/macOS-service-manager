@@ -168,13 +168,29 @@ func (a *app) devInstalledPackage(c *ui.Context, id string, p devplatform.Packag
 			if p.Formula != "" {
 				removeText = "Remove from workspace"
 			}
+			// It sits in the row of everyday actions: it asks first.
 			if btn(c, removeText, icoTrash, btnDanger).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
-				a.devTask(func(m *devplatform.Manager) (string, error) {
-					if p.Formula != "" {
-						return "Removed workspace registration. The shared Homebrew installation is kept.", m.Uninstall(m.Context, id)
-					}
-					return "Uninstalled " + p.Name, m.Uninstall(m.Context, id)
-				})
+				name := softwareTitle(p.Name) + " " + p.Version
+				ask := askState{
+					open:    true,
+					title:   "Uninstall " + name + "?",
+					message: "Removes " + name + " from Devbase. You can install it again later.",
+					button:  "Uninstall Version",
+				}
+				if p.Formula != "" {
+					ask.title = "Remove " + name + " from the workspace?"
+					ask.message = "Devbase stops managing it. The shared Homebrew installation is kept."
+					ask.button = "Remove Version"
+				}
+				ask.run = func() {
+					a.devTask(func(m *devplatform.Manager) (string, error) {
+						if p.Formula != "" {
+							return "Removed workspace registration. The shared Homebrew installation is kept.", m.Uninstall(m.Context, id)
+						}
+						return "Uninstalled " + p.Name, m.Uninstall(m.Context, id)
+					})
+				}
+				a.ask = ask
 			}
 		})
 	})

@@ -18,56 +18,10 @@ import (
 	"time"
 )
 
-var tunnelClientIDRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,39}$`)
-
-func normalizeTunnelDomain(raw string) (string, error) {
-	d := strings.ToLower(strings.TrimSpace(raw))
-	d = strings.TrimPrefix(d, "*.")
-	d = strings.TrimPrefix(d, ".")
-	d = strings.TrimSuffix(d, ".")
-	if d == "" {
-		return "", nil
-	}
-	if len(d) > 240 {
-		return "", errors.New("tunnel domain is too long")
-	}
-	parts := strings.Split(d, ".")
-	if len(parts) < 2 {
-		return "", errors.New("tunnel domain must be a full domain such as dev.example.com")
-	}
-	for _, part := range parts {
-		if !proxyDomainPart.MatchString(part) {
-			return "", fmt.Errorf("invalid tunnel domain label %q", part)
-		}
-	}
-	return d, nil
-}
-
-func normalizeTunnelEndpoint(raw string) (string, error) {
-	ep := strings.TrimSpace(raw)
-	if ep == "" {
-		return "", nil
-	}
-	u, err := url.Parse(ep)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return "", errors.New("worker URL must be a valid https:// URL without query or credentials")
-	}
-	scheme := strings.ToLower(u.Scheme)
-	host := strings.ToLower(u.Hostname())
-	switch scheme {
-	case "https":
-	case "http":
-		if host != "127.0.0.1" && host != "localhost" {
-			return "", errors.New("worker URL must use https://")
-		}
-	default:
-		return "", errors.New("worker URL must use https://")
-	}
-	u.Scheme = scheme
-	u.Host = strings.ToLower(u.Host)
-	u.Path = strings.TrimRight(u.Path, "/")
-	return u.String(), nil
-}
+var (
+	tunnelClientIDRE      = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,39}$`)
+	cloudflareAccountIDRE = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,64}$`)
+)
 
 func normalizeTunnelClientID(raw string) (string, error) {
 	id := strings.ToLower(strings.TrimSpace(raw))
@@ -80,27 +34,44 @@ func normalizeTunnelClientID(raw string) (string, error) {
 	return id, nil
 }
 
-func validateTunnelSettings(domain, endpoint, clientID string) error {
-	nd, err := normalizeTunnelDomain(domain)
+func normalizeCloudflareAccountID(raw string) (string, error) {
+	id := strings.TrimSpace(raw)
+	if id == "" {
+		return "", nil
+	}
+	if !cloudflareAccountIDRE.MatchString(id) {
+		return "", errors.New("Cloudflare account ID must be 8–64 alphanumeric characters, hyphens, or underscores")
+	}
+	return id, nil
+}
+
+func validateTunnelState(s *State) error {
+	nc, err := normalizeTunnelClientID(s.TunnelClientID)
 	if err != nil {
 		return err
 	}
-	if nd != domain {
-		return errors.New("tunnel domain is not normalized")
-	}
-	ne, err := normalizeTunnelEndpoint(endpoint)
-	if err != nil {
-		return err
-	}
-	if ne != endpoint {
-		return errors.New("tunnel endpoint is not normalized")
-	}
-	nc, err := normalizeTunnelClientID(clientID)
-	if err != nil {
-		return err
-	}
-	if nc != clientID {
+	if nc != s.TunnelClientID {
 		return errors.New("tunnel client ID is not normalized")
+	}
+	na, err := normalizeCloudflareAccountID(s.CloudflareAccountID)
+	if err != nil {
+		return err
+	}
+	if na != s.CloudflareAccountID {
+		return errors.New("Cloudflare account ID is not normalized")
+	}
+	if sub := strings.TrimSpace(s.CloudflareSubdomain); sub != "" {
+		if strings.ToLower(sub) != sub || !proxyDomainPart.MatchString(sub) {
+			return errors.New("Cloudflare workers.dev subdomain is invalid")
+		}
+	}
+	for name, worker := range s.TunnelWorkers {
+		if !strings.HasPrefix(name, "devbase-") || worker.ScriptName != name || !proxyDomainPart.MatchString(name) {
+			return fmt.Errorf("invalid deployed tunnel worker %q", name)
+		}
+		if worker.PublicURL == "" || worker.LocalPort < 1 || worker.LocalPort > 65535 {
+			return fmt.Errorf("incomplete tunnel worker state %q", name)
+		}
 	}
 	return nil
 }
@@ -116,6 +87,21 @@ func validateTunnelSecret(secret string) (string, error) {
 	return trimmed, nil
 }
 
+func validateCloudflareToken(token string) (string, error) {
+	trimmed := strings.TrimSpace(token)
+	if len(trimmed) < 10 || len(trimmed) > 512 {
+		return "", errors.New("Cloudflare API token must be 10–512 characters")
+	}
+	if strings.ContainsAny(trimmed, " \t\r\n") {
+		return "", errors.New("Cloudflare API token cannot contain whitespace")
+	}
+	return trimmed, nil
+}
+
+func (m *Manager) cloudflareTokenPath() string {
+	return filepath.Join(m.Root, "proxy", "cloudflare.key")
+}
+
 func (m *Manager) tunnelKeyPath() string {
 	return filepath.Join(m.Root, "proxy", "tunnel.key")
 }
@@ -128,6 +114,29 @@ func (m *Manager) tunnelStatusPath() string {
 	return filepath.Join(m.Root, "proxy", "tunnel-status.json")
 }
 
+// HasCloudflareToken checks whether a Cloudflare API token file is stored
+// without exposing its contents.
+func (m *Manager) HasCloudflareToken() bool {
+	info, err := os.Stat(m.cloudflareTokenPath())
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	return info.Size() >= 10 && info.Size() <= 4096
+}
+
+// ReadCloudflareToken reads the Cloudflare API token from 0600 storage.
+func (m *Manager) ReadCloudflareToken() (string, error) {
+	return readSecretFile(m.cloudflareTokenPath(), validateCloudflareToken, "Cloudflare API token")
+}
+
+func (m *Manager) writeCloudflareToken(token string) error {
+	cleaned, err := validateCloudflareToken(token)
+	if err != nil {
+		return err
+	}
+	return atomicWrite(m.cloudflareTokenPath(), []byte(cleaned), 0600)
+}
+
 // HasTunnelSecret checks whether a valid tunnel secret file is stored without
 // exposing its bytes.
 func (m *Manager) HasTunnelSecret() bool {
@@ -138,9 +147,13 @@ func (m *Manager) HasTunnelSecret() bool {
 	return info.Size() >= 16 && info.Size() <= 4096
 }
 
-// ReadTunnelSecret reads the local Cloudflare Worker shared secret from disk.
+// ReadTunnelSecret reads the internal Worker shared HMAC secret from disk.
 func (m *Manager) ReadTunnelSecret() (string, error) {
-	f, err := os.Open(m.tunnelKeyPath())
+	return readSecretFile(m.tunnelKeyPath(), validateTunnelSecret, "tunnel secret")
+}
+
+func readSecretFile(path string, validate func(string) (string, error), label string) (string, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
@@ -150,9 +163,9 @@ func (m *Manager) ReadTunnelSecret() (string, error) {
 		return "", err
 	}
 	if len(b) > 4096 {
-		return "", errors.New("tunnel secret file exceeds size limit")
+		return "", fmt.Errorf("%s file exceeds size limit", label)
 	}
-	return validateTunnelSecret(string(b))
+	return validate(string(b))
 }
 
 func (m *Manager) writeTunnelSecret(secret string) error {
@@ -161,6 +174,21 @@ func (m *Manager) writeTunnelSecret(secret string) error {
 		return err
 	}
 	return atomicWrite(m.tunnelKeyPath(), []byte(cleaned), 0600)
+}
+
+func (m *Manager) ensureTunnelSecret() (string, error) {
+	if secret, err := m.ReadTunnelSecret(); err == nil {
+		return secret, nil
+	}
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	secret := hex.EncodeToString(raw[:])
+	if err := m.writeTunnelSecret(secret); err != nil {
+		return "", err
+	}
+	return secret, nil
 }
 
 // GenerateTunnelSecret creates a fresh 256-bit hex secret in proxy/tunnel.key
@@ -182,89 +210,54 @@ func (m *Manager) GenerateTunnelSecret(ctx context.Context) error {
 	})
 }
 
-// SaveTunnelSettings validates and saves Cloudflare tunnel configuration and an
-// optional replacement secret.
-func (m *Manager) SaveTunnelSettings(ctx context.Context, domain, clientID, endpoint, newSecret string) error {
-	nd, err := normalizeTunnelDomain(domain)
-	if err != nil {
-		return err
-	}
-	ne, err := normalizeTunnelEndpoint(endpoint)
-	if err != nil {
-		return err
-	}
-	nc, err := normalizeTunnelClientID(clientID)
-	if err != nil {
-		return err
-	}
-	var cleanedSecret string
-	if strings.TrimSpace(newSecret) != "" {
-		cleanedSecret, err = validateTunnelSecret(newSecret)
-		if err != nil {
-			return err
-		}
-	}
-	return m.withState(ctx, func(s *State) error {
-		if nc == "" && (nd != "" || ne != "") {
-			nc = "mac-" + randomID()[:8]
-		}
-		s.TunnelDomain = nd
-		s.TunnelEndpoint = ne
-		s.TunnelClientID = nc
-		if cleanedSecret != "" {
-			if err := m.writeTunnelSecret(cleanedSecret); err != nil {
-				return err
-			}
-		}
-		if m.tunnelPublishedExists() || m.loaded(ctx, "tunnel") {
-			return m.writePublishedTunnelConfig(s)
-		}
-		return nil
-	})
-}
-
-// TunnelRoute maps a single public hostname to a local loopback port.
+// TunnelRoute maps a single deployed Cloudflare Worker to a local loopback port.
 type TunnelRoute struct {
-	PublicHost  string `json:"publicHost"`
+	WorkerName  string `json:"workerName"`
+	PublicURL   string `json:"publicUrl"`
+	ConnectURL  string `json:"connectUrl,omitempty"`
 	LocalDomain string `json:"localDomain"`
 	LocalPort   int    `json:"localPort"`
 }
 
-type tunnelPublishedConfig struct {
-	SchemaVersion int           `json:"schemaVersion"`
-	Domain        string        `json:"domain"`
-	Endpoint      string        `json:"endpoint"`
-	ClientID      string        `json:"clientId"`
-	Rules         []TunnelRoute `json:"rules"`
+func (r TunnelRoute) PublicHost() string {
+	u, err := url.Parse(r.PublicURL)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Host)
 }
 
-func (c tunnelPublishedConfig) WebSocketURL() (string, error) {
-	if c.Endpoint != "" {
-		u, err := url.Parse(c.Endpoint)
-		if err != nil {
-			return "", err
-		}
-		switch u.Scheme {
-		case "https":
-			u.Scheme = "wss"
-		case "http":
-			u.Scheme = "ws"
-		default:
-			return "", errors.New("unsupported tunnel endpoint scheme")
-		}
-		u.Path = "/__devbase/connect"
-		return u.String(), nil
+func (r TunnelRoute) WebSocketURL() (string, error) {
+	base := strings.TrimSpace(r.ConnectURL)
+	if base == "" {
+		base = strings.TrimSpace(r.PublicURL)
 	}
-	if c.Domain == "" {
-		return "", errors.New("tunnel wildcard domain or worker URL is required")
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" {
+		return "", errors.New("invalid tunnel route URL")
 	}
-	return "wss://" + reservedTunnelSubdomain + "." + c.Domain + "/__devbase/connect", nil
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		u.Scheme = "wss"
+	case "http":
+		u.Scheme = "ws"
+	case "wss", "ws":
+	default:
+		return "", errors.New("unsupported tunnel URL scheme")
+	}
+	u.Path = "/__devbase/connect"
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String(), nil
+}
+
+type tunnelPublishedConfig struct {
+	SchemaVersion int           `json:"schemaVersion"`
+	ClientID      string        `json:"clientId"`
+	Routes        []TunnelRoute `json:"routes"`
 }
 
 func tunnelConfigFromState(s *State) (tunnelPublishedConfig, error) {
-	if s.TunnelDomain == "" && s.TunnelEndpoint == "" {
-		return tunnelPublishedConfig{}, errors.New("configure a wildcard domain or worker URL first")
-	}
 	clientID := s.TunnelClientID
 	if clientID == "" {
 		clientID = "mac-" + randomID()[:8]
@@ -274,22 +267,29 @@ func tunnelConfigFromState(s *State) (tunnelPublishedConfig, error) {
 		if !rule.Tunnel {
 			continue
 		}
-		if s.TunnelDomain == "" {
-			return tunnelPublishedConfig{}, errors.New("wildcard domain is required when tunneling proxy rules")
+		workerName := rule.ResolvedTunnelWorker()
+		publicURL := ""
+		if w, ok := s.TunnelWorkers[workerName]; ok && w.PublicURL != "" {
+			publicURL = w.PublicURL
+		} else if rule.TunnelURL != "" {
+			publicURL = rule.TunnelURL
+		}
+		if publicURL == "" {
+			return tunnelPublishedConfig{}, fmt.Errorf("deploy Cloudflare Worker before starting tunnel for %s", rule.Domain)
 		}
 		routes = append(routes, TunnelRoute{
-			PublicHost:  rule.PublicHost(s.TunnelDomain),
+			WorkerName:  workerName,
+			PublicURL:   publicURL,
+			ConnectURL:  publicURL,
 			LocalDomain: rule.Domain,
 			LocalPort:   rule.LocalPort,
 		})
 	}
-	sort.Slice(routes, func(i, j int) bool { return routes[i].PublicHost < routes[j].PublicHost })
+	sort.Slice(routes, func(i, j int) bool { return routes[i].WorkerName < routes[j].WorkerName })
 	return tunnelPublishedConfig{
 		SchemaVersion: 1,
-		Domain:        s.TunnelDomain,
-		Endpoint:      s.TunnelEndpoint,
 		ClientID:      clientID,
-		Rules:         routes,
+		Routes:        routes,
 	}, nil
 }
 
@@ -327,32 +327,32 @@ func readPublishedTunnelConfig(root string) (tunnelPublishedConfig, error) {
 	if cfg.SchemaVersion != 1 {
 		return cfg, errors.New("unsupported tunnel snapshot schema")
 	}
-	if err = validateTunnelSettings(cfg.Domain, cfg.Endpoint, cfg.ClientID); err != nil {
-		return cfg, err
-	}
 	if cfg.ClientID == "" {
 		return cfg, errors.New("tunnel snapshot missing client ID")
 	}
-	if cfg.Rules == nil {
-		cfg.Rules = []TunnelRoute{}
+	if _, err = normalizeTunnelClientID(cfg.ClientID); err != nil {
+		return cfg, err
+	}
+	if cfg.Routes == nil {
+		cfg.Routes = []TunnelRoute{}
 	}
 	seen := map[string]bool{}
-	for _, r := range cfg.Rules {
-		if r.PublicHost == "" || r.LocalPort < 1 || r.LocalPort > 65535 {
+	for _, r := range cfg.Routes {
+		if !strings.HasPrefix(r.WorkerName, "devbase-") || r.PublicURL == "" || r.LocalPort < 1 || r.LocalPort > 65535 {
 			return cfg, errors.New("invalid tunnel route in snapshot")
 		}
-		if seen[r.PublicHost] {
-			return cfg, fmt.Errorf("duplicate tunnel route %s", r.PublicHost)
+		if seen[r.WorkerName] {
+			return cfg, fmt.Errorf("duplicate tunnel route %s", r.WorkerName)
 		}
-		seen[r.PublicHost] = true
-	}
-	if _, err = cfg.WebSocketURL(); err != nil {
-		return cfg, err
+		seen[r.WorkerName] = true
+		if _, err = r.WebSocketURL(); err != nil {
+			return cfg, err
+		}
 	}
 	return cfg, nil
 }
 
-// TunnelConflict describes a hostname already claimed by another active client.
+// TunnelConflict describes a hostname or Worker already claimed by another active client.
 type TunnelConflict struct {
 	Host  string `json:"host"`
 	Owner string `json:"owner"`
@@ -363,6 +363,8 @@ type TunnelConflict struct {
 type TunnelStatusSnapshot struct {
 	PID       int              `json:"pid"`
 	Phase     string           `json:"phase"`
+	Connected int              `json:"connected"`
+	Total     int              `json:"total"`
 	Accepted  []string         `json:"accepted,omitempty"`
 	Conflicts []TunnelConflict `json:"conflicts,omitempty"`
 	UpdatedAt time.Time        `json:"updatedAt"`

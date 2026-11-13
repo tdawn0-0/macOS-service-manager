@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -43,24 +45,32 @@ func TestTunnelConfigValidationAndSecretIsolation(t *testing.T) {
 		t.Fatalf("tunnel key permissions wrong: %v %v", info.Mode().Perm(), err)
 	}
 
-	if err := m.SaveTunnelSettings(ctx, " *.DEV.Example.COM ", "", "https://gw.example.com/", ""); err != nil {
+	apiToken := "cf-secret-api-token-0123456789abcdef"
+	if err := m.SaveCloudflareSettings(ctx, apiToken, "acc_test_12345", ""); err != nil {
 		t.Fatal(err)
+	}
+	if !m.HasCloudflareToken() {
+		t.Fatal("expected Cloudflare API token to be present")
+	}
+	tokInfo, err := os.Stat(m.cloudflareTokenPath())
+	if err != nil || tokInfo.Mode().Perm() != 0600 {
+		t.Fatalf("cloudflare token permissions wrong: %v %v", tokInfo.Mode().Perm(), err)
 	}
 	s, err := m.Read()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.TunnelDomain != "dev.example.com" || s.TunnelEndpoint != "https://gw.example.com" || !strings.HasPrefix(s.TunnelClientID, "mac-") {
-		t.Fatalf("unexpected saved tunnel settings: %+v", s)
+	if s.CloudflareAccountID != "acc_test_12345" || !strings.HasPrefix(s.TunnelClientID, "mac-") {
+		t.Fatalf("unexpected saved Cloudflare settings: %+v", s)
 	}
 
-	// Secret must never appear in state.json or redacted diagnostics.
+	// Neither tunnel.key nor cloudflare.key may appear in state.json or diagnostics.
 	rawState, err := os.ReadFile(filepath.Join(m.Root, "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(rawState), secret) {
-		t.Fatal("state.json exposed tunnel secret")
+	if strings.Contains(string(rawState), secret) || strings.Contains(string(rawState), apiToken) {
+		t.Fatal("state.json exposed secret or API token")
 	}
 	report, err := m.Diagnose(ctx)
 	if err != nil {
@@ -70,35 +80,51 @@ func TestTunnelConfigValidationAndSecretIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(redacted), secret) {
-		t.Fatal("diagnostics exposed tunnel secret")
+	if strings.Contains(string(redacted), secret) || strings.Contains(string(redacted), apiToken) {
+		t.Fatal("diagnostics exposed secret or API token")
 	}
 
-	// Reject insecure remote http:// endpoints while allowing loopback http:// for tests.
-	if err := m.SaveTunnelSettings(ctx, "dev.example.com", "mac-1", "http://remote.example.com", ""); err == nil {
-		t.Fatal("accepted non-loopback http:// worker URL")
+	// Validate per-rule worker names, URLs, custom domain validation, and collision checks.
+	if got := DefaultTunnelWorkerName("api.app.test"); got != "devbase-api-app" {
+		t.Fatalf("DefaultTunnelWorkerName = %q", got)
 	}
-	if err := m.SaveTunnelSettings(ctx, "dev.example.com", "mac-1", "http://127.0.0.1:8787", ""); err != nil {
-		t.Fatalf("rejected loopback http:// worker URL: %v", err)
+	longWorker := DefaultTunnelWorkerName(strings.Repeat("ab.", 25) + "test")
+	if len(longWorker) > 63 || strings.HasSuffix(longWorker, "-") || !strings.HasPrefix(longWorker, "devbase-") {
+		t.Fatalf("invalid truncated worker name %q (len=%d)", longWorker, len(longWorker))
+	}
+	if got := (ProxyRule{Domain: "api.test", Tunnel: true}).PreviewTunnelURL("demo"); got != "https://devbase-api.demo.workers.dev" {
+		t.Fatalf("workers.dev preview URL = %q", got)
+	}
+	if got := (ProxyRule{Domain: "api.test", Tunnel: true, TunnelDomain: "api.example.com"}).PreviewTunnelURL("demo"); got != "https://api.example.com" {
+		t.Fatalf("custom domain preview URL = %q", got)
 	}
 
-	// Validate ProxyRule tunnel subdomain normalization & collision detection.
-	if got := DefaultTunnelSubdomain("api.app.test"); got != "api-app" {
-		t.Fatalf("DefaultTunnelSubdomain = %q", got)
-	}
 	if err := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{
 		{Domain: "a.b.test", LocalPort: 3000, Tunnel: true},
 		{Domain: "a-b.test", LocalPort: 3001, Tunnel: true},
-	}); err == nil || !strings.Contains(err.Error(), "duplicate tunnel subdomain") {
-		t.Fatalf("accepted duplicate resolved tunnel subdomain: %v", err)
+	}); err == nil || !strings.Contains(err.Error(), "duplicate tunnel worker") {
+		t.Fatalf("accepted duplicate resolved worker name: %v", err)
 	}
 	if err := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{
-		{Domain: "devbase-gateway.test", LocalPort: 3000, Tunnel: true},
-	}); err == nil || !strings.Contains(err.Error(), "reserved") {
-		t.Fatalf("accepted reserved tunnel subdomain: %v", err)
+		{Domain: "app.test", LocalPort: 3000, Tunnel: true, TunnelWorker: "other-worker"},
+	}); err == nil || !strings.Contains(err.Error(), "devbase-") {
+		t.Fatalf("accepted non-devbase worker name: %v", err)
+	}
+	for _, badDomain := range []string{"app.test", "devbase-app.demo.workers.dev", "singlelabel", "bad/path.example.com"} {
+		if err := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{
+			{Domain: "app.test", LocalPort: 3000, Tunnel: true, TunnelDomain: badDomain},
+		}); err == nil {
+			t.Fatalf("accepted invalid custom domain %q", badDomain)
+		}
 	}
 	if err := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{
-		{Domain: "a.b.test", LocalPort: 3000, Tunnel: true, TunnelSubdomain: " API "},
+		{Domain: "a.test", LocalPort: 3000, Tunnel: true, TunnelDomain: "same.example.com"},
+		{Domain: "b.test", LocalPort: 3001, Tunnel: true, TunnelDomain: "same.example.com"},
+	}); err == nil || !strings.Contains(err.Error(), "duplicate tunnel custom domain") {
+		t.Fatalf("accepted duplicate custom domain: %v", err)
+	}
+	if err := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{
+		{Domain: "a.b.test", LocalPort: 3000, Tunnel: true, TunnelWorker: "devbase-api", TunnelDomain: "api.example.com"},
 		{Domain: "a-b.test", LocalPort: 3001, Tunnel: true},
 	}); err != nil {
 		t.Fatalf("valid disambiguated tunnel rules failed: %v", err)
@@ -293,6 +319,9 @@ func (g *mockGatewayServer) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	g.mu.Lock()
 	owner := g.routes[host]
+	if owner == "" {
+		owner = g.routes["*"]
+	}
 	agentWS := g.agents[owner]
 	g.mu.Unlock()
 	if agentWS == nil {
@@ -637,6 +666,265 @@ func (g *mockGatewayServer) handleVisitorWS(w http.ResponseWriter, r *http.Reque
 	}
 }
 
+func TestCloudflareAPISyncDiscoveryAndCleanup(t *testing.T) {
+	type mockScript struct {
+		migrationTag     string
+		subdomainEnabled bool
+		customDomains    []string
+		secretText       string
+		sawMigrations    []bool
+	}
+	var mu sync.Mutex
+	scripts := map[string]*mockScript{
+		"existing-blog": {migrationTag: "v1", subdomainEnabled: true},
+	}
+	var deletedScripts []string
+	var touchedUnrelated bool
+	wantToken := "cf-api-token-test-0123456789"
+
+	cfSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+wantToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "errors": []map[string]any{{"code": 10000, "message": "Authentication error"}}})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/accounts":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": []map[string]string{{"id": "acc-cf-999", "name": "Dev"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/accounts/acc-cf-999/workers/subdomain":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": map[string]string{"subdomain": "my-dev"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/zones":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": []map[string]string{{"id": "zone-1", "name": "example.com"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/zones/zone-1/dns_records":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"result": []map[string]string{
+					{"id": "r1", "name": "web.example.com", "type": "CNAME"},
+					{"id": "r2", "name": "mail.example.com", "type": "MX"},
+				},
+			})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/accounts/acc-cf-999/workers/services/"):
+			name := strings.TrimPrefix(r.URL.Path, "/accounts/acc-cf-999/workers/services/")
+			mu.Lock()
+			sc := scripts[name]
+			mu.Unlock()
+			if sc == nil {
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "errors": []map[string]any{{"code": 10007, "message": "not found"}}})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": map[string]any{"default_environment": map[string]any{"script": map[string]string{"migration_tag": sc.migrationTag}}}})
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/accounts/acc-cf-999/workers/scripts/") && !strings.HasSuffix(r.URL.Path, "/domains/records"):
+			name := strings.TrimPrefix(r.URL.Path, "/accounts/acc-cf-999/workers/scripts/")
+			if name == "existing-blog" {
+				mu.Lock()
+				touchedUnrelated = true
+				mu.Unlock()
+			}
+			_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatalf("bad multipart header: %v", err)
+			}
+			mr := multipart.NewReader(r.Body, params["boundary"])
+			var metaRaw, codeRaw []byte
+			for {
+				p, err := mr.NextPart()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatalf("multipart read error: %v", err)
+				}
+				data, _ := io.ReadAll(p)
+				switch p.FormName() {
+				case "metadata":
+					metaRaw = data
+				case "index.mjs":
+					codeRaw = data
+				}
+			}
+			if !strings.Contains(string(codeRaw), "TunnelGateway") {
+				t.Fatalf("uploaded script missing TunnelGateway: %s", string(codeRaw))
+			}
+			var meta struct {
+				MainModule string           `json:"main_module"`
+				Bindings   []map[string]any `json:"bindings"`
+				Migrations any              `json:"migrations"`
+			}
+			if err := json.Unmarshal(metaRaw, &meta); err != nil {
+				t.Fatalf("decode metadata: %v", err)
+			}
+			var secretVal string
+			for _, b := range meta.Bindings {
+				if b["name"] == "TUNNEL_SECRET" {
+					secretVal, _ = b["text"].(string)
+				}
+			}
+			mu.Lock()
+			sc := scripts[name]
+			if sc == nil {
+				sc = &mockScript{}
+				scripts[name] = sc
+			}
+			sc.migrationTag = "v1"
+			sc.secretText = secretVal
+			sc.sawMigrations = append(sc.sawMigrations, meta.Migrations != nil)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": map[string]any{"id": name}})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/subdomain"):
+			trimmed := strings.TrimPrefix(r.URL.Path, "/accounts/acc-cf-999/workers/scripts/")
+			name := strings.TrimSuffix(trimmed, "/subdomain")
+			var body struct {
+				Enabled bool `json:"enabled"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			if scripts[name] != nil {
+				scripts[name].subdomainEnabled = body.Enabled
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": map[string]any{"enabled": body.Enabled}})
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/domains/records"):
+			trimmed := strings.TrimPrefix(r.URL.Path, "/accounts/acc-cf-999/workers/scripts/")
+			name := strings.TrimSuffix(trimmed, "/domains/records")
+			var body struct {
+				Origins []struct {
+					Hostname string `json:"hostname"`
+					ZoneID   string `json:"zone_id"`
+				} `json:"origins"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			var hosts []string
+			for _, o := range body.Origins {
+				hosts = append(hosts, o.Hostname)
+			}
+			mu.Lock()
+			if scripts[name] != nil {
+				scripts[name].customDomains = hosts
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": []any{}})
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/accounts/acc-cf-999/workers/scripts/"):
+			name := strings.TrimPrefix(r.URL.Path, "/accounts/acc-cf-999/workers/scripts/")
+			mu.Lock()
+			if name == "existing-blog" {
+				touchedUnrelated = true
+			}
+			delete(scripts, name)
+			deletedScripts = append(deletedScripts, name)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": map[string]any{}})
+		default:
+			t.Fatalf("unexpected Cloudflare API request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer cfSrv.Close()
+
+	m := testManager(t)
+	m.CloudflareAPIBase = cfSrv.URL
+	ctx := context.Background()
+
+	if err := m.SaveCloudflareSettings(ctx, wantToken, "", "mac-cf-test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RefreshCloudflareMetadata(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s, err := m.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CloudflareAccountID != "acc-cf-999" || s.CloudflareSubdomain != "my-dev" || len(s.CloudflareZones) != 1 || len(s.CloudflareDNS) != 1 || s.CloudflareDNS[0].Name != "web.example.com" {
+		t.Fatalf("unexpected metadata: %+v", s)
+	}
+
+	// Deploy 1 workers.dev rule + 1 Custom Domain rule.
+	if err := m.ReplaceProxyRules(ctx, s.ProxyRulesRevision, 8443, []ProxyRule{
+		{Domain: "api.test", LocalPort: 3000, Tunnel: true},
+		{Domain: "web.test", LocalPort: 4000, Tunnel: true, TunnelDomain: "web.example.com"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SyncTunnels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s, err = m.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.ProxyRules[0].TunnelURL != "https://devbase-api.my-dev.workers.dev" || s.ProxyRules[1].TunnelURL != "https://web.example.com" {
+		t.Fatalf("unexpected synced rule URLs: %+v", s.ProxyRules)
+	}
+	if len(s.TunnelWorkers) != 2 || !s.TunnelWorkers["devbase-api"].PublicURLEquals("https://devbase-api.my-dev.workers.dev") {
+		t.Fatalf("unexpected TunnelWorkers state: %+v", s.TunnelWorkers)
+	}
+	tunnelSecret, err := m.ReadTunnelSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	apiScript := scripts["devbase-api"]
+	webScript := scripts["devbase-web"]
+	mu.Unlock()
+	if apiScript == nil || !apiScript.subdomainEnabled || apiScript.secretText != tunnelSecret || !apiScript.sawMigrations[0] {
+		t.Fatalf("unexpected devbase-api script state: %+v", apiScript)
+	}
+	if webScript == nil || webScript.subdomainEnabled || len(webScript.customDomains) != 1 || webScript.customDomains[0] != "web.example.com" || !webScript.sawMigrations[0] {
+		t.Fatalf("unexpected devbase-web script state: %+v", webScript)
+	}
+	cfg, err := readPublishedTunnelConfig(m.Root)
+	if err != nil || len(cfg.Routes) != 2 {
+		t.Fatalf("unexpected published tunnel.json: %+v err=%v", cfg, err)
+	}
+
+	// Second sync should omit migrations because existing migration_tag == "v1".
+	if err := m.SyncTunnels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	if len(scripts["devbase-api"].sawMigrations) != 2 || scripts["devbase-api"].sawMigrations[1] {
+		t.Fatalf("expected migrations omitted on update, got %v", scripts["devbase-api"].sawMigrations)
+	}
+	mu.Unlock()
+
+	// Invalid custom domain outside active zones must fail before mutating deployed workers.
+	if err := m.ReplaceProxyRules(ctx, s.ProxyRulesRevision, 8443, []ProxyRule{
+		{Domain: "api.test", LocalPort: 3000, Tunnel: true},
+		{Domain: "web.test", LocalPort: 4000, Tunnel: true, TunnelDomain: "bad.unowned.org"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SyncTunnels(ctx); err == nil || !strings.Contains(err.Error(), "active Cloudflare zone") {
+		t.Fatalf("expected unowned zone rejection, got %v", err)
+	}
+
+	// Disabling Tunnel on web.test deletes devbase-web cleanly and leaves devbase-api + unrelated existing-blog untouched.
+	s, _ = m.Read()
+	if err := m.ReplaceProxyRules(ctx, s.ProxyRulesRevision, 8443, []ProxyRule{
+		{Domain: "api.test", LocalPort: 3000, Tunnel: true},
+		{Domain: "web.test", LocalPort: 4000, Tunnel: false},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SyncTunnels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s, _ = m.Read()
+	if len(s.TunnelWorkers) != 1 || s.TunnelWorkers["devbase-api"].ScriptName != "devbase-api" || s.ProxyRules[1].TunnelURL != "" {
+		t.Fatalf("orphan cleanup state mismatch: %+v", s)
+	}
+	mu.Lock()
+	if len(deletedScripts) != 1 || deletedScripts[0] != "devbase-web" || scripts["devbase-web"] != nil || touchedUnrelated {
+		t.Fatalf("unexpected delete history=%v touchedUnrelated=%v", deletedScripts, touchedUnrelated)
+	}
+	mu.Unlock()
+}
+
+func (w TunnelWorkerState) PublicURLEquals(want string) bool {
+	return w.PublicURL == want
+}
+
 func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 	sseRelease := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -663,13 +951,13 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 			w.Header().Add("Set-Cookie", "a=1; Path=/")
 			w.Header().Add("Set-Cookie", "b=2; Path=/")
 			_ = json.NewEncoder(w).Encode(map[string]string{
-				"host":      r.Host,
-				"fhost":     r.Header.Get("X-Forwarded-Host"),
-				"fproto":    r.Header.Get("X-Forwarded-Proto"),
-				"forigin":   r.Header.Get("X-Forwarded-Origin"),
-				"origin":    r.Header.Get("Origin"),
-				"ffor":      r.Header.Get("X-Forwarded-For"),
-				"query":     r.URL.RawQuery,
+				"host":    r.Host,
+				"fhost":   r.Header.Get("X-Forwarded-Host"),
+				"fproto":  r.Header.Get("X-Forwarded-Proto"),
+				"forigin": r.Header.Get("X-Forwarded-Origin"),
+				"origin":  r.Header.Get("Origin"),
+				"ffor":    r.Header.Get("X-Forwarded-For"),
+				"query":   r.URL.RawQuery,
 			})
 		case "/large":
 			body, err := io.ReadAll(r.Body)
@@ -710,25 +998,36 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	gw := newMockGatewayServer(t, secret)
-	gw.claimed["conflict.dev.example.com"] = "other-mac"
-	m.tunnelTLSConfig = gw.tlsConfig()
+	gwApp := newMockGatewayServer(t, secret)
+	gwAdmin := newMockGatewayServer(t, secret)
+	gwConflict := newMockGatewayServer(t, secret)
+	gwConflict.claimed["*"] = "other-mac"
+
+	pool := x509.NewCertPool()
+	pool.AddCert(gwApp.server.Certificate())
+	pool.AddCert(gwAdmin.server.Certificate())
+	pool.AddCert(gwConflict.server.Certificate())
+	tlsCfg := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+
+	m.tunnelTLSConfig = tlsCfg
 	m.tunnelPingInterval = 250 * time.Millisecond
 	m.tunnelReadTimeout = 2 * time.Second
 
-	if err := m.SaveTunnelSettings(ctx, "dev.example.com", "mac-test", gw.server.URL, ""); err != nil {
+	if err := m.SaveCloudflareSettings(ctx, "", "", "mac-test"); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{
-		{Domain: "app.test", LocalPort: localPort, Tunnel: true},
+		{Domain: "app.test", LocalPort: localPort, Tunnel: true, TunnelURL: "https://devbase-app.demo.workers.dev"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	s, err := m.Read()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := m.writePublishedTunnelConfig(&s); err != nil {
+	if err := writeJSON(m.tunnelConfigPath(), tunnelPublishedConfig{
+		SchemaVersion: 1,
+		ClientID:      "mac-test",
+		Routes: []TunnelRoute{
+			{WorkerName: "devbase-app", PublicURL: "https://devbase-app.demo.workers.dev", ConnectURL: gwApp.server.URL, LocalDomain: "app.test", LocalPort: localPort},
+		},
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -762,15 +1061,15 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 	}
 
 	waitForTunnel(func(st TunnelStatusSnapshot) bool {
-		return st.Phase == "Connected" && len(st.Accepted) == 1 && st.Accepted[0] == "app.dev.example.com"
+		return st.Phase == "Connected" && st.Connected == 1 && st.Total == 1 && len(st.Accepted) == 1 && st.Accepted[0] == "devbase-app.demo.workers.dev"
 	})
 
-	visitorClient := gw.server.Client()
+	visitorClient := gwApp.server.Client()
 
 	// 1. Standard HTTP request + multi-value headers + Origin/Host rewriting.
-	req, _ := http.NewRequest("GET", gw.server.URL+"/hello?x=1&y=2", nil)
-	req.Host = "app.dev.example.com"
-	req.Header.Set("Origin", "https://app.dev.example.com")
+	req, _ := http.NewRequest("GET", gwApp.server.URL+"/hello?x=1&y=2", nil)
+	req.Host = "devbase-app.demo.workers.dev"
+	req.Header.Set("Origin", "https://devbase-app.demo.workers.dev")
 	resp, err := visitorClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -782,14 +1081,14 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 		t.Fatalf("unexpected response: status=%d cookies=%v", resp.StatusCode, resp.Cookies())
 	}
 	wantLocalHost := fmt.Sprintf("localhost:%d", localPort)
-	if echo["host"] != wantLocalHost || echo["fhost"] != "app.dev.example.com" || echo["fproto"] != "https" || echo["origin"] != "http://"+wantLocalHost || echo["forigin"] != "https://app.dev.example.com" || echo["query"] != "x=1&y=2" {
+	if echo["host"] != wantLocalHost || echo["fhost"] != "devbase-app.demo.workers.dev" || echo["fproto"] != "https" || echo["origin"] != "http://"+wantLocalHost || echo["forigin"] != "https://devbase-app.demo.workers.dev" || echo["query"] != "x=1&y=2" {
 		t.Fatalf("header forwarding mismatch: %+v", echo)
 	}
 
 	// 2. Large (>1 MiB) streaming POST & response body.
 	big := bytes.Repeat([]byte("DevbaseTunnelPayload"), (1500<<10)/20) // ~1.5 MiB
-	reqBig, _ := http.NewRequest("POST", gw.server.URL+"/large", bytes.NewReader(big))
-	reqBig.Host = "app.dev.example.com"
+	reqBig, _ := http.NewRequest("POST", gwApp.server.URL+"/large", bytes.NewReader(big))
+	reqBig.Host = "devbase-app.demo.workers.dev"
 	respBig, err := visitorClient.Do(reqBig)
 	if err != nil {
 		t.Fatal(err)
@@ -801,8 +1100,8 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 	}
 
 	// 3. SSE streaming flush before upstream completes.
-	reqSSE, _ := http.NewRequest("GET", gw.server.URL+"/sse", nil)
-	reqSSE.Host = "app.dev.example.com"
+	reqSSE, _ := http.NewRequest("GET", gwApp.server.URL+"/sse", nil)
+	reqSSE.Host = "devbase-app.demo.workers.dev"
 	respSSE, err := visitorClient.Do(reqSSE)
 	if err != nil {
 		t.Fatal(err)
@@ -821,12 +1120,12 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 	}
 
 	// 4. Proxied WebSocket with vite-hmr subprotocol and >256 KiB binary frame.
-	wsURL := "wss://" + strings.TrimPrefix(gw.server.URL, "https://") + "/hmr"
+	wsURL := "wss://" + strings.TrimPrefix(gwApp.server.URL, "https://") + "/hmr"
 	wsHeaders := http.Header{
-		"Host":   []string{"app.dev.example.com"},
-		"Origin": []string{"https://app.dev.example.com"},
+		"Host":   []string{"devbase-app.demo.workers.dev"},
+		"Origin": []string{"https://devbase-app.demo.workers.dev"},
 	}
-	vws, wsResp, err := dialWebSocket(ctx, wsURL, wsHeaders, []string{"vite-hmr"}, gw.tlsConfig())
+	vws, wsResp, err := dialWebSocket(ctx, wsURL, wsHeaders, []string{"vite-hmr"}, tlsCfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -851,80 +1150,85 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 	_ = vws.WriteClose(1000, "done")
 	_ = vws.Close()
 
-	// 5. Hot reload routes via proxy/tunnel.json without reconnecting WS, and report conflicts.
-	initialConns := gw.conns.Load()
-	if err := m.ReplaceProxyRules(ctx, 1, 8443, []ProxyRule{
-		{Domain: "app.test", LocalPort: localPort, Tunnel: true},
-		{Domain: "admin.test", LocalPort: secondPort, Tunnel: true},
-		{Domain: "conflict.test", LocalPort: secondPort, Tunnel: true},
+	// 5. Hot-add workers via proxy/tunnel.json without dropping existing WS, and report conflicts.
+	initialConns := gwApp.conns.Load()
+	if err := writeJSON(m.tunnelConfigPath(), tunnelPublishedConfig{
+		SchemaVersion: 1,
+		ClientID:      "mac-test",
+		Routes: []TunnelRoute{
+			{WorkerName: "devbase-app", PublicURL: "https://devbase-app.demo.workers.dev", ConnectURL: gwApp.server.URL, LocalDomain: "app.test", LocalPort: localPort},
+			{WorkerName: "devbase-admin", PublicURL: "https://admin.example.com", ConnectURL: gwAdmin.server.URL, LocalDomain: "admin.test", LocalPort: secondPort},
+			{WorkerName: "devbase-conflict", PublicURL: "https://conflict.example.com", ConnectURL: gwConflict.server.URL, LocalDomain: "conflict.test", LocalPort: secondPort},
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	s, _ = m.Read()
-	if err := m.writePublishedTunnelConfig(&s); err != nil {
-		t.Fatal(err)
-	}
 	st := waitForTunnel(func(st TunnelStatusSnapshot) bool {
-		return st.Phase == "Connected" && len(st.Accepted) == 2 && len(st.Conflicts) == 1
+		return st.Phase == "Connected" && st.Connected == 3 && st.Total == 3 && len(st.Conflicts) == 1
 	})
-	if st.Conflicts[0].Host != "conflict.dev.example.com" || st.Conflicts[0].Owner != "other-mac" {
+	if st.Conflicts[0].Host != "conflict.example.com" || st.Conflicts[0].Owner != "other-mac" {
 		t.Fatalf("unexpected conflict report: %+v", st.Conflicts)
 	}
-	if detail := m.formatTunnelDetail(); detail != "Conflict: 1 route" {
+	if detail := m.formatTunnelDetail(); detail != "Conflict: 1 worker" {
 		t.Fatalf("unexpected formatTunnelDetail: %q", detail)
 	}
-	if gw.conns.Load() != initialConns {
-		t.Fatalf("route hot reload dropped and reconnected WS: before=%d after=%d", initialConns, gw.conns.Load())
+	if gwApp.conns.Load() != initialConns {
+		t.Fatalf("adding new worker dropped existing WS: before=%d after=%d", initialConns, gwApp.conns.Load())
 	}
-	reqAdmin, _ := http.NewRequest("GET", gw.server.URL+"/", nil)
-	reqAdmin.Host = "admin.dev.example.com"
-	respAdmin, err := visitorClient.Do(reqAdmin)
+	reqAdmin, _ := http.NewRequest("GET", gwAdmin.server.URL+"/", nil)
+	reqAdmin.Host = "admin.example.com"
+	respAdmin, err := gwAdmin.server.Client().Do(reqAdmin)
 	if err != nil {
 		t.Fatal(err)
 	}
 	adminBody, _ := io.ReadAll(respAdmin.Body)
 	respAdmin.Body.Close()
 	if respAdmin.StatusCode != 200 || string(adminBody) != "second-upstream-ok" {
-		t.Fatalf("hot-reloaded route failed: %d %q", respAdmin.StatusCode, string(adminBody))
+		t.Fatalf("hot-added worker failed: %d %q", respAdmin.StatusCode, string(adminBody))
 	}
 
-	// 6. Auto-reconnect after gateway drops the agent connection.
-	gw.dropClient("mac-test")
+	// 6. Auto-reconnect after gateway drops one worker's connection.
+	gwApp.dropClient("mac-test")
 	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && gw.conns.Load() == initialConns {
+	for time.Now().Before(deadline) && gwApp.conns.Load() == initialConns {
 		time.Sleep(25 * time.Millisecond)
 	}
-	if gw.conns.Load() <= initialConns {
+	if gwApp.conns.Load() <= initialConns {
 		t.Fatal("ServeTunnel did not reconnect after connection drop")
 	}
 	waitForTunnel(func(st TunnelStatusSnapshot) bool {
-		return st.Phase == "Connected" && len(st.Accepted) == 2
+		return st.Phase == "Connected" && st.Connected == 3 && st.Total == 3
 	})
+
+	// 7. Removing a worker from tunnel.json closes its WS cleanly while keeping others connected.
+	appConnsBeforeRemove := gwApp.conns.Load()
+	if err := writeJSON(m.tunnelConfigPath(), tunnelPublishedConfig{
+		SchemaVersion: 1,
+		ClientID:      "mac-test",
+		Routes: []TunnelRoute{
+			{WorkerName: "devbase-app", PublicURL: "https://devbase-app.demo.workers.dev", ConnectURL: gwApp.server.URL, LocalDomain: "app.test", LocalPort: localPort},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForTunnel(func(st TunnelStatusSnapshot) bool {
+		return st.Phase == "Connected" && st.Connected == 1 && st.Total == 1
+	})
+	if gwApp.conns.Load() != appConnsBeforeRemove {
+		t.Fatalf("removing devbase-admin reconnected devbase-app: before=%d after=%d", appConnsBeforeRemove, gwApp.conns.Load())
+	}
 }
 
-func TestExportTunnelWorkerTemplate(t *testing.T) {
-	m := testManager(t)
-	ctx := context.Background()
-	if err := m.SaveTunnelSettings(ctx, "edge.example.com", "mac-1", "", ""); err != nil {
+func TestTunnelWorkerScriptSyntax(t *testing.T) {
+	if !strings.Contains(cloudflareWorkerIndexMJS, "TunnelGateway") || !strings.Contains(cloudflareWorkerIndexMJS, `this.routes.get("*")`) {
+		t.Fatal("worker script missing expected TunnelGateway or wildcard route fallback")
+	}
+	scriptPath := filepath.Join(t.TempDir(), "index.mjs")
+	if err := os.WriteFile(scriptPath, []byte(cloudflareWorkerIndexMJS), 0600); err != nil {
 		t.Fatal(err)
-	}
-	dir, err := m.ExportTunnelWorker(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, rel := range []string{"wrangler.toml", "src/index.mjs", "README.md"} {
-		p := filepath.Join(dir, rel)
-		info, err := os.Stat(p)
-		if err != nil || info.Mode().Perm() != 0600 {
-			t.Fatalf("missing or wrong permissions for %s: %v", rel, err)
-		}
-	}
-	tomlBytes, _ := os.ReadFile(filepath.Join(dir, "wrangler.toml"))
-	if !strings.Contains(string(tomlBytes), "TunnelGateway") || !strings.Contains(string(tomlBytes), "*.edge.example.com/*") {
-		t.Fatalf("unexpected wrangler.toml:\n%s", string(tomlBytes))
 	}
 	if nodeBin, lookErr := exec.LookPath("node"); lookErr == nil {
-		out, err := exec.Command(nodeBin, "--check", filepath.Join(dir, "src", "index.mjs")).CombinedOutput()
+		out, err := exec.Command(nodeBin, "--check", scriptPath).CombinedOutput()
 		if err != nil {
 			t.Fatalf("node --check failed: %v\n%s", err, string(out))
 		}

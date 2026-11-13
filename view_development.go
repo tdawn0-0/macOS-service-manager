@@ -22,11 +22,26 @@ const (
 	devTabHTTPS
 )
 
+const (
+	tunnelModeWorkersDev   = "workers.dev (Auto)"
+	tunnelModeCustomDomain = "Custom domain"
+)
+
 type proxyRuleDraft struct {
-	Domain          string
-	LocalPort       string
-	Tunnel          bool
-	TunnelSubdomain string
+	Domain       string
+	LocalPort    string
+	Tunnel       bool
+	TunnelWorker string
+	TunnelMode   string
+	TunnelDomain string
+	TunnelURL    string
+}
+
+func effectiveDraftTunnelDomain(row proxyRuleDraft) string {
+	if row.TunnelMode != tunnelModeCustomDomain {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(row.TunnelDomain))
 }
 
 type developmentState struct {
@@ -89,7 +104,7 @@ type developmentState struct {
 	proxyListenerPort                                                                                   string
 	proxyDraftRevision                                                                                  uint64
 	proxyDraftLoaded                                                                                    bool
-	tunnelDomain, tunnelClientID, tunnelEndpoint, tunnelSecretDraft                                     string
+	cloudflareAccountID, cloudflareTokenDraft, tunnelClientID                                           string
 	tunnelDraftLoaded                                                                                   bool
 	proxyPublicationState                                                                               string
 	proxyChecks                                                                                         map[string]devplatform.ProxyHTTPResult
@@ -563,11 +578,18 @@ func (a *app) devMaster(c *ui.Context) {
 func (d *developmentState) loadProxyDraft(s devplatform.State) {
 	d.proxyDraft = make([]proxyRuleDraft, len(s.ProxyRules))
 	for i, rule := range s.ProxyRules {
+		mode := tunnelModeWorkersDev
+		if rule.TunnelDomain != "" {
+			mode = tunnelModeCustomDomain
+		}
 		d.proxyDraft[i] = proxyRuleDraft{
-			Domain:          rule.Domain,
-			LocalPort:       strconv.Itoa(rule.LocalPort),
-			Tunnel:          rule.Tunnel,
-			TunnelSubdomain: rule.TunnelSubdomain,
+			Domain:       rule.Domain,
+			LocalPort:    strconv.Itoa(rule.LocalPort),
+			Tunnel:       rule.Tunnel,
+			TunnelWorker: rule.TunnelWorker,
+			TunnelMode:   mode,
+			TunnelDomain: rule.TunnelDomain,
+			TunnelURL:    rule.TunnelURL,
 		}
 	}
 	port := s.ProxyListenerPort
@@ -587,27 +609,29 @@ func (d *developmentState) proxyDraftDirty() bool {
 	}
 	for i, row := range d.proxyDraft {
 		rule := d.state.ProxyRules[i]
-		if row.Domain != rule.Domain || row.LocalPort != strconv.Itoa(rule.LocalPort) || row.Tunnel != rule.Tunnel || row.TunnelSubdomain != rule.TunnelSubdomain {
+		if row.Domain != rule.Domain ||
+			row.LocalPort != strconv.Itoa(rule.LocalPort) ||
+			row.Tunnel != rule.Tunnel ||
+			row.TunnelWorker != rule.TunnelWorker ||
+			effectiveDraftTunnelDomain(row) != rule.TunnelDomain {
 			return true
 		}
 	}
 	return false
 }
 func (d *developmentState) loadTunnelDraft(s devplatform.State) {
-	d.tunnelDomain = s.TunnelDomain
+	d.cloudflareAccountID = s.CloudflareAccountID
 	d.tunnelClientID = s.TunnelClientID
-	d.tunnelEndpoint = s.TunnelEndpoint
-	d.tunnelSecretDraft = ""
+	d.cloudflareTokenDraft = ""
 	d.tunnelDraftLoaded = true
 }
 func (d *developmentState) tunnelDraftDirty() bool {
 	if !d.tunnelDraftLoaded {
 		return false
 	}
-	return d.tunnelDomain != d.state.TunnelDomain ||
+	return d.cloudflareAccountID != d.state.CloudflareAccountID ||
 		d.tunnelClientID != d.state.TunnelClientID ||
-		d.tunnelEndpoint != d.state.TunnelEndpoint ||
-		d.tunnelSecretDraft != ""
+		d.cloudflareTokenDraft != ""
 }
 
 func (a *app) devManager() *devplatform.Manager {

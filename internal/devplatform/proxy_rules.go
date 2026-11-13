@@ -17,40 +17,93 @@ import (
 // ProxyRule is configuration for one local HTTP port. It has no independent
 // process, identity, or lifecycle.
 type ProxyRule struct {
-	Domain          string `json:"domain"`
-	LocalPort       int    `json:"localPort"`
-	Tunnel          bool   `json:"tunnel,omitempty"`
-	TunnelSubdomain string `json:"tunnelSubdomain,omitempty"`
+	Domain       string `json:"domain"`
+	LocalPort    int    `json:"localPort"`
+	Tunnel       bool   `json:"tunnel,omitempty"`
+	TunnelWorker string `json:"tunnelWorker,omitempty"`
+	TunnelDomain string `json:"tunnelDomain,omitempty"`
+	TunnelURL    string `json:"tunnelUrl,omitempty"`
 }
 
-// DefaultTunnelSubdomain derives a single DNS label from a .test local domain
-// so wildcard TLS certificates (*.tunnelDomain) cover multi-level local names.
-func DefaultTunnelSubdomain(domain string) string {
+// DefaultTunnelWorkerName derives the Cloudflare Worker script name for a
+// local .test domain, always prefixed with "devbase-" so Devbase only manages
+// Workers it owns.
+func DefaultTunnelWorkerName(domain string) string {
 	d := strings.ToLower(strings.TrimSpace(domain))
 	d = strings.TrimSuffix(d, ".test")
-	return strings.ReplaceAll(d, ".", "-")
-}
-
-// ResolvedTunnelSubdomain returns the effective DNS label for tunnel routing.
-func (r ProxyRule) ResolvedTunnelSubdomain() string {
-	if sub := strings.ToLower(strings.TrimSpace(r.TunnelSubdomain)); sub != "" {
-		return sub
-	}
-	return DefaultTunnelSubdomain(r.Domain)
-}
-
-// PublicHost returns the full public hostname when tunneling is enabled and a
-// wildcard tunnel domain is configured.
-func (r ProxyRule) PublicHost(tunnelDomain string) string {
-	d := strings.ToLower(strings.TrimSpace(tunnelDomain))
-	if !r.Tunnel || d == "" {
+	slug := strings.ReplaceAll(d, ".", "-")
+	slug = strings.Trim(slug, "-")
+	if slug == "" {
 		return ""
 	}
-	sub := r.ResolvedTunnelSubdomain()
-	if sub == "" {
+	name := "devbase-" + slug
+	if len(name) > 63 {
+		name = strings.TrimRight(name[:63], "-")
+	}
+	return name
+}
+
+// ResolvedTunnelWorker returns the Cloudflare Worker script name for this rule.
+func (r ProxyRule) ResolvedTunnelWorker() string {
+	if w := strings.ToLower(strings.TrimSpace(r.TunnelWorker)); w != "" {
+		return w
+	}
+	return DefaultTunnelWorkerName(r.Domain)
+}
+
+// EffectiveTunnelDomain returns the normalized custom domain, or empty when
+// using automatic *.workers.dev routing.
+func (r ProxyRule) EffectiveTunnelDomain() string {
+	return normalizeTunnelHost(r.TunnelDomain)
+}
+
+// PreviewTunnelURL returns the public HTTPS URL for a tunneled rule given the
+// account's workers.dev subdomain.
+func (r ProxyRule) PreviewTunnelURL(cloudflareSubdomain string) string {
+	if !r.Tunnel {
 		return ""
 	}
-	return sub + "." + d
+	if dom := r.EffectiveTunnelDomain(); dom != "" {
+		return "https://" + dom
+	}
+	if sub := strings.ToLower(strings.TrimSpace(cloudflareSubdomain)); sub != "" {
+		if worker := r.ResolvedTunnelWorker(); worker != "" {
+			return "https://" + worker + "." + sub + ".workers.dev"
+		}
+	}
+	return strings.TrimSpace(r.TunnelURL)
+}
+
+func normalizeTunnelHost(raw string) string {
+	h := strings.TrimSpace(raw)
+	h = strings.TrimPrefix(h, "https://")
+	h = strings.TrimPrefix(h, "http://")
+	h = strings.TrimSuffix(h, "/")
+	return strings.ToLower(h)
+}
+
+func validatePublicTunnelHostname(host string) error {
+	if host == "" {
+		return nil
+	}
+	if len(host) > 253 || strings.ContainsAny(host, "/: \t\r\n") {
+		return errors.New("custom domain must be a hostname without scheme or path")
+	}
+	if !strings.Contains(host, ".") {
+		return errors.New("custom domain must include a zone domain (e.g. app.example.com)")
+	}
+	if strings.HasSuffix(host, ".test") {
+		return errors.New("custom domain cannot be a local .test domain")
+	}
+	if strings.HasSuffix(host, ".workers.dev") {
+		return errors.New("clear Custom domain to use automatic workers.dev URLs")
+	}
+	for _, part := range strings.Split(host, ".") {
+		if !proxyDomainPart.MatchString(part) {
+			return fmt.Errorf("invalid custom domain %q", host)
+		}
+	}
+	return nil
 }
 
 // proxyRoute is a derived transport entry, never a saved resource.
@@ -69,8 +122,6 @@ func (r proxyRoute) Validate() error {
 	return err
 }
 
-const reservedTunnelSubdomain = "devbase-gateway"
-
 var proxyDomainPart = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
 func normalizeProxyRules(listenerPort int, rules []ProxyRule) ([]ProxyRule, error) {
@@ -82,7 +133,8 @@ func normalizeProxyRules(listenerPort int, rules []ProxyRule) ([]ProxyRule, erro
 	}
 	normalized := make([]ProxyRule, len(rules))
 	seen := make(map[string]bool, len(rules))
-	seenSubdomains := make(map[string]bool, len(rules))
+	seenWorkers := make(map[string]bool, len(rules))
+	seenTunnelDomains := make(map[string]bool, len(rules))
 	for i, rule := range rules {
 		rule.Domain = strings.ToLower(strings.TrimSpace(rule.Domain))
 		if len(rule.Domain) > 253 || !strings.HasSuffix(rule.Domain, ".test") {
@@ -100,27 +152,34 @@ func normalizeProxyRules(listenerPort int, rules []ProxyRule) ([]ProxyRule, erro
 			return nil, fmt.Errorf("duplicate proxy domain %s", rule.Domain)
 		}
 		seen[rule.Domain] = true
-		rule.TunnelSubdomain = strings.ToLower(strings.TrimSpace(rule.TunnelSubdomain))
-		if rule.TunnelSubdomain != "" {
-			if !proxyDomainPart.MatchString(rule.TunnelSubdomain) {
-				return nil, fmt.Errorf("rule %d: tunnel prefix must be a single DNS label", i+1)
-			}
-			if rule.TunnelSubdomain == reservedTunnelSubdomain {
-				return nil, fmt.Errorf("rule %d: tunnel prefix %q is reserved", i+1, reservedTunnelSubdomain)
+		rule.TunnelWorker = strings.ToLower(strings.TrimSpace(rule.TunnelWorker))
+		if rule.TunnelWorker != "" {
+			if !proxyDomainPart.MatchString(rule.TunnelWorker) || !strings.HasPrefix(rule.TunnelWorker, "devbase-") || len(rule.TunnelWorker) <= len("devbase-") {
+				return nil, fmt.Errorf("rule %d: worker name must start with devbase- and use valid DNS label characters", i+1)
 			}
 		}
+		rule.TunnelDomain = normalizeTunnelHost(rule.TunnelDomain)
+		if err := validatePublicTunnelHostname(rule.TunnelDomain); err != nil {
+			return nil, fmt.Errorf("rule %d: %w", i+1, err)
+		}
+		rule.TunnelURL = strings.TrimSpace(rule.TunnelURL)
 		if rule.Tunnel {
-			resolved := rule.ResolvedTunnelSubdomain()
-			if !proxyDomainPart.MatchString(resolved) {
-				return nil, fmt.Errorf("rule %d: invalid tunnel prefix %q", i+1, resolved)
+			worker := rule.ResolvedTunnelWorker()
+			if !proxyDomainPart.MatchString(worker) || !strings.HasPrefix(worker, "devbase-") || len(worker) <= len("devbase-") {
+				return nil, fmt.Errorf("rule %d: invalid worker name %q", i+1, worker)
 			}
-			if resolved == reservedTunnelSubdomain {
-				return nil, fmt.Errorf("rule %d: tunnel prefix %q is reserved", i+1, reservedTunnelSubdomain)
+			if seenWorkers[worker] {
+				return nil, fmt.Errorf("duplicate tunnel worker %s", worker)
 			}
-			if seenSubdomains[resolved] {
-				return nil, fmt.Errorf("duplicate tunnel subdomain %s", resolved)
+			seenWorkers[worker] = true
+			if rule.TunnelDomain != "" {
+				if seenTunnelDomains[rule.TunnelDomain] {
+					return nil, fmt.Errorf("duplicate tunnel custom domain %s", rule.TunnelDomain)
+				}
+				seenTunnelDomains[rule.TunnelDomain] = true
 			}
-			seenSubdomains[resolved] = true
+		} else {
+			rule.TunnelURL = ""
 		}
 		normalized[i] = rule
 	}

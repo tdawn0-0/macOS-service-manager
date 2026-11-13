@@ -321,12 +321,8 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		return m.StopTunnel(ctx)
 	case "tunnel-restart":
 		return m.RestartTunnel(ctx)
-	case "tunnel-export":
-		dir, e := m.ExportTunnelWorker(ctx)
-		if e == nil {
-			fmt.Fprintln(out, dir)
-		}
-		return e
+	case "tunnel-sync":
+		return m.SyncTunnels(ctx)
 	case "doctor":
 		if len(args) > 2 || (len(args) == 2 && args[1] != "--json" && args[1] != "--export") {
 			return errors.New("use doctor [--json|--export]")

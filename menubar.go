@@ -384,14 +384,23 @@ func (a *app) panelProxy(c *ui.Context, openWindow func()) {
 		if tunnelStatus == "" {
 			tunnelStatus = "Stopped"
 		}
-		tunnelSub := d.state.TunnelDomain
-		if tunnelSub == "" {
-			tunnelSub = "Cloudflare Worker"
+		tunnelSub := fmt.Sprintf("%d workers", len(d.state.TunnelWorkers))
+		if len(d.state.TunnelWorkers) == 1 {
+			tunnelSub = "1 worker"
+		} else if len(d.state.TunnelWorkers) == 0 {
+			tunnelSub = "Cloudflare Workers"
 		}
 		if detail := d.statuses["tunnel:detail"]; tunnelStatus == "Running" && detail != "" {
 			tunnelSub = detail
 		}
 		tunnelOn := tunnelStatus == "Running"
+		hasRules := false
+		for _, rule := range d.state.ProxyRules {
+			if rule.Tunnel {
+				hasRules = true
+				break
+			}
+		}
 		panelRow(c, "menu-tunnel", func() {
 			ui.Box(c).Size(26, 26).Shrink(0).Children(func() {
 				iconTile(c, icoGlobe, theme.TokensOf(c).TextSecondary, 26)
@@ -404,7 +413,7 @@ func (a *app) panelProxy(c *ui.Context, openWindow func()) {
 			if tunnelOn {
 				label = "Stop tunnel"
 			}
-			if choice.Switch(c, &tunnelOn, choice.SwitchProps{Size: theme.Small}).Label(label).Disabled(d.busy || a.quit.open || (d.state.TunnelDomain == "" && d.state.TunnelEndpoint == "" && !tunnelOn)).Changed() {
+			if choice.Switch(c, &tunnelOn, choice.SwitchProps{Size: theme.Small}).Label(label).Disabled(d.busy || a.quit.open || (!hasRules && !tunnelOn)).Changed() {
 				a.devTask(func(m *devplatform.Manager) (string, error) {
 					if tunnelOn {
 						return "Cloudflare tunnel started.", m.ApplyTunnel(m.Context)
@@ -418,7 +427,7 @@ func (a *app) panelProxy(c *ui.Context, openWindow func()) {
 
 func (a *app) tunnelConfigured() bool {
 	d := &a.dev
-	if d.state.TunnelDomain != "" || d.state.TunnelEndpoint != "" || d.statuses["tunnel"] == "Running" {
+	if d.statuses["tunnel:token"] == "Configured" || len(d.state.TunnelWorkers) > 0 || d.statuses["tunnel"] == "Running" {
 		return true
 	}
 	for _, rule := range d.state.ProxyRules {

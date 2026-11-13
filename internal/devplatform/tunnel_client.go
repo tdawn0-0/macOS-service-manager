@@ -28,12 +28,45 @@ const (
 	tunnelMaxStreams        = 256
 )
 
-// ApplyTunnel publishes the tunnel routing snapshot and ensures the background
+// ApplyTunnel reconciles any unsynced Cloudflare Workers if an API token is
+// configured, publishes the tunnel routing snapshot, and ensures the background
 // launchd tunnel job is running.
 func (m *Manager) ApplyTunnel(ctx context.Context) error {
+	if s, err := m.Read(); err == nil && m.needsTunnelSync(s) && m.HasCloudflareToken() {
+		if err := m.SyncTunnels(ctx); err != nil {
+			return err
+		}
+	}
 	return m.withState(ctx, func(s *State) error {
 		return m.startTunnel(ctx, s)
 	})
+}
+
+func (m *Manager) needsTunnelSync(s State) bool {
+	desired := map[string]ProxyRule{}
+	for _, rule := range s.ProxyRules {
+		if !rule.Tunnel {
+			continue
+		}
+		name := rule.ResolvedTunnelWorker()
+		desired[name] = rule
+		w, ok := s.TunnelWorkers[name]
+		if !ok {
+			if rule.TunnelURL == "" {
+				return true
+			}
+			continue
+		}
+		if w.PublicURL == "" || w.CustomDomain != rule.EffectiveTunnelDomain() {
+			return true
+		}
+	}
+	for name := range s.TunnelWorkers {
+		if _, keep := desired[name]; !keep {
+			return true
+		}
+	}
+	return false
 }
 
 // StartTunnel ensures the background Cloudflare tunnel launchd job is running.
@@ -66,8 +99,15 @@ func (m *Manager) startTunnel(ctx context.Context, s *State) error {
 	if err := m.ensureLogMaintenance(ctx, s); err != nil {
 		return err
 	}
-	if !m.HasTunnelSecret() {
-		return errors.New("configure or generate a tunnel secret before starting the tunnel")
+	if _, err := m.ensureTunnelSecret(); err != nil {
+		return err
+	}
+	cfg, err := tunnelConfigFromState(s)
+	if err != nil {
+		return err
+	}
+	if len(cfg.Routes) == 0 {
+		return errors.New("enable Tunnel on at least one HTTPS rule first")
 	}
 	if err := m.writePublishedTunnelConfig(s); err != nil {
 		return err
@@ -93,8 +133,8 @@ func (m *Manager) startTunnel(ctx context.Context, s *State) error {
 	return nil
 }
 
-// ServeTunnel runs the outbound Cloudflare Worker + Durable Object WebSocket
-// multiplexing agent.
+// ServeTunnel supervises one outbound WebSocket connection per deployed
+// Cloudflare Worker route defined in proxy/tunnel.json.
 func (m *Manager) ServeTunnel(ctx context.Context) error {
 	if err := m.init(); err != nil {
 		return err
@@ -107,55 +147,36 @@ func (m *Manager) ServeTunnel(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	agent := &tunnelAgent{
+	sup := &tunnelSupervisor{
 		manager:   m,
+		transport: newTunnelUpstreamTransport(),
 		cfg:       cfg,
 		cfgDigest: cfgDigest,
 		secret:    secret,
 		keyDigest: keyDigest,
-		routes:    buildTunnelRouteMap(cfg.Rules),
-		transport: newTunnelUpstreamTransport(),
+		runners:   map[string]*managedWorkerRunner{},
+		statuses:  map[string]tunnelWorkerStatus{},
 	}
-	m.writeTunnelStatus(TunnelStatusSnapshot{PID: os.Getpid(), Phase: "Connecting"})
-	defer m.writeTunnelStatus(TunnelStatusSnapshot{Phase: "Stopped"})
+	sup.reconcile(ctx)
+	defer func() {
+		sup.stopAll()
+		m.writeTunnelStatus(TunnelStatusSnapshot{Phase: "Stopped"})
+	}()
 
-	backoff := 500 * time.Millisecond
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
 	for {
-		if ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
 			return nil
+		case <-tick.C:
+			sup.checkUpdates(ctx)
 		}
-		startedAt := time.Now()
-		authFailed, reloadOnly, runErr := agent.runOnce(ctx)
-		if ctx.Err() != nil {
-			return nil
-		}
-		if reloadOnly {
-			backoff = 500 * time.Millisecond
-			continue
-		}
-		if time.Since(startedAt) >= 15*time.Second {
-			backoff = 500 * time.Millisecond
-		}
-		wait := backoff
-		if authFailed {
-			m.writeTunnelStatus(TunnelStatusSnapshot{PID: os.Getpid(), Phase: "AuthFailed"})
-			wait = 15 * time.Second
-		} else {
-			m.writeTunnelStatus(TunnelStatusSnapshot{PID: os.Getpid(), Phase: "Reconnecting"})
-			backoff *= 2
-			if backoff > 15*time.Second {
-				backoff = 15 * time.Second
-			}
-		}
-		if runErr != nil {
-			m.emit("Tunnel disconnected: " + runErr.Error())
-		}
-		agent.waitForRetryOrChange(ctx, wait)
 	}
 }
 
 func newTunnelUpstreamTransport() *http.Transport {
-	transport := &http.Transport{
+	return &http.Transport{
 		Proxy:                 nil,
 		DisableCompression:    true,
 		IdleConnTimeout:       90 * time.Second,
@@ -164,27 +185,39 @@ func newTunnelUpstreamTransport() *http.Transport {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 60 * time.Second,
 	}
-	return transport
 }
 
-type tunnelAgent struct {
+type tunnelWorkerStatus struct {
+	phase     string
+	conflicts []TunnelConflict
+}
+
+type managedWorkerRunner struct {
+	route  TunnelRoute
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+type tunnelSupervisor struct {
 	manager   *Manager
 	transport *http.Transport
 
-	mu        sync.RWMutex
+	mu        sync.Mutex
 	cfg       tunnelPublishedConfig
 	cfgDigest [32]byte
 	secret    string
 	keyDigest [32]byte
-	routes    map[string]TunnelRoute
+	runners   map[string]*managedWorkerRunner
+	statuses  map[string]tunnelWorkerStatus
 }
 
-func buildTunnelRouteMap(rules []TunnelRoute) map[string]TunnelRoute {
-	out := make(map[string]TunnelRoute, len(rules))
-	for _, r := range rules {
-		out[strings.ToLower(r.PublicHost)] = r
-	}
-	return out
+type tunnelWorkerRunner struct {
+	sup       *tunnelSupervisor
+	manager   *Manager
+	transport *http.Transport
+	clientID  string
+	secret    string
+	route     TunnelRoute
 }
 
 func readTunnelConfigWithDigest(root string) (tunnelPublishedConfig, [32]byte, error) {
@@ -211,106 +244,241 @@ func (m *Manager) readTunnelSecretWithDigest() (string, [32]byte, error) {
 	return secret, sha256.Sum256(b), nil
 }
 
-func (a *tunnelAgent) snapshotConfig() (tunnelPublishedConfig, string) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.cfg, a.secret
-}
+func (s *tunnelSupervisor) checkUpdates(ctx context.Context) {
+	cfg, cfgDigest, cfgErr := readTunnelConfigWithDigest(s.manager.Root)
+	secret, keyDigest, keyErr := s.manager.readTunnelSecretWithDigest()
 
-func (a *tunnelAgent) lookupRoute(host string) (TunnelRoute, bool) {
-	h := strings.ToLower(strings.TrimSpace(host))
-	if onlyHost, _, err := net.SplitHostPort(h); err == nil {
-		h = onlyHost
+	var toStop []*managedWorkerRunner
+	var restartAll, cfgChanged bool
+
+	s.mu.Lock()
+	if keyErr == nil && keyDigest != s.keyDigest {
+		s.secret = secret
+		s.keyDigest = keyDigest
+		restartAll = true
 	}
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	r, ok := a.routes[h]
-	return r, ok
-}
-
-func (a *tunnelAgent) checkDiskUpdates() (reconnect bool, routesChanged bool) {
-	cfg, cfgDigest, cfgErr := readTunnelConfigWithDigest(a.manager.Root)
-	secret, keyDigest, keyErr := a.manager.readTunnelSecretWithDigest()
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if keyErr == nil && keyDigest != a.keyDigest {
-		a.secret = secret
-		a.keyDigest = keyDigest
-		reconnect = true
-	}
-	if cfgErr == nil && cfgDigest != a.cfgDigest {
-		if cfg.ClientID != a.cfg.ClientID || cfg.Domain != a.cfg.Domain || cfg.Endpoint != a.cfg.Endpoint {
-			reconnect = true
+	if cfgErr == nil && cfgDigest != s.cfgDigest {
+		if cfg.ClientID != s.cfg.ClientID {
+			restartAll = true
 		} else {
-			routesChanged = true
+			cfgChanged = true
 		}
-		a.cfg = cfg
-		a.cfgDigest = cfgDigest
-		a.routes = buildTunnelRouteMap(cfg.Rules)
+		s.cfg = cfg
+		s.cfgDigest = cfgDigest
 	}
-	return reconnect, routesChanged
+	if restartAll {
+		for name, mr := range s.runners {
+			toStop = append(toStop, mr)
+			delete(s.runners, name)
+			delete(s.statuses, name)
+		}
+	}
+	s.mu.Unlock()
+
+	for _, mr := range toStop {
+		mr.cancel()
+		<-mr.done
+	}
+	if restartAll || cfgChanged {
+		s.reconcile(ctx)
+	}
 }
 
-func (a *tunnelAgent) waitForRetryOrChange(ctx context.Context, d time.Duration) {
-	deadline := time.NewTimer(d)
-	defer deadline.Stop()
-	tick := time.NewTicker(time.Second)
-	defer tick.Stop()
+func (s *tunnelSupervisor) reconcile(ctx context.Context) {
+	s.mu.Lock()
+	desired := make(map[string]TunnelRoute, len(s.cfg.Routes))
+	for _, r := range s.cfg.Routes {
+		desired[r.WorkerName] = r
+	}
+	var toStop []*managedWorkerRunner
+	for name, mr := range s.runners {
+		want, keep := desired[name]
+		if !keep || mr.route != want {
+			toStop = append(toStop, mr)
+			delete(s.runners, name)
+			delete(s.statuses, name)
+		}
+	}
+	s.mu.Unlock()
+
+	for _, mr := range toStop {
+		mr.cancel()
+		<-mr.done
+	}
+
+	s.mu.Lock()
+	for name, route := range desired {
+		if _, exists := s.runners[name]; exists {
+			continue
+		}
+		rCtx, rCancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		s.runners[name] = &managedWorkerRunner{route: route, cancel: rCancel, done: done}
+		s.statuses[name] = tunnelWorkerStatus{phase: "Connecting"}
+		runner := &tunnelWorkerRunner{
+			sup:       s,
+			manager:   s.manager,
+			transport: s.transport,
+			clientID:  s.cfg.ClientID,
+			secret:    s.secret,
+			route:     route,
+		}
+		go func() {
+			defer close(done)
+			runner.loop(rCtx)
+		}()
+	}
+	snap := s.buildStatusLocked()
+	s.mu.Unlock()
+
+	s.manager.writeTunnelStatus(snap)
+}
+
+func (s *tunnelSupervisor) stopAll() {
+	s.mu.Lock()
+	toStop := make([]*managedWorkerRunner, 0, len(s.runners))
+	for name, mr := range s.runners {
+		toStop = append(toStop, mr)
+		delete(s.runners, name)
+		delete(s.statuses, name)
+	}
+	s.mu.Unlock()
+
+	for _, mr := range toStop {
+		mr.cancel()
+		<-mr.done
+	}
+}
+
+func (s *tunnelSupervisor) updateStatus(workerName string, st tunnelWorkerStatus) {
+	s.mu.Lock()
+	if _, active := s.runners[workerName]; !active {
+		s.mu.Unlock()
+		return
+	}
+	s.statuses[workerName] = st
+	snap := s.buildStatusLocked()
+	s.mu.Unlock()
+	s.manager.writeTunnelStatus(snap)
+}
+
+func (s *tunnelSupervisor) buildStatusLocked() TunnelStatusSnapshot {
+	total := len(s.runners)
+	if total == 0 {
+		return TunnelStatusSnapshot{PID: os.Getpid(), Phase: "Stopped", Total: 0}
+	}
+	var connected, connecting, authFailed int
+	var accepted []string
+	var conflicts []TunnelConflict
+	for name, mr := range s.runners {
+		st := s.statuses[name]
+		switch st.phase {
+		case "Connected":
+			connected++
+			if h := mr.route.PublicHost(); h != "" {
+				accepted = append(accepted, h)
+			}
+			conflicts = append(conflicts, st.conflicts...)
+		case "AuthFailed":
+			authFailed++
+		case "Connecting":
+			connecting++
+		}
+	}
+	sort.Strings(accepted)
+	phase := "Reconnecting"
+	switch {
+	case connected > 0:
+		phase = "Connected"
+	case authFailed > 0:
+		phase = "AuthFailed"
+	case connecting == total:
+		phase = "Connecting"
+	}
+	return TunnelStatusSnapshot{
+		PID:       os.Getpid(),
+		Phase:     phase,
+		Connected: connected,
+		Total:     total,
+		Accepted:  accepted,
+		Conflicts: conflicts,
+	}
+}
+
+func (r *tunnelWorkerRunner) loop(ctx context.Context) {
+	backoff := 500 * time.Millisecond
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		case <-deadline.C:
+		}
+		startedAt := time.Now()
+		authFailed, runErr := r.runOnce(ctx)
+		if ctx.Err() != nil {
 			return
-		case <-tick.C:
-			reconnect, routesChanged := a.checkDiskUpdates()
-			if reconnect || routesChanged {
-				return
+		}
+		if time.Since(startedAt) >= 15*time.Second {
+			backoff = 500 * time.Millisecond
+		}
+		wait := backoff
+		if authFailed {
+			r.sup.updateStatus(r.route.WorkerName, tunnelWorkerStatus{phase: "AuthFailed"})
+			wait = 15 * time.Second
+		} else {
+			r.sup.updateStatus(r.route.WorkerName, tunnelWorkerStatus{phase: "Reconnecting"})
+			backoff *= 2
+			if backoff > 15*time.Second {
+				backoff = 15 * time.Second
 			}
 		}
+		if runErr != nil {
+			r.manager.emit("Tunnel (" + r.route.WorkerName + ") disconnected: " + runErr.Error())
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
 	}
 }
 
-func (a *tunnelAgent) runOnce(ctx context.Context) (authFailed bool, reloadOnly bool, err error) {
-	_, _ = a.checkDiskUpdates()
-	cfg, secret := a.snapshotConfig()
-	wsURL, err := cfg.WebSocketURL()
+func (r *tunnelWorkerRunner) runOnce(ctx context.Context) (authFailed bool, err error) {
+	wsURL, err := r.route.WebSocketURL()
 	if err != nil {
-		return false, false, err
+		return false, err
 	}
 
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	nonce := randomID() + randomID()
-	sig := signTunnelHandshake(secret, cfg.ClientID, ts, nonce)
+	sig := signTunnelHandshake(r.secret, r.clientID, ts, nonce)
 	headers := http.Header{}
-	headers.Set("X-Devbase-Client", cfg.ClientID)
+	headers.Set("X-Devbase-Client", r.clientID)
 	headers.Set("X-Devbase-Timestamp", ts)
 	headers.Set("X-Devbase-Nonce", nonce)
 	headers.Set("X-Devbase-Signature", sig)
 
 	dialCtx, dialCancel := context.WithTimeout(ctx, 15*time.Second)
 	var tlsCfg *tls.Config
-	if a.manager.tunnelTLSConfig != nil {
-		tlsCfg = a.manager.tunnelTLSConfig
+	if r.manager.tunnelTLSConfig != nil {
+		tlsCfg = r.manager.tunnelTLSConfig
 	}
 	ws, _, err := dialWebSocket(dialCtx, wsURL, headers, nil, tlsCfg)
 	dialCancel()
 	if err != nil {
 		var hsErr *wsHandshakeError
 		if errors.As(err, &hsErr) && (hsErr.StatusCode == http.StatusUnauthorized || hsErr.StatusCode == http.StatusForbidden) {
-			return true, false, err
+			return true, err
 		}
-		return false, false, err
+		return false, err
 	}
 	defer ws.Close()
 
-	readTimeout := a.manager.tunnelReadTimeout
+	readTimeout := r.manager.tunnelReadTimeout
 	if readTimeout <= 0 {
 		readTimeout = tunnelReadTimeout
 	}
-	pingInterval := a.manager.tunnelPingInterval
+	pingInterval := r.manager.tunnelPingInterval
 	if pingInterval <= 0 {
 		pingInterval = tunnelKeepAliveInterval
 	}
@@ -324,7 +492,7 @@ func (a *tunnelAgent) runOnce(ctx context.Context) (authFailed bool, reloadOnly 
 	defer sessionCancel()
 
 	sess := &tunnelSession{
-		agent:       a,
+		runner:      r,
 		ws:          ws,
 		sem:         make(chan struct{}, tunnelMaxStreams),
 		httpStreams: map[uint32]*tunnelHTTPStream{},
@@ -332,18 +500,16 @@ func (a *tunnelAgent) runOnce(ctx context.Context) (authFailed bool, reloadOnly 
 	}
 	defer sess.closeAll()
 
-	if err = sess.sendRegister(cfg); err != nil {
-		return false, false, err
+	if err = sess.sendRegister(r.clientID); err != nil {
+		return false, err
 	}
-	a.manager.writeTunnelStatus(TunnelStatusSnapshot{PID: os.Getpid(), Phase: "Connecting"})
+	r.sup.updateStatus(r.route.WorkerName, tunnelWorkerStatus{phase: "Connecting"})
 
 	readErrCh := make(chan error, 1)
 	go func() {
 		readErrCh <- sess.readLoop(sessionCtx)
 	}()
 
-	watchTick := time.NewTicker(time.Second)
-	defer watchTick.Stop()
 	pingTick := time.NewTicker(pingInterval)
 	defer pingTick.Stop()
 
@@ -353,38 +519,22 @@ func (a *tunnelAgent) runOnce(ctx context.Context) (authFailed bool, reloadOnly 
 			_ = ws.WriteClose(1000, "shutdown")
 			sessionCancel()
 			<-readErrCh
-			return false, false, nil
+			return false, nil
 		case readErr := <-readErrCh:
 			sessionCancel()
-			return false, false, readErr
+			return false, readErr
 		case <-pingTick.C:
 			if err := ws.WriteText([]byte(tunnelControlPing)); err != nil {
 				sessionCancel()
 				<-readErrCh
-				return false, false, err
-			}
-		case <-watchTick.C:
-			reconnect, routesChanged := a.checkDiskUpdates()
-			if reconnect {
-				_ = ws.WriteClose(1000, "config changed")
-				sessionCancel()
-				<-readErrCh
-				return false, true, nil
-			}
-			if routesChanged {
-				latest, _ := a.snapshotConfig()
-				if err := sess.sendRegister(latest); err != nil {
-					sessionCancel()
-					<-readErrCh
-					return false, false, err
-				}
+				return false, err
 			}
 		}
 	}
 }
 
 type tunnelSession struct {
-	agent       *tunnelAgent
+	runner      *tunnelWorkerRunner
 	ws          *wsConn
 	sem         chan struct{}
 	streamsMu   sync.Mutex
@@ -392,15 +542,10 @@ type tunnelSession struct {
 	wsStreams   map[uint32]*tunnelWSStream
 }
 
-func (s *tunnelSession) sendRegister(cfg tunnelPublishedConfig) error {
-	hosts := make([]string, 0, len(cfg.Rules))
-	for _, r := range cfg.Rules {
-		hosts = append(hosts, r.PublicHost)
-	}
-	sort.Strings(hosts)
+func (s *tunnelSession) sendRegister(clientID string) error {
 	frame, err := encodeTunnelJSONFrame(frameRegister, tunnelFlagFIN, 0, 0, tunnelRegisterPayload{
-		ClientID: cfg.ClientID,
-		Routes:   hosts,
+		ClientID: clientID,
+		Routes:   []string{"*"},
 	})
 	if err != nil {
 		return err
@@ -451,11 +596,15 @@ func (s *tunnelSession) readLoop(ctx context.Context) error {
 		case frameRegisterAck:
 			var ack tunnelRegisterAckPayload
 			if err := json.Unmarshal(frame.Payload, &ack); err == nil {
-				s.agent.manager.writeTunnelStatus(TunnelStatusSnapshot{
-					PID:       os.Getpid(),
-					Phase:     "Connected",
-					Accepted:  ack.Accepted,
-					Conflicts: ack.Conflicts,
+				conflicts := append([]TunnelConflict(nil), ack.Conflicts...)
+				for i := range conflicts {
+					if conflicts[i].Host == "*" {
+						conflicts[i].Host = s.runner.route.PublicHost()
+					}
+				}
+				s.runner.sup.updateStatus(s.runner.route.WorkerName, tunnelWorkerStatus{
+					phase:     "Connected",
+					conflicts: conflicts,
 				})
 			}
 		case frameHTTPReqHead:
@@ -480,11 +629,7 @@ func (s *tunnelSession) handleHTTPHead(ctx context.Context, frame tunnelFrame) {
 		s.sendReset(frame.StreamID)
 		return
 	}
-	route, ok := s.agent.lookupRoute(head.Host)
-	if !ok {
-		s.sendSimpleHTTPResponse(frame.StreamID, http.StatusNotFound, "text/plain; charset=utf-8", []byte("Unknown Devbase tunnel host"))
-		return
-	}
+	route := s.runner.route
 	select {
 	case s.sem <- struct{}{}:
 	default:
@@ -567,9 +712,9 @@ func (s *tunnelSession) forwardHTTP(ctx context.Context, streamID uint32, route 
 	}
 	localHost := fmt.Sprintf("localhost:%d", route.LocalPort)
 	req.Host = localHost
-	applyTunnelForwardedHeaders(req.Header, head.Headers, route.PublicHost, localHost, head.RemoteAddr)
+	applyTunnelForwardedHeaders(req.Header, head.Headers, route.PublicHost(), localHost, head.RemoteAddr)
 
-	resp, err := s.agent.transport.RoundTrip(req)
+	resp, err := s.runner.transport.RoundTrip(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			s.sendReset(streamID)
@@ -695,11 +840,7 @@ func (s *tunnelSession) handleWSOpen(ctx context.Context, frame tunnelFrame) {
 		s.sendWSOpenError(frame.StreamID, http.StatusBadRequest, "invalid websocket open payload")
 		return
 	}
-	route, ok := s.agent.lookupRoute(head.Host)
-	if !ok {
-		s.sendWSOpenError(frame.StreamID, http.StatusNotFound, "unknown Devbase tunnel host")
-		return
-	}
+	route := s.runner.route
 	select {
 	case s.sem <- struct{}{}:
 	default:
@@ -714,7 +855,7 @@ func (s *tunnelSession) handleWSOpen(ctx context.Context, frame tunnelFrame) {
 	localHost := fmt.Sprintf("localhost:%d", route.LocalPort)
 	reqHeaders := http.Header{}
 	reqHeaders.Set("Host", localHost)
-	applyTunnelForwardedHeaders(reqHeaders, head.Headers, route.PublicHost, localHost, "")
+	applyTunnelForwardedHeaders(reqHeaders, head.Headers, route.PublicHost(), localHost, "")
 
 	dialCtx, dialCancel := context.WithTimeout(ctx, 10*time.Second)
 	localWS, resp, err := dialWebSocket(dialCtx, fmt.Sprintf("ws://127.0.0.1:%d%s", route.LocalPort, path), reqHeaders, head.Protocols, nil)
@@ -1146,6 +1287,6 @@ func renderTunnelFailure(route TunnelRoute, err error) (int, []byte) {
 	_ = tunnelFailurePage.Execute(&buf, struct {
 		Title, Message, PublicHost string
 		LocalPort                  int
-	}{title, message, route.PublicHost, route.LocalPort})
+	}{title, message, route.PublicHost(), route.LocalPort})
 	return status, buf.Bytes()
 }

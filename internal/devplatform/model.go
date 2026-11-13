@@ -111,6 +111,27 @@ type Instance struct {
 	Port          int    `json:"port"`
 	Persistent    bool   `json:"persistent"`
 }
+type CloudflareZone struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type CloudflareDNSRecord struct {
+	ID     string `json:"id,omitempty"`
+	ZoneID string `json:"zoneId"`
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+}
+
+type TunnelWorkerState struct {
+	ScriptName   string `json:"scriptName"`
+	PublicURL    string `json:"publicUrl"`
+	CustomDomain string `json:"customDomain,omitempty"`
+	ZoneID       string `json:"zoneId,omitempty"`
+	LocalDomain  string `json:"localDomain"`
+	LocalPort    int    `json:"localPort"`
+}
+
 type State struct {
 	UVExecutable        string                       `json:"uvExecutable,omitempty"`
 	RuntimeDefaults     map[string]string            `json:"runtimeDefaults,omitempty"`
@@ -118,9 +139,12 @@ type State struct {
 	ProxyRules          []ProxyRule                  `json:"proxyRules"`
 	ProxyListenerPort   int                          `json:"proxyListenerPort"`
 	ProxyRulesRevision  uint64                       `json:"proxyRulesRevision"`
-	TunnelDomain        string                       `json:"tunnelDomain,omitempty"`
-	TunnelEndpoint      string                       `json:"tunnelEndpoint,omitempty"`
+	CloudflareAccountID string                       `json:"cloudflareAccountId,omitempty"`
+	CloudflareSubdomain string                       `json:"cloudflareSubdomain,omitempty"`
+	CloudflareZones     []CloudflareZone             `json:"cloudflareZones,omitempty"`
+	CloudflareDNS       []CloudflareDNSRecord        `json:"cloudflareDns,omitempty"`
 	TunnelClientID      string                       `json:"tunnelClientId,omitempty"`
+	TunnelWorkers       map[string]TunnelWorkerState `json:"tunnelWorkers,omitempty"`
 	PackageIntegrity    map[string]string            `json:"packageIntegrity,omitempty"`
 	LogRotationDisabled bool                         `json:"logRotationDisabled,omitempty"`
 	NodeDefault         string                       `json:"nodeDefault,omitempty"`
@@ -141,6 +165,7 @@ type Manager struct {
 	tunnelTLSConfig    *tls.Config   // Test override for mock TLS tunnel gateway servers.
 	tunnelReadTimeout  time.Duration // Test override for tunnel keepalive timeout.
 	tunnelPingInterval time.Duration // Test override for tunnel keepalive ping interval.
+	CloudflareAPIBase  string        // Override for Cloudflare v4 API base URL (tests).
 	initialization *initializationContext
 	databaseWork   *databaseWorkContext
 	operation      *operationWriter
@@ -292,7 +317,7 @@ func (m *Manager) Read() (State, error) {
 	if _, e = normalizeProxyRules(decoded.ProxyListenerPort, decoded.ProxyRules); e != nil {
 		return s, fmt.Errorf("invalid state proxy rules: %w", e)
 	}
-	if e = validateTunnelSettings(decoded.TunnelDomain, decoded.TunnelEndpoint, decoded.TunnelClientID); e != nil {
+	if e = validateTunnelState(&decoded); e != nil {
 		return s, fmt.Errorf("invalid state tunnel settings: %w", e)
 	}
 	s = decoded

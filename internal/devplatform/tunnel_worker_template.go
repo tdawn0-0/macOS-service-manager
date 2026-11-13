@@ -1,103 +1,5 @@
 package devplatform
 
-import (
-	"context"
-	"fmt"
-	"path/filepath"
-	"strings"
-)
-
-// ExportTunnelWorker writes a ready-to-deploy Cloudflare Worker + Durable Object
-// project into <Root>/cloudflare-worker and returns that directory path.
-func (m *Manager) ExportTunnelWorker(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	if err := m.init(); err != nil {
-		return "", err
-	}
-	s, err := m.Read()
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(m.Root, "cloudflare-worker")
-	srcDir := filepath.Join(dir, "src")
-
-	wrangler := buildWranglerTOML(s.TunnelDomain)
-	if err := atomicWrite(filepath.Join(dir, "wrangler.toml"), []byte(wrangler), 0600); err != nil {
-		return "", err
-	}
-	if err := atomicWrite(filepath.Join(srcDir, "index.mjs"), []byte(cloudflareWorkerIndexMJS), 0600); err != nil {
-		return "", err
-	}
-	if err := atomicWrite(filepath.Join(dir, "README.md"), []byte(buildWorkerREADME(s.TunnelDomain)), 0600); err != nil {
-		return "", err
-	}
-	return dir, nil
-}
-
-func inferRootZone(tunnelDomain string) string {
-	parts := strings.Split(strings.TrimSpace(tunnelDomain), ".")
-	if len(parts) >= 2 {
-		return strings.Join(parts[len(parts)-2:], ".")
-	}
-	return "<your-root-zone>"
-}
-
-func buildWranglerTOML(tunnelDomain string) string {
-	routeComment := `# routes = [{ pattern = "*.example.com/*", zone_name = "example.com" }]`
-	if tunnelDomain != "" {
-		routeComment = fmt.Sprintf(`# routes = [{ pattern = "*.%s/*", zone_name = %q }]`, tunnelDomain, inferRootZone(tunnelDomain))
-	}
-	return fmt.Sprintf(`name = "devbase-tunnel"
-main = "src/index.mjs"
-compatibility_date = "2025-01-01"
-
-# Bind your wildcard subdomain in the Cloudflare Dashboard or uncomment below:
-%s
-
-[durable_objects]
-bindings = [
-  { name = "TUNNEL_GATEWAY", class_name = "TunnelGateway" }
-]
-
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["TunnelGateway"]
-`, routeComment)
-}
-
-func buildWorkerREADME(tunnelDomain string) string {
-	domainHint := "example.com"
-	if tunnelDomain != "" {
-		domainHint = tunnelDomain
-	}
-	return fmt.Sprintf(`# Devbase Cloudflare Tunnel Worker
-
-This Worker + Durable Object acts as a stateless edge gateway for Devbase.
-All routing rules live locally in Devbase; Cloudflare only stores TUNNEL_SECRET.
-
-## Setup
-
-Note: Cloudflare Free Universal SSL covers single-level wildcards (*.example.com).
-Multi-level wildcards (such as *.dev.example.com) require Total TLS / Advanced Certificate Manager.
-
-1. Deploy the Worker and Durable Object (with Wrangler or Cloudflare cf CLI):
-
-   npx wrangler deploy
-   # or: cf deploy
-
-2. Upload your shared secret from Devbase ("Copy secret"):
-
-   npx wrangler secret put TUNNEL_SECRET
-   # or: cf workers secrets update TUNNEL_SECRET --worker devbase-tunnel --type secret_text
-
-3. In Cloudflare DNS for your zone:
-   - Add a proxied wildcard DNS record: *.%s -> AAAA 100:: (or A 192.0.2.1)
-   - Add a Worker Route: *.%s/* -> devbase-tunnel
-`, domainHint, domainHint)
-}
-
 const cloudflareWorkerIndexMJS = `import { DurableObject } from "cloudflare:workers";
 
 const PROTO_VERSION = 1;
@@ -339,7 +241,7 @@ export class TunnelGateway extends DurableObject {
     }
 
     const host = url.hostname.toLowerCase();
-    const clientId = this.routes.get(host);
+    const clientId = this.routes.get(host) || this.routes.get("*");
     const agentWs = clientId ? this.agents.get(clientId) : null;
     if (!agentWs || agentWs.readyState !== WS_OPEN) {
       return new Response("Devbase tunnel offline for " + host, { status: 502 });

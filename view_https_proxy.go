@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 
 	"devbase/internal/devplatform"
 	"github.com/egoist/mygo/ui"
@@ -10,6 +12,40 @@ import (
 	"github.com/lobehub/lobe-mygo/pkg/display"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 )
+
+func cloudflareHostSuggestions(s devplatform.State, localDomain string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(host string) {
+		h := strings.ToLower(strings.TrimSpace(host))
+		if h == "" || strings.HasPrefix(h, "*.") || !strings.Contains(h, ".") || seen[h] {
+			return
+		}
+		seen[h] = true
+		out = append(out, h)
+	}
+	for _, rec := range s.CloudflareDNS {
+		add(rec.Name)
+	}
+	slug := strings.TrimPrefix(devplatform.DefaultTunnelWorkerName(localDomain), "devbase-")
+	for _, z := range s.CloudflareZones {
+		if slug != "" {
+			add(slug + "." + z.Name)
+		}
+		add(z.Name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func hasAnyTunnelRule(s devplatform.State) bool {
+	for _, r := range s.ProxyRules {
+		if r.Tunnel {
+			return true
+		}
+	}
+	return false
+}
 
 // devHTTPS is the single page of the HTTPS proxy: the saved table of
 // Domain → Local port rules with its listener, background proxy & Cloudflare
@@ -50,7 +86,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 
 	devCardWith(c, icoRoute, "Rules", "", func() {
 		if btn(c, "Add rule", icoPlus, btnText).Clicked() {
-			d.proxyDraft = append(d.proxyDraft, proxyRuleDraft{LocalPort: "3000"})
+			d.proxyDraft = append(d.proxyDraft, proxyRuleDraft{LocalPort: "3000", TunnelMode: tunnelModeWorkersDev})
 		}
 	}, func() {
 		removeRule := -1
@@ -89,34 +125,54 @@ func (a *app) devHTTPS(c *ui.Context) {
 					})
 				})
 				if row.Tunnel {
-					subPlaceholder := devplatform.DefaultTunnelSubdomain(row.Domain)
-					if subPlaceholder == "" {
-						subPlaceholder = "subdomain"
+					if row.TunnelMode == "" {
+						row.TunnelMode = tunnelModeWorkersDev
 					}
-					ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(0, 0, 0, 12).Children(func() {
+					ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Padding(0, 0, 0, 12).Children(func() {
 						ui.Icon(c, icoGlobe).FontSize(13).TextColor(tk.TextTertiary).Shrink(0)
-						mono(ui.TextInput(c, &row.TunnelSubdomain).Placeholder(subPlaceholder).Label(fmt.Sprintf("Tunnel prefix %d", i+1)).Width(160))
-						if d.state.TunnelDomain != "" {
-							mono(ui.Text(c, "."+d.state.TunnelDomain).FontSize(textSmall).TextColor(tk.TextTertiary).SingleLine().Grow(1).MinWidth(0))
-						} else {
-							ui.Text(c, "Set wildcard domain below").FontSize(textCaption).TextColor(tk.TextTertiary).SingleLine().Grow(1).MinWidth(0)
+						modes := []string{tunnelModeWorkersDev, tunnelModeCustomDomain}
+						if ui.Select(c, &row.TunnelMode, modes).Label(fmt.Sprintf("Tunnel mode %d", i+1)).Width(164).Changed() && row.TunnelMode == tunnelModeWorkersDev {
+							row.TunnelDomain = ""
 						}
-						if !dirty && d.state.TunnelDomain != "" {
-							publicHost := (devplatform.ProxyRule{Domain: row.Domain, Tunnel: true, TunnelSubdomain: row.TunnelSubdomain}).PublicHost(d.state.TunnelDomain)
-							if publicHost != "" {
-								publicURL := "https://" + publicHost
-								if iconButton(c, icoCopy, "Copy tunnel URL", tk.TextSecondary).Clicked() {
-									if a.copy != nil {
-										a.copy(publicURL)
-									}
-									d.output = "Copied " + publicURL
+						if row.TunnelMode == tunnelModeCustomDomain {
+							mono(ui.TextInput(c, &row.TunnelDomain).Placeholder("app.example.com").Label(fmt.Sprintf("Custom domain %d", i+1)).Width(210))
+							if suggestions := cloudflareHostSuggestions(d.state, row.Domain); len(suggestions) > 0 {
+								pick := "Existing DNS..."
+								opts := append([]string{pick}, suggestions...)
+								if ui.Select(c, &pick, opts).Label(fmt.Sprintf("DNS suggestion %d", i+1)).Width(164).Changed() && pick != "Existing DNS..." {
+									row.TunnelDomain = pick
 								}
-								if iconButton(c, icoLink, "Open tunnel URL", tk.TextSecondary).Clicked() {
-									a.devTask(func(m *devplatform.Manager) (string, error) {
-										_, err := m.Run(m.Context, "/usr/bin/open", publicURL)
-										return "Opened tunnel URL in browser.", err
-									})
+							}
+						}
+						previewRule := devplatform.ProxyRule{
+							Domain:       row.Domain,
+							Tunnel:       true,
+							TunnelWorker: row.TunnelWorker,
+							TunnelDomain: effectiveDraftTunnelDomain(*row),
+							TunnelURL:    row.TunnelURL,
+						}
+						previewURL := previewRule.PreviewTunnelURL(d.state.CloudflareSubdomain)
+						previewText := previewURL
+						if previewText == "" {
+							if worker := previewRule.ResolvedTunnelWorker(); worker != "" {
+								previewText = worker + " (.workers.dev)"
+							} else {
+								previewText = "Deploy to assign URL"
+							}
+						}
+						mono(ui.Text(c, previewText).FontSize(textSmall).TextColor(tk.TextTertiary).SingleLine().Grow(1).MinWidth(140))
+						if !dirty && previewURL != "" {
+							if iconButton(c, icoCopy, "Copy tunnel URL", tk.TextSecondary).Clicked() {
+								if a.copy != nil {
+									a.copy(previewURL)
 								}
+								d.output = "Copied " + previewURL
+							}
+							if iconButton(c, icoLink, "Open tunnel URL", tk.TextSecondary).Clicked() {
+								a.devTask(func(m *devplatform.Manager) (string, error) {
+									_, err := m.Run(m.Context, "/usr/bin/open", previewURL)
+									return "Opened tunnel URL in browser.", err
+								})
 							}
 						}
 					})
@@ -155,20 +211,33 @@ func (a *app) devHTTPS(c *ui.Context) {
 						break
 					}
 					rules = append(rules, devplatform.ProxyRule{
-						Domain:          row.Domain,
-						LocalPort:       port,
-						Tunnel:          row.Tunnel,
-						TunnelSubdomain: row.TunnelSubdomain,
+						Domain:       row.Domain,
+						LocalPort:    port,
+						Tunnel:       row.Tunnel,
+						TunnelWorker: row.TunnelWorker,
+						TunnelDomain: effectiveDraftTunnelDomain(row),
+						TunnelURL:    row.TunnelURL,
 					})
 				}
 				if err != nil {
 					d.output = "Error: Enter valid numeric ports"
 				} else {
 					revision := d.proxyDraftRevision
+					rulesSaved := false
 					a.devTaskThen(func(m *devplatform.Manager) (string, error) {
-						return "Saved HTTPS rules. Apply proxy or tunnel to activate changes.", m.ReplaceProxyRules(m.Context, revision, listener, rules)
+						if err := m.ReplaceProxyRules(m.Context, revision, listener, rules); err != nil {
+							return "", err
+						}
+						rulesSaved = true
+						if m.HasCloudflareToken() {
+							if err := m.SyncTunnels(m.Context); err != nil {
+								return "", fmt.Errorf("saved HTTPS rules; Cloudflare sync failed: %w", err)
+							}
+							return "Saved HTTPS rules and synced Cloudflare Workers.", nil
+						}
+						return "Saved HTTPS rules.", nil
 					}, func(err error) {
-						if err == nil {
+						if err == nil || rulesSaved {
 							a.dev.loadProxyDraft(a.dev.state)
 						}
 					})
@@ -234,6 +303,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 		})
 	})
 
+	hasTunnelRules := hasAnyTunnelRule(d.state)
 	tunnelStatus := d.statuses["tunnel"]
 	if tunnelStatus == "" {
 		tunnelStatus = "Stopped"
@@ -244,7 +314,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 		tunnelNote = detail
 	}
 	devCardWith(c, icoGlobe, "Cloudflare tunnel", tunnelNote, func() {
-		if choice.Switch(c, &tunnelOn, choice.SwitchProps{Size: theme.Small}).Label("Cloudflare tunnel service").Disabled(d.busy || tunnelDirty || (d.state.TunnelDomain == "" && d.state.TunnelEndpoint == "" && !tunnelOn)).Tooltip("Start or stop the background Cloudflare tunnel launchd service").Changed() {
+		if choice.Switch(c, &tunnelOn, choice.SwitchProps{Size: theme.Small}).Label("Cloudflare tunnel service").Disabled(d.busy || tunnelDirty || (!hasTunnelRules && !tunnelOn)).Tooltip("Start or stop the background Cloudflare tunnel launchd service").Changed() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				if tunnelOn {
 					return "Cloudflare tunnel started.", m.ApplyTunnel(m.Context)
@@ -254,15 +324,28 @@ func (a *app) devHTTPS(c *ui.Context) {
 		}
 	}, func() {
 		devFieldGrid(c, func() {
-			devField(c, "Wildcard domain", &d.tunnelDomain, "example.com")
-			devField(c, "Client ID", &d.tunnelClientID, "mac-auto")
-			devField(c, "Worker URL", &d.tunnelEndpoint, "https://devbase-gateway.example.com")
-			secretPlaceholder := "Paste or generate (16+ chars)"
-			if d.statuses["tunnel:secret"] == "Configured" {
-				secretPlaceholder = "Saved (paste to replace)"
+			tokenPlaceholder := "Paste Cloudflare API token"
+			if d.statuses["tunnel:token"] == "Configured" {
+				tokenPlaceholder = "Saved (paste to replace)"
 			}
-			devField(c, "Tunnel secret", &d.tunnelSecretDraft, secretPlaceholder)
+			devField(c, "Cloudflare API token", &d.cloudflareTokenDraft, tokenPlaceholder)
+			devField(c, "Account ID", &d.cloudflareAccountID, "Auto-detected")
+			devField(c, "Client ID", &d.tunnelClientID, "mac-auto")
 		})
+		if d.state.CloudflareSubdomain != "" || len(d.state.CloudflareZones) > 0 {
+			var info []string
+			if d.state.CloudflareSubdomain != "" {
+				info = append(info, "*."+d.state.CloudflareSubdomain+".workers.dev")
+			}
+			if len(d.state.CloudflareZones) > 0 {
+				names := make([]string, 0, len(d.state.CloudflareZones))
+				for _, z := range d.state.CloudflareZones {
+					names = append(names, z.Name)
+				}
+				info = append(info, "Zones: "+strings.Join(names, ", "))
+			}
+			mono(ui.Text(c, strings.Join(info, " · ")).FontSize(textCaption).TextColor(tk.TextTertiary).SingleLine())
+		}
 		ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
 			if tunnelDirty {
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Grow(1).MinWidth(0).Children(func() {
@@ -275,10 +358,10 @@ func (a *app) devHTTPS(c *ui.Context) {
 			if btn(c, "Discard tunnel changes", icoUndo, btnDefault).Disabled(d.busy || !tunnelDirty).Clicked() {
 				d.loadTunnelDraft(d.state)
 			}
-			if btn(c, "Save tunnel settings", icoSave, btnPrimary).Disabled(d.busy || !tunnelDirty).Clicked() {
-				domain, clientID, endpoint, secret := d.tunnelDomain, d.tunnelClientID, d.tunnelEndpoint, d.tunnelSecretDraft
+			if btn(c, "Save Cloudflare settings", icoSave, btnPrimary).Disabled(d.busy || !tunnelDirty).Clicked() {
+				token, accountID, clientID := d.cloudflareTokenDraft, d.cloudflareAccountID, d.tunnelClientID
 				a.devTaskThen(func(m *devplatform.Manager) (string, error) {
-					return "Saved Cloudflare tunnel settings.", m.SaveTunnelSettings(m.Context, domain, clientID, endpoint, secret)
+					return "Saved Cloudflare settings.", m.SaveCloudflareSettings(m.Context, token, accountID, clientID)
 				}, func(err error) {
 					if err == nil {
 						a.dev.loadTunnelDraft(a.dev.state)
@@ -287,37 +370,28 @@ func (a *app) devHTTPS(c *ui.Context) {
 			}
 		})
 		devButtonRow(c, func() {
-			if btn(c, "Apply tunnel", icoPlay, btnDefault).Disabled(d.busy || dirty || tunnelDirty || (d.state.TunnelDomain == "" && d.state.TunnelEndpoint == "")).Clicked() {
-				a.devTask(func(m *devplatform.Manager) (string, error) {
-					return "Cloudflare tunnel routes published.", m.ApplyTunnel(m.Context)
+			if btn(c, "Deploy Workers", icoGlobe, btnDefault).Disabled(d.busy || dirty || tunnelDirty || !hasTunnelRules || d.statuses["tunnel:token"] != "Configured").Clicked() {
+				a.devTaskThen(func(m *devplatform.Manager) (string, error) {
+					return "Deployed Cloudflare Workers.", m.SyncTunnels(m.Context)
+				}, func(err error) {
+					if err == nil {
+						a.dev.loadProxyDraft(a.dev.state)
+						a.dev.loadTunnelDraft(a.dev.state)
+					}
 				})
 			}
-			if btn(c, "Restart tunnel", icoRotate, btnDefault).Disabled(d.busy || !tunnelOn).Clicked() {
+			if btn(c, "Refresh zones", icoRotate, btnDefault).Disabled(d.busy || tunnelDirty || d.statuses["tunnel:token"] != "Configured").Clicked() {
+				a.devTaskThen(func(m *devplatform.Manager) (string, error) {
+					return "Refreshed Cloudflare zones and DNS records.", m.RefreshCloudflareMetadata(m.Context)
+				}, func(err error) {
+					if err == nil {
+						a.dev.loadTunnelDraft(a.dev.state)
+					}
+				})
+			}
+			if btn(c, "Restart tunnel", icoPlay, btnDefault).Disabled(d.busy || !tunnelOn).Clicked() {
 				a.devTask(func(m *devplatform.Manager) (string, error) {
 					return "Restarted Cloudflare tunnel.", m.RestartTunnel(m.Context)
-				})
-			}
-			if btn(c, "Generate secret", icoKey, btnDefault).Disabled(d.busy).Clicked() {
-				a.devTask(func(m *devplatform.Manager) (string, error) {
-					return "Generated new tunnel secret. Copy it to wrangler secret put TUNNEL_SECRET.", m.GenerateTunnelSecret(m.Context)
-				})
-			}
-			if btn(c, "Copy secret", icoCopy, btnDefault).Disabled(d.busy || d.statuses["tunnel:secret"] != "Configured").Clicked() {
-				a.devTask(func(m *devplatform.Manager) (string, error) {
-					secret, err := m.ReadTunnelSecret()
-					if err == nil && a.copy != nil {
-						a.post(func() { a.copy(secret) })
-					}
-					return "Copied tunnel secret to clipboard.", err
-				})
-			}
-			if btn(c, "Export Worker", icoDownload, btnDefault).Disabled(d.busy).Clicked() {
-				a.devTask(func(m *devplatform.Manager) (string, error) {
-					dir, err := m.ExportTunnelWorker(m.Context)
-					if err == nil {
-						_, _ = m.Run(m.Context, "/usr/bin/open", dir)
-					}
-					return "Exported Cloudflare Worker template to " + dir, err
 				})
 			}
 		})

@@ -176,8 +176,10 @@ func (m *Manager) ApplyProxy(ctx context.Context) error {
 		if err := m.startProxy(ctx, s); err != nil {
 			return err
 		}
-		if (m.tunnelPublishedExists() || m.loaded(ctx, "tunnel")) && (s.TunnelDomain != "" || s.TunnelEndpoint != "") {
-			return m.writePublishedTunnelConfig(s)
+		if m.tunnelPublishedExists() || m.loaded(ctx, "tunnel") {
+			if err := m.writePublishedTunnelConfig(s); err != nil && m.loaded(ctx, "tunnel") {
+				return err
+			}
 		}
 		return nil
 	})

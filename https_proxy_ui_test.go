@@ -2,13 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/egoist/mygo/ui"
 	"image/png"
 	"devbase/internal/devplatform"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -91,45 +95,101 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 		}
 	})
 	t.Run("tunnel-controls", func(t *testing.T) {
+		var mu sync.Mutex
+		deployed := map[string]bool{}
+		cfSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/accounts":
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": []map[string]string{{"id": "acc-ui-123", "name": "Test"}}})
+			case r.Method == http.MethodGet && r.URL.Path == "/accounts/acc-ui-123/workers/subdomain":
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": map[string]string{"subdomain": "ui-test"}})
+			case r.Method == http.MethodGet && r.URL.Path == "/zones":
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": []map[string]string{{"id": "zone-1", "name": "example.com"}}})
+			case r.Method == http.MethodGet && r.URL.Path == "/zones/zone-1/dns_records":
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": []map[string]string{{"id": "rec-1", "name": "api.example.com", "type": "CNAME"}}})
+			case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/accounts/acc-ui-123/workers/services/"):
+				name := strings.TrimPrefix(r.URL.Path, "/accounts/acc-ui-123/workers/services/")
+				mu.Lock()
+				exists := deployed[name]
+				mu.Unlock()
+				if !exists {
+					w.WriteHeader(http.StatusNotFound)
+					_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "errors": []map[string]any{{"code": 10007, "message": "not found"}}})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": map[string]any{"default_environment": map[string]any{"script": map[string]string{"migration_tag": "v1"}}}})
+			case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/accounts/acc-ui-123/workers/scripts/") && !strings.HasSuffix(r.URL.Path, "/domains/records"):
+				name := strings.TrimPrefix(r.URL.Path, "/accounts/acc-ui-123/workers/scripts/")
+				mu.Lock()
+				deployed[name] = true
+				mu.Unlock()
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": map[string]any{}})
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/subdomain"):
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": map[string]any{"enabled": true}})
+			case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/domains/records"):
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": []any{}})
+			case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/accounts/acc-ui-123/workers/scripts/"):
+				name := strings.TrimPrefix(r.URL.Path, "/accounts/acc-ui-123/workers/scripts/")
+				mu.Lock()
+				delete(deployed, name)
+				mu.Unlock()
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": map[string]any{}})
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer cfSrv.Close()
+
 		h := newDevUIHarness(t)
+		origFactory := h.a.dev.managerFactory
+		h.a.dev.managerFactory = func() *devplatform.Manager {
+			m := origFactory()
+			m.CloudflareAPIBase = cfSrv.URL
+			return m
+		}
+
 		h.click("HTTPS")
-		h.fill("Wildcard domain", "dev.example.com")
+		h.fill("Cloudflare API token", "cf-token-ui-0123456789")
 		h.fill("Client ID", "mac-ui")
-		h.fill("Worker URL", "https://gw.dev.example.com")
-		h.click("Save tunnel settings")
+		h.click("Save Cloudflare settings")
+		if h.a.dev.statuses["tunnel:token"] != "Configured" {
+			t.Fatalf("token status not updated: %v output=%q", h.a.dev.statuses, h.a.dev.output)
+		}
 		state, err := devplatform.New(h.root).Read()
-		if err != nil || state.TunnelDomain != "dev.example.com" || state.TunnelClientID != "mac-ui" || state.TunnelEndpoint != "https://gw.dev.example.com" {
-			t.Fatalf("tunnel settings not saved: %+v err=%v output=%q", state, err, h.a.dev.output)
+		if err != nil || state.TunnelClientID != "mac-ui" {
+			t.Fatalf("Cloudflare settings not saved: %+v err=%v output=%q", state, err, h.a.dev.output)
 		}
-		h.click("Generate secret")
-		if h.a.dev.statuses["tunnel:secret"] != "Configured" {
-			t.Fatalf("secret status not updated: %v output=%q", h.a.dev.statuses, h.a.dev.output)
+
+		h.click("Refresh zones")
+		state, err = devplatform.New(h.root).Read()
+		if err != nil || state.CloudflareAccountID != "acc-ui-123" || state.CloudflareSubdomain != "ui-test" || len(state.CloudflareZones) != 1 {
+			t.Fatalf("Cloudflare metadata not refreshed: %+v err=%v output=%q", state, err, h.a.dev.output)
 		}
-		h.click("Copy secret")
-		secret, err := devplatform.New(h.root).ReadTunnelSecret()
-		if err != nil || len(h.copied) == 0 || h.copied[len(h.copied)-1] != secret || strings.Contains(h.a.dev.output, secret) {
-			t.Fatalf("copy secret failed or leaked secret in output: err=%v output=%q", err, h.a.dev.output)
-		}
-		h.click("Export Worker")
-		workerDir := filepath.Join(h.root, "cloudflare-worker")
-		if _, err := os.Stat(filepath.Join(workerDir, "src", "index.mjs")); err != nil {
-			t.Fatalf("worker template not exported: %v", err)
-		}
+
 		h.click("Add rule")
 		h.fill("Domain", "api.app.test")
 		h.fill("Local port", "3000")
 		h.click("Tunnel rule 1")
-		h.fill("Tunnel prefix 1", "api")
 		h.click("Save HTTPS rules")
 		state, err = devplatform.New(h.root).Read()
-		if err != nil || len(state.ProxyRules) != 1 || !state.ProxyRules[0].Tunnel || state.ProxyRules[0].TunnelSubdomain != "api" {
-			t.Fatalf("tunnel rule not saved: %+v err=%v output=%q", state.ProxyRules, err, h.a.dev.output)
+		if err != nil || len(state.ProxyRules) != 1 || !state.ProxyRules[0].Tunnel || state.ProxyRules[0].TunnelURL != "https://devbase-api-app.ui-test.workers.dev" {
+			t.Fatalf("tunnel rule not synced: %+v err=%v output=%q", state.ProxyRules, err, h.a.dev.output)
 		}
 		h.click("Copy tunnel URL")
-		if len(h.copied) == 0 || h.copied[len(h.copied)-1] != "https://api.dev.example.com" {
+		if len(h.copied) == 0 || h.copied[len(h.copied)-1] != "https://devbase-api-app.ui-test.workers.dev" {
 			t.Fatalf("wrong copied tunnel URL: %v", h.copied)
 		}
-		// Verify Cloudflare tunnel service switch renders and reports cleanly on mocked launchctl.
+
+		// Disabling tunnel and saving removes orphaned Worker cleanly.
+		h.click("Tunnel rule 1")
+		h.click("Save HTTPS rules")
+		mu.Lock()
+		stillDeployed := deployed["devbase-api-app"]
+		mu.Unlock()
+		if stillDeployed {
+			t.Fatalf("expected orphaned devbase-api-app worker to be deleted, output=%q", h.a.dev.output)
+		}
 		if _, ok := h.ui.Find("Cloudflare tunnel service"); !ok {
 			t.Fatal("Cloudflare tunnel service switch missing")
 		}
@@ -159,11 +219,14 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 			a.dev.tab = devTabHTTPS
 			a.dev.proxyDraftLoaded = true
 			a.dev.proxyListenerPort = "8443"
-			a.dev.proxyDraft = []proxyRuleDraft{{Domain: "a-very-long-but-valid-local-development-name.test", LocalPort: "12345", Tunnel: true, TunnelSubdomain: "long-app"}, {Domain: "another-long-local-development-name.test", LocalPort: "54321"}}
+			a.dev.proxyDraft = []proxyRuleDraft{
+				{Domain: "a-very-long-but-valid-local-development-name.test", LocalPort: "12345", Tunnel: true, TunnelMode: tunnelModeCustomDomain, TunnelDomain: "long-app.example.com"},
+				{Domain: "another-long-local-development-name.test", LocalPort: "54321", TunnelMode: tunnelModeWorkersDev},
+			}
 			tester := ui.NewTester(a.view, tc.width, tc.height)
 			tester.SetDark(tc.dark)
 			tester.Frame()
-			for _, label := range []string{"HTTPS proxy rules", "Domain", "Local port", "Save HTTPS rules", "Apply proxy", "HTTPS proxy service", "Cloudflare tunnel service", "Wildcard domain", "Export Worker"} {
+			for _, label := range []string{"HTTPS proxy rules", "Domain", "Local port", "Save HTTPS rules", "Apply proxy", "HTTPS proxy service", "Cloudflare tunnel service", "Cloudflare API token", "Save Cloudflare settings", "Deploy Workers", "Refresh zones"} {
 				if _, ok := tester.Find(label); !ok {
 					t.Fatalf("%dx%d %s missing", tc.width, tc.height, label)
 				}

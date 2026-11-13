@@ -29,6 +29,9 @@ func (m *Manager) Snapshot(ctx context.Context, s State) RuntimeSnapshot {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	out := RuntimeSnapshot{States: map[string]string{}}
+	if m.HasCloudflareToken() {
+		out.States["tunnel:token"] = "Configured"
+	}
 	if m.HasTunnelSecret() {
 		out.States["tunnel:secret"] = "Configured"
 	}
@@ -88,7 +91,7 @@ func (m *Manager) Snapshot(ctx context.Context, s State) RuntimeSnapshot {
 			break
 		}
 	}
-	observeTunnel := s.TunnelDomain != "" || s.TunnelEndpoint != "" || anyTunnelRule || tunnelJobError == nil
+	observeTunnel := m.HasCloudflareToken() || s.CloudflareAccountID != "" || len(s.TunnelWorkers) > 0 || anyTunnelRule || tunnelJobError == nil
 	if observeTunnel {
 		tasks = append(tasks, task{"tunnel", func(check context.Context) observation {
 			job, err := m.readJobState(check, "tunnel")
@@ -168,15 +171,21 @@ func (m *Manager) formatTunnelDetail() string {
 	case "Connected":
 		if len(st.Conflicts) > 0 {
 			if len(st.Conflicts) == 1 {
-				return "Conflict: 1 route"
+				return "Conflict: 1 worker"
 			}
-			return fmt.Sprintf("Conflict: %d routes", len(st.Conflicts))
+			return fmt.Sprintf("Conflict: %d workers", len(st.Conflicts))
+		}
+		if st.Total > 0 {
+			if st.Connected == 1 && st.Total == 1 {
+				return "Connected · 1 worker"
+			}
+			return fmt.Sprintf("Connected · %d/%d workers", st.Connected, st.Total)
 		}
 		if len(st.Accepted) == 1 {
-			return "Connected · 1 route"
+			return "Connected · 1 worker"
 		}
 		if len(st.Accepted) > 1 {
-			return fmt.Sprintf("Connected · %d routes", len(st.Accepted))
+			return fmt.Sprintf("Connected · %d workers", len(st.Accepted))
 		}
 		return "Connected"
 	case "AuthFailed":

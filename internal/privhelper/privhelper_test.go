@@ -560,3 +560,59 @@ func TestInstallFailsWhenHealthCheckTimesOut(t *testing.T) {
 		t.Fatalf("expected health check timeout failure, got %v", err)
 	}
 }
+
+func TestStagedBundleEnvelopeAvoidsDotAppSuffixAndPreservesVersion(t *testing.T) {
+	dir := t.TempDir()
+	appBundle := filepath.Join(dir, "Devbase.app")
+	appContents := filepath.Join(appBundle, "Contents")
+	appExe := filepath.Join(appContents, "MacOS", "Devbase")
+	if err := os.MkdirAll(filepath.Dir(appExe), 0755); err != nil {
+		t.Fatal(err)
+	}
+	plistBytes := []byte("<plist version=\"1.0\"><dict><key>CFBundleName</key><string>Devbase</string></dict></plist>\n")
+	exeBytes := []byte("devbase-binary-payload")
+	if err := os.WriteFile(filepath.Join(appContents, "Info.plist"), plistBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(appExe, exeBytes, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	gotBundle := appBundleForExecutable(appExe)
+	if gotBundle != appBundle {
+		t.Fatalf("appBundleForExecutable(%q) = %q, want %q", appExe, gotBundle, appBundle)
+	}
+	info := BinaryInfo{
+		Executable: appExe,
+		BundlePath: gotBundle,
+		Version:    computeArtifactVersion(appExe, gotBundle),
+		OwnerUID:   os.Geteuid(),
+	}
+
+	helperDir := filepath.Join(dir, "helper-root")
+	stagedExe := expectedStagedExecutable(helperDir, info)
+	if strings.Contains(stagedExe, ".app") {
+		t.Fatalf("staged helper executable path %q must not contain .app suffix", stagedExe)
+	}
+	wantStagedExe := filepath.Join(helperDir, "bundle", "Contents", "MacOS", "Devbase")
+	if stagedExe != wantStagedExe {
+		t.Fatalf("expectedStagedExecutable = %q, want %q", stagedExe, wantStagedExe)
+	}
+
+	stagedBundle := filepath.Join(helperDir, "bundle")
+	if err := os.MkdirAll(filepath.Dir(stagedExe), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stagedBundle, "Contents", "Info.plist"), plistBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stagedExe, exeBytes, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if gotStagedBundle := appBundleForExecutable(stagedExe); gotStagedBundle != stagedBundle {
+		t.Fatalf("staged appBundleForExecutable(%q) = %q, want %q", stagedExe, gotStagedBundle, stagedBundle)
+	}
+	if stagedVer := computeArtifactVersion(stagedExe, stagedBundle); stagedVer != info.Version {
+		t.Fatalf("staged artifact version = %q, want %q", stagedVer, info.Version)
+	}
+}

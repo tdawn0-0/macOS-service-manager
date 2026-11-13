@@ -52,7 +52,7 @@ func CurrentBinaryInfo() BinaryInfo {
 }
 
 func appBundleForExecutable(exe string) string {
-	// <Name>.app/Contents/MacOS/<binary>
+	// <Envelope>/Contents/MacOS/<binary> sealed with Contents/Info.plist
 	dir := filepath.Dir(exe)
 	if filepath.Base(dir) != "MacOS" {
 		return ""
@@ -61,11 +61,10 @@ func appBundleForExecutable(exe string) string {
 	if filepath.Base(contents) != "Contents" {
 		return ""
 	}
-	bundle := filepath.Dir(contents)
-	if !strings.HasSuffix(bundle, ".app") {
+	if _, err := os.Stat(filepath.Join(contents, "Info.plist")); err != nil {
 		return ""
 	}
-	return bundle
+	return filepath.Dir(contents)
 }
 
 func computeArtifactVersion(exe, bundle string) string {
@@ -334,9 +333,8 @@ func Require() (*Client, error) {
 
 func expectedStagedExecutable(helperDir string, info BinaryInfo) string {
 	if info.BundlePath != "" {
-		base := filepath.Base(info.BundlePath)
 		relExe := filepath.Base(info.Executable)
-		return filepath.Join(helperDir, base, "Contents", "MacOS", relExe)
+		return filepath.Join(helperDir, "bundle", "Contents", "MacOS", relExe)
 	}
 	return filepath.Join(helperDir, "devbase-helper")
 }
@@ -506,7 +504,7 @@ func installHelperScript(info BinaryInfo, helperDir, plistPath, sockPath, tmpPli
 		"/bin/mkdir -p " + system.ShellQuote(helperDir),
 	}
 	if info.BundlePath != "" {
-		destBundle := filepath.Join(helperDir, filepath.Base(info.BundlePath))
+		destBundle := filepath.Join(helperDir, "bundle")
 		lines = append(lines,
 			"/usr/bin/ditto --noqtn "+system.ShellQuote(info.BundlePath)+" "+system.ShellQuote(destBundle),
 			"/usr/bin/codesign --verify --deep --strict "+system.ShellQuote(destBundle),

@@ -18,8 +18,13 @@ func (m *Manager) bundleHelperExecutable(source, digest string) (string, bool, e
 	macos := filepath.Dir(source)
 	contents := filepath.Dir(macos)
 	bundle := filepath.Dir(contents)
-	if filepath.Base(macos) != "MacOS" || filepath.Base(contents) != "Contents" || !strings.EqualFold(filepath.Ext(bundle), ".app") {
+	if filepath.Base(macos) != "MacOS" || filepath.Base(contents) != "Contents" {
 		return "", false, nil
+	}
+	if !strings.EqualFold(filepath.Ext(bundle), ".app") {
+		if _, err := os.Stat(filepath.Join(contents, "Info.plist")); err != nil {
+			return "", false, nil
+		}
 	}
 	ctx, cancel := context.WithTimeout(m.Context, 30*time.Second)
 	defer cancel()
@@ -39,7 +44,7 @@ func (m *Manager) bundleHelperExecutable(source, digest string) (string, bool, e
 	if e := plainDeletionDirectory(parent); e != nil {
 		return "", true, e
 	}
-	dest := filepath.Join(parent, digest+".app")
+	dest := filepath.Join(parent, digest)
 	program := filepath.Join(dest, "Contents", "MacOS", filepath.Base(source))
 	if _, e := os.Lstat(dest); e == nil {
 		if !hasDigest(program, digest) {
@@ -57,7 +62,7 @@ func (m *Manager) bundleHelperExecutable(source, digest string) (string, bool, e
 		return "", true, e
 	}
 	defer os.RemoveAll(stage)
-	snapshot := filepath.Join(stage, "snapshot.app")
+	snapshot := filepath.Join(stage, "snapshot")
 	if _, e = m.Run(ctx, "/usr/bin/ditto", "--noqtn", bundle, snapshot); e != nil {
 		return "", true, fmt.Errorf("prepare signed helper bundle: %w", e)
 	}

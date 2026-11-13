@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sort"
@@ -96,9 +97,107 @@ listenerFields:
 	return results
 }
 
-// Port status comes from binding IPv4 loopback, never from a PID or lsof exit
-// code. Process names and endpoints are a bounded, read-only observation; full
-// command lines, environment and process-control operations are not requested.
+func isPermissionBindError(err error) bool {
+	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES)
+}
+
+func (m *Manager) bindLoopbackPort(port int) (io.Closer, error) {
+	if m != nil && m.listenLoopback != nil {
+		return m.listenLoopback(port)
+	}
+	return net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func (m *Manager) connectLoopbackPort(ctx context.Context, port int) (io.Closer, error) {
+	if m != nil && m.dialLoopback != nil {
+		return m.dialLoopback(ctx, port)
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	return (&net.Dialer{}).DialContext(probeCtx, "tcp4", fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+// parseNetstatListeners extracts LISTEN rows from macOS `netstat -anv -p tcp`
+// output for a target port so root-owned listeners hidden from unprivileged lsof
+// still report PID, process name, and endpoint.
+func parseNetstatListeners(output string, port int) []PortListener {
+	portText := strconv.Itoa(port)
+	seen := map[string]bool{}
+	var results []PortListener
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 11 {
+			continue
+		}
+		if fields[0] != "tcp4" && fields[0] != "tcp6" && fields[0] != "tcp46" {
+			continue
+		}
+		if fields[5] != "LISTEN" {
+			continue
+		}
+		localAddr := fields[3]
+		dot := strings.LastIndexByte(localAddr, '.')
+		if dot <= 0 || localAddr[dot+1:] != portText {
+			continue
+		}
+		host := localAddr[:dot]
+		addr := host + ":" + portText
+		if strings.Contains(host, ":") {
+			addr = "[" + host + "]:" + portText
+		}
+		pid := 0
+		var rawName string
+		for idx := len(fields) - 1; idx >= 10; idx-- {
+			colon := strings.LastIndexByte(fields[idx], ':')
+			if colon < 0 {
+				continue
+			}
+			parsedPID, err := strconv.Atoi(fields[idx][colon+1:])
+			if err != nil || parsedPID < 1 {
+				continue
+			}
+			pid = parsedPID
+			var nameParts []string
+			if idx > 10 {
+				nameParts = append(nameParts, fields[10:idx]...)
+			}
+			if prefix := fields[idx][:colon]; prefix != "" {
+				nameParts = append(nameParts, prefix)
+			}
+			rawName = strings.Join(nameParts, " ")
+			break
+		}
+		if pid < 1 {
+			continue
+		}
+		name := visiblePortText(rawName)
+		if name == "" {
+			name = "unknown"
+		}
+		key := strconv.Itoa(pid) + ":" + addr
+		if seen[key] {
+			continue
+		}
+		results = append(results, PortListener{PID: pid, UID: -1, Name: name, Address: addr})
+		seen[key] = true
+		if len(results) >= 65 {
+			break
+		}
+	}
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].PID != results[j].PID {
+			return results[i].PID < results[j].PID
+		}
+		return results[i].Address < results[j].Address
+	})
+	return results
+}
+
+// Port status comes from binding IPv4 loopback (or probing loopback connect for
+// privileged ports < 1024 when bind fails with permission denied), never from a
+// PID or lsof exit code. Process names and endpoints are a bounded, read-only
+// observation; full command lines, environment and process-control operations
+// are not requested.
 func (m *Manager) InspectPort(ctx context.Context, port int) (PortInspection, error) {
 	r := PortInspection{Port: port, CheckedAt: time.Now().UTC(), Status: "Unknown"}
 	if port < 1 || port > 65535 {
@@ -107,12 +206,33 @@ func (m *Manager) InspectPort(ctx context.Context, port int) (PortInspection, er
 	if err := ctx.Err(); err != nil {
 		return r, err
 	}
-	l, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
+	l, err := m.bindLoopbackPort(port)
 	if err == nil {
 		_ = l.Close()
 		r.Status = "Available"
 		r.Detail = "IPv4 loopback was available at this check. Saving a suggestion does not reserve it."
 		return r, nil
+	}
+	if isPermissionBindError(err) {
+		conn, dialErr := m.connectLoopbackPort(ctx, port)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			if conn != nil {
+				_ = conn.Close()
+			}
+			return r, ctxErr
+		}
+		switch {
+		case dialErr == nil:
+			_ = conn.Close()
+			err = syscall.EADDRINUSE
+		case errors.Is(dialErr, syscall.ECONNREFUSED):
+			r.Status = "Available"
+			r.Detail = "IPv4 loopback had no active listener. Privileged ports below 1024 use launchd authorization when applying the proxy."
+			return r, nil
+		default:
+			r.Detail = "Could not verify IPv4 loopback availability: " + dialErr.Error()
+			return r, nil
+		}
 	}
 	if !errors.Is(err, syscall.EADDRINUSE) {
 		r.Detail = "Could not test IPv4 loopback availability: " + err.Error()
@@ -127,10 +247,19 @@ func (m *Manager) InspectPort(ctx context.Context, port int) (PortInspection, er
 	}
 	if lookupErr == nil {
 		r.Listeners = parsePortListeners(output)
-		if len(r.Listeners) > 64 {
-			r.Listeners = r.Listeners[:64]
-			r.Truncated = true
+	}
+	if len(r.Listeners) == 0 {
+		netstatOut, netstatErr := m.Run(query, "/usr/sbin/netstat", "-anv", "-p", "tcp")
+		if err := ctx.Err(); err != nil {
+			return r, err
 		}
+		if netstatErr == nil {
+			r.Listeners = parseNetstatListeners(netstatOut, port)
+		}
+	}
+	if len(r.Listeners) > 64 {
+		r.Listeners = r.Listeners[:64]
+		r.Truncated = true
 	}
 	if len(r.Listeners) == 0 {
 		r.Detail = "IPv4 loopback is in use. Listener details were unavailable or the process changed during this check."
@@ -168,7 +297,7 @@ func (m *Manager) AvailableLocalPort(ctx context.Context) (int, error) {
 
 // Check only newly requested ports, keeping an existing app listener intact.
 // launchd can bind privileged ports even when this process lacks that privilege.
-func preflightProxyPorts(sites, old []proxyRoute, loaded bool) error {
+func (m *Manager) preflightProxyPorts(ctx context.Context, sites, old []proxyRoute, loaded bool) error {
 	before := map[int]bool{}
 	for _, site := range old {
 		before[site.Port] = true
@@ -177,12 +306,20 @@ func preflightProxyPorts(sites, old []proxyRoute, loaded bool) error {
 		if loaded && before[port] {
 			continue
 		}
-		l, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
+		l, err := m.bindLoopbackPort(port)
 		if err == nil {
 			_ = l.Close()
 			continue
 		}
-		if port < 1024 && (errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES)) {
+		if port < 1024 && isPermissionBindError(err) {
+			conn, dialErr := m.connectLoopbackPort(ctx, port)
+			if dialErr == nil {
+				_ = conn.Close()
+				return &PortUnavailableError{Port: port, Role: "HTTPS", Err: syscall.EADDRINUSE}
+			}
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
 			continue
 		}
 		return &PortUnavailableError{Port: port, Role: "HTTPS", Err: err}

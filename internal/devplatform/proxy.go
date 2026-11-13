@@ -106,7 +106,7 @@ func (m *Manager) startProxy(ctx context.Context, s *State) error {
 		return m.startSocketProxy(ctx, sites, old)
 	}
 	loaded := m.loaded(ctx, "proxy")
-	if e := preflightProxyPorts(sites, old, loaded || m.socketLoaded(ctx)); e != nil {
+	if e := m.preflightProxyPorts(ctx, sites, old, loaded || m.socketLoaded(ctx)); e != nil {
 		return e
 	}
 	if e := m.stopSocketJob(ctx); e != nil {

@@ -127,7 +127,7 @@ func (m *Manager) stopProxy(ctx context.Context) error {
 }
 func (m *Manager) startSocketProxy(ctx context.Context, sites, old []proxyRoute) (err error) {
 	userWasLoaded, systemWasLoaded := m.loaded(ctx, "proxy"), m.socketLoaded(ctx)
-	if err = preflightProxyPorts(sites, old, userWasLoaded || systemWasLoaded); err != nil {
+	if err = m.preflightProxyPorts(ctx, sites, old, userWasLoaded || systemWasLoaded); err != nil {
 		return err
 	}
 	oldJob, _ := os.ReadFile(m.socketJobPath())

@@ -165,7 +165,9 @@ type Manager struct {
 	tunnelTLSConfig    *tls.Config   // Test override for mock TLS tunnel gateway servers.
 	tunnelReadTimeout  time.Duration // Test override for tunnel keepalive timeout.
 	tunnelPingInterval time.Duration // Test override for tunnel keepalive ping interval.
-	CloudflareAPIBase  string        // Override for Cloudflare v4 API base URL (tests).
+	CloudflareAPIBase  string                                       // Override for Cloudflare v4 API base URL (tests).
+	listenLoopback     func(int) (io.Closer, error)                 // Test override of IPv4 loopback bind probe.
+	dialLoopback       func(context.Context, int) (io.Closer, error) // Test override of IPv4 loopback connect probe.
 	initialization *initializationContext
 	databaseWork   *databaseWorkContext
 	operation      *operationWriter

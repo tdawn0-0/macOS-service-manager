@@ -3,12 +3,14 @@ package devplatform
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"devbase/internal/system"
@@ -134,5 +136,130 @@ func TestSuggestedPortIsAvailableWithoutChangingStoredState(t *testing.T) {
 	after, _ := os.ReadFile(filepath.Join(m.Root, "state.json"))
 	if string(after) != string(before) {
 		t.Fatal("suggesting a port rewrote settings")
+	}
+}
+
+func TestInspectPrivilegedPortAvailableAndOccupiedViaConnectProbe(t *testing.T) {
+	m := testManager(t)
+	m.listenLoopback = func(port int) (io.Closer, error) {
+		if port != 443 {
+			t.Fatalf("unexpected port %d", port)
+		}
+		return nil, os.ErrPermission
+	}
+
+	t.Run("free", func(t *testing.T) {
+		m.dialLoopback = func(context.Context, int) (io.Closer, error) {
+			return nil, syscall.ECONNREFUSED
+		}
+		m.Run = func(context.Context, string, ...string) (string, error) {
+			t.Fatal("available privileged port should not run listener lookups")
+			return "", nil
+		}
+		r, err := m.InspectPort(context.Background(), 443)
+		if err != nil || r.Status != "Available" || len(r.Listeners) != 0 {
+			t.Fatalf("expected available port 443, got %+v err=%v", r, err)
+		}
+	})
+
+	t.Run("occupied-by-root-daemon", func(t *testing.T) {
+		m.dialLoopback = func(context.Context, int) (io.Closer, error) {
+			client, server := net.Pipe()
+			_ = server.Close()
+			return client, nil
+		}
+		var calls []string
+		m.Run = func(_ context.Context, name string, args ...string) (string, error) {
+			calls = append(calls, name)
+			switch name {
+			case "/usr/sbin/lsof":
+				return "", errors.New("exit status 1")
+			case "/usr/sbin/netstat":
+				return strings.Join([]string{
+					"Active Internet connections (including servers)",
+					"Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)          rxbytes      txbytes  rhiwat  shiwat          process:pid    state  options           gencnt    flags   flags1 usecnt rtncnt fltrs",
+					"tcp4       0      0  127.0.0.1.443          *.*                    LISTEN                 0            0  131072  131072          launchd:1      00180 00000006 0000000000000ddc 00000000 00000800      1      0 000000",
+					"tcp4       0      0  *.443                  *.*                    LISTEN                 0            0  131072  131072 Google Chrome fo:94161  00100 00000006 0000000000686ff8 00000000 00000800      1      0 000000",
+					"tcp4       0      0  127.0.0.1.8443         *.*                    LISTEN                 0            0  131072  131072           caddy:777    00100 00000006 0000000000686ff9 00000000 00000800      1      0 000000",
+				}, "\n"), nil
+			default:
+				t.Fatalf("unexpected lookup command: %s %v", name, args)
+				return "", nil
+			}
+		}
+		r, err := m.InspectPort(context.Background(), 443)
+		if err != nil || r.Status != "In use" {
+			t.Fatalf("expected occupied port 443, got %+v err=%v", r, err)
+		}
+		if !reflect.DeepEqual(calls, []string{"/usr/sbin/lsof", "/usr/sbin/netstat"}) {
+			t.Fatalf("unexpected lookup sequence: %v", calls)
+		}
+		want := []PortListener{
+			{PID: 1, UID: -1, Name: "launchd", Address: "127.0.0.1:443"},
+			{PID: 94161, UID: -1, Name: "Google Chrome fo", Address: "*:443"},
+		}
+		if !reflect.DeepEqual(r.Listeners, want) {
+			t.Fatalf("got listeners %+v, want %+v", r.Listeners, want)
+		}
+	})
+
+	t.Run("probe-timeout-keeps-unknown", func(t *testing.T) {
+		m.dialLoopback = func(context.Context, int) (io.Closer, error) {
+			return nil, context.DeadlineExceeded
+		}
+		m.Run = func(context.Context, string, ...string) (string, error) {
+			t.Fatal("timed-out probe should not run listener lookups")
+			return "", nil
+		}
+		r, err := m.InspectPort(context.Background(), 443)
+		if err != nil || r.Status != "Unknown" {
+			t.Fatalf("expected unknown port 443 on probe timeout, got %+v err=%v", r, err)
+		}
+	})
+}
+
+func TestPrivilegedSocketProxyPreflightDetectsOccupiedPortBeforeAuthorizing(t *testing.T) {
+	m := testManager(t)
+	m.listenLoopback = func(int) (io.Closer, error) {
+		return nil, syscall.EACCES
+	}
+	oldAdmin := system.RunAdmin
+	t.Cleanup(func() { system.RunAdmin = oldAdmin })
+	system.RunAdmin = func(string, ...string) (string, error) {
+		t.Fatal("conflict requested administrator authorization")
+		return "", nil
+	}
+	m.Run = func(_ context.Context, name string, args ...string) (string, error) {
+		if filepath.Base(name) == "launchctl" && len(args) > 0 && args[0] == "print" {
+			return "", errors.New("Could not find service")
+		}
+		t.Fatal("conflict modified a process", name, args)
+		return "", nil
+	}
+	before := []byte("last-good-routes")
+	path := filepath.Join(m.Root, "proxy", "rules.json")
+	if err := os.WriteFile(path, before, 0600); err != nil {
+		t.Fatal(err)
+	}
+	m.dialLoopback = func(context.Context, int) (io.Closer, error) {
+		client, server := net.Pipe()
+		_ = server.Close()
+		return client, nil
+	}
+	err := m.startSocketProxy(context.Background(), []proxyRoute{{Domain: "conflict.test", LocalPort: 3000, Port: 443}}, nil)
+	var conflict *PortUnavailableError
+	if !errors.As(err, &conflict) || conflict.Port != 443 {
+		t.Fatalf("expected PortUnavailableError for 443, got %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("preflight damaged prior routing: %v", err)
+	}
+
+	m.dialLoopback = func(context.Context, int) (io.Closer, error) {
+		return nil, syscall.ECONNREFUSED
+	}
+	if err := m.preflightProxyPorts(context.Background(), []proxyRoute{{Domain: "ok.test", LocalPort: 3000, Port: 443}}, nil, false); err != nil {
+		t.Fatalf("expected free privileged port preflight to pass, got %v", err)
 	}
 }

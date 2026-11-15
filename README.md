@@ -18,7 +18,7 @@ The menu bar shows managed database instances and one HTTPS proxy status. Closin
 
 ## Installation and permissions
 
-Requires an Apple Silicon Mac. App release artifacts and system requirements are described by the build workflow; this source checkout is not itself an installed release. The app asks for administrator authorization only when a privileged proxy listener, local hosts mapping, CA trust, or system service change needs it. Deleting a database instance has a separate data review and confirmation. No product operation should remove an unrelated application process or shared Homebrew keg.
+Requires an Apple Silicon Mac. App release artifacts and system requirements are described by the build workflow; this source checkout is not itself an installed release. The app asks for administrator authorization only when a privileged proxy listener, local hosts mapping, CA trust, or system service change needs it. Deleting a database instance has a separate data review and confirmation. No product operation should remove an unrelated application process or shared Homebrew keg. An optional privileged helper can be installed from Settings to avoid repeated password prompts. The helper only accepts requests from the Devbase build it was installed from, running as the installing user.
 
 ## Source and verification
 

@@ -8,12 +8,15 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ebitengine/purego"
 )
 
 func shortSocketDir(t *testing.T) string {
@@ -614,5 +617,131 @@ func TestStagedBundleEnvelopeAvoidsDotAppSuffixAndPreservesVersion(t *testing.T)
 	}
 	if stagedVer := computeArtifactVersion(stagedExe, stagedBundle); stagedVer != info.Version {
 		t.Fatalf("staged artifact version = %q, want %q", stagedVer, info.Version)
+	}
+}
+
+// pidSatisfiesSelf is a test-only check that the process with pid runs code
+// satisfying this process's designated requirement.
+func pidSatisfiesSelf(pid int) error {
+	if err := initSecurity(); err != nil {
+		return err
+	}
+	req, err := selfRequirement()
+	if err != nil {
+		return err
+	}
+	var cfNumberCreate func(alloc uintptr, typ int, val *int32) uintptr
+	sec, err := purego.Dlopen("/System/Library/Frameworks/Security.framework/Security", purego.RTLD_LAZY)
+	if err != nil {
+		return err
+	}
+	cf, err := purego.Dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", purego.RTLD_LAZY)
+	if err != nil {
+		return err
+	}
+	purego.RegisterLibFunc(&cfNumberCreate, cf, "CFNumberCreate")
+	sym, err := purego.Dlsym(sec, "kSecGuestAttributePid")
+	if err != nil {
+		return err
+	}
+	key := derefSymbol(sym)
+	p := int32(pid)
+	num := cfNumberCreate(0, 3, &p) // kCFNumberSInt32Type
+	if num == 0 {
+		return errors.New("CFNumberCreate failed")
+	}
+	defer cfRelease(num)
+	return codeSatisfies(key, num, req)
+}
+
+func TestCodeRequirementAcceptsSelfAndRejectsOtherCode(t *testing.T) {
+	if err := pidSatisfiesSelf(os.Getpid()); err != nil {
+		t.Fatalf("own pid should satisfy own requirement: %v", err)
+	}
+	cmd := exec.Command("/bin/sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	if err := pidSatisfiesSelf(cmd.Process.Pid); err == nil {
+		t.Fatal("/bin/sleep must not satisfy the test binary's requirement")
+	}
+}
+
+func TestPeerAuditTokenIdentifiesSelf(t *testing.T) {
+	sock := filepath.Join(shortSocketDir(t), "p.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, _ := ln.Accept()
+		accepted <- c
+	}()
+	dialed, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dialed.Close()
+	conn := <-accepted
+	if conn == nil {
+		t.Fatal("accept failed")
+	}
+	defer conn.Close()
+	if err := peerRunsHelperCode(conn); err != nil {
+		t.Fatalf("peerRunsHelperCode: %v", err)
+	}
+}
+
+func TestPeerCodeAuthorizationRejectsForeignCode(t *testing.T) {
+	hostsFile := filepath.Join(t.TempDir(), "hosts")
+	orig := []byte("127.0.0.1 localhost\n")
+	if err := os.WriteFile(hostsFile, orig, 0644); err != nil {
+		t.Fatal(err)
+	}
+	client, _, _ := startTestHelper(t, ServerConfig{
+		PeerAuthorized: func(net.Conn) error { return errors.New("foreign") },
+		HostsPath:      hostsFile,
+	})
+	_, err := client.Ping(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "update the helper in Settings") {
+		t.Fatalf("expected peer code rejection, got %v", err)
+	}
+	err = client.SyncHosts(context.Background(), HostsSyncRequest{
+		ExpectedOld: string(orig),
+		NewContent:  string(orig) + "127.0.0.1 evil.test\n",
+	})
+	if err == nil {
+		t.Fatal("SyncHosts must fail for foreign code")
+	}
+	got, rerr := os.ReadFile(hostsFile)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(got) != string(orig) {
+		t.Fatalf("hosts file changed: %q", got)
+	}
+}
+
+func TestPeerCodeAuthorizationRunsAfterUIDCheck(t *testing.T) {
+	client, _, _ := startTestHelper(t, ServerConfig{
+		OwnerUID:       os.Geteuid() + 1,
+		PeerAuthorized: func(net.Conn) error { t.Error("must not be reached"); return nil },
+	})
+	_, err := client.Ping(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "not authorized") {
+		t.Fatalf("expected peer uid rejection, got %v", err)
+	}
+}
+
+func TestDefaultPeerAuthorizationAcceptsSameBinary(t *testing.T) {
+	client, _, _ := startTestHelper(t, ServerConfig{})
+	if _, err := client.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping with default authorization: %v", err)
 	}
 }

@@ -41,7 +41,10 @@ type ServerConfig struct {
 	SocketJobDirs      []string
 	Run                func(ctx context.Context, name string, args ...string) ([]byte, error)
 	PeerUID            func(net.Conn) (int, error)
-	Chown              func(path string, uid, gid int) error
+	// PeerAuthorized reports whether the peer runs code satisfying this
+	// helper's designated requirement. Defaults to peerRunsHelperCode.
+	PeerAuthorized func(net.Conn) error
+	Chown          func(path string, uid, gid int) error
 }
 
 // Server serves privileged operations over a Unix domain socket for OwnerUID.
@@ -71,6 +74,9 @@ func NewServer(cfg ServerConfig) *Server {
 	}
 	if cfg.PeerUID == nil {
 		cfg.PeerUID = peerEffectiveUID
+	}
+	if cfg.PeerAuthorized == nil {
+		cfg.PeerAuthorized = peerRunsHelperCode
 	}
 	if cfg.Chown == nil {
 		cfg.Chown = os.Lchown
@@ -197,6 +203,11 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		}
 		if s.cfg.OwnerUID <= 0 || uid != s.cfg.OwnerUID {
 			writeError(w, http.StatusForbidden, fmt.Sprintf("peer uid %d is not authorized", uid))
+			return
+		}
+		if err := s.cfg.PeerAuthorized(conn); err != nil {
+			fmt.Fprintln(os.Stderr, "privhelper: peer code check failed:", err)
+			writeError(w, http.StatusForbidden, "peer is not the Devbase build this helper was installed from; update the helper in Settings")
 			return
 		}
 		next.ServeHTTP(w, r)

@@ -12,6 +12,41 @@ import (
 	"time"
 )
 
+// archiveRelease is one exact, verified upstream archive.
+type archiveRelease struct{ version, url, sha256 string }
+
+// Newest first: the first entry is the default the UI offers.
+var mysqlReleases = []archiveRelease{
+	{"8.4.13", "https://dev.mysql.com/get/Downloads/MySQL-8.4/mysql-8.4.13-macos15-arm64.tar.gz", "f324f8950e24d4147470bbc6a6ef0b90ef93b91d3fc74154b3d2ba085b44912a"},
+	{"8.4.4", "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.4-macos15-arm64.tar.gz", "a23a5beada1404a609ee8f2a7b14f2869444fe05b5731f94a3d2215d4f6c41b5"},
+}
+
+var mongodbReleases = []archiveRelease{
+	{"8.0.38", "https://fastdl.mongodb.org/osx/mongodb-macos-arm64-8.0.38.tgz", "5c372533187a7789b6b2f4d7856f0651557dfbed572dbe5f4c23f43578fc74df"},
+	{"8.0.5", "https://fastdl.mongodb.org/osx/mongodb-macos-arm64-8.0.5.tgz", "71e2510f0455ff24e1961aa0507eb0660b300c84f6da9899052be409090fb990"},
+}
+
+func findRelease(releases []archiveRelease, version string) (archiveRelease, bool) {
+	for _, r := range releases {
+		if r.version == version {
+			return r, true
+		}
+	}
+	return archiveRelease{}, false
+}
+
+func releaseVersionList(releases []archiveRelease) []string {
+	out := make([]string, 0, len(releases))
+	for _, r := range releases {
+		out = append(out, r.version)
+	}
+	return out
+}
+
+func releaseVersions(releases []archiveRelease) string {
+	return strings.Join(releaseVersionList(releases), ", ")
+}
+
 func fetch(ctx context.Context, address string, v any) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -47,12 +82,12 @@ func Resolve(ctx context.Context, name, version string) (Package, error) {
 	case "java":
 		return resolveJava(ctx, version)
 	case "mysql":
-		if p.Version != "8.4.4" {
-			return p, errors.New("supported MySQL version: 8.4.4")
+		r, ok := findRelease(mysqlReleases, p.Version)
+		if !ok {
+			return p, errors.New("supported MySQL versions: " + releaseVersions(mysqlReleases))
 		}
-		assetArch := "arm64"
-		p.SHA256 = "a23a5beada1404a609ee8f2a7b14f2869444fe05b5731f94a3d2215d4f6c41b5"
-		p.URL = "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.4-macos15-" + assetArch + ".tar.gz"
+		p.SHA256 = r.sha256
+		p.URL = r.url
 		p.MinMacOS = "15.0"
 		p.License = "GPL-2.0 and bundled component licenses"
 		p.Binaries = map[string]string{"mysqld": "bin/mysqld", "mysql": "bin/mysql", "mysqldump": "bin/mysqldump"}
@@ -74,12 +109,12 @@ func Resolve(ctx context.Context, name, version string) (Package, error) {
 		p.Binaries = map[string]string{"redis-server": "bin/redis-server", "redis-cli": "bin/redis-cli"}
 		return p, p.Validate()
 	case "mongodb":
-		if p.Version != "8.0.5" {
-			return p, errors.New("supported MongoDB version: 8.0.5")
+		r, ok := findRelease(mongodbReleases, p.Version)
+		if !ok {
+			return p, errors.New("supported MongoDB versions: " + releaseVersions(mongodbReleases))
 		}
-		assetArch := "arm64"
-		p.SHA256 = "71e2510f0455ff24e1961aa0507eb0660b300c84f6da9899052be409090fb990"
-		p.URL = "https://fastdl.mongodb.org/osx/mongodb-macos-" + assetArch + "-8.0.5.tgz"
+		p.SHA256 = r.sha256
+		p.URL = r.url
 		p.MinMacOS = "13.0"
 		p.License = "SSPL-1.0"
 		p.Binaries = map[string]string{"mongod": "bin/mongod", "mongos": "bin/mongos"}
@@ -145,13 +180,13 @@ func AvailableVersions(name string) []string {
 	case "node":
 		return []string{"22.14.0", "20.19.0"}
 	case "mysql":
-		return []string{"8.4.4"}
+		return releaseVersionList(mysqlReleases)
 	case "postgresql":
 		return []string{"17", "18", "16"}
 	case "redis":
 		return []string{"7.4.7"}
 	case "mongodb":
-		return []string{"8.0.5"}
+		return releaseVersionList(mongodbReleases)
 	}
 	return nil
 }

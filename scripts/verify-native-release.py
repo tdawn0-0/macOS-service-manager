@@ -25,8 +25,8 @@ NATIVE = ('TestNativeResourceProduct',) + tuple('TestNativeResourceProduct/' + x
 REQUIRED = CORE + MATRIX + NATIVE
 SANDBOX = ('sandbox-exec', '-p', '(version 1)(allow default)(deny file-write* (subpath "/opt/homebrew"))')
 
-VERSIONS = (('node', '22.14.0'), ('node', '20.19.0'), ('mysql', '8.4.4'),
-            ('redis', '7.4.7'), ('mongodb', '8.0.5'), ('postgresql', '17'))
+VERSIONS = (('node', '22.14.0'), ('node', '20.19.0'), ('mysql', '8.4.13'),
+            ('redis', '7.4.7'), ('mongodb', '8.0.38'), ('postgresql', '17'))
 
 
 def check_events(lines, required=REQUIRED):

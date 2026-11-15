@@ -131,6 +131,7 @@ func (a *app) devDatabases(c *ui.Context) {
 	a.devDatabaseConnections(c, instance)
 	devCardWith(c, icoPlug, "Endpoint & storage", "", nil, func() {
 		devKV(c, "Version", d.state.Packages[instance.Package].Version)
+		a.devUpgradeControl(c, instance, status, busy)
 		devKV(c, "Data", a.devManager().DatabaseDataDirectory(instance))
 		a.devDatabasePort(c, instance)
 	})
@@ -362,4 +363,34 @@ func (a *app) backupRows(c *ui.Context, id string, busy bool) {
 			}
 		})
 	}
+}
+
+// devUpgradeControl offers the newest installed patch release of the same
+// series. It only asks: nothing changes until the dialog is confirmed.
+func (a *app) devUpgradeControl(c *ui.Context, instance devplatform.Instance, status string, busy bool) {
+	d := &a.dev
+	targets := devplatform.UpgradeTargets(d.state, instance)
+	if len(targets) == 0 {
+		return
+	}
+	target := targets[0]
+	version := d.state.Packages[target].Version
+	current := d.state.Packages[instance.Package].Version
+	running := status == "Running" || status == "Healthy"
+	devButtonRow(c, func() {
+		if btn(c, "Upgrade to "+version+"\u2026", nil, btnDefault).Tooltip("Stop this instance first. Only the server version changes; data, port and credentials are kept.").Disabled(busy || running).Clicked() {
+			id := instance.ID
+			a.ask = askState{
+				open:    true,
+				title:   "Upgrade " + id + " to " + softwareTitle(instance.Kind) + " " + version + "?",
+				message: "The instance will use the newer server the next time it starts. Its data is not copied or deleted, and no backup is taken: back up the databases you need before continuing. After the newer server has started, going back to " + current + " is not supported.",
+				button:  "Upgrade Instance",
+				run: func() {
+					a.devTask(func(m *devplatform.Manager) (string, error) {
+						return "Upgraded " + id + " to " + version + ". Start the instance to use it.", m.UpgradeInstancePackage(m.Context, instance, target)
+					})
+				},
+			}
+		}
+	})
 }

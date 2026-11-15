@@ -142,6 +142,11 @@ func (a *app) devInstalledPackage(c *ui.Context, id string, p devplatform.Packag
 			if p.Formula != "" {
 				devTag(c, "Homebrew", display.TagColor(""))
 			}
+			if p.Name == "mysql" || p.Name == "mongodb" || p.Name == "redis" {
+				if v := devplatform.NewerListedPatch(p.Version, devplatform.AvailableVersions(p.Name)); v != "" {
+					devTag(c, v+" available", display.TagColor(""))
+				}
+			}
 			if p.Name == "node" && id == d.state.NodeDefault {
 				display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
 			}

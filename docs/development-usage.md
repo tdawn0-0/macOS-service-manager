@@ -10,6 +10,8 @@ Install a checked version of Node.js, MySQL, PostgreSQL, Redis, or MongoDB. Revi
 
 Create an independent instance with an installed engine, instance name, and local port. Start, stop, restart, create a database or user when the engine supports it, and back up or restore data in the Databases entry. Redis uses database numbers 0–15. Before destructive data deletion, review the target path and typed confirmation. Connection profiles store a database, username, and engine-specific metadata, not a business password. Copy URI and Open client use the selected instance's current port. The administrator connection and password action remain separate from business profiles. Removing a profile does not remove a real database or user.
 
+Each instance's Backups card lists its backups with the database, date and size. Use for restore selects a backup, and restoring always creates a new database. Deleting a backup removes only that file and does not change any database.
+
 ## HTTPS
 
 Enter a `.test` Domain and a local HTTP port for each forwarding rule. The proxy forwards to `127.0.0.1` on that port. The incoming HTTPS listener port is global. Save validates and stores the entire table. Apply publishes the saved table; remove a row and Save/Apply to stop forwarding that domain. Configure local domains and Trust local CA are separate actions that may require macOS authorization. Stopping the proxy leaves the saved rules and external application process alone.

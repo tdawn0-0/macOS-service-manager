@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -163,10 +166,12 @@ func (a *app) devDatabases(c *ui.Context) {
 		}
 	})
 	devCardWith(c, icoArchive, "Backups", "", nil, func() {
+		a.loadBackups(instance.ID)
 		if btn(c, "Back up database", icoArchive, btnDefault).AlignSelf(ui.Start).Disabled(busy).Clicked() {
 			id, name := d.dbID, d.dbName
 			a.startDatabaseOperation(d.state.Instances[id], "backup", func(m *devplatform.Manager) (string, error) { return m.Backup(m.Context, id, name) })
 		}
+		a.backupRows(c, instance.ID, busy)
 		devDivider(c, "Restore")
 		devField(c, "Backup file", &d.backupPath, "Select a backup file")
 		devButtonRow(c, func() {
@@ -281,4 +286,80 @@ func devPackageChoice(c *ui.Context, label string, selected *string, ids []strin
 		return true
 	}
 	return false
+}
+
+// loadBackups reads the instance's backups folder in the background.
+func (a *app) loadBackups(id string) {
+	d := &a.dev
+	if a.post == nil || d.backupsLoading || d.backupsFor == id {
+		return
+	}
+	d.backupsLoading = true
+	m := a.devManager()
+	a.spawn(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		rows, e := m.Backups(ctx, id)
+		a.post(func() {
+			a.dev.backups, a.dev.backupsError = rows, ""
+			if e != nil {
+				a.dev.backupsError = "Backups could not be listed: " + e.Error()
+			}
+			a.dev.backupsFor = id
+			a.dev.backupsLoading = false
+		})
+	})
+}
+
+// reloadBackups marks the list stale so the next frame reads it again.
+func (a *app) reloadBackups() { a.dev.backupsFor = "" }
+
+func formatBackupSize(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f KiB", float64(n)/(1<<10))
+	}
+	return fmt.Sprintf("%d B", n)
+}
+
+// backupRows lists the instance's backups with their actions.
+func (a *app) backupRows(c *ui.Context, id string, busy bool) {
+	d := &a.dev
+	if d.backupsFor != id {
+		return
+	}
+	if d.backupsError != "" {
+		devHint(c, feedback.Warning, d.backupsError, "")
+		return
+	}
+	if len(d.backups) == 0 {
+		devSubtle(c, "No backups yet.")
+		return
+	}
+	for _, row := range d.backups {
+		row := row
+		when := row.Modified.Format("2006-01-02 15:04")
+		kc := c.Key("backup-" + row.Name)
+		ui.Row(kc).Gap(12).AlignItems(ui.Center).MinWidth(0).Children(func() {
+			devSubtle(kc, row.Database+" · "+when+" · "+formatBackupSize(row.Size)).Grow(1).MinWidth(0)
+			if btn(kc, "Use for restore", icoRestore, btnDefault).Clicked() {
+				d.backupPath = row.Path
+			}
+			if btn(kc, "Show in Finder", icoFolder, btnText).Disabled(a.reveal == nil).Clicked() {
+				a.reveal(row.Path)
+			}
+			if btn(kc, "Delete", icoTrash, btnDanger).Disabled(busy).Clicked() {
+				name := row.Name
+				a.ask = askState{open: true, title: "Delete this backup?", message: "Permanently deletes the backup of " + row.Database + " from " + when + ". The database itself is not changed.", button: "Delete Backup", run: func() {
+					a.devTaskThen(func(m *devplatform.Manager) (string, error) {
+						return "Deleted backup", m.DeleteBackup(m.Context, id, name)
+					}, func(error) { a.reloadBackups() })
+				}}
+			}
+		})
+	}
 }

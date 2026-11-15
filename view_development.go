@@ -101,6 +101,9 @@ type developmentState struct {
 	profileSelected, profileDraftInstance, profilePendingInstance, profilePendingSelect, profileRedisDB string
 	profileOffer                                                                                        *connectionOperationOffer
 	persistent                                                                                          bool
+	backups                                                                                             []devplatform.BackupFile
+	backupsFor, backupsError                                                                            string
+	backupsLoading                                                                                      bool
 	proxyDraft                                                                                          []proxyRuleDraft
 	proxyListenerPort                                                                                   string
 	proxyDraftRevision                                                                                  uint64

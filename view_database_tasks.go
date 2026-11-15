@@ -159,6 +159,7 @@ func (a *app) startDatabaseOperationWithOffer(i devplatform.Instance, kind strin
 				task.Result = label + " did not complete.\nError: " + err.Error()
 			}
 			a.dev.databaseNeedsRefresh = true
+			a.reloadBackups()
 			a.dev.lastDatabaseTask = task
 			a.refreshFinishedPackages()
 		})

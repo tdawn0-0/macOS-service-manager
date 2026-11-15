@@ -5,8 +5,6 @@ package privhelper
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,13 +26,12 @@ import (
 
 // BinaryInfo identifies the Devbase artifact that the helper expects to match.
 type BinaryInfo struct {
-	Version    string
 	Executable string
 	BundlePath string
 	OwnerUID   int
 }
 
-// CurrentBinaryInfo returns the version and artifact identity for the running Devbase process.
+// CurrentBinaryInfo returns the artifact identity for the running Devbase process.
 func CurrentBinaryInfo() BinaryInfo {
 	exe, _ := os.Executable()
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil && resolved != "" {
@@ -47,7 +44,6 @@ func CurrentBinaryInfo() BinaryInfo {
 	if bundle := appBundleForExecutable(exe); bundle != "" {
 		info.BundlePath = bundle
 	}
-	info.Version = computeArtifactVersion(info.Executable, info.BundlePath)
 	return info
 }
 
@@ -65,28 +61,6 @@ func appBundleForExecutable(exe string) string {
 		return ""
 	}
 	return filepath.Dir(contents)
-}
-
-func computeArtifactVersion(exe, bundle string) string {
-	h := sha256.New()
-	if bundle != "" {
-		if data, err := os.ReadFile(filepath.Join(bundle, "Contents", "Info.plist")); err == nil {
-			h.Write(data)
-		}
-	}
-	if exe != "" {
-		if data, err := os.ReadFile(exe); err == nil {
-			h.Write(data)
-		} else if fi, statErr := os.Stat(exe); statErr == nil {
-			h.Write([]byte(strconv.FormatInt(fi.Size(), 10)))
-			h.Write([]byte(strconv.FormatInt(fi.ModTime().UnixNano(), 10)))
-		}
-	}
-	sum := hex.EncodeToString(h.Sum(nil))
-	if len(sum) > 16 {
-		return sum[:16]
-	}
-	return sum
 }
 
 // ClientConfig configures a privileged helper RPC client.
@@ -230,9 +204,8 @@ func (c *Client) Status() HelperStatus {
 	expected := c.cfg.Expected
 	if c == nil || c.disabled {
 		return HelperStatus{
-			State:           StateNotInstalled,
-			ExpectedVersion: expected.Version,
-			Message:         "Privileged helper is disabled in this environment.",
+			State:   StateNotInstalled,
+			Message: "Privileged helper is disabled in this environment.",
 		}
 	}
 
@@ -240,80 +213,57 @@ func (c *Client) Status() HelperStatus {
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return HelperStatus{
-				State:           StateNotInstalled,
-				ExpectedVersion: expected.Version,
-				Message:         "Not installed. Install once to avoid repeated administrator password prompts.",
+				State:   StateNotInstalled,
+				Message: "Not installed. Install once to avoid repeated administrator password prompts.",
 			}
 		}
 		return HelperStatus{
-			State:           StateNotInstalled,
-			ExpectedVersion: expected.Version,
-			Message:         fmt.Sprintf("Could not inspect helper configuration: %v", err),
+			State:   StateNotInstalled,
+			Message: fmt.Sprintf("Could not inspect helper configuration: %v", err),
 		}
 	}
 
 	var doc helperPlistDoc
 	if _, err := plist.Unmarshal(raw, &doc); err != nil {
 		return HelperStatus{
-			State:           StateOutdated,
-			ExpectedVersion: expected.Version,
-			Message:         "Installed helper configuration is invalid and should be updated.",
+			State:   StateNotInstalled,
+			Message: "Installed helper configuration is invalid and needs to be reinstalled.",
 		}
 	}
 
 	stagedExe := expectedStagedExecutable(c.cfg.HelperDir, expected)
 	if doc.Label != Label || len(doc.ProgramArguments) < 4 || doc.ProgramArguments[0] != stagedExe {
 		return HelperStatus{
-			State:           StateOutdated,
-			ExpectedVersion: expected.Version,
-			Message:         "Installed helper points to a different location and needs an update.",
+			State:   StateNotInstalled,
+			Message: "Installed helper points to a different location and needs to be reinstalled.",
 		}
 	}
 
 	if !hasOwnerArg(doc.ProgramArguments, expected.OwnerUID) {
 		return HelperStatus{
-			State:           StateOutdated,
-			ExpectedVersion: expected.Version,
-			Message:         "Installed helper is configured for a different user and needs an update.",
+			State:   StateNotInstalled,
+			Message: "Installed helper is configured for a different user and needs to be reinstalled.",
 		}
 	}
 
 	sockCfg, ok := doc.Sockets[SocketName]
 	if !ok || sockCfg.SockPathName != c.cfg.SocketPath {
 		return HelperStatus{
-			State:           StateOutdated,
-			ExpectedVersion: expected.Version,
-			Message:         "Installed helper socket configuration is outdated and needs an update.",
+			State:   StateNotInstalled,
+			Message: "Installed helper socket configuration is invalid and needs to be reinstalled.",
 		}
 	}
 
 	if _, err := os.Stat(stagedExe); err != nil {
 		return HelperStatus{
-			State:           StateOutdated,
-			ExpectedVersion: expected.Version,
-			Message:         "Installed helper binary is missing and needs to be reinstalled.",
-		}
-	}
-
-	versionFile := filepath.Join(c.cfg.HelperDir, "version")
-	installedVersion := ""
-	if verBytes, err := os.ReadFile(versionFile); err == nil {
-		installedVersion = strings.TrimSpace(string(verBytes))
-	}
-	if installedVersion == "" || (expected.Version != "" && installedVersion != expected.Version) {
-		return HelperStatus{
-			State:            StateOutdated,
-			InstalledVersion: installedVersion,
-			ExpectedVersion:  expected.Version,
-			Message:          "Privileged helper version differs from this app and needs an update.",
+			State:   StateNotInstalled,
+			Message: "Installed helper binary is missing and needs to be reinstalled.",
 		}
 	}
 
 	return HelperStatus{
-		State:            StateInstalled,
-		InstalledVersion: installedVersion,
-		ExpectedVersion:  expected.Version,
-		Message:          "Installed and up to date. Root operations run without password prompts.",
+		State:   StateInstalled,
+		Message: "Installed. Root operations run without password prompts.",
 	}
 }
 
@@ -378,12 +328,8 @@ func (c *Client) Install(ctx context.Context) error {
 	if err := os.WriteFile(tmpPlist, plistBytes, 0644); err != nil {
 		return err
 	}
-	tmpVersion := filepath.Join(tmpDir, "version")
-	if err := os.WriteFile(tmpVersion, []byte(expected.Version+"\n"), 0644); err != nil {
-		return err
-	}
 
-	script := installHelperScript(expected, c.cfg.HelperDir, c.cfg.PlistPath, c.cfg.SocketPath, tmpPlist, tmpVersion, stagedExe)
+	script := installHelperScript(expected, c.cfg.HelperDir, c.cfg.PlistPath, c.cfg.SocketPath, tmpPlist, stagedExe)
 	if out, err := c.cfg.RunAdmin("/bin/sh", "-c", script); err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg != "" {
@@ -417,16 +363,12 @@ func (c *Client) waitForHealthy(ctx context.Context) error {
 			if resp.OwnerUID != expected.OwnerUID {
 				return fmt.Errorf("helper owner UID mismatch: got %d, want %d", resp.OwnerUID, expected.OwnerUID)
 			}
-			if expected.Version != "" && resp.Version != "" && resp.Version != expected.Version {
-				lastErr = fmt.Errorf("helper version mismatch: got %q, want %q", resp.Version, expected.Version)
-			} else {
-				return nil
-			}
+			return nil
 		} else {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if strings.Contains(err.Error(), "not authorized") {
+			if strings.Contains(err.Error(), "not authorized") || strings.Contains(err.Error(), "reinstall the helper") {
 				return fmt.Errorf("helper installed, but health check failed: %w", err)
 			}
 			lastErr = err
@@ -490,7 +432,7 @@ func buildHelperPlist(stagedExe string, ownerUID int, sockPath string) ([]byte, 
 	return plist.MarshalIndent(doc, plist.XMLFormat, "\t")
 }
 
-func installHelperScript(info BinaryInfo, helperDir, plistPath, sockPath, tmpPlist, tmpVersion, stagedExe string) string {
+func installHelperScript(info BinaryInfo, helperDir, plistPath, sockPath, tmpPlist, stagedExe string) string {
 	parentDir := filepath.Dir(helperDir)
 	quotedSock := system.ShellQuote(sockPath)
 	lines := []string{
@@ -515,7 +457,6 @@ func installHelperScript(info BinaryInfo, helperDir, plistPath, sockPath, tmpPli
 		)
 	}
 	lines = append(lines,
-		"/usr/bin/install -m 0644 "+system.ShellQuote(tmpVersion)+" "+system.ShellQuote(filepath.Join(helperDir, "version")),
 		"/usr/sbin/chown -R root:wheel "+system.ShellQuote(helperDir),
 		"/bin/chmod 0755 "+system.ShellQuote(helperDir),
 		"/usr/bin/install -m 0644 "+system.ShellQuote(tmpPlist)+" "+system.ShellQuote(plistPath),

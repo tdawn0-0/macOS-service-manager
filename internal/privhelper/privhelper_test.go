@@ -45,9 +45,6 @@ func startTestHelper(t *testing.T, cfg ServerConfig) (*Client, string, func()) {
 	if cfg.OwnerUID == 0 {
 		cfg.OwnerUID = os.Geteuid()
 	}
-	if cfg.ExpectedVersion == "" {
-		cfg.ExpectedVersion = "test-ver-1"
-	}
 	srv := NewServer(cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -69,7 +66,6 @@ func startTestHelper(t *testing.T, cfg ServerConfig) (*Client, string, func()) {
 	client := NewClient(ClientConfig{
 		SocketPath: sockPath,
 		Expected: BinaryInfo{
-			Version:  cfg.ExpectedVersion,
 			OwnerUID: cfg.OwnerUID,
 		},
 	})
@@ -373,7 +369,6 @@ func TestPassiveStatusTransitions(t *testing.T) {
 	stagedExe := filepath.Join(helperDir, "devbase-helper")
 
 	expected := BinaryInfo{
-		Version:    "v-abc123",
 		Executable: "/Applications/Devbase.app/Contents/MacOS/Devbase",
 		OwnerUID:   501,
 	}
@@ -385,7 +380,29 @@ func TestPassiveStatusTransitions(t *testing.T) {
 	})
 
 	if st := client.Status(); st.State != StateNotInstalled {
-		t.Fatalf("expected not-installed, got %+v", st)
+		t.Fatalf("expected not-installed when plist missing, got %+v", st)
+	}
+
+	wrongOwnerPlist, err := buildHelperPlist(stagedExe, expected.OwnerUID+1, sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plistPath, wrongOwnerPlist, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if st := client.Status(); st.State != StateNotInstalled {
+		t.Fatalf("expected not-installed for wrong owner uid, got %+v", st)
+	}
+
+	plistBytes, err := buildHelperPlist(stagedExe, expected.OwnerUID, sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plistPath, plistBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if st := client.Status(); st.State != StateNotInstalled {
+		t.Fatalf("expected not-installed when staged binary missing, got %+v", st)
 	}
 
 	if err := os.MkdirAll(helperDir, 0755); err != nil {
@@ -394,25 +411,7 @@ func TestPassiveStatusTransitions(t *testing.T) {
 	if err := os.WriteFile(stagedExe, []byte("bin"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(helperDir, "version"), []byte("old-ver\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	plistBytes, err := buildHelperPlist(stagedExe, expected.OwnerUID, sockPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(plistPath, plistBytes, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if st := client.Status(); st.State != StateOutdated || st.InstalledVersion != "old-ver" {
-		t.Fatalf("expected outdated with installed version, got %+v", st)
-	}
-
-	if err := os.WriteFile(filepath.Join(helperDir, "version"), []byte(expected.Version+"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if st := client.Status(); st.State != StateInstalled || st.InstalledVersion != expected.Version {
+	if st := client.Status(); st.State != StateInstalled {
 		t.Fatalf("expected installed, got %+v", st)
 	}
 }
@@ -429,9 +428,8 @@ func TestIdleTimeoutPreservesSocketFile(t *testing.T) {
 	}
 
 	srv := NewServer(ServerConfig{
-		OwnerUID:        os.Geteuid(),
-		ExpectedVersion: "v1",
-		IdleTimeout:     80 * time.Millisecond,
+		OwnerUID:    os.Geteuid(),
+		IdleTimeout: 80 * time.Millisecond,
 	})
 	done := make(chan error, 1)
 	go func() {
@@ -440,7 +438,7 @@ func TestIdleTimeoutPreservesSocketFile(t *testing.T) {
 
 	client := NewClient(ClientConfig{SocketPath: sockPath})
 	resp, err := client.Ping(context.Background())
-	if err != nil || resp.Version != "v1" {
+	if err != nil || resp.ProtocolVersion != ProtocolVersion {
 		t.Fatalf("Ping: resp=%+v err=%v", resp, err)
 	}
 
@@ -494,7 +492,6 @@ func TestInstallWaitsForDelayedSocketCreation(t *testing.T) {
 		PlistPath:  plistPath,
 		HelperDir:  helperDir,
 		Expected: BinaryInfo{
-			Version:    "v-new",
 			Executable: fakeExe,
 			OwnerUID:   os.Geteuid(),
 		},
@@ -516,8 +513,7 @@ func TestInstallWaitsForDelayedSocketCreation(t *testing.T) {
 				ln = l
 				lnMu.Unlock()
 				srv := NewServer(ServerConfig{
-					OwnerUID:        os.Geteuid(),
-					ExpectedVersion: "v-new",
+					OwnerUID: os.Geteuid(),
 				})
 				srvDone <- srv.Serve(ctx, l)
 			}()
@@ -547,7 +543,6 @@ func TestInstallFailsWhenHealthCheckTimesOut(t *testing.T) {
 		PlistPath:  filepath.Join(dir, Label+".plist"),
 		HelperDir:  filepath.Join(dir, "helper"),
 		Expected: BinaryInfo{
-			Version:    "v-missing",
 			Executable: fakeExe,
 			OwnerUID:   os.Geteuid(),
 		},
@@ -564,7 +559,7 @@ func TestInstallFailsWhenHealthCheckTimesOut(t *testing.T) {
 	}
 }
 
-func TestStagedBundleEnvelopeAvoidsDotAppSuffixAndPreservesVersion(t *testing.T) {
+func TestStagedBundleEnvelopeAvoidsDotAppSuffix(t *testing.T) {
 	dir := t.TempDir()
 	appBundle := filepath.Join(dir, "Devbase.app")
 	appContents := filepath.Join(appBundle, "Contents")
@@ -588,7 +583,6 @@ func TestStagedBundleEnvelopeAvoidsDotAppSuffixAndPreservesVersion(t *testing.T)
 	info := BinaryInfo{
 		Executable: appExe,
 		BundlePath: gotBundle,
-		Version:    computeArtifactVersion(appExe, gotBundle),
 		OwnerUID:   os.Geteuid(),
 	}
 
@@ -614,9 +608,6 @@ func TestStagedBundleEnvelopeAvoidsDotAppSuffixAndPreservesVersion(t *testing.T)
 	}
 	if gotStagedBundle := appBundleForExecutable(stagedExe); gotStagedBundle != stagedBundle {
 		t.Fatalf("staged appBundleForExecutable(%q) = %q, want %q", stagedExe, gotStagedBundle, stagedBundle)
-	}
-	if stagedVer := computeArtifactVersion(stagedExe, stagedBundle); stagedVer != info.Version {
-		t.Fatalf("staged artifact version = %q, want %q", stagedVer, info.Version)
 	}
 }
 
@@ -709,7 +700,7 @@ func TestPeerCodeAuthorizationRejectsForeignCode(t *testing.T) {
 		HostsPath:      hostsFile,
 	})
 	_, err := client.Ping(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "update the helper in Settings") {
+	if err == nil || !strings.Contains(err.Error(), "reinstall the helper in Settings") {
 		t.Fatalf("expected peer code rejection, got %v", err)
 	}
 	err = client.SyncHosts(context.Background(), HostsSyncRequest{

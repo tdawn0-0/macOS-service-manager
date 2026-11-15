@@ -33,16 +33,10 @@ func InstallTestHelper(tb testing.TB, cfg ServerConfig) *Client {
 	if cfg.OwnerUID == 0 {
 		cfg.OwnerUID = os.Geteuid()
 	}
-	if cfg.ExpectedVersion == "" {
-		cfg.ExpectedVersion = "test-v1"
-	}
 
 	helperDir := tb.TempDir()
 	stagedExe := filepath.Join(helperDir, "devbase-helper")
 	if err := os.WriteFile(stagedExe, []byte("bin"), 0755); err != nil {
-		tb.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(helperDir, "version"), []byte(cfg.ExpectedVersion+"\n"), 0644); err != nil {
 		tb.Fatal(err)
 	}
 	plistPath := filepath.Join(tb.TempDir(), Label+".plist")
@@ -64,7 +58,6 @@ func InstallTestHelper(tb testing.TB, cfg ServerConfig) *Client {
 		PlistPath:  plistPath,
 		HelperDir:  helperDir,
 		Expected: BinaryInfo{
-			Version:    cfg.ExpectedVersion,
 			Executable: "/Applications/Devbase.app/Contents/MacOS/Devbase",
 			OwnerUID:   cfg.OwnerUID,
 		},

@@ -175,15 +175,8 @@ func (a *app) sidebar(c *ui.Context) {
 			})
 			ui.SidebarSection(c, "System", nil, func() {
 				ui.SidebarItem(c, navSettings, icoSettings, "Settings").Children(func() {
-					badge := ""
-					switch a.helperStatus.State {
-					case privhelper.StateNotInstalled:
-						badge = "Setup"
-					case privhelper.StateOutdated:
-						badge = "Update"
-					}
-					if badge != "" {
-						ui.Text(c, badge).FontSize(textCaption).TextColor(t.Warning).SingleLine()
+					if a.helperStatus.State == privhelper.StateNotInstalled {
+						ui.Text(c, "Setup").FontSize(textCaption).TextColor(t.Warning).SingleLine()
 					}
 				})
 			})
@@ -299,7 +292,7 @@ func (a *app) restrictionNote(c *ui.Context) {
 	})
 }
 
-// helperNote offers a one-click privileged helper install/update banner on root service lists.
+// helperNote offers a one-click privileged helper install banner on root service lists.
 func (a *app) helperNote(c *ui.Context) {
 	if a.nav != string(service.SystemAgent) && a.nav != string(service.Daemon) {
 		return
@@ -308,17 +301,13 @@ func (a *app) helperNote(c *ui.Context) {
 		return
 	}
 	t := c.Theme()
-	btnLabel := "Install Privileged Helper…"
-	if a.helperStatus.State == privhelper.StateOutdated {
-		btnLabel = "Update Privileged Helper…"
-	}
 	ui.Column(c).Shrink(0).Margin(8, 12, 0).Padding(8, 12).Gap(8).Radius(8).Background(glassOf(t).inset).Children(func() {
 		ui.Row(c).Gap(8).Children(func() {
 			ui.Icon(c, iconLock).FontSize(13).TextColor(t.TextMuted).AlignSelf(ui.Start).Margin(1, 0, 0)
 			ui.Text(c, a.helperStatus.Message).FontSize(textSmall).TextColor(t.TextMuted).Grow(1).MinWidth(0)
 		})
 		ui.Row(c).Wrap().Gap(6).Children(func() {
-			labeledButton(c, iconLock, btnLabel, false).Disabled(a.helperBusy).OnClick(a.installHelper)
+			labeledButton(c, iconLock, "Install Privileged Helper…", false).Disabled(a.helperBusy).OnClick(a.installHelper)
 			labeledButton(c, icoSettings, "Open Settings", false).OnClick(func() {
 				a.chosen.Clear()
 				a.nav = navSettings

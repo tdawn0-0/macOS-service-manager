@@ -34,7 +34,6 @@ type connContextKey struct{}
 // ServerConfig configures the privileged helper HTTP-over-Unix server.
 type ServerConfig struct {
 	OwnerUID           int
-	ExpectedVersion    string
 	IdleTimeout        time.Duration
 	HostsPath          string
 	ManagedLaunchdDirs []string
@@ -106,10 +105,8 @@ func ServeActivated(ctx context.Context, ownerUID int) error {
 		return err
 	}
 	defer ln.Close()
-	info := CurrentBinaryInfo()
 	srv := NewServer(ServerConfig{
-		OwnerUID:        ownerUID,
-		ExpectedVersion: info.Version,
+		OwnerUID: ownerUID,
 	})
 	return srv.Serve(ctx, ln)
 }
@@ -207,7 +204,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		}
 		if err := s.cfg.PeerAuthorized(conn); err != nil {
 			fmt.Fprintln(os.Stderr, "privhelper: peer code check failed:", err)
-			writeError(w, http.StatusForbidden, "peer is not the Devbase build this helper was installed from; update the helper in Settings")
+			writeError(w, http.StatusForbidden, "peer is not the Devbase build this helper was installed from; reinstall the helper in Settings")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -230,7 +227,6 @@ func (s *Server) routes() {
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, StatusResponse{
 		ProtocolVersion: ProtocolVersion,
-		Version:         s.cfg.ExpectedVersion,
 		OwnerUID:        s.cfg.OwnerUID,
 	})
 }

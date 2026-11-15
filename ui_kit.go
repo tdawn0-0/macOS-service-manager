@@ -236,7 +236,7 @@ func statusKind(status string) feedback.BadgeStatus {
 		return feedback.BadgeSuccess
 	case "Failed", "Needs repair":
 		return feedback.BadgeError
-	case "Not ready", "Partly running", "Restarting", "Unknown", "Interrupted", "Pending", "In use", "Update available", "Not installed", "Restricted":
+	case "Not ready", "Partly running", "Restarting", "Unknown", "Interrupted", "Pending", "In use", "Not installed", "Restricted":
 		return feedback.BadgeWarning
 	case "Starting", "Stopping", "Working", "Checking":
 		return feedback.BadgeProcessing

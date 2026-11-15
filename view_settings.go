@@ -34,13 +34,8 @@ func (a *app) settingsView(c *ui.Context) {
 		ui.Scroll(c.Key("settings")).TrackScroll(&a.settingsScroll).Grow(1).MinWidth(0).MinHeight(0).Padding(24, 28, 28).Background(g.sheet).Children(func() {
 			ui.Column(c).Gap(16).MaxWidth(880).Children(func() {
 				helperBadge := "Not installed"
-				installLabel := "Install helper"
-				switch a.helperStatus.State {
-				case privhelper.StateInstalled:
+				if a.helperStatus.State == privhelper.StateInstalled {
 					helperBadge = "Installed"
-				case privhelper.StateOutdated:
-					helperBadge = "Update available"
-					installLabel = "Update helper"
 				}
 				helperMsg := a.helperStatus.Message
 				if helperMsg == "" {
@@ -55,11 +50,11 @@ func (a *app) settingsView(c *ui.Context) {
 					devKV(c, "Helper", privhelper.HelperDir)
 					devButtonRow(c, func() {
 						if a.helperStatus.State != privhelper.StateInstalled {
-							if btn(c, installLabel, icoShield, btnPrimary).Disabled(a.helperBusy || d.busy).Clicked() {
+							if btn(c, "Install helper", icoShield, btnPrimary).Disabled(a.helperBusy || d.busy).Clicked() {
 								a.installHelper()
 							}
 						}
-						if a.helperStatus.State == privhelper.StateInstalled || a.helperStatus.State == privhelper.StateOutdated {
+						if a.helperStatus.State == privhelper.StateInstalled {
 							if btn(c, "Remove helper", nil, btnText).Disabled(a.helperBusy || d.busy).Clicked() {
 								a.uninstallHelper()
 							}

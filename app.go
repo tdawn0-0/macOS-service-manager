@@ -1147,19 +1147,11 @@ func (a *app) installHelperThen(after func()) {
 }
 
 func (a *app) promptInstallHelper(retry func()) {
-	title := "Privileged helper required"
-	button := "Install Helper"
-	msg := "Install the Devbase privileged helper once to run root operations such as local HTTPS port 443, /etc/hosts updates, and system launchd jobs without repeated macOS password prompts."
-	if a.helperStatus.State == privhelper.StateOutdated {
-		title = "Privileged helper update required"
-		button = "Update Helper"
-		msg = "The installed privileged helper is out of date for this build of Devbase. Update it once to continue."
-	}
 	a.ask = askState{
 		open:    true,
-		title:   title,
-		message: msg,
-		button:  button,
+		title:   "Privileged helper required",
+		message: "Install the Devbase privileged helper once to run root operations such as local HTTPS port 443, /etc/hosts updates, and system launchd jobs without repeated macOS password prompts.",
+		button:  "Install Helper",
 		run:     func() { a.installHelperThen(retry) },
 	}
 }

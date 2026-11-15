@@ -1461,9 +1461,6 @@ func TestPrivilegedHelperCreatesAndEditsRootJobWithInAppConfirmationAndNoPasswor
 	if err := os.WriteFile(stagedExe, []byte("bin"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(helperDir, "version"), []byte("test-v1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 	helperPlistPath := filepath.Join(t.TempDir(), privhelper.Label+".plist")
 	ownerUID := os.Geteuid()
 	plistXML := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
@@ -1486,7 +1483,6 @@ func TestPrivilegedHelperCreatesAndEditsRootJobWithInAppConfirmationAndNoPasswor
 	var launchctlCalls [][]string
 	srv := privhelper.NewServer(privhelper.ServerConfig{
 		OwnerUID:           ownerUID,
-		ExpectedVersion:    "test-v1",
 		ManagedLaunchdDirs: []string{managedDir},
 		Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			launchctlCalls = append(launchctlCalls, append([]string{name}, args...))
@@ -1507,7 +1503,6 @@ func TestPrivilegedHelperCreatesAndEditsRootJobWithInAppConfirmationAndNoPasswor
 		PlistPath:  helperPlistPath,
 		HelperDir:  helperDir,
 		Expected: privhelper.BinaryInfo{
-			Version:    "test-v1",
 			Executable: "/Applications/Devbase.app/Contents/MacOS/Devbase",
 			OwnerUID:   ownerUID,
 		},

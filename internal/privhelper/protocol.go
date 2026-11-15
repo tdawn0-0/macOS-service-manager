@@ -5,8 +5,8 @@ package privhelper
 import "errors"
 
 // ErrNotInstalled reports that privileged operations cannot run because the
-// Devbase privileged helper is missing or outdated.
-var ErrNotInstalled = errors.New("privileged helper is not installed or needs an update; install the helper in Devbase first")
+// Devbase privileged helper is missing.
+var ErrNotInstalled = errors.New("privileged helper is not installed; install the helper in Devbase first")
 
 const (
 	// Label is the launchd job label for the Devbase privileged helper.
@@ -29,25 +29,20 @@ type HelperState string
 const (
 	// StateNotInstalled reports that the helper plist or binary is not staged.
 	StateNotInstalled HelperState = "not-installed"
-	// StateOutdated reports that the staged helper version or owner differs from the running app.
-	StateOutdated HelperState = "outdated"
-	// StateInstalled reports that the helper plist and staged artifact match the running app.
+	// StateInstalled reports that the helper plist and staged artifact are present and valid.
 	StateInstalled HelperState = "installed"
 )
 
 // HelperStatus describes the passive state read without launching the helper or prompting for a password.
 type HelperStatus struct {
-	State            HelperState
-	InstalledVersion string
-	ExpectedVersion  string
-	Message          string
+	State   HelperState
+	Message string
 }
 
 // StatusResponse is returned by GET /v1/status.
 type StatusResponse struct {
-	ProtocolVersion int    `json:"protocolVersion"`
-	Version         string `json:"version"`
-	OwnerUID        int    `json:"ownerUid"`
+	ProtocolVersion int `json:"protocolVersion"`
+	OwnerUID        int `json:"ownerUid"`
 }
 
 // HostsSyncRequest is sent to POST /v1/hosts/sync.

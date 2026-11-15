@@ -1,9 +1,11 @@
 package devplatform
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"html/template"
 	"net"
 	"net/http"
@@ -92,6 +94,37 @@ func (routes *liveProxyRoutes) close() {
 	}
 }
 
+// dialLocalUpstream connects to a developer's server on a loopback port. It
+// tries IPv4 first and falls back to IPv6, because a server bound to
+// "localhost" may listen on only one of them.
+func dialLocalUpstream(ctx context.Context, port string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp4", net.JoinHostPort("127.0.0.1", port))
+	if err == nil {
+		return conn, nil
+	}
+	if ctx.Err() != nil {
+		return nil, err
+	}
+	if conn6, err6 := dialer.DialContext(ctx, "tcp6", net.JoinHostPort("::1", port)); err6 == nil {
+		return conn6, nil
+	}
+	return nil, err
+}
+
+// loopbackUpstreamDialer adapts dialLocalUpstream to http.Transport.DialContext.
+// It ignores the host of addr: forwarding targets are loopback by construction.
+func loopbackUpstreamDialer(ctx context.Context, _ string, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	if host != "127.0.0.1" {
+		return nil, fmt.Errorf("upstream host %q is not loopback 127.0.0.1", host)
+	}
+	return dialLocalUpstream(ctx, port)
+}
+
 func newReverseRoute(site proxyRoute) *reverseRoute {
 	target, _ := url.Parse(site.upstream())
 	transport := &http.Transport{ForceAttemptHTTP2: true, IdleConnTimeout: 90 * time.Second, MaxIdleConns: 100}
@@ -99,7 +132,7 @@ func newReverseRoute(site proxyRoute) *reverseRoute {
 		transport = defaults.Clone()
 	}
 	transport.Proxy = nil
-	transport.DialContext = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	transport.DialContext = loopbackUpstreamDialer
 	transport.TLSHandshakeTimeout = 10 * time.Second
 	transport.ResponseHeaderTimeout = 30 * time.Second
 	proxy := &httputil.ReverseProxy{Transport: transport, FlushInterval: -1}

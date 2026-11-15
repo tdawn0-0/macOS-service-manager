@@ -72,6 +72,12 @@ func wsAcceptKey(key string) string {
 }
 
 func dialWebSocket(ctx context.Context, rawURL string, headers http.Header, protocols []string, tlsConfig *tls.Config) (*wsConn, *http.Response, error) {
+	return dialWebSocketVia(ctx, rawURL, headers, protocols, tlsConfig, nil)
+}
+
+// dialWebSocketVia is dialWebSocket with an optional dial function that
+// replaces the plain TCP dialer for ws URLs.
+func dialWebSocketVia(ctx context.Context, rawURL string, headers http.Header, protocols []string, tlsConfig *tls.Config, dial func(ctx context.Context, network, addr string) (net.Conn, error)) (*wsConn, *http.Response, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, nil, err
@@ -88,7 +94,11 @@ func dialWebSocket(ctx context.Context, rawURL string, headers http.Header, prot
 	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
 	switch u.Scheme {
 	case "ws":
-		conn, err = dialer.DialContext(ctx, "tcp", host)
+		if dial != nil {
+			conn, err = dial(ctx, "tcp", host)
+		} else {
+			conn, err = dialer.DialContext(ctx, "tcp", host)
+		}
 	case "wss":
 		cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 		if tlsConfig != nil {

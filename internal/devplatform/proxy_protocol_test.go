@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -259,5 +260,127 @@ func TestHTTPSProxyRejectsMismatchedHostAndSNI(t *testing.T) {
 	}
 	if !alphaServed {
 		t.Fatal("alpha upstream handler was not invoked for matching host")
+	}
+}
+
+func listenIPv6OrSkip(t *testing.T) net.Listener {
+	t.Helper()
+	l, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skip("IPv6 loopback unavailable")
+	}
+	return l
+}
+
+func acceptOnce(l net.Listener) {
+	go func() {
+		if c, err := l.Accept(); err == nil {
+			c.Close()
+		}
+	}()
+}
+
+func TestLocalUpstreamDialFallsBackToIPv6Loopback(t *testing.T) {
+	l := listenIPv6OrSkip(t)
+	defer l.Close()
+	acceptOnce(l)
+	_, port, _ := net.SplitHostPort(l.Addr().String())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := dialLocalUpstream(ctx, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	ip := conn.RemoteAddr().(*net.TCPAddr).IP
+	if ip.To4() != nil || !ip.IsLoopback() {
+		t.Fatalf("remote %v is not IPv6 loopback", ip)
+	}
+}
+
+func TestLocalUpstreamDialPrefersIPv4(t *testing.T) {
+	l, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	acceptOnce(l)
+	_, port, _ := net.SplitHostPort(l.Addr().String())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := dialLocalUpstream(ctx, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if conn.RemoteAddr().(*net.TCPAddr).IP.To4() == nil {
+		t.Fatalf("remote %v is not IPv4", conn.RemoteAddr())
+	}
+}
+
+func TestLocalUpstreamDialReportsIPv4ErrorWhenNothingListens(t *testing.T) {
+	l, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, port, _ := net.SplitHostPort(l.Addr().String())
+	l.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := dialLocalUpstream(ctx, port)
+	if err == nil {
+		conn.Close()
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "127.0.0.1") {
+		t.Fatalf("error %q does not mention 127.0.0.1", err)
+	}
+}
+
+func TestHTTPSProxyForwardsToIPv6OnlyUpstream(t *testing.T) {
+	l6 := listenIPv6OrSkip(t)
+	upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "ipv6 upstream")
+	}))
+	upstream.Listener.Close()
+	upstream.Listener = l6
+	upstream.Start()
+	defer upstream.Close()
+	m := testManager(t)
+	port := integrationPort(t)
+	localPort := upstream.Listener.Addr().(*net.TCPAddr).Port
+	site := proxyRoute{Domain: "ipv6.test", LocalPort: localPort, Port: port}
+	if e := writeJSON(filepath.Join(m.Root, "proxy", "rules.json"), proxyPublishedConfig{SchemaVersion: 1, ListenerPort: port, Rules: []ProxyRule{{Domain: site.Domain, LocalPort: localPort}}}); e != nil {
+		t.Fatal(e)
+	}
+	ca, _, e := m.ca()
+	if e != nil {
+		t.Fatal(e)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- m.ServeProxy(ctx) }()
+	if e = m.verifyProxyTLS(ctx, site); e != nil {
+		t.Fatal(e)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: site.Domain, MinVersion: tls.VersionTLS12}}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	req, e := http.NewRequest("GET", fmt.Sprintf("https://127.0.0.1:%d/", port), nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	req.Host = site.Domain
+	res, e := client.Do(req)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != 200 || string(body) != "ipv6 upstream" {
+		t.Fatal(res.StatusCode, string(body))
 	}
 }

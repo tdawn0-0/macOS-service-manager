@@ -181,7 +181,7 @@ func newTunnelUpstreamTransport() *http.Transport {
 		DisableCompression:    true,
 		IdleConnTimeout:       90 * time.Second,
 		MaxIdleConns:          100,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:           loopbackUpstreamDialer,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 60 * time.Second,
 	}
@@ -849,7 +849,7 @@ func (s *tunnelSession) handleWSOpen(ctx context.Context, frame tunnelFrame) {
 	applyTunnelForwardedHeaders(reqHeaders, head.Headers, route.PublicHost(), localHost, "")
 
 	dialCtx, dialCancel := context.WithTimeout(ctx, 10*time.Second)
-	localWS, resp, err := dialWebSocket(dialCtx, fmt.Sprintf("ws://127.0.0.1:%d%s", route.LocalPort, path), reqHeaders, head.Protocols, nil)
+	localWS, resp, err := dialWebSocketVia(dialCtx, fmt.Sprintf("ws://127.0.0.1:%d%s", route.LocalPort, path), reqHeaders, head.Protocols, nil, loopbackUpstreamDialer)
 	dialCancel()
 	if err != nil {
 		<-s.sem

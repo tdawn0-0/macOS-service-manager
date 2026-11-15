@@ -1,5 +1,7 @@
 # Spike: Menu Bar Quick-Actions for HTTPS Domains and Database Logs
 
+**Status**: Option A implemented (database log action; single-rule HTTPS URL action). Option B not adopted.
+
 **Context & Status**: Spike design specification for menu bar quick-actions on macOS. Baseline: `deb8547`. Follows constraints from `docs/product-scope.md:7,13` and `docs/resources-acceptance.md:16` (`AC-UI`).
 
 ## 1. Problem & Evidence

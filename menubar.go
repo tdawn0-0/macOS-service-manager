@@ -3,6 +3,8 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -225,7 +227,8 @@ func panelRow(c *ui.Context, key string, lead func(), title, sub, openLabel stri
 }
 
 // panelDatabases lists the managed database instances, each with a switch
-// that starts or stops it, and copies its connection on hover.
+// that starts or stops it, and copies its connection or opens its logs on
+// hover.
 func (a *app) panelDatabases(c *ui.Context, openWindow func()) {
 	d := &a.dev
 	running := 0
@@ -297,6 +300,9 @@ func (a *app) panelDatabase(c *ui.Context, instance devplatform.Instance, openWi
 				return "Connection URI copied", err
 			})
 		}
+		if iconButton(c, icoScroll, "Open logs for "+id, theme.TokensOf(c).TextSecondary).Disabled(d.busy).Clicked() {
+			a.openInstanceLogs(id, openWindow)
+		}
 	}, func() {
 		if a.databaseTaskRunning(id) {
 			ui.Spinner(c).Label("Working").Size(13, 13)
@@ -312,6 +318,45 @@ func (a *app) panelDatabase(c *ui.Context, instance devplatform.Instance, openWi
 			})
 		}
 	})
+}
+
+// openInstanceLogs opens an instance's log file in Console, or its page in
+// the window when it has not written one yet.
+func (a *app) openInstanceLogs(id string, openWindow func()) {
+	a.devTask(func(m *devplatform.Manager) (string, error) {
+		for _, name := range []string{"db-" + id + ".err.log", "db-" + id + ".log"} {
+			path := filepath.Join(m.Root, "logs", name)
+			info, err := os.Stat(path)
+			if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+				continue
+			}
+			if _, err := m.Run(m.Context, "/usr/bin/open", "-a", "Console", path); err != nil {
+				break
+			}
+			a.post(func() { a.toasts = append(a.toasts, "Opened logs for "+id+" in Console") })
+			return "Opened logs in Console", nil
+		}
+		a.post(func() {
+			a.openInstance(id)
+			a.dev.showResult = true
+			openWindow()
+		})
+		return m.Logs("db-" + id)
+	})
+}
+
+// panelProxyURL is the address the one saved rule answers at, or "" unless
+// exactly one rule is saved and the proxy is running.
+func (a *app) panelProxyURL() string {
+	d := &a.dev
+	if len(d.state.ProxyRules) != 1 || d.statuses["proxy"] != "Running" {
+		return ""
+	}
+	url := "https://" + d.state.ProxyRules[0].Domain
+	if port := d.state.ProxyListenerPort; port != 0 && port != 443 {
+		url = fmt.Sprintf("%s:%d", url, port)
+	}
+	return url
 }
 
 // openInstance goes to an instance's page in the window.
@@ -332,7 +377,8 @@ func (a *app) openInstance(id string) {
 
 // panelProxy is the single HTTPS proxy: its state, a switch that applies the
 // saved rules or stops it, and the way to its settings. Its rules are not
-// resources of their own, and are not listed.
+// resources of their own, and are not listed. With exactly one rule saved and
+// the proxy running, a button on the row opens its HTTPS address.
 func (a *app) panelProxy(c *ui.Context, openWindow func()) {
 	d := &a.dev
 	status := d.statuses["proxy"]
@@ -365,7 +411,18 @@ func (a *app) panelProxy(c *ui.Context, openWindow func()) {
 				devStatusDot(c, status)
 			})
 		})
-	}, "Proxy · "+status, sub, "Open HTTPS proxy", openSettings, nil, func() {
+	}, "Proxy · "+status, sub, "Open HTTPS proxy", openSettings, func() {
+		url := a.panelProxyURL()
+		if url == "" {
+			return
+		}
+		if iconButton(c, icoLink, "Open HTTPS URL", theme.TokensOf(c).TextSecondary).Disabled(d.busy).Clicked() {
+			a.devTask(func(m *devplatform.Manager) (string, error) {
+				_, err := m.Run(m.Context, "/usr/bin/open", url)
+				return "Opened saved HTTPS rule in browser.", err
+			})
+		}
+	}, func() {
 		label := "Apply proxy"
 		if on {
 			label = "Stop HTTPS proxy"

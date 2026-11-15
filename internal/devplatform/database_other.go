@@ -122,7 +122,7 @@ func (m *Manager) otherCreateUser(ctx context.Context, s *State, i Instance, nam
 }
 
 func (m *Manager) otherBackup(ctx context.Context, s *State, i Instance, name, path string) error {
-	if i.Kind == "redis" || i.Kind == "valkey" {
+	if i.Kind == "redis" {
 		return m.redisBackup(ctx, i, name, path)
 	}
 	if i.Kind == "mysql" {
@@ -146,7 +146,7 @@ func (m *Manager) otherBackup(ctx context.Context, s *State, i Instance, name, p
 	return errors.New("backup for this engine is not implemented")
 }
 func (m *Manager) otherRestore(ctx context.Context, s *State, i Instance, name, path string) error {
-	if i.Kind == "redis" || i.Kind == "valkey" {
+	if i.Kind == "redis" {
 		return m.redisRestore(ctx, i, name, path)
 	}
 	if i.Kind == "mysql" {

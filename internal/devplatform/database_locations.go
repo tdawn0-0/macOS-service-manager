@@ -14,7 +14,7 @@ func (m *Manager) DatabaseDataDirectory(i Instance) string {
 		return filepath.Join(i.DataDirectory, "data")
 	}
 	dir := m.instanceDirectory(i.ID)
-	if i.Kind == "redis" || i.Kind == "valkey" {
+	if i.Kind == "redis" {
 		return filepath.Join(m.Root, "instances", i.ID)
 	}
 	return filepath.Join(dir, "data")

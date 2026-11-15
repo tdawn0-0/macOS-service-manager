@@ -120,19 +120,6 @@ func Resolve(ctx context.Context, name, version string) (Package, error) {
 		p.Binaries = map[string]string{"mongod": "bin/mongod", "mongos": "bin/mongos"}
 		return p, p.Validate()
 
-	case "valkey":
-		if p.Version != "9.1.2" {
-			return p, errors.New("supported Valkey package version: 9.1.2")
-		}
-		p.Arch = "universal"
-		p.URL = "https://github.com/alhassanaraouf/Valkey.app/releases/download/valkey-9.1.2/valkey-9.1.2-macos-universal.tar.gz"
-		p.SHA256 = "befbdf6a57552e7f4c2824e2bc11dfba1d74c1e97b89955836497cca67b1e5c9"
-		p.Strip = 0
-		p.MinMacOS = "13.0"
-		p.License = "BSD-3-Clause"
-		p.Binaries = map[string]string{"valkey-server": "bin/valkey-server", "valkey-cli": "bin/valkey-cli"}
-		return p, p.Validate()
-
 	case "node":
 		if !exactRuntimeVersion.MatchString(p.Version) {
 			return p, errors.New("choose an exact Node.js version, for example 22.14.0; resolve 22, lts or latest first")

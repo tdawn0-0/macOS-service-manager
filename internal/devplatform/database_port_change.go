@@ -89,7 +89,7 @@ func (m *Manager) changeInstancePort(ctx context.Context, expected Instance, por
 		if i != expected {
 			return nil, nil, errors.New("database settings changed; select the instance again before changing its port")
 		}
-		if i.Kind != "redis" && i.Kind != "valkey" && i.Kind != "postgresql" && i.Kind != "mysql" && i.Kind != "mongodb" {
+		if i.Kind != "redis" && i.Kind != "postgresql" && i.Kind != "mysql" && i.Kind != "mongodb" {
 			return nil, nil, errors.New("unsupported database engine")
 		}
 		if port == i.Port && !repair {
@@ -113,7 +113,7 @@ func (m *Manager) changeInstancePort(ctx context.Context, expected Instance, por
 			before, after []byte
 		}
 		var updates []fileUpdate
-		if i.Kind == "redis" || i.Kind == "valkey" || i.Kind == "mysql" {
+		if i.Kind == "redis" || i.Kind == "mysql" {
 			dir := filepath.Join(m.Root, "instances", i.ID)
 			name := "valkey.conf"
 			replace := replaceManagedRedisPort

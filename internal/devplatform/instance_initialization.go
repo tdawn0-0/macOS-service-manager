@@ -193,7 +193,7 @@ func (m *Manager) createInstance(ctx context.Context, i Instance) (err error) {
 	if e := validID(i.ID); e != nil {
 		return e
 	}
-	if i.Kind != "postgresql" && i.Kind != "mysql" && i.Kind != "mongodb" && i.Kind != "redis" && i.Kind != "valkey" {
+	if i.Kind != "postgresql" && i.Kind != "mysql" && i.Kind != "mongodb" && i.Kind != "redis" {
 		return errors.New("supported engines: mysql, postgresql, redis, mongodb")
 	}
 	if i.Port < 1024 || i.Port > 65535 {

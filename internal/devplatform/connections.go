@@ -43,7 +43,7 @@ func (m *Manager) ConnectionInfo(id string) (ConnectionInfo, error) {
 		scheme, user, path = "mongodb", "devmanager", "/admin"
 		query.Set("authSource", "admin")
 		query.Set("directConnection", "true")
-	case "redis", "valkey":
+	case "redis":
 		scheme, user, path = "redis", "default", "/0"
 	default:
 		return ConnectionInfo{}, errors.New("unsupported database engine")

@@ -16,7 +16,7 @@ func (m *Manager) initializeInstanceData(ctx context.Context, s *State, i Instan
 	if e := m.verifyDataLocation(i); e != nil {
 		return e
 	}
-	if i.DataDirectory != "" && (i.Kind == "redis" || i.Kind == "valkey") {
+	if i.DataDirectory != "" && i.Kind == "redis" {
 		if e := os.MkdirAll(m.DatabaseDataDirectory(i), 0700); e != nil {
 			return e
 		}
@@ -38,11 +38,10 @@ func (m *Manager) initializeInstanceData(ctx context.Context, s *State, i Instan
 			return e
 		}
 	} else {
-		binary := "valkey-server"
-		if i.Kind == "redis" {
-			binary = "redis-server"
+		if i.Kind != "redis" {
+			return errors.New("unsupported database engine")
 		}
-		if _, e := m.Binary(s, i.Package, binary); e != nil {
+		if _, e := m.Binary(s, i.Package, "redis-server"); e != nil {
 			return e
 		}
 		config := fmt.Sprintf("bind 127.0.0.1\nport %d\ndir %q\nrequirepass %s\ndaemonize no\n", i.Port, m.DatabaseDataDirectory(i), password)
@@ -110,11 +109,10 @@ func (m *Manager) instanceStartArguments(s *State, i Instance) ([]string, error)
 		}
 		args = []string{bin, "--dbpath", m.DatabaseDataDirectory(i), "--bind_ip", "127.0.0.1", "--port", fmt.Sprint(i.Port), "--auth"}
 	} else {
-		binary := "valkey-server"
-		if i.Kind == "redis" {
-			binary = "redis-server"
+		if i.Kind != "redis" {
+			return nil, errors.New("unsupported database engine")
 		}
-		bin, e := m.Binary(s, i.Package, binary)
+		bin, e := m.Binary(s, i.Package, "redis-server")
 		if e != nil {
 			return nil, e
 		}

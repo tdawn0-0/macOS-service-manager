@@ -34,7 +34,7 @@ func databasePortFixture(t *testing.T, kind string) (*Manager, Instance, string)
 	return m, i, dir
 }
 func TestDatabasePortChangeKeepsEveryEngineDataAndCredentials(t *testing.T) {
-	for _, kind := range []string{"mysql", "postgresql", "mongodb", "redis", "valkey"} {
+	for _, kind := range []string{"mysql", "postgresql", "mongodb", "redis"} {
 		t.Run(kind, func(t *testing.T) {
 			m, i, dir := databasePortFixture(t, kind)
 			port := integrationPort(t)
@@ -54,7 +54,7 @@ func TestDatabasePortChangeKeepsEveryEngineDataAndCredentials(t *testing.T) {
 					t.Fatal("port change modified data", name, err)
 				}
 			}
-			if kind == "redis" || kind == "valkey" {
+			if kind == "redis" {
 				b, _ := os.ReadFile(filepath.Join(dir, "valkey.conf"))
 				if !strings.Contains(string(b), "port "+strconv.Itoa(port)+"\n") || !strings.Contains(string(b), "requirepass keep-this-credential") {
 					t.Fatal("Redis configuration was recreated incorrectly")

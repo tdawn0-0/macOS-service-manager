@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   native-test:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 90
     permissions:
       contents: read
@@ -37,7 +37,7 @@ jobs:
 
   release:
     needs: native-test
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 90
     # Holds the secrets, and hands them only to the tags above.
     environment: release

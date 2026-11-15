@@ -88,7 +88,7 @@ func Resolve(ctx context.Context, name, version string) (Package, error) {
 		}
 		p.SHA256 = r.sha256
 		p.URL = r.url
-		p.MinMacOS = "15.0"
+		p.MinMacOS = "26.0"
 		p.License = "GPL-2.0 and bundled component licenses"
 		p.Binaries = map[string]string{"mysqld": "bin/mysqld", "mysql": "bin/mysql", "mysqldump": "bin/mysqldump"}
 		return p, p.Validate()
@@ -104,7 +104,7 @@ func Resolve(ctx context.Context, name, version string) (Package, error) {
 		p.URL = "https://packages.redis.io/redis-stack/redis-stack-server-7.4.0-v8." + asset + ".zip"
 		p.Format = "zip"
 		p.Strip = 0
-		p.MinMacOS = "14.0"
+		p.MinMacOS = "26.0"
 		p.License = "RSALv2/SSPLv1 and bundled component licenses"
 		p.Binaries = map[string]string{"redis-server": "bin/redis-server", "redis-cli": "bin/redis-cli"}
 		return p, p.Validate()
@@ -115,7 +115,7 @@ func Resolve(ctx context.Context, name, version string) (Package, error) {
 		}
 		p.SHA256 = r.sha256
 		p.URL = r.url
-		p.MinMacOS = "13.0"
+		p.MinMacOS = "26.0"
 		p.License = "SSPL-1.0"
 		p.Binaries = map[string]string{"mongod": "bin/mongod", "mongos": "bin/mongos"}
 		return p, p.Validate()

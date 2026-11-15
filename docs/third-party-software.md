@@ -12,6 +12,8 @@ PostgreSQL 通过 Apple Silicon Homebrew core 的版本公式管理。Java 使�
 | Redis | Redis 7.4.7 / Stack 7.4.0-v8 发行包 | [Redis 官方包目录](https://packages.redis.io/redis-stack/) | RSALv2/SSPLv1 及包内组件许可 |
 | MongoDB | 8.0.38、8.0.5 | [MongoDB 官方下载源](https://fastdl.mongodb.org/osx/) | SSPL-1.0 |
 
+MySQL、Redis 和 MongoDB 归档包要求 macOS 26 或更新版本；更旧的系统不在测试范围内。
+
 Redis 实例直接使用发行包中的 redis-server，不用 Valkey 替代，也不自动启用 Stack 模块。PHP 不再由应用管理。
 
 应用本身直接依赖 MyGo、purego、MongoDB Go Driver 和 howett.net/plist；精确版本及传递依赖见 go.mod/go.sum。项目自有源码已按计划采用顶层 Apache-2.0 LICENSE/NOTICE。标准文本来自 [Apache 官方](https://www.apache.org/licenses/LICENSE-2.0.txt)，原作者在 Git 历史中保留为 J.yeu/Jyeu。外部组件保持原许可；新增源码或资产的来源仍须在发布前审阅。

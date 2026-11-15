@@ -99,3 +99,17 @@ func TestCatalogRejectsUnlistedVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestCatalogDatabaseArchivesRequireMacOS26(t *testing.T) {
+	for _, name := range []string{"mysql", "redis", "mongodb"} {
+		for _, v := range AvailableVersions(name) {
+			p, err := Resolve(context.Background(), name, v)
+			if err != nil {
+				t.Fatalf("%s %s: %v", name, v, err)
+			}
+			if p.MinMacOS != "26.0" {
+				t.Fatalf("%s %s: MinMacOS %q", name, v, p.MinMacOS)
+			}
+		}
+	}
+}

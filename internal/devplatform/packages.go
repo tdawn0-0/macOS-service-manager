@@ -54,7 +54,7 @@ func (m *Manager) Binary(s *State, id, name string) (string, error) {
 	if p.Name == "php" || p.Name == "php-fpm" {
 		return "", errors.New("PHP is not managed by this app")
 	}
-	if p.Formula != "" || p.Name == "postgresql" || p.Name == "java" {
+	if p.Formula != "" || p.Name == "postgresql" || p.Name == "redis" || p.Name == "java" {
 		if e := p.Validate(); e != nil {
 			return "", e
 		}

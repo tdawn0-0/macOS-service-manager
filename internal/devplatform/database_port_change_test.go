@@ -144,10 +144,8 @@ func TestDatabasePortChangeCancellationRestoresFiles(t *testing.T) {
 	for _, cancelled := range []bool{false, true} {
 		t.Run(strconv.FormatBool(cancelled), func(t *testing.T) {
 			m, i, dir := databasePortFixture(t, "redis")
-			pkg, err := Resolve(context.Background(), "redis", "7.4.7")
-			if err != nil {
-				t.Fatal(err)
-			}
+			pkg := Package{Name: "redis", Version: "8.2.11", Arch: "arm64", Format: "homebrew", Formula: "redis@8.2", URL: "https://formulae.brew.sh/formula/redis@8.2", SHA256: strings.Repeat("a", 64), Binaries: homebrewBinaries("redis")}
+			var err error
 			i.Package = pkg.ID()
 			if err = m.withState(context.Background(), func(s *State) error {
 				s.Instances[i.ID] = i

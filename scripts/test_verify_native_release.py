@@ -114,7 +114,7 @@ class NativeReleaseTests(unittest.TestCase):
             base=Path(directory).resolve(); root=base/'private'; root.mkdir()
             packages={}
             for index,(name,version) in enumerate(m.VERSIONS):
-                formula='postgresql@17' if name=='postgresql' else ''
+                formula={'postgresql':'postgresql@17','redis':'redis@8.2'}.get(name,'')
                 packages[str(index)]={'name':name,'version':version,'arch':'arm64','sha256':'a'*64,'url':'https://upstream.example/private?token=fixture','formula':formula,'secret':'not-exported'}
             def command(argv,**kwargs):
                 if argv[-1]=='status':return json.dumps({'packages':packages,'private':'do-not-export'})
@@ -215,7 +215,7 @@ class NativeReleaseTests(unittest.TestCase):
         m=module()
         with tempfile.TemporaryDirectory() as directory:
             cellar=Path(directory)
-            for rack,version,tap,stable,binaries in [('postgresql@17','17.11_1','homebrew/core','17.11',['bin/'+x for x in ['postgres','initdb','pg_dump','pg_restore','psql','createdb']])]:
+            for rack,version,tap,stable,binaries in [('postgresql@17','17.11_1','homebrew/core','17.11',['bin/'+x for x in ['postgres','initdb','pg_dump','pg_restore','psql','createdb']]),('redis@8.2','8.2.11','homebrew/core','8.2.11',['bin/redis-server','bin/redis-cli'])]:
                 keg=cellar/rack/version;keg.mkdir(parents=True)
                 (keg/'INSTALL_RECEIPT.json').write_text(json.dumps({'source':{'tap':tap,'versions':{'stable':stable}}}))
                 for name in binaries:
@@ -223,6 +223,7 @@ class NativeReleaseTests(unittest.TestCase):
             def info(argv,**kwargs):
                 self.assertEqual(argv[:3],list(m.SANDBOX))
                 self.assertNotIn('install',argv);self.assertNotIn('tap',argv)
+                if argv[-1]=='redis@8.2':return json.dumps({'formulae':[{'name':'redis@8.2','full_name':'redis@8.2','versions':{'stable':'8.2.11'},'revision':0}]})
                 return json.dumps({'formulae':[{'name':'postgresql@17','full_name':'postgresql@17','versions':{'stable':'17.11'},'revision':1}]})
             real_path=Path
             with mock.patch.object(m,'Path',side_effect=lambda value:cellar if value=='/opt/homebrew/Cellar' else real_path(value)), mock.patch.object(m,'checked',side_effect=info):

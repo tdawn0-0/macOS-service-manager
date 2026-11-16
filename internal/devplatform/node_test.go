@@ -375,7 +375,7 @@ func TestTheFirstNodeInstalledBecomesTheDefault(t *testing.T) {
 	if got.NodeDefault != first.ID() {
 		t.Fatalf("default %q", got.NodeDefault)
 	}
-	other := Package{Name: "redis", Version: "7.4.7", Arch: "arm64"}
+	other := Package{Name: "redis", Version: "8.2.11", Arch: "arm64"}
 	if err := m.defaultFirstNode(context.Background(), other); err != nil {
 		t.Fatal(err)
 	}

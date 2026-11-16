@@ -25,8 +25,9 @@ NATIVE = ('TestNativeResourceProduct',) + tuple('TestNativeResourceProduct/' + x
 REQUIRED = CORE + MATRIX + NATIVE
 SANDBOX = ('sandbox-exec', '-p', '(version 1)(allow default)(deny file-write* (subpath "/opt/homebrew"))')
 
+HOMEBREW_FORMULAE = {'postgresql': 'postgresql@17', 'redis': 'redis@8.2'}
 VERSIONS = (('node', '22.14.0'), ('node', '20.19.0'), ('mysql', '8.4.13'),
-            ('redis', '7.4.7'), ('mongodb', '8.0.38'), ('postgresql', '17'))
+            ('redis', '8.2'), ('mongodb', '8.0.38'), ('postgresql', '17'))
 
 
 def check_events(lines, required=REQUIRED):
@@ -114,8 +115,8 @@ def package_summary(packages):
             raise ValueError('invalid package source')
         # Source domain identifies provenance without leaking URL query/path values.
         formula = value.get('formula', '')
-        if name == 'postgresql' and formula != 'postgresql@17':
-            raise ValueError('unexpected PostgreSQL formula')
+        if name in HOMEBREW_FORMULAE and formula != HOMEBREW_FORMULAE[name]:
+            raise ValueError('unexpected Homebrew formula')
         rows.append({'name': name, 'version': version, 'arch': arch, 'sha256': digest, 'source': url.hostname})
     if Counter(row['name'] for row in rows) != Counter(name for name, _ in VERSIONS):
         raise ValueError('missing prepared packages')
@@ -151,7 +152,7 @@ def parse_formula_metadata(raw, name):
         rack = formula['name']
         stable = formula['versions']['stable']
         revision = formula.get('revision', 0)
-        racks = {'postgresql@17'}
+        racks = set(HOMEBREW_FORMULAE.values())
         if (not isinstance(full_name, str) or not isinstance(rack, str) or rack not in racks
                 or not isinstance(stable, str) or not re.fullmatch(r'[0-9]+\.[0-9]+(?:\.[0-9]+)?', stable)
                 or type(revision) is not int or revision < 0):
@@ -163,7 +164,8 @@ def parse_formula_metadata(raw, name):
 
 def validate_existing_kegs():
     env = dict(os.environ, HOMEBREW_NO_AUTO_UPDATE='1')
-    for name, requested, tap, binaries in [('postgresql', 'postgresql@17', 'homebrew/core', ['postgres','initdb','pg_dump','pg_restore','psql','createdb'])]:
+    for name, requested, tap, binaries in [('postgresql', 'postgresql@17', 'homebrew/core', ['postgres','initdb','pg_dump','pg_restore','psql','createdb']),
+                                           ('redis', 'redis@8.2', 'homebrew/core', ['redis-server','redis-cli'])]:
         raw = checked(list(SANDBOX) + ['/opt/homebrew/bin/brew','info','--json=v2','--formula',requested], env=env)
         formula = parse_formula_metadata(raw, name)
         if formula['full_name'] != requested:

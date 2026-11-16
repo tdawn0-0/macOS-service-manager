@@ -20,7 +20,7 @@ func TestRedisPackageRepairPreservesInstanceData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, ok := state.Packages["redis@7.4.7-"+runtime.GOARCH]
+	p, ok := state.Packages["redis@8.2.11-"+runtime.GOARCH]
 	if !ok {
 		t.Fatal("verified Redis package is required")
 	}

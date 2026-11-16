@@ -178,7 +178,7 @@ func TestUpgradeTargets(t *testing.T) {
 		t.Errorf("newest has targets: %v", got)
 	}
 	for _, i := range []Instance{
-		{Kind: "redis", Package: "redis@7.2.1-arm64"},
+		{Kind: "redis", Package: "redis@8.2.11-arm64"},
 		{Kind: "postgresql", Package: "postgresql@17.1-arm64"},
 		{Kind: "mysql", Package: "mysql@8.4.1-arm64"},
 	} {

@@ -220,7 +220,7 @@ func TestUISoftwareInstallAndDatabaseWorkflow(t *testing.T) {
 		t.Skip("set MSM_UI_E2E_PACKAGE_CACHE to a verified binary download cache")
 	}
 	h := newDevUIHarnessSize(t, 900, 520, false)
-	pkg, e := devplatform.Resolve(context.Background(), "redis", "7.4.7")
+	pkg, e := devplatform.Resolve(context.Background(), "redis", "8.2")
 	if e != nil {
 		t.Fatal(e)
 	}

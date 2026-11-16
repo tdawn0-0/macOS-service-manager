@@ -17,7 +17,7 @@ import (
 
 func installUIInitializationRedis(t *testing.T, h *devUIHarness) devplatform.Package {
 	t.Helper()
-	pkg := seedUIPackage(t, h, "redis", "7.4.7")
+	pkg := seedUIPackage(t, h, "redis", "8.2")
 	h.click("Software")
 	h.click("Software redis")
 	h.click("Review package")

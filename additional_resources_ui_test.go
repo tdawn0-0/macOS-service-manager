@@ -123,10 +123,11 @@ func TestUIDatabaseLocations(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		p := devplatform.Package{Name: "redis", Version: "7.4.7", Arch: "arm64", URL: "https://example.invalid/fixture.zip", SHA256: strings.Repeat("a", 64), Format: "zip", Binaries: map[string]string{"redis-server": "bin/redis-server"}}
-		path := filepath.Join(m.PackageDirectory(p), "bin", "redis-server")
-		os.MkdirAll(filepath.Dir(path), 0700)
-		os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0700)
+		p := devplatform.Package{Name: "redis", Version: "8.2.11", Arch: "arm64", URL: "https://formulae.brew.sh/formula/redis@8.2", SHA256: strings.Repeat("a", 64), Format: "homebrew", Formula: "redis@8.2", Binaries: map[string]string{"redis-server": "bin/redis-server", "redis-cli": "bin/redis-cli"}}
+		// Homebrew kegs live in the shared Cellar; tests never write there.
+		if os.Getenv("MSM_UI_E2E_HOMEBREW") != "1" {
+			t.Skip("set MSM_UI_E2E_HOMEBREW=1 and preinstall the redis@8.2 Homebrew keg")
+		}
 		s.Packages[p.ID()] = p
 		b, _ := json.Marshal(s)
 		if e = os.WriteFile(filepath.Join(h.root, "state.json"), b, 0600); e != nil {

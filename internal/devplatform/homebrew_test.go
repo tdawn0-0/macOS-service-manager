@@ -312,3 +312,56 @@ func TestHomebrewLiveMetadataAndExistingKeg(t *testing.T) {
 		}
 	}
 }
+
+func redisBrewMetadata(fullName string) string {
+	f := homebrewFormula{Name: "redis@8.2", FullName: fullName, License: "AGPL-3.0-only AND BSD-2-Clause"}
+	f.Versions.Stable = "8.2.11"
+	f.SourceChecksum.SHA256 = strings.Repeat("b", 64)
+	b, _ := json.Marshal(map[string]any{"formulae": []homebrewFormula{f}})
+	return string(b)
+}
+
+func TestHomebrewFormulaForRedis(t *testing.T) {
+	for _, version := range []string{"8.2", "8.2.11", "v8.2.11", "8.2.11_1"} {
+		if formula, err := homebrewFormulaFor("redis", version); err != nil || formula != "redis@8.2" {
+			t.Fatal(version, formula, err)
+		}
+	}
+	for _, version := range []string{"7.4.7", "8", "8.10", "redis"} {
+		if _, err := homebrewFormulaFor("redis", version); err == nil {
+			t.Fatal("accepted", version)
+		}
+	}
+}
+
+func TestResolveRedisHomebrew(t *testing.T) {
+	run := func(metadata string) commandRunner {
+		return func(ctx context.Context, program string, args ...string) (string, error) {
+			if program != "/usr/bin/env" || len(args) < 5 || args[3] != homebrewProgram || args[4] != "info" {
+				t.Fatalf("unexpected command %s %v", program, args)
+			}
+			return metadata, nil
+		}
+	}
+	p, err := resolveHomebrew(context.Background(), "redis", "8.2", run(redisBrewMetadata("redis@8.2")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name != "redis" || p.Version != "8.2.11" || p.Formula != "redis@8.2" || p.Format != "homebrew" || p.License == "" ||
+		!reflect.DeepEqual(p.Binaries, map[string]string{"redis-server": "bin/redis-server", "redis-cli": "bin/redis-cli"}) {
+		t.Fatalf("%+v", p)
+	}
+	if err = p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = resolveHomebrew(context.Background(), "redis", "8.2", run(redisBrewMetadata("other/tap/redis@8.2"))); err == nil {
+		t.Fatal("accepted a formula from a different tap")
+	}
+}
+
+func TestRedisRequiresHomebrewPackage(t *testing.T) {
+	p := Package{Name: "redis", Version: "8.2.11", Arch: "arm64", URL: "https://example.com/redis.zip", SHA256: strings.Repeat("a", 64), Format: "zip", Binaries: map[string]string{"redis-server": "bin/redis-server"}}
+	if err := p.Validate(); err == nil {
+		t.Fatal("zip-format Redis package accepted")
+	}
+}

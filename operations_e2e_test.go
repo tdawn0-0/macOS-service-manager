@@ -10,7 +10,7 @@ import (
 func TestUITaskHistoryInitializationRequiresNewTargetReview(t *testing.T) {
 	h := newDevUIHarnessSize(t, 900, 520, true)
 	m := h.a.dev.managerFactory()
-	if e := m.CreateInstance(context.Background(), devplatform.Instance{ID: "old-target", Kind: "redis", Package: "redis@7.4.7-arm64", Port: 0}); e == nil {
+	if e := m.CreateInstance(context.Background(), devplatform.Instance{ID: "old-target", Kind: "redis", Package: "redis@8.2.11-arm64", Port: 0}); e == nil {
 		t.Fatal("expected fixture initialization validation failure")
 	}
 	h.click("Tasks")

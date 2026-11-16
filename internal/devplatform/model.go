@@ -63,8 +63,8 @@ func (p Package) Validate() error {
 	if p.Name == "php" || p.Name == "php-fpm" {
 		return errors.New("PHP is not managed by this app")
 	}
-	if p.Name == "postgresql" && p.Formula == "" {
-		return errors.New("PostgreSQL requires a Homebrew package")
+	if (p.Name == "postgresql" || p.Name == "redis") && p.Formula == "" {
+		return errors.New("PostgreSQL and Redis require a Homebrew package")
 	}
 	u, e := url.Parse(p.URL)
 	if e != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {

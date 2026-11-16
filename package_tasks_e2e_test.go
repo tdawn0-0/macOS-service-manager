@@ -68,7 +68,7 @@ func TestUIQuitCanCancelBackgroundPackageBeforeLeaving(t *testing.T) {
 		t.Skip("set MSM_UI_E2E_PACKAGE_CACHE to verified Redis archive")
 	}
 	h := newDevUIHarnessSize(t, 900, 520, false)
-	pkg := seedUIPackage(t, h, "redis", "7.4.7")
+	pkg := seedUIPackage(t, h, "redis", "8.2")
 	entered, release := pauseUIPackage(t, h, pkg.ID())
 	h.click("Software")
 	h.click("Software redis")
@@ -125,7 +125,7 @@ func TestUIPackageOtherCallerHelper(t *testing.T) {
 		return
 	}
 	m := devplatform.New(root)
-	p, e := devplatform.Resolve(context.Background(), "redis", "7.4.7")
+	p, e := devplatform.Resolve(context.Background(), "redis", "8.2")
 	if e != nil {
 		os.Exit(25)
 	}
@@ -145,7 +145,7 @@ func TestUIPackageOtherCallerBusyDetailsAndRetry(t *testing.T) {
 		t.Skip("set MSM_UI_E2E_PACKAGE_CACHE to verified Redis archive")
 	}
 	h := newDevUIHarnessSize(t, 900, 520, true)
-	pkg := seedUIPackage(t, h, "redis", "7.4.7")
+	pkg := seedUIPackage(t, h, "redis", "8.2")
 	c := exec.Command(os.Args[0], "-test.run=^TestUIPackageOtherCallerHelper$")
 	c.Env = append(os.Environ(), "MSM_UI_PACKAGE_CALLER_ROOT="+h.root)
 	in, e := c.StdinPipe()
@@ -214,7 +214,7 @@ func TestUIBackgroundCancelOnePackageKeepsOtherPackageRunning(t *testing.T) {
 	}
 	h := newDevUIHarnessSize(t, 900, 520, true)
 	node := seedUIPackage(t, h, "node", "20.19.0")
-	redis := seedUIPackage(t, h, "redis", "7.4.7")
+	redis := seedUIPackage(t, h, "redis", "8.2")
 	nodeEntered, _ := pauseUIPackage(t, h, node.ID())
 	redisEntered, releaseRedis := pauseUIPackage(t, h, redis.ID())
 	h.click("Software")

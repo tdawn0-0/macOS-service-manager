@@ -31,6 +31,8 @@ type homebrewFormula struct {
 
 var postgresBrewVersion = regexp.MustCompile(`^(\d+)(?:\.\d+)?(?:_\d+)?$`)
 
+var redisBrewVersion = regexp.MustCompile(`^8\.2(?:\.\d+)?(?:_\d+)?$`)
+
 func homebrewFormulaFor(name, version string) (string, error) {
 	version = strings.TrimPrefix(version, "v")
 	switch name {
@@ -38,17 +40,29 @@ func homebrewFormulaFor(name, version string) (string, error) {
 		if match := postgresBrewVersion.FindStringSubmatch(version); match != nil {
 			return "postgresql@" + match[1], nil
 		}
+		return "", errors.New("choose a PostgreSQL major version (for example 17) or an exact Homebrew version")
+	case "redis":
+		if redisBrewVersion.MatchString(version) {
+			return "redis@8.2", nil
+		}
+		return "", errors.New("choose Redis 8.2 or an exact 8.2.x Homebrew version")
 	}
-	return "", errors.New("choose a PostgreSQL major version (for example 17) or an exact Homebrew version")
+	return "", errors.New("Homebrew packages are only supported for PostgreSQL and Redis")
 }
 
 func homebrewBinaries(name string) map[string]string {
+	names := []string{"postgres", "initdb", "pg_dump", "pg_restore", "psql", "createdb"}
+	if name == "redis" {
+		names = []string{"redis-server", "redis-cli"}
+	}
 	bins := map[string]string{}
-	for _, bin := range []string{"postgres", "initdb", "pg_dump", "pg_restore", "psql", "createdb"} {
+	for _, bin := range names {
 		bins[bin] = "bin/" + bin
 	}
 	return bins
 }
+
+var redisExactVersion = regexp.MustCompile(`^8\.2\.\d+$`)
 
 func validHomebrewPackage(p Package) bool {
 	formula, e := homebrewFormulaFor(p.Name, p.Version)
@@ -60,7 +74,16 @@ func validHomebrewPackage(p Package) bool {
 	}
 	// Persist exact keg versions, never a moving major/minor channel or opt link.
 	base := strings.Split(p.Version, "_")[0]
-	if p.Name != "postgresql" || strings.Count(base, ".") != 1 {
+	switch p.Name {
+	case "postgresql":
+		if strings.Count(base, ".") != 1 {
+			return false
+		}
+	case "redis":
+		if !redisExactVersion.MatchString(base) {
+			return false
+		}
+	default:
 		return false
 	}
 	return reflect.DeepEqual(p.Binaries, homebrewBinaries(p.Name))
@@ -71,7 +94,7 @@ func brewRun(ctx context.Context, run commandRunner, args ...string) (string, er
 	env := []string{"HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_CLEANUP=1", "HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1", homebrewProgram}
 	out, err := run(ctx, "/usr/bin/env", append(env, args...)...)
 	if err != nil {
-		return "", fmt.Errorf("Homebrew %s: %w. PostgreSQL requires Apple Silicon Homebrew at %s", args[0], err, homebrewProgram)
+		return "", fmt.Errorf("Homebrew %s: %w. Homebrew packages require Apple Silicon Homebrew at %s", args[0], err, homebrewProgram)
 	}
 	return out, nil
 }
@@ -100,7 +123,7 @@ func resolveHomebrew(ctx context.Context, name, requested string, run commandRun
 		version += fmt.Sprintf("_%d", f.Revision)
 	}
 	requested = strings.TrimPrefix(requested, "v")
-	channel := strings.TrimPrefix(formula, "postgresql@")
+	channel := strings.TrimPrefix(strings.TrimPrefix(formula, "postgresql@"), "redis@")
 	if requested != channel && requested != version && requested != f.Versions.Stable {
 		return Package{}, fmt.Errorf("Homebrew currently provides %s %s, not %s; review the available version", formula, version, requested)
 	}
@@ -118,7 +141,7 @@ func (m *Manager) ResolvePackage(ctx context.Context, name, version string) (Pac
 	if err := requireAppleSiliconHost(); err != nil {
 		return Package{}, err
 	}
-	if name == "postgresql" {
+	if name == "postgresql" || name == "redis" {
 		return resolveHomebrew(ctx, name, version, m.Run)
 	}
 	return Resolve(ctx, name, version)

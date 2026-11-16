@@ -62,19 +62,20 @@ def main():
         try:
             for name, version in [('node', '22.14.0'), ('node', '20.19.0'),
                                   ('mysql', '8.4.4'), ('postgresql', '17'),
-                                  ('redis', '7.4.7'), ('mongodb', '8.0.5')]:
+                                  ('redis', '8.2'), ('mongodb', '8.0.5')]:
                 cli('install', name, version)
             packages = json.loads(cli('status'))['packages']
             if {value['name'] for value in packages.values()} != {'node', 'mysql', 'postgresql', 'redis', 'mongodb'}:
                 raise AssertionError('five software categories were not installed')
             pg_id, pg_pkg = next((key, value) for key, value in packages.items() if value['name'] == 'postgresql')
+            redis_id, redis_pkg = next((key, value) for key, value in packages.items() if value['name'] == 'redis')
             node = root / 'packages/node@22.14.0-arm64/bin/node'
             node20 = root / 'packages/node@20.19.0-arm64/bin/node'
             assert subprocess.check_output([str(node), '--version'], text=True).strip() == 'v22.14.0'
             assert subprocess.check_output([str(node20), '--version'], text=True).strip() == 'v20.19.0'
             web, https, pg_port, redis_port = [free_port() for _ in range(4)]
             pg_instance = {'id': 'integration-pg', 'kind': 'postgresql', 'package': pg_id, 'port': pg_port, 'persistent': True}
-            redis_instance = {'id': 'integration-redis', 'kind': 'redis', 'package': 'redis@7.4.7-arm64', 'port': redis_port, 'persistent': True}
+            redis_instance = {'id': 'integration-redis', 'kind': 'redis', 'package': redis_id, 'port': redis_port, 'persistent': True}
             for instance in [pg_instance, redis_instance]:
                 cli('instance', save_json(root, instance['id'], instance))
                 instances.append(instance['id'])
@@ -120,7 +121,7 @@ def main():
             cli('restore', 'integration-pg', 'restored_db', backup)
             assert sql('restored_db', 'select n from sample').strip() == '42'
             print('PASS: PostgreSQL backup and restore', flush=True)
-            redis_cli = root / 'packages/redis@7.4.7-arm64/bin/redis-cli'
+            redis_cli = Path('/opt/homebrew/Cellar') / redis_pkg['formula'].split('/')[-1] / redis_pkg['version'] / 'bin/redis-cli'
             redis_env = dict(env, REDISCLI_AUTH=(root / 'instances/integration-redis/password').read_text())
             assert subprocess.check_output([str(redis_cli), '-p', str(redis_port), 'PING'], env=redis_env, text=True).strip() == 'PONG'
             print('PASS: Redis authenticated PING', flush=True)

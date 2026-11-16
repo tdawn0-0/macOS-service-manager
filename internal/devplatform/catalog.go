@@ -93,21 +93,8 @@ func Resolve(ctx context.Context, name, version string) (Package, error) {
 		p.Binaries = map[string]string{"mysqld": "bin/mysqld", "mysql": "bin/mysql", "mysqldump": "bin/mysqldump"}
 		return p, p.Validate()
 
-	case "postgresql":
+	case "postgresql", "redis":
 		return resolveHomebrew(ctx, name, version, runCommand)
-	case "redis":
-		if p.Version != "7.4.7" {
-			return p, errors.New("supported Redis version: 7.4.7 (Redis Stack 7.4.0-v8 distribution)")
-		}
-		asset := "sonoma.arm64"
-		p.SHA256 = "4b063a410120843f6e493fa52d433b17ad79b57adc751b9f8050aa81874f04da"
-		p.URL = "https://packages.redis.io/redis-stack/redis-stack-server-7.4.0-v8." + asset + ".zip"
-		p.Format = "zip"
-		p.Strip = 0
-		p.MinMacOS = "26.0"
-		p.License = "RSALv2/SSPLv1 and bundled component licenses"
-		p.Binaries = map[string]string{"redis-server": "bin/redis-server", "redis-cli": "bin/redis-cli"}
-		return p, p.Validate()
 	case "mongodb":
 		r, ok := findRelease(mongodbReleases, p.Version)
 		if !ok {
@@ -171,7 +158,7 @@ func AvailableVersions(name string) []string {
 	case "postgresql":
 		return []string{"17", "18", "16"}
 	case "redis":
-		return []string{"7.4.7"}
+		return []string{"8.2"}
 	case "mongodb":
 		return releaseVersionList(mongodbReleases)
 	}

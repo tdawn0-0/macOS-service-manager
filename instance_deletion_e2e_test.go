@@ -23,7 +23,7 @@ func newUIDeletionInstance(t *testing.T, dark bool) (*devUIHarness, *devplatform
 	}
 	h := newDevUIHarnessSize(t, 900, 520, dark)
 	m := h.a.dev.managerFactory()
-	pkg, e := devplatform.Resolve(context.Background(), "redis", "7.4.7")
+	pkg, e := devplatform.Resolve(context.Background(), "redis", "8.2")
 	if e != nil {
 		t.Fatal(e)
 	}

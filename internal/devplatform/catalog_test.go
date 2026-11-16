@@ -11,7 +11,7 @@ import (
 var hex64 = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func TestCatalogEveryListedVersionResolves(t *testing.T) {
-	for _, name := range []string{"mysql", "redis", "mongodb"} {
+	for _, name := range []string{"mysql", "mongodb"} {
 		seen := map[string]string{}
 		for _, v := range AvailableVersions(name) {
 			p, err := Resolve(context.Background(), name, v)
@@ -24,9 +24,7 @@ func TestCatalogEveryListedVersionResolves(t *testing.T) {
 			if p.Version != v {
 				t.Fatalf("%s %s: version %q", name, v, p.Version)
 			}
-			// Redis ships inside the Redis Stack archive, whose file name carries the
-			// distribution version rather than the Redis version.
-			if !strings.HasPrefix(p.URL, "https://") || (name != "redis" && !strings.Contains(p.URL, v)) {
+			if !strings.HasPrefix(p.URL, "https://") || !strings.Contains(p.URL, v) {
 				t.Fatalf("%s %s: url %q", name, v, p.URL)
 			}
 			if !hex64.MatchString(p.SHA256) {
@@ -101,7 +99,7 @@ func TestCatalogRejectsUnlistedVersion(t *testing.T) {
 }
 
 func TestCatalogDatabaseArchivesRequireMacOS26(t *testing.T) {
-	for _, name := range []string{"mysql", "redis", "mongodb"} {
+	for _, name := range []string{"mysql", "mongodb"} {
 		for _, v := range AvailableVersions(name) {
 			p, err := Resolve(context.Background(), name, v)
 			if err != nil {

@@ -24,7 +24,7 @@ func TestCLIInitializationReviewAndArchivePreservesPreparedFiles(t *testing.T) {
 	if _, e := os.Stat(root); !os.IsNotExist(e) {
 		t.Fatal("inspection created storage", e)
 	}
-	p := devplatform.Package{Name: "redis", Version: "fixture", Arch: "universal", URL: "https://unused.invalid/fixture.zip", SHA256: strings.Repeat("0", 64), Format: "zip", Binaries: map[string]string{"redis-server": "missing"}}
+	p := devplatform.Package{Name: "redis", Version: "8.2.99", Arch: "arm64", URL: "https://formulae.brew.sh/formula/redis@8.2", SHA256: strings.Repeat("0", 64), Format: "homebrew", Formula: "redis@8.2", Binaries: map[string]string{"redis-server": "bin/redis-server", "redis-cli": "bin/redis-cli"}}
 	s := devplatform.State{SchemaVersion: devplatform.Schema, ProxyRules: []devplatform.ProxyRule{}, ProxyListenerPort: 443, Packages: map[string]devplatform.Package{p.ID(): p}, Instances: map[string]devplatform.Instance{}}
 	if e := os.MkdirAll(root, 0700); e != nil {
 		t.Fatal(e)

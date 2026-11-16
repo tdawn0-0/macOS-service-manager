@@ -54,7 +54,7 @@ func TestNativeResourceProduct(t *testing.T) {
 	t.Run("resource-quit", func(t *testing.T) {
 		TestUIQuitKeepsServicesOrStopsOwnedScopeAndRetriesFailure(t)
 		h := newDevUIHarness(t)
-		pkg, err := devplatform.Resolve(context.Background(), "redis", "7.4.7")
+		pkg, err := devplatform.Resolve(context.Background(), "redis", "8.2")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -86,7 +86,7 @@ func TestNativeResourceProduct(t *testing.T) {
 	})
 	t.Run("connection-profiles", func(t *testing.T) {
 		h := newDevUIHarness(t)
-		pkg, err := devplatform.Resolve(context.Background(), "redis", "7.4.7")
+		pkg, err := devplatform.Resolve(context.Background(), "redis", "8.2")
 		if err != nil {
 			t.Fatal(err)
 		}

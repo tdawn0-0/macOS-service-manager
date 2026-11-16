@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -19,7 +18,7 @@ func TestDatabaseRejectsForeignListenerWithoutStartingJobs(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer l.Close()
-	i := Instance{ID: "port-conflict", Kind: "redis", Package: "redis@7.4.7-arm64", Port: l.Addr().(*net.TCPAddr).Port}
+	i := Instance{ID: "port-conflict", Kind: "redis", Package: "redis@8.2.11-arm64", Port: l.Addr().(*net.TCPAddr).Port}
 	m.Run = func(_ context.Context, name string, args ...string) (string, error) {
 		if name == "launchctl" && len(args) > 0 && args[0] == "print" {
 			return "", errors.New("not loaded")
@@ -42,12 +41,11 @@ func TestDatabaseRejectsForeignListenerWithoutStartingJobs(t *testing.T) {
 func TestDatabaseForeignListenerAfterPreflightDoesNotHideExitedJob(t *testing.T) {
 	m := testManager(t)
 	i := Instance{ID: "raced", Kind: "redis", Port: integrationPort(t)}
-	pkg := Package{Name: "redis", Version: "test", Arch: runtime.GOARCH, Binaries: map[string]string{"redis-server": "server"}}
+	m.brewCellar = t.TempDir()
+	pkg := Package{Name: "redis", Version: "8.2.11", Arch: "arm64", Format: "homebrew", Formula: "redis@8.2", URL: "https://formulae.brew.sh/formula/redis@8.2", SHA256: strings.Repeat("a", 64), Binaries: homebrewBinaries("redis")}
 	i.Package = pkg.ID()
-	if err := os.MkdirAll(m.packageDir(pkg), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(m.packageDir(pkg), "server"), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
+	writeBrewKeg(t, m, pkg, "homebrew/core")
+	if err := os.WriteFile(filepath.Join(m.packageDir(pkg), "bin/redis-server"), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	s := emptyState()

@@ -11,7 +11,6 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/action"
-	"github.com/lobehub/lobe-mygo/pkg/feedback"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 	"devbase/internal/devplatform"
 	"devbase/internal/privhelper"
@@ -401,22 +400,23 @@ func (a *app) devStatusBar(c *ui.Context) {
 	tk := theme.TokensOf(c)
 	ui.Column(c).Height(1).Shrink(0).Background(hairline(c.Theme()))
 	ui.Row(c).Height(36).Shrink(0).Padding(0, 12, 0, 20).Gap(8).AlignItems(ui.Center).Children(func() {
-		status, kind := "", feedback.BadgeDefault
+		// A dot, an optional word for what needs a look, and the result line.
+		t := c.Theme()
+		status, dot := "", t.Success
 		if a.backgroundTasksRunning() {
-			status, kind = "Background tasks", feedback.BadgeProcessing
+			status, dot = "Background tasks", t.Warning
 		}
 		if d.busy {
-			status, kind = "Working", feedback.BadgeProcessing
+			status, dot = "Working", t.Warning
 		}
 		if strings.Contains(d.output, "Error:") {
-			status, kind = "Needs attention", feedback.BadgeError
+			status, dot = "Needs attention", t.Danger
 		}
+		ui.Box(c).Size(8, 8).Radius(4).Shrink(0).Background(dot)
 		if status != "" {
-			feedback.Badge(c, feedback.BadgeProps{Status: kind, Text: status}, nil).Shrink(0)
-		} else {
-			devStatusDot(c, "Succeeded")
+			ui.Text(c, status).FontSize(textSmall).FontWeight(500).TextColor(tk.TextHeading).SingleLine().Shrink(0)
 		}
-		ui.Text(c, firstLine(d.output)).FontSize(textSmall).TextColor(tk.TextDescription).SingleLine().Grow(1).MinWidth(0)
+		ui.Text(c, resultLine(d.output)).FontSize(textSmall).TextColor(tk.TextDescription).SingleLine().Grow(1).MinWidth(0)
 		if action.Button(c, "Details", action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
 			d.showResult = !d.showResult
 		}
@@ -652,11 +652,19 @@ func (a *app) devManager() *devplatform.Manager {
 }
 
 
-// firstLine is the first line of an operation result, for the status bar. The
-// rest is under Details.
-func firstLine(s string) string {
-	line, rest, more := strings.Cut(strings.TrimSpace(s), "\n")
-	if more && strings.TrimSpace(rest) != "" {
+// resultLine is the line of an operation result that the status bar shows:
+// the error when there is one, else the first line. The rest is under Details.
+func resultLine(s string) string {
+	s = strings.TrimSpace(s)
+	lines := strings.Split(s, "\n")
+	line := lines[0]
+	for _, l := range lines {
+		if strings.HasPrefix(l, "Error:") {
+			line = l
+			break
+		}
+	}
+	if len(lines) > 1 && line == lines[0] {
 		line += " …"
 	}
 	return line

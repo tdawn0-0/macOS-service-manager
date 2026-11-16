@@ -29,7 +29,7 @@ func TestUIQuitKeepsServicesOrStopsOwnedScopeAndRetriesFailure(t *testing.T) {
 	h.click("HTTPS")
 	h.fill("HTTPS listener port", fmt.Sprint(httpsPort))
 	h.click("Add rule")
-	h.fill("Domain", "quit.test")
+	h.fill("Domain", "quit.devbase.localhost")
 	h.fill("Local port", fmt.Sprint(port))
 	h.click("Save HTTPS rules")
 	h.click("Apply proxy")
@@ -70,7 +70,7 @@ func TestUIQuitKeepsServicesOrStopsOwnedScopeAndRetriesFailure(t *testing.T) {
 
 	// Re-enter and add unsaved edits: quit prompts once about unsaved edits.
 	h.a.quit.allow = false
-	h.fill("Domain", "unsaved-quit.test")
+	h.fill("Domain", "unsaved-quit.devbase.localhost")
 	triggerQuit()
 	if !h.a.quit.open || quitCalls != 1 {
 		t.Fatal("unsaved edits did not open quit confirmation")
@@ -140,7 +140,7 @@ func TestUIQuitKeepsServicesOrStopsOwnedScopeAndRetriesFailure(t *testing.T) {
 	assertListening(port)
 	assertListening(httpsPort)
 	state, err = m.Read()
-	if err != nil || len(state.ProxyRules) != 1 || state.ProxyRules[0].Domain != "quit.test" {
+	if err != nil || len(state.ProxyRules) != 1 || state.ProxyRules[0].Domain != "quit.devbase.localhost" {
 		t.Fatal("quit saved an unsaved form", err)
 	}
 

@@ -270,20 +270,28 @@ func (m *Manager) diagnose(ctx context.Context, s State, p diagnosticProbes) (Di
 		lookupCtx, done := context.WithTimeout(ctx, 8*time.Second)
 		addresses, err := p.lookup(lookupCtx, site.Domain)
 		done()
-		correct := err == nil && len(addresses) > 0
+		// The proxy listens on 127.0.0.1. macOS answers *.localhost with both
+		// 127.0.0.1 and ::1, and a client falls back to the IPv4 one.
+		correct, hasIPv4 := err == nil && len(addresses) > 0, false
 		for _, address := range addresses {
-			if !net.ParseIP(address).Equal(net.ParseIP("127.0.0.1")) {
+			ip := net.ParseIP(address)
+			switch {
+			case ip != nil && ip.Equal(net.ParseIP("127.0.0.1")):
+				hasIPv4 = true
+			case ip != nil && ip.Equal(net.IPv6loopback):
+			default:
 				correct = false
 			}
 		}
+		correct = correct && hasIPv4
 		var dnsError net.Error
 		timedOut := errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &dnsError) && dnsError.Timeout())
 		if timedOut {
 			add("DNS", site.Domain, "Warning", "Name resolution timed out; the domain mapping was not verified.", "Retry diagnostics and inspect the macOS resolver if the timeout repeats.")
 		} else if correct {
-			add("DNS", site.Domain, "OK", "Domain resolves only to the proxy's IPv4 loopback address.", "")
+			add("DNS", site.Domain, "OK", "Domain resolves only to this Mac's loopback address.", "")
 		} else {
-			add("DNS", site.Domain, "Failed", "Domain is unresolved or includes an address other than 127.0.0.1.", "Use Configure local domains; remove conflicting DNS or hosts entries, then retry.")
+			add("DNS", site.Domain, "Failed", "Domain is unresolved or includes an address other than loopback.", "macOS resolves *.localhost itself; look for a VPN, DNS filter or hosts entry that overrides it, then retry.")
 		}
 		address := upstreamHostPort(site.UpstreamHost, site.LocalPort)
 		probeCtx, done := context.WithTimeout(ctx, 2*time.Second)

@@ -62,12 +62,6 @@ type StatusResponse struct {
 	OwnerUID        int `json:"ownerUid"`
 }
 
-// HostsSyncRequest is sent to POST /v1/hosts/sync.
-type HostsSyncRequest struct {
-	ExpectedOld string `json:"expectedOld"`
-	NewContent  string `json:"newContent"`
-}
-
 // ProxySocketInstallRequest is sent to POST /v1/proxy-socket/install.
 type ProxySocketInstallRequest struct {
 	Plist   []byte `json:"plist"`

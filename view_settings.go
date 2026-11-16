@@ -39,7 +39,7 @@ func (a *app) settingsView(c *ui.Context) {
 				}
 				helperMsg := a.helperStatus.Message
 				if helperMsg == "" {
-					helperMsg = "Install once to delegate local HTTPS port 443, /etc/hosts, port inspection, and system launchd jobs without password prompts."
+					helperMsg = "Install once to delegate local HTTPS port 443, port inspection, and system launchd jobs without password prompts."
 				}
 				devCardWith(c, icoShield, "Privileged helper", "System daemon · on-demand socket", func() {
 					statusTag(c, helperBadge)

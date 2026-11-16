@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prepare a private arm64 App copy and real Node/Redis fixture for desktop QA.
 Launch the returned .app through Launch Services. This script never opens UI,
-changes hosts or adds/removes keychain trust. --reuse-ca only copies a local CA
+adds/removes keychain trust. --reuse-ca only copies a local CA
 into the private disposable fixture; certificate authorization stays in the App.
 """
 import argparse
@@ -180,7 +180,7 @@ def _main(argv=None):
         ''')
         # The private fixture saves one complete proxy ruleset.
         state = json.loads(cli('status'))
-        state['proxyRules'] = [{'domain':'service-manager-verify.test','localPort':web_port}]
+        state['proxyRules'] = [{'domain':'service-manager-verify.devbase.localhost','localPort':web_port}]
         state['proxyListenerPort'] = https_port
         state['proxyRulesRevision'] = state.get('proxyRulesRevision',0) + 1
         state_path = root / 'state.json'
@@ -195,9 +195,9 @@ def _main(argv=None):
         external_process = start_external_app(node_binary, app_dir, app_env, web_port,
                                               root/'logs/verification-app.log')
         record = dict(harness=str(devmgr),base=str(base),root=str(root),app=str(app),executable=str(exe),instance=instance['id'],
-                      proxyRules=[{'domain':'service-manager-verify.test','localPort':web_port}],
+                      proxyRules=[{'domain':'service-manager-verify.devbase.localhost','localPort':web_port}],
                       externalPID=external_process.pid, externalBinary=str(node_binary), appDirectory=str(app_dir),
-                      webPort=web_port,redisPort=redis_port,httpsPort=https_port,url=f'https://service-manager-verify.test:{https_port}/',
+                      webPort=web_port,redisPort=redis_port,httpsPort=https_port,url=f'https://service-manager-verify.devbase.localhost:{https_port}/',
                       labelPrefix='xyz.jyeu.devbase.dev.'+hashlib.sha256(str(root).encode()).hexdigest()[:8]+'.',identifier=info['CFBundleIdentifier'])
         (base/'native-ui.json').write_text(json.dumps(record,indent=2)+'\n')
         print(json.dumps(record,indent=2))

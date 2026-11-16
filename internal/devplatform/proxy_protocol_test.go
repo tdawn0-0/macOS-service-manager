@@ -66,7 +66,7 @@ func TestHTTPSProxyWebSocketStreamingAndUpload(t *testing.T) {
 	defer upstream.Close()
 	m := testManager(t)
 	port := integrationPort(t)
-	site := proxyRoute{Domain: "protocols.test", LocalPort: upstream.Listener.Addr().(*net.TCPAddr).Port, Port: port}
+	site := proxyRoute{Domain: "protocols.devbase.localhost", LocalPort: upstream.Listener.Addr().(*net.TCPAddr).Port, Port: port}
 	localPort := upstream.Listener.Addr().(*net.TCPAddr).Port
 	if e := writeJSON(filepath.Join(m.Root, "proxy", "rules.json"), proxyPublishedConfig{SchemaVersion: 1, ListenerPort: port, Rules: []ProxyRule{{Domain: site.Domain, LocalPort: localPort}}}); e != nil {
 		t.Fatal(e)
@@ -188,8 +188,8 @@ func TestHTTPSProxyRejectsMismatchedHostAndSNI(t *testing.T) {
 		SchemaVersion: 1,
 		ListenerPort:  port,
 		Rules: []ProxyRule{
-			{Domain: "alpha.test", LocalPort: alphaPort},
-			{Domain: "beta.test", LocalPort: betaPort},
+			{Domain: "alpha.devbase.localhost", LocalPort: alphaPort},
+			{Domain: "beta.devbase.localhost", LocalPort: betaPort},
 		},
 	}
 	if e := writeJSON(filepath.Join(m.Root, "proxy", "rules.json"), config); e != nil {
@@ -203,17 +203,17 @@ func TestHTTPSProxyRejectsMismatchedHostAndSNI(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- m.ServeProxy(ctx) }()
-	if e = m.verifyProxyTLS(ctx, proxyRoute{Domain: "alpha.test", LocalPort: alphaPort, Port: port}); e != nil {
+	if e = m.verifyProxyTLS(ctx, proxyRoute{Domain: "alpha.devbase.localhost", LocalPort: alphaPort, Port: port}); e != nil {
 		t.Fatal(e)
 	}
-	if e = m.verifyProxyTLS(ctx, proxyRoute{Domain: "beta.test", LocalPort: betaPort, Port: port}); e != nil {
+	if e = m.verifyProxyTLS(ctx, proxyRoute{Domain: "beta.devbase.localhost", LocalPort: betaPort, Port: port}); e != nil {
 		t.Fatal(e)
 	}
 
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
-	// Client negotiates TLS with ServerName: "alpha.test"
-	tlsConfig := &tls.Config{RootCAs: roots, ServerName: "alpha.test", MinVersion: tls.VersionTLS12}
+	// Client negotiates TLS with ServerName: "alpha.devbase.localhost"
+	tlsConfig := &tls.Config{RootCAs: roots, ServerName: "alpha.devbase.localhost", MinVersion: tls.VersionTLS12}
 	transport := &http.Transport{
 		TLSClientConfig: tlsConfig,
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -223,12 +223,12 @@ func TestHTTPSProxyRejectsMismatchedHostAndSNI(t *testing.T) {
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
 
-	// 1. Mismatch: TLS ServerName is "alpha.test", but request Host is "beta.test"
+	// 1. Mismatch: TLS ServerName is "alpha.devbase.localhost", but request Host is "beta.devbase.localhost"
 	reqMismatch, err := http.NewRequest("GET", fmt.Sprintf("https://127.0.0.1:%d/", port), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqMismatch.Host = "beta.test"
+	reqMismatch.Host = "beta.devbase.localhost"
 	resMismatch, err := client.Do(reqMismatch)
 	if err != nil {
 		t.Fatal(err)
@@ -244,12 +244,12 @@ func TestHTTPSProxyRejectsMismatchedHostAndSNI(t *testing.T) {
 		t.Fatal("alpha upstream handler was invoked on mismatched SNI/Host request")
 	}
 
-	// 2. Case variation matching SNI: req.Host = "ALPHA.test"
+	// 2. Case variation matching SNI: req.Host = "ALPHA.devbase.localhost"
 	reqMatch, err := http.NewRequest("GET", fmt.Sprintf("https://127.0.0.1:%d/", port), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqMatch.Host = "ALPHA.test"
+	reqMatch.Host = "ALPHA.devbase.localhost"
 	resMatch, err := client.Do(reqMatch)
 	if err != nil {
 		t.Fatal(err)
@@ -349,7 +349,7 @@ func TestHTTPSProxyForwardsToIPv6OnlyUpstream(t *testing.T) {
 	m := testManager(t)
 	port := integrationPort(t)
 	localPort := upstream.Listener.Addr().(*net.TCPAddr).Port
-	site := proxyRoute{Domain: "ipv6.test", LocalPort: localPort, Port: port}
+	site := proxyRoute{Domain: "ipv6.devbase.localhost", LocalPort: localPort, Port: port}
 	if e := writeJSON(filepath.Join(m.Root, "proxy", "rules.json"), proxyPublishedConfig{SchemaVersion: 1, ListenerPort: port, Rules: []ProxyRule{{Domain: site.Domain, LocalPort: localPort}}}); e != nil {
 		t.Fatal(e)
 	}

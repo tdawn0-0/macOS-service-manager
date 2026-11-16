@@ -16,24 +16,24 @@ func TestUIHTTPSActivation(t *testing.T) {
 	t.Run("navigation-and-stale", func(t *testing.T) {
 		a := designFixture(t)
 		a.dev.tab = devTabHTTPS
-		a.dev.state.ProxyRules = []devplatform.ProxyRule{{Domain: "rule.test", LocalPort: 3000}}
+		a.dev.state.ProxyRules = []devplatform.ProxyRule{{Domain: "rule.devbase.localhost", LocalPort: 3000}}
 		a.dev.state.ProxyRulesRevision = 2
-		a.dev.proxyDraft = []proxyRuleDraft{{Domain: "rule.test", LocalPort: "3000"}}
+		a.dev.proxyDraft = []proxyRuleDraft{{Domain: "rule.devbase.localhost", LocalPort: "3000"}}
 		a.dev.proxyDraftLoaded = true
 		a.dev.proxyDraftRevision = 2
-		a.dev.proxyChecks = map[string]devplatform.ProxyHTTPResult{"rule.test": {Domain: "rule.test", Revision: 1, Fingerprint: "old", StatusCode: 404, CheckedAt: time.Now()}}
+		a.dev.proxyChecks = map[string]devplatform.ProxyHTTPResult{"rule.devbase.localhost": {Domain: "rule.devbase.localhost", Revision: 1, Fingerprint: "old", StatusCode: 404, CheckedAt: time.Now()}}
 		tt := ui.NewTester(a.view, 1120, 720)
 		tt.Frame()
 		if strings.Contains(strings.Join(tt.Texts(), "\n"), "HTTP response: 404") {
 			t.Fatal("stale response shown")
 		}
 		a.dev.proxyDraft[0].LocalPort = "3001"
-		a.openDiagnosticTarget(devplatform.DiagnosticTarget{Kind: "proxy", ID: "rule.test"}, false)
+		a.openDiagnosticTarget(devplatform.DiagnosticTarget{Kind: "proxy", ID: "rule.devbase.localhost"}, false)
 		if a.dev.proxyDraft[0].LocalPort != "3001" || a.dev.tab != devTabHTTPS {
 			t.Fatal("proxy draft lost on navigation")
 		}
 		a.dev.diagnosticsOpen = true
-		a.openDiagnosticTarget(devplatform.DiagnosticTarget{Kind: "proxy", ID: "deleted.test"}, false)
+		a.openDiagnosticTarget(devplatform.DiagnosticTarget{Kind: "proxy", ID: "deleted.devbase.localhost"}, false)
 		if !a.dev.diagnosticsOpen {
 			t.Fatal("missing target navigated")
 		}
@@ -55,15 +55,15 @@ func TestUIHTTPSActivation(t *testing.T) {
 		}
 	})
 	t.Run("out-of-order-checks", func(t *testing.T) {
-		d := developmentState{proxyCheckGeneration: 2, proxyChecking: map[string]bool{"new.test": true}, proxyChecks: map[string]devplatform.ProxyHTTPResult{}}
-		old := devplatform.ProxyHTTPResult{Domain: "old.test", Revision: 1, Fingerprint: "old", StatusCode: 200, CheckedAt: time.Now()}
-		d.acceptProxyHTTPResult("old.test", 1, 1, "old", old, nil, "old", 1, nil)
-		if len(d.proxyChecks) != 0 || !d.proxyChecking["new.test"] {
+		d := developmentState{proxyCheckGeneration: 2, proxyChecking: map[string]bool{"new.devbase.localhost": true}, proxyChecks: map[string]devplatform.ProxyHTTPResult{}}
+		old := devplatform.ProxyHTTPResult{Domain: "old.devbase.localhost", Revision: 1, Fingerprint: "old", StatusCode: 200, CheckedAt: time.Now()}
+		d.acceptProxyHTTPResult("old.devbase.localhost", 1, 1, "old", old, nil, "old", 1, nil)
+		if len(d.proxyChecks) != 0 || !d.proxyChecking["new.devbase.localhost"] {
 			t.Fatal("old callback overwrote new check")
 		}
-		fresh := devplatform.ProxyHTTPResult{Domain: "new.test", Revision: 2, Fingerprint: "new", StatusCode: 404, CheckedAt: time.Now()}
-		d.acceptProxyHTTPResult("new.test", 2, 2, "new", fresh, nil, "new", 2, nil)
-		if d.proxyChecks["new.test"].StatusCode != 404 || d.proxyChecking["new.test"] {
+		fresh := devplatform.ProxyHTTPResult{Domain: "new.devbase.localhost", Revision: 2, Fingerprint: "new", StatusCode: 404, CheckedAt: time.Now()}
+		d.acceptProxyHTTPResult("new.devbase.localhost", 2, 2, "new", fresh, nil, "new", 2, nil)
+		if d.proxyChecks["new.devbase.localhost"].StatusCode != 404 || d.proxyChecking["new.devbase.localhost"] {
 			t.Fatal("new check was lost")
 		}
 	})
@@ -74,9 +74,9 @@ func TestUIHTTPSActivation(t *testing.T) {
 		}{{false, 900, 520}, {true, 900, 520}, {false, 1120, 720}, {true, 1120, 720}} {
 			a := designFixture(t)
 			a.dev.tab = devTabHTTPS
-			a.dev.state.ProxyRules = []devplatform.ProxyRule{{Domain: "some-long-local-name.test", LocalPort: 3000}}
+			a.dev.state.ProxyRules = []devplatform.ProxyRule{{Domain: "some-long-local-name.devbase.localhost", LocalPort: 3000}}
 			a.dev.state.ProxyRulesRevision = 2
-			a.dev.proxyDraft = []proxyRuleDraft{{Domain: "some-long-local-name.test", LocalPort: "3000"}}
+			a.dev.proxyDraft = []proxyRuleDraft{{Domain: "some-long-local-name.devbase.localhost", LocalPort: "3000"}}
 			a.dev.proxyDraftRevision = 2
 			a.dev.proxyDraftLoaded = true
 			tt := ui.NewTester(a.view, tc.w, tc.h)

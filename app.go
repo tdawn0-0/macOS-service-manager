@@ -1173,7 +1173,7 @@ func (a *app) promptInstallHelper(retry func()) {
 	a.ask = askState{
 		open:    true,
 		title:   "Privileged helper required",
-		message: "Install the Devbase privileged helper once to run root operations such as local HTTPS port 443, /etc/hosts updates, and system launchd jobs without repeated macOS password prompts.",
+		message: "Install the Devbase privileged helper once to run root operations such as local HTTPS port 443 and system launchd jobs without repeated macOS password prompts.",
 		button:  "Install Helper",
 		run:     func() { a.installHelperThen(retry) },
 	}
@@ -1186,7 +1186,7 @@ func (a *app) uninstallHelper() {
 	a.ask = askState{
 		open:    true,
 		title:   "Remove privileged helper?",
-		message: "Privileged operations like local HTTPS port 443, /etc/hosts updates, and system launchd jobs require the privileged helper and will remain unavailable until you install it again.",
+		message: "Privileged operations like local HTTPS port 443 and system launchd jobs require the privileged helper and will remain unavailable until you install it again.",
 		button:  "Remove Helper",
 		run:     a.runUninstallHelper,
 	}

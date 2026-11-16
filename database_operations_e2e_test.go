@@ -81,7 +81,7 @@ func TestUIBackgroundDatabaseBackupKeepsConfigurationAndIndependentInstance(t *t
 			h.click("HTTPS")
 			h.fill("HTTPS listener port", fmt.Sprint(freeUIPort(t)))
 			h.click("Add rule")
-			h.fill("Domain", "during-backup.test")
+			h.fill("Domain", "during-backup.devbase.localhost")
 			h.fill("Local port", "3000")
 			timer := time.AfterFunc(4*time.Second, unblock)
 			h.click("Save HTTPS rules")
@@ -90,7 +90,7 @@ func TestUIBackgroundDatabaseBackupKeepsConfigurationAndIndependentInstance(t *t
 			if e != nil || len(state.ProxyRules) != 1 || !h.a.databaseTaskRunning(id) {
 				t.Fatal("backup blocked configuration", state, e)
 			}
-			h.fill("Domain", "unsaved-backup.test")
+			h.fill("Domain", "unsaved-backup.devbase.localhost")
 			if cancelled {
 				h.click("Database tasks")
 				h.click("Cancel database operation " + id)
@@ -99,7 +99,7 @@ func TestUIBackgroundDatabaseBackupKeepsConfigurationAndIndependentInstance(t *t
 			}
 			h.foregroundOnly = false
 			h.waitIdle()
-			if h.a.dev.proxyDraft[0].Domain != "unsaved-backup.test" {
+			if h.a.dev.proxyDraft[0].Domain != "unsaved-backup.devbase.localhost" {
 				t.Fatal("background refresh replaced draft")
 			}
 			if redis("GET", "value") != "42" {

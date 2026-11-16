@@ -94,7 +94,7 @@ func TestDatabaseToolsOverlapWithoutBlockingConfigurationAndReserveLifecycle(t *
 	waitDatabaseTool(t, m, "second")
 	short, stop := context.WithTimeout(ctx, 2*time.Second)
 	defer stop()
-	if e := New(m.Root).ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "during-backup.test", LocalPort: 3000}}); e != nil {
+	if e := New(m.Root).ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "during-backup.devbase.localhost", LocalPort: 3000}}); e != nil {
 		t.Fatal("backup blocked workspace configuration", e)
 	}
 	assertBusy := func(name string, e error) {
@@ -139,7 +139,7 @@ func TestDatabaseToolsOverlapWithoutBlockingConfigurationAndReserveLifecycle(t *
 		}
 	}
 	s, e = m.Read()
-	if e != nil || len(s.ProxyRules) != 1 || s.ProxyRules[0].Domain != "during-backup.test" {
+	if e != nil || len(s.ProxyRules) != 1 || s.ProxyRules[0].Domain != "during-backup.devbase.localhost" {
 		t.Fatal("tool completion replaced a newer configuration", e)
 	}
 }
@@ -184,7 +184,7 @@ func TestDatabaseToolCancellationDoesNotCancelIndependentBackup(t *testing.T) {
 		t.Fatal("independent backup completed before release", r)
 	default:
 	}
-	if e := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{{Domain: "during-cancel.test", LocalPort: 3000}}); e != nil {
+	if e := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{{Domain: "during-cancel.devbase.localhost", LocalPort: 3000}}); e != nil {
 		t.Fatal(e)
 	}
 	if e := os.WriteFile(filepath.Join(m.Root, "release"), nil, 0600); e != nil {

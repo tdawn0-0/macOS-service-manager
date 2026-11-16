@@ -106,7 +106,7 @@ func TestSocketProxyConflictFailsBeforeStoppingOrAuthorizing(t *testing.T) {
 	if err = os.WriteFile(path, before, 0600); err != nil {
 		t.Fatal(err)
 	}
-	site := proxyRoute{Domain: "conflict.test", LocalPort: 3000, Port: l.Addr().(*net.TCPAddr).Port}
+	site := proxyRoute{Domain: "conflict.devbase.localhost", LocalPort: 3000, Port: l.Addr().(*net.TCPAddr).Port}
 	err = m.startSocketProxy(context.Background(), []proxyRoute{site}, nil)
 	var conflict *PortUnavailableError
 	if !errors.As(err, &conflict) || conflict.Port != site.Port {
@@ -248,7 +248,7 @@ func TestPrivilegedSocketProxyPreflightDetectsOccupiedPortBeforeAuthorizing(t *t
 		_ = server.Close()
 		return client, nil
 	}
-	err := m.startSocketProxy(context.Background(), []proxyRoute{{Domain: "conflict.test", LocalPort: 3000, Port: 443}}, nil)
+	err := m.startSocketProxy(context.Background(), []proxyRoute{{Domain: "conflict.devbase.localhost", LocalPort: 3000, Port: 443}}, nil)
 	var conflict *PortUnavailableError
 	if !errors.As(err, &conflict) || conflict.Port != 443 {
 		t.Fatalf("expected PortUnavailableError for 443, got %v", err)
@@ -261,7 +261,7 @@ func TestPrivilegedSocketProxyPreflightDetectsOccupiedPortBeforeAuthorizing(t *t
 	m.dialLoopback = func(context.Context, int) (io.Closer, error) {
 		return nil, syscall.ECONNREFUSED
 	}
-	if err := m.preflightProxyPorts(context.Background(), []proxyRoute{{Domain: "ok.test", LocalPort: 3000, Port: 443}}, nil, false); err != nil {
+	if err := m.preflightProxyPorts(context.Background(), []proxyRoute{{Domain: "ok.devbase.localhost", LocalPort: 3000, Port: 443}}, nil, false); err != nil {
 		t.Fatalf("expected free privileged port preflight to pass, got %v", err)
 	}
 }

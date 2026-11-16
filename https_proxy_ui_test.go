@@ -21,7 +21,7 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 		h := newDevUIHarness(t)
 		h.click("HTTPS")
 		h.click("Add rule")
-		h.fill("Domain", " app.test ")
+		h.fill("Domain", " app.devbase.localhost ")
 		h.fill("Local port", "3000")
 		if _, ok := h.ui.Find("Open HTTPS URL"); ok {
 			t.Fatal("opened unsaved rule")
@@ -33,14 +33,14 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 		port := freeUIPort(t)
 		h.fill("HTTPS listener port", fmt.Sprint(port))
 		h.click("Add rule")
-		h.fill("Domain", "app.test")
+		h.fill("Domain", "app.devbase.localhost")
 		h.fill("Local port", "3000")
 		h.click("Save HTTPS rules")
 		if h.a.dev.proxyPublicationState != "Unknown" {
 			t.Fatalf("expected Unknown publication state before initial publish, got %q", h.a.dev.proxyPublicationState)
 		}
 		state, err := devplatform.New(h.root).Read()
-		if err != nil || state.ProxyListenerPort != port || len(state.ProxyRules) != 1 || state.ProxyRules[0].Domain != "app.test" {
+		if err != nil || state.ProxyListenerPort != port || len(state.ProxyRules) != 1 || state.ProxyRules[0].Domain != "app.devbase.localhost" {
 			t.Fatal(state, err)
 		}
 		defer devplatform.New(h.root).StopProxy(context.Background())
@@ -49,12 +49,12 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 			t.Fatalf("expected Published publication state after Apply proxy, got %q (output: %q)", h.a.dev.proxyPublicationState, h.a.dev.output)
 		}
 		h.click("Open HTTPS URL")
-		expectedURL := fmt.Sprintf("https://app.test:%d", port)
+		expectedURL := fmt.Sprintf("https://app.devbase.localhost:%d", port)
 		if len(h.opened) != 1 || h.opened[0] != expectedURL {
 			t.Fatal("wrong saved URL", h.opened, "want", expectedURL)
 		}
 		h.click("Add rule")
-		h.a.dev.proxyDraft[1] = proxyRuleDraft{Domain: "APP.test", LocalPort: "4000"}
+		h.a.dev.proxyDraft[1] = proxyRuleDraft{Domain: "APP.devbase.localhost", LocalPort: "4000"}
 		h.ui.Frame()
 		h.click("Save HTTPS rules")
 		state, err = devplatform.New(h.root).Read()
@@ -168,7 +168,7 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 		}
 
 		h.click("Add rule")
-		h.fill("Domain", "api.app.test")
+		h.fill("Domain", "api.app.devbase.localhost")
 		h.fill("Local port", "3000")
 		h.click("Tunnel rule 1")
 		h.click("Save HTTPS rules")
@@ -198,15 +198,15 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 		h := newDevUIHarness(t)
 		h.click("HTTPS")
 		h.click("Add rule")
-		h.fill("Domain", "draft.test")
+		h.fill("Domain", "draft.devbase.localhost")
 		h.fill("Local port", "3000")
 		m := devplatform.New(h.root)
-		if err := m.ReplaceProxyRules(m.Context, 0, 8443, []devplatform.ProxyRule{{Domain: "external.test", LocalPort: 4000}}); err != nil {
+		if err := m.ReplaceProxyRules(m.Context, 0, 8443, []devplatform.ProxyRule{{Domain: "external.devbase.localhost", LocalPort: 4000}}); err != nil {
 			t.Fatal(err)
 		}
 		h.click("Save HTTPS rules")
 		state, err := m.Read()
-		if err != nil || state.ProxyRulesRevision != 1 || state.ProxyRules[0].Domain != "external.test" || h.a.dev.proxyDraft[0].Domain != "draft.test" || !strings.Contains(h.a.dev.output, "changed") {
+		if err != nil || state.ProxyRulesRevision != 1 || state.ProxyRules[0].Domain != "external.devbase.localhost" || h.a.dev.proxyDraft[0].Domain != "draft.devbase.localhost" || !strings.Contains(h.a.dev.output, "changed") {
 			t.Fatal("conflict lost", state, h.a.dev.output, err)
 		}
 	})
@@ -220,8 +220,8 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 			a.dev.proxyDraftLoaded = true
 			a.dev.proxyListenerPort = "8443"
 			a.dev.proxyDraft = []proxyRuleDraft{
-				{Domain: "a-very-long-but-valid-local-development-name.test", LocalPort: "12345", Tunnel: true, TunnelMode: tunnelModeCustomDomain, TunnelDomain: "long-app.example.com"},
-				{Domain: "another-long-local-development-name.test", LocalPort: "54321", TunnelMode: tunnelModeWorkersDev},
+				{Domain: "a-very-long-but-valid-local-development-name.devbase.localhost", LocalPort: "12345", Tunnel: true, TunnelMode: tunnelModeCustomDomain, TunnelDomain: "long-app.example.com"},
+				{Domain: "another-long-local-development-name.devbase.localhost", LocalPort: "54321", TunnelMode: tunnelModeWorkersDev},
 			}
 			tester := ui.NewTester(a.view, tc.width, tc.height)
 			tester.SetDark(tc.dark)
@@ -259,7 +259,7 @@ func TestUIHTTPSRuleUpstreamHost(t *testing.T) {
 	h := newDevUIHarness(t)
 	h.click("HTTPS")
 	h.click("Add rule")
-	h.fill("Domain", "lan.test")
+	h.fill("Domain", "lan.devbase.localhost")
 	h.fill("Upstream host", " 192.168.1.20 ")
 	h.fill("Local port", "8080")
 	h.click("Save HTTPS rules")

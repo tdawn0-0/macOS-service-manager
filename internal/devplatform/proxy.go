@@ -10,7 +10,6 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"fmt"
-	"devbase/internal/privhelper"
 	"math/big"
 	"net"
 	"net/http"
@@ -267,64 +266,6 @@ func (m *Manager) ServeProxy(ctx context.Context) error {
 	}
 }
 
-const hostsBegin = "# BEGIN Devbase Development"
-const hostsEnd = "# END Devbase Development"
-const legacyHostsBegin = "# BEGIN Service Manager Development"
-const legacyHostsEnd = "# END Service Manager Development"
-
-func HostsContent(old string, sites []proxyRoute) (string, error) {
-	if e := validateProxyRoutes(sites); e != nil {
-		return "", e
-	}
-	for _, pair := range [][2]string{{legacyHostsBegin, legacyHostsEnd}, {hostsBegin, hostsEnd}} {
-		if strings.Count(old, pair[0]) > 1 || strings.Count(old, pair[1]) > 1 {
-			return "", errors.New("malformed managed hosts block")
-		}
-		start, end := strings.Index(old, pair[0]), strings.Index(old, pair[1])
-		if (start < 0) != (end < 0) || end < start {
-			return "", errors.New("malformed managed hosts block")
-		}
-		if start >= 0 {
-			if start > 0 && old[start-1] != '\n' {
-				return "", errors.New("malformed managed hosts block")
-			}
-			finish := end + len(pair[1])
-			if finish < len(old) && old[finish] != '\n' && old[finish] != '\r' {
-				return "", errors.New("malformed managed hosts block")
-			}
-			old = old[:start] + old[finish:]
-		}
-	}
-	domains := map[string]bool{}
-	for _, s := range sites {
-		domains[s.Domain] = true
-	}
-	for _, line := range strings.Split(old, "\n") {
-		fields := strings.Fields(strings.SplitN(line, "#", 2)[0])
-		if len(fields) < 2 {
-			continue
-		}
-		for _, name := range fields[1:] {
-			if domains[name] {
-				return "", fmt.Errorf("domain %s already appears outside managed block", name)
-			}
-		}
-	}
-	names := []string{}
-	for d := range domains {
-		names = append(names, d)
-	}
-	sort.Strings(names)
-	out := strings.TrimRight(old, "\n") + "\n"
-	if len(names) > 0 {
-		out += hostsBegin + "\n"
-		for _, d := range names {
-			out += "127.0.0.1 " + d + "\n"
-		}
-		out += hostsEnd + "\n"
-	}
-	return out, nil
-}
 func (m *Manager) ConfigureTrust(ctx context.Context, remove bool) error {
 	return m.withState(ctx, func(*State) error {
 		if !remove {
@@ -344,42 +285,6 @@ func (m *Manager) ConfigureTrust(ctx context.Context, remove bool) error {
 		})
 	})
 }
-func (m *Manager) hostsFilePath() string {
-	if m.HostsPath != "" {
-		return m.HostsPath
-	}
-	return "/etc/hosts"
-}
-func (m *Manager) ConfigureHosts(ctx context.Context) error {
-	return m.withState(ctx, func(s *State) error {
-		old, e := os.ReadFile(m.hostsFilePath())
-		if e != nil {
-			return e
-		}
-		updated, e := HostsContent(string(old), proxyRoutesFromState(s))
-		if e != nil {
-			return e
-		}
-		if updated == string(old) {
-			return nil
-		}
-		if len(updated) > 64<<10 {
-			return errors.New("hosts configuration exceeds authorized command size limit")
-		}
-		if e = atomicWrite(filepath.Join(m.Root, "hosts.backup"), old, 0600); e != nil {
-			return e
-		}
-		hc, e := privhelper.Require()
-		if e != nil {
-			return e
-		}
-		return hc.SyncHosts(ctx, privhelper.HostsSyncRequest{
-			ExpectedOld: string(old),
-			NewContent:  updated,
-		})
-	})
-}
-
 func (m *Manager) publishedProxyRoutes() ([]proxyRoute, error) {
 	config, err := readPublishedProxyConfig(m.Root)
 	if err != nil {

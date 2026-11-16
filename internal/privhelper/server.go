@@ -35,7 +35,6 @@ type connContextKey struct{}
 type ServerConfig struct {
 	OwnerUID           int
 	IdleTimeout        time.Duration
-	HostsPath          string
 	ManagedLaunchdDirs []string
 	SocketJobDirs      []string
 	Run                func(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -58,9 +57,6 @@ type Server struct {
 func NewServer(cfg ServerConfig) *Server {
 	if cfg.IdleTimeout <= 0 {
 		cfg.IdleTimeout = defaultIdleTimeout
-	}
-	if cfg.HostsPath == "" {
-		cfg.HostsPath = "/private/etc/hosts" // /etc is a symlink to /private/etc on macOS; the helper refuses symlinked directories
 	}
 	if len(cfg.ManagedLaunchdDirs) == 0 {
 		cfg.ManagedLaunchdDirs = []string{"/Library/LaunchAgents", "/Library/LaunchDaemons"}
@@ -213,7 +209,6 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/status", s.handleStatus)
-	s.mux.HandleFunc("POST /v1/hosts/sync", s.handleHostsSync)
 	s.mux.HandleFunc("POST /v1/proxy-socket/install", s.handleProxySocketInstall)
 	s.mux.HandleFunc("POST /v1/proxy-socket/stop", s.handleProxySocketStop)
 	s.mux.HandleFunc("POST /v1/proxy-socket/kickstart", s.handleProxySocketKickstart)
@@ -229,45 +224,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		ProtocolVersion: ProtocolVersion,
 		OwnerUID:        s.cfg.OwnerUID,
 	})
-}
-
-func (s *Server) handleHostsSync(w http.ResponseWriter, r *http.Request) {
-	var req HostsSyncRequest
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-	if strings.ContainsRune(req.NewContent, '\x00') {
-		writeError(w, http.StatusBadRequest, "hosts content must not contain NUL bytes")
-		return
-	}
-	if len(req.NewContent) > 64<<10 {
-		writeError(w, http.StatusBadRequest, "hosts configuration exceeds size limit")
-		return
-	}
-	hostsPath, err := validateCleanTargetFile(s.cfg.HostsPath, []string{filepath.Dir(s.cfg.HostsPath)}, "")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	perm := os.FileMode(0644)
-	if info, statErr := os.Stat(hostsPath); statErr == nil {
-		perm = info.Mode().Perm()
-	}
-	current, err := os.ReadFile(hostsPath)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if string(current) != req.ExpectedOld {
-		writeError(w, http.StatusConflict, "hosts file changed concurrently")
-		return
-	}
-	if err := atomicWriteFile(hostsPath, []byte(req.NewContent), perm); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	_, _ = s.cfg.Run(r.Context(), "/usr/bin/dscacheutil", "-flushcache")
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleProxySocketInstall(w http.ResponseWriter, r *http.Request) {

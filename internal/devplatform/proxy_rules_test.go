@@ -11,21 +11,21 @@ import (
 
 func TestProxyRulesAtomicSave(t *testing.T) {
 	m := New(t.TempDir())
-	if err := m.ReplaceProxyRules(context.Background(), 0, 443, []ProxyRule{{Domain: " App.TEST ", LocalPort: 3000}}); err != nil {
+	if err := m.ReplaceProxyRules(context.Background(), 0, 443, []ProxyRule{{Domain: " App.DEVBASE.LOCALHOST ", LocalPort: 3000}}); err != nil {
 		t.Fatal(err)
 	}
 	s, err := m.Read()
-	if err != nil || s.ProxyRulesRevision != 1 || s.ProxyRules[0].Domain != "app.test" {
+	if err != nil || s.ProxyRulesRevision != 1 || s.ProxyRules[0].Domain != "app.devbase.localhost" {
 		t.Fatal(s, err)
 	}
 	for _, tc := range []struct {
 		port  int
 		rules []ProxyRule
 	}{
-		{8443, []ProxyRule{{Domain: "loop.test", LocalPort: 8443}}},
+		{8443, []ProxyRule{{Domain: "loop.devbase.localhost", LocalPort: 8443}}},
 		{0, []ProxyRule{}},
-		{8443, []ProxyRule{{Domain: "a.test", LocalPort: 3000}, {Domain: " A.TEST ", LocalPort: 4000}}},
-		{8443, []ProxyRule{{Domain: "https://a.test", LocalPort: 3000}}},
+		{8443, []ProxyRule{{Domain: "a.devbase.localhost", LocalPort: 3000}, {Domain: " A.DEVBASE.LOCALHOST ", LocalPort: 4000}}},
+		{8443, []ProxyRule{{Domain: "https://a.devbase.localhost", LocalPort: 3000}}},
 	} {
 		if err := m.ReplaceProxyRules(context.Background(), 1, tc.port, tc.rules); err == nil {
 			t.Fatal("invalid combined save accepted", tc)
@@ -51,7 +51,7 @@ func TestProxyRules(t *testing.T) {
 	t.Run("validation-and-atomicity", TestProxyRulesAtomicSave)
 	t.Run("publication", func(t *testing.T) {
 		m := New(t.TempDir())
-		if err := m.ReplaceProxyRules(context.Background(), 0, 8443, []ProxyRule{{Domain: "b.test", LocalPort: 3001}, {Domain: "a.test", LocalPort: 3000}}); err != nil {
+		if err := m.ReplaceProxyRules(context.Background(), 0, 8443, []ProxyRule{{Domain: "b.devbase.localhost", LocalPort: 3001}, {Domain: "a.devbase.localhost", LocalPort: 3000}}); err != nil {
 			t.Fatal(err)
 		}
 		want := func(expected string) {
@@ -124,7 +124,7 @@ func TestProxyRules(t *testing.T) {
 	t.Run("failed-stop-keeps-publication", func(t *testing.T) {
 		m := New(t.TempDir())
 		path := filepath.Join(m.Root, "proxy", "rules.json")
-		old := proxyPublishedConfig{SchemaVersion: 1, ListenerPort: 443, Rules: []ProxyRule{{Domain: "old.test", LocalPort: 3000}}}
+		old := proxyPublishedConfig{SchemaVersion: 1, ListenerPort: 443, Rules: []ProxyRule{{Domain: "old.devbase.localhost", LocalPort: 3000}}}
 		if err := writeJSON(path, old); err != nil {
 			t.Fatal(err)
 		}

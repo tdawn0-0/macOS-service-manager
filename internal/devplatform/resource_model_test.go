@@ -33,10 +33,10 @@ func TestResourceOnlyCore(t *testing.T) {
 	})
 	t.Run("atomic proxy configuration", func(t *testing.T) {
 		m := New(t.TempDir())
-		if err := m.ReplaceProxyRules(context.Background(), 0, 443, []ProxyRule{{Domain: "app.test", LocalPort: 3000}}); err != nil {
+		if err := m.ReplaceProxyRules(context.Background(), 0, 443, []ProxyRule{{Domain: "app.devbase.localhost", LocalPort: 3000}}); err != nil {
 			t.Fatal(err)
 		}
-		if err := m.ReplaceProxyRules(context.Background(), 1, 8443, []ProxyRule{{Domain: "app.test", LocalPort: 8443}}); err == nil {
+		if err := m.ReplaceProxyRules(context.Background(), 1, 8443, []ProxyRule{{Domain: "app.devbase.localhost", LocalPort: 8443}}); err == nil {
 			t.Fatal("accepted self-referencing proxy rule")
 		}
 		s, err := m.Read()
@@ -50,11 +50,11 @@ func TestResourceOnlyCore(t *testing.T) {
 		if e != nil || initial.SchemaVersion != 2 || initial.Packages == nil || initial.Instances == nil || initial.ProxyRules == nil || initial.ProxyListenerPort != 443 {
 			t.Fatal(initial, e)
 		}
-		if e = m.ReplaceProxyRules(context.Background(), 0, 8443, []ProxyRule{{Domain: "  APP.TEST  ", LocalPort: 3000}}); e != nil {
+		if e = m.ReplaceProxyRules(context.Background(), 0, 8443, []ProxyRule{{Domain: "  APP.DEVBASE.LOCALHOST  ", LocalPort: 3000}}); e != nil {
 			t.Fatal(e)
 		}
 		got, e := m.Read()
-		if e != nil || got.SchemaVersion != 2 || got.ProxyRulesRevision != 1 || len(got.ProxyRules) != 1 || got.ProxyRules[0].Domain != "app.test" {
+		if e != nil || got.SchemaVersion != 2 || got.ProxyRulesRevision != 1 || len(got.ProxyRules) != 1 || got.ProxyRules[0].Domain != "app.devbase.localhost" {
 			t.Fatal(got, e)
 		}
 		path := filepath.Join(m.Root, "state.json")
@@ -109,10 +109,10 @@ func TestResourceOnlyCore(t *testing.T) {
 	t.Run("rules validate together and save one revision", func(t *testing.T) {
 		m := New(t.TempDir())
 		ctx := context.Background()
-		if e := m.ReplaceProxyRules(ctx, 0, 443, []ProxyRule{{Domain: "a.test", LocalPort: 3000}}); e != nil {
+		if e := m.ReplaceProxyRules(ctx, 0, 443, []ProxyRule{{Domain: "a.devbase.localhost", LocalPort: 3000}}); e != nil {
 			t.Fatal(e)
 		}
-		for _, rules := range [][]ProxyRule{nil, {{Domain: "A.TEST", LocalPort: 3000}, {Domain: "a.test", LocalPort: 4000}}, {{Domain: "public.com", LocalPort: 3000}}, {{Domain: "a.test", LocalPort: 8443}}} {
+		for _, rules := range [][]ProxyRule{nil, {{Domain: "A.DEVBASE.LOCALHOST", LocalPort: 3000}, {Domain: "a.devbase.localhost", LocalPort: 4000}}, {{Domain: "public.com", LocalPort: 3000}}, {{Domain: "a.devbase.localhost", LocalPort: 8443}}} {
 			if e := m.ReplaceProxyRules(ctx, 1, 8443, rules); e == nil {
 				t.Fatal("invalid rules accepted", rules)
 			}
@@ -121,14 +121,14 @@ func TestResourceOnlyCore(t *testing.T) {
 			t.Fatal("stale revision accepted")
 		}
 		state, e := m.Read()
-		if e != nil || state.ProxyListenerPort != 443 || state.ProxyRulesRevision != 1 || state.ProxyRules[0].Domain != "a.test" {
+		if e != nil || state.ProxyListenerPort != 443 || state.ProxyRulesRevision != 1 || state.ProxyRules[0].Domain != "a.devbase.localhost" {
 			t.Fatal(state, e)
 		}
-		if e = m.ReplaceProxyRules(ctx, 1, 8443, []ProxyRule{{Domain: "b.test", LocalPort: 4000}}); e != nil {
+		if e = m.ReplaceProxyRules(ctx, 1, 8443, []ProxyRule{{Domain: "b.devbase.localhost", LocalPort: 4000}}); e != nil {
 			t.Fatal(e)
 		}
 		state, e = m.Read()
-		if e != nil || state.ProxyListenerPort != 8443 || state.ProxyRulesRevision != 2 || len(state.ProxyRules) != 1 || state.ProxyRules[0].Domain != "b.test" {
+		if e != nil || state.ProxyListenerPort != 8443 || state.ProxyRulesRevision != 2 || len(state.ProxyRules) != 1 || state.ProxyRules[0].Domain != "b.devbase.localhost" {
 			t.Fatal(state, e)
 		}
 		if e = m.ReplaceProxyRules(ctx, 2, 8443, []ProxyRule{}); e != nil {

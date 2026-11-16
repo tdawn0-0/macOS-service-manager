@@ -174,7 +174,6 @@ type Manager struct {
 	Program        string
 	LoginDir       string
 	SocketJobDir   string // Test fixture override for /Library/LaunchDaemons.
-	HostsPath      string // Test fixture override for /etc/hosts.
 	Home           string // Test fixture override of the user's home folder.
 	Context        context.Context
 	Root           string

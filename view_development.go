@@ -595,7 +595,7 @@ func (d *developmentState) loadProxyDraft(s devplatform.State) {
 			mode = tunnelModeCustomDomain
 		}
 		d.proxyDraft[i] = proxyRuleDraft{
-			Domain:       rule.Domain,
+			Domain:       strings.TrimSuffix(rule.Domain, devplatform.LocalDomainSuffix),
 			LocalPort:    strconv.Itoa(rule.LocalPort),
 			UpstreamHost: rule.UpstreamHost,
 			Tunnel:       rule.Tunnel,
@@ -622,7 +622,7 @@ func (d *developmentState) proxyDraftDirty() bool {
 	}
 	for i, row := range d.proxyDraft {
 		rule := d.state.ProxyRules[i]
-		if row.Domain != rule.Domain ||
+		if devplatform.LocalDomain(row.Domain) != rule.Domain ||
 			row.LocalPort != strconv.Itoa(rule.LocalPort) ||
 			strings.TrimSpace(row.UpstreamHost) != rule.UpstreamHost ||
 			row.Tunnel != rule.Tunnel ||

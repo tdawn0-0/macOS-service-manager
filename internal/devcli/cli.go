@@ -64,7 +64,6 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
  status                           Print configuration (no stored passwords)
  doctor [--json|--export]          Diagnose layers; anonymize JSON and exported reports
  proxy                            Apply proxy configuration
- hosts                            Apply managed hosts block (macOS authorization)
  trust|untrust                    Install/remove this app's CA trust
  db-work                          Review unfinished database data tasks
  db-work-resolve <id> <revision>   Stop the reviewed owned task, keeping database and output files
@@ -398,8 +397,6 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 			return e
 		}
 		return m.ApplyProxy(ctx)
-	case "hosts":
-		return m.ConfigureHosts(ctx)
 	case "trust", "untrust":
 		return m.ConfigureTrust(ctx, args[0] == "untrust")
 	case "instance":

@@ -88,7 +88,7 @@ def main():
                                             env=dict(env, PORT=str(web)), stdout=log,
                                             stderr=subprocess.STDOUT, start_new_session=True)
             state = json.loads(cli('status'))
-            state['proxyRules'] = [{'domain': 'integration.test', 'localPort': web}]
+            state['proxyRules'] = [{'domain': 'integration.devbase.localhost', 'localPort': web}]
             state['proxyListenerPort'] = https
             state['proxyRulesRevision'] = state.get('proxyRulesRevision', 0) + 1
             staged = root / '.state-smoke.json'
@@ -99,8 +99,8 @@ def main():
             for attempt in range(60):
                 try:
                     context = ssl.create_default_context(cafile=str(root / 'proxy/ca.pem'))
-                    with context.wrap_socket(socket.create_connection(('127.0.0.1', https), 2), server_hostname='integration.test') as connection:
-                        connection.sendall(b'GET / HTTP/1.1\r\nHost: integration.test\r\nConnection: close\r\n\r\n')
+                    with context.wrap_socket(socket.create_connection(('127.0.0.1', https), 2), server_hostname='integration.devbase.localhost') as connection:
+                        connection.sendall(b'GET / HTTP/1.1\r\nHost: integration.devbase.localhost\r\nConnection: close\r\n\r\n')
                         response = b''
                         while chunk := connection.recv(8192):
                             response += chunk
@@ -137,7 +137,7 @@ def main():
             for job in (root / 'jobs').glob('*.plist'):
                 if job.stem.startswith(prefix):
                     subprocess.run(['launchctl', 'bootout', f'gui/{os.getuid()}/' + job.stem], capture_output=True, timeout=40)
-    print('PASS: isolated services stopped; no hosts or system trust changes', flush=True)
+    print('PASS: isolated services stopped; no system trust changes', flush=True)
 
 
 if __name__ == '__main__':

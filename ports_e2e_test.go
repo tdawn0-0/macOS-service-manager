@@ -29,7 +29,7 @@ func TestUIHTTPSPortConflictKeepsLastGoodRulesAndRepairsByChangingPort(t *testin
 			goodPort := freeUIPort(t)
 			h.fill("HTTPS listener port", fmt.Sprint(goodPort))
 			h.click("Add rule")
-			h.fill("Domain", "good-port.test")
+			h.fill("Domain", "good-port.devbase.localhost")
 			h.fill("Local port", fmt.Sprint(upstream.Listener.Addr().(*net.TCPAddr).Port))
 			h.click("Save HTTPS rules")
 			h.click("Apply proxy")
@@ -59,7 +59,7 @@ func TestUIHTTPSPortConflictKeepsLastGoodRulesAndRepairsByChangingPort(t *testin
 					t.Fatal("wrong HTTPS response", string(body))
 				}
 			}
-			check("good-port.test", goodPort)
+			check("good-port.devbase.localhost", goodPort)
 			before, err := m.InspectPort(context.Background(), goodPort)
 			if err != nil || len(before.Listeners) == 0 {
 				t.Fatal("could not observe initial proxy", err)
@@ -76,7 +76,7 @@ func TestUIHTTPSPortConflictKeepsLastGoodRulesAndRepairsByChangingPort(t *testin
 			if !strings.Contains(h.a.dev.output, "unavailable") || h.a.dev.portChecks[oldPort].Status != "In use" {
 				t.Fatal("port failure not shown", h.a.dev.output)
 			}
-			check("good-port.test", goodPort)
+			check("good-port.devbase.localhost", goodPort)
 			after, err := m.InspectPort(context.Background(), goodPort)
 			if err != nil || len(after.Listeners) == 0 || after.Listeners[0].PID != before.Listeners[0].PID {
 				t.Fatal("failed preflight restarted the last good proxy", err)
@@ -95,7 +95,7 @@ func TestUIHTTPSPortConflictKeepsLastGoodRulesAndRepairsByChangingPort(t *testin
 			if strings.Contains(h.a.dev.output, "Error:") {
 				t.Fatal("GUI port repair failed", h.a.dev.output)
 			}
-			check("good-port.test", newPort)
+			check("good-port.devbase.localhost", newPort)
 			conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", oldPort), time.Second)
 			if err != nil {
 				t.Fatal("port repair stopped an external listener", err)

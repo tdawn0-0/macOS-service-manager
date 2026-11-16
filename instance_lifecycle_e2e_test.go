@@ -75,7 +75,7 @@ func TestUIBackgroundInstanceStartupKeepsPhaseConfigurationAndIndependentInstanc
 			h.click("HTTPS")
 			h.fill("HTTPS listener port", fmt.Sprint(freeUIPort(t)))
 			h.click("Add rule")
-			h.fill("Domain", "during-startup.test")
+			h.fill("Domain", "during-startup.devbase.localhost")
 			h.fill("Local port", "3000")
 			timer := time.AfterFunc(4*time.Second, unblock)
 			h.click("Save HTTPS rules")
@@ -87,7 +87,7 @@ func TestUIBackgroundInstanceStartupKeepsPhaseConfigurationAndIndependentInstanc
 			if h.a.dev.statuses["instance:"+id] != "Starting" {
 				t.Fatal("configuration refresh replaced startup phase")
 			}
-			h.fill("Domain", "unsaved-startup.test")
+			h.fill("Domain", "unsaved-startup.devbase.localhost")
 			if cancelled {
 				h.click("Database tasks")
 				h.click("Cancel database operation " + id)
@@ -96,7 +96,7 @@ func TestUIBackgroundInstanceStartupKeepsPhaseConfigurationAndIndependentInstanc
 			}
 			h.foregroundOnly = false
 			h.waitIdle()
-			if h.a.dev.proxyDraft[0].Domain != "unsaved-startup.test" {
+			if h.a.dev.proxyDraft[0].Domain != "unsaved-startup.devbase.localhost" {
 				t.Fatal("startup completion replaced draft")
 			}
 			h.click("Databases")

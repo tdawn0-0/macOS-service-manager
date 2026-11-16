@@ -122,7 +122,7 @@ func TestRuntimeSnapshotProxyAndPID(t *testing.T) {
 		t.Fatal(r.States)
 	}
 	s := emptyState()
-	s.ProxyRules = []ProxyRule{{Domain: "proxy.test", LocalPort: 3000}}
+	s.ProxyRules = []ProxyRule{{Domain: "proxy.devbase.localhost", LocalPort: 3000}}
 	m.Run = func(_ context.Context, _ string, args ...string) (string, error) {
 		if strings.HasSuffix(args[len(args)-1], m.label("proxy")) {
 			return "state = running\npid = 123", nil

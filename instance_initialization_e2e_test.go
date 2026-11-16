@@ -95,7 +95,7 @@ func TestUIDatabaseInitializationKeepsIndependentDrafts(t *testing.T) {
 			h.click("HTTPS")
 			h.fill("HTTPS listener port", fmt.Sprint(freeUIPort(t)))
 			h.click("Add rule")
-			h.fill("Domain", "during-initialization.test")
+			h.fill("Domain", "during-initialization.devbase.localhost")
 			h.fill("Local port", "3000")
 			timer := time.AfterFunc(4*time.Second, release)
 			h.click("Save HTTPS rules")
@@ -104,11 +104,11 @@ func TestUIDatabaseInitializationKeepsIndependentDrafts(t *testing.T) {
 			if e != nil || len(state.ProxyRules) != 1 || !h.a.dev.databaseTasks["first-bg"].Running {
 				t.Fatal(state, e)
 			}
-			h.fill("Domain", "unsaved-initialization.test")
+			h.fill("Domain", "unsaved-initialization.devbase.localhost")
 			release()
 			h.foregroundOnly = false
 			h.waitIdle()
-			if h.a.dev.proxyDraft[0].Domain != "unsaved-initialization.test" || len(h.a.dev.state.Instances) != 2 {
+			if h.a.dev.proxyDraft[0].Domain != "unsaved-initialization.devbase.localhost" || len(h.a.dev.state.Instances) != 2 {
 				t.Fatal("completion replaced draft or state")
 			}
 			h.click("Databases")

@@ -28,7 +28,7 @@ func TestNormalizeUpstreamHost(t *testing.T) {
 			t.Errorf("%q: got %q, %v; want %q", in, got, err, want)
 		}
 	}
-	for _, bad := range []string{"0.0.0.0", "::", "224.0.0.1", "http://a.test", "a.test:8080", "a/b", "user@host", "bad host", "-a.test", "a..test", strings.Repeat("a", 64) + ".test", "fe80::1%en0"} {
+	for _, bad := range []string{"0.0.0.0", "::", "224.0.0.1", "http://a.devbase.localhost", "a.devbase.localhost:8080", "a/b", "user@host", "bad host", "-a.devbase.localhost", "a..test", strings.Repeat("a", 64) + ".test", "fe80::1%en0"} {
 		if got, err := normalizeUpstreamHost(bad); err == nil {
 			t.Errorf("%q accepted as %q", bad, got)
 		}
@@ -37,16 +37,16 @@ func TestNormalizeUpstreamHost(t *testing.T) {
 
 func TestProxyRulesWithRemoteUpstream(t *testing.T) {
 	rules, err := normalizeProxyRules(443, []ProxyRule{
-		{Domain: "lan.test", LocalPort: 443, UpstreamHost: "192.168.1.20"}, // same number as the HTTPS port is fine off this Mac
-		{Domain: "mac.test", LocalPort: 3000, UpstreamHost: "localhost"},
+		{Domain: "lan.devbase.localhost", LocalPort: 443, UpstreamHost: "192.168.1.20"}, // same number as the HTTPS port is fine off this Mac
+		{Domain: "mac.devbase.localhost", LocalPort: 3000, UpstreamHost: "localhost"},
 	})
 	if err != nil || rules[0].UpstreamHost != "192.168.1.20" || rules[1].UpstreamHost != "" {
 		t.Fatal(rules, err)
 	}
-	if _, err = normalizeProxyRules(443, []ProxyRule{{Domain: "mac.test", LocalPort: 443}}); err == nil {
+	if _, err = normalizeProxyRules(443, []ProxyRule{{Domain: "mac.devbase.localhost", LocalPort: 443}}); err == nil {
 		t.Fatal("this Mac's own HTTPS port must stay refused")
 	}
-	if _, err = normalizeProxyRules(443, []ProxyRule{{Domain: "x.test", LocalPort: 80, UpstreamHost: "a b"}}); err == nil {
+	if _, err = normalizeProxyRules(443, []ProxyRule{{Domain: "x.devbase.localhost", LocalPort: 80, UpstreamHost: "a b"}}); err == nil {
 		t.Fatal("invalid upstream accepted")
 	}
 	if got := (proxyRoute{LocalPort: 8080, UpstreamHost: "fd00::5"}).upstream(); got != "http://[fd00::5]:8080" {
@@ -59,7 +59,7 @@ func TestProxyRulesWithRemoteUpstream(t *testing.T) {
 
 func TestProxyUpstreamHostIsPublishedAndRouted(t *testing.T) {
 	m := testManager(t)
-	rules := []ProxyRule{{Domain: "lan.test", LocalPort: 8000, UpstreamHost: "192.168.1.20", Tunnel: true}}
+	rules := []ProxyRule{{Domain: "lan.devbase.localhost", LocalPort: 8000, UpstreamHost: "192.168.1.20", Tunnel: true}}
 	if err := m.ReplaceProxyRules(context.Background(), 0, 8443, rules); err != nil {
 		t.Fatal(err)
 	}
@@ -75,15 +75,15 @@ func TestProxyUpstreamHostIsPublishedAndRouted(t *testing.T) {
 		t.Fatal(state, err)
 	}
 	// Changing only the upstream host is a routing change.
-	if err = m.ReplaceProxyRules(context.Background(), 1, 8443, []ProxyRule{{Domain: "lan.test", LocalPort: 8000, UpstreamHost: "192.168.1.21", Tunnel: true}}); err != nil {
+	if err = m.ReplaceProxyRules(context.Background(), 1, 8443, []ProxyRule{{Domain: "lan.devbase.localhost", LocalPort: 8000, UpstreamHost: "192.168.1.21", Tunnel: true}}); err != nil {
 		t.Fatal(err)
 	}
 	if state, _ := m.ProxyPublicationState(); state != "Pending" {
 		t.Fatal("a new upstream host must be pending, got", state)
 	}
-	old := newLiveProxyRoutes(m, []proxyRoute{{Domain: "lan.test", LocalPort: 8000, UpstreamHost: "192.168.1.20", Port: 8443}}).current
-	next := (&liveProxyRoutes{manager: m}).build([]proxyRoute{{Domain: "lan.test", LocalPort: 8000, UpstreamHost: "192.168.1.21", Port: 8443}}, old)
-	if next.routes["lan.test:8443"] == old.routes["lan.test:8443"] {
+	old := newLiveProxyRoutes(m, []proxyRoute{{Domain: "lan.devbase.localhost", LocalPort: 8000, UpstreamHost: "192.168.1.20", Port: 8443}}).current
+	next := (&liveProxyRoutes{manager: m}).build([]proxyRoute{{Domain: "lan.devbase.localhost", LocalPort: 8000, UpstreamHost: "192.168.1.21", Port: 8443}}, old)
+	if next.routes["lan.devbase.localhost:8443"] == old.routes["lan.devbase.localhost:8443"] {
 		t.Fatal("a route kept its old transport after the upstream host changed")
 	}
 }
@@ -98,10 +98,10 @@ func TestUpstreamDialerReachesNonDefaultHost(t *testing.T) {
 	srv.Listener = l
 	srv.Start()
 	defer srv.Close()
-	site := proxyRoute{Domain: "v6.test", UpstreamHost: "::1", LocalPort: l.Addr().(*net.TCPAddr).Port, Port: 8443}
+	site := proxyRoute{Domain: "v6.devbase.localhost", UpstreamHost: "::1", LocalPort: l.Addr().(*net.TCPAddr).Port, Port: 8443}
 	route := newReverseRoute(site)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "https://v6.test/", nil)
+	req := httptest.NewRequest("GET", "https://v6.devbase.localhost/", nil)
 	route.proxy.ServeHTTP(rec, req)
 	if rec.Code != 200 || rec.Body.String() != "remote ok" {
 		t.Fatal(rec.Code, rec.Body.String())
@@ -114,5 +114,29 @@ func TestTunnelRouteUpstreamHost(t *testing.T) {
 	}
 	if got := (TunnelRoute{LocalPort: 3000, UpstreamHost: "192.168.1.20"}).localHostHeader(); got != "192.168.1.20:3000" {
 		t.Fatal(got)
+	}
+}
+
+func TestProxyDomainsLiveUnderDevbaseLocalhost(t *testing.T) {
+	for _, ok := range []string{"app.devbase.localhost", "a.b.devbase.localhost", "my-app.devbase.localhost"} {
+		if _, err := normalizeProxyRules(443, []ProxyRule{{Domain: ok, LocalPort: 3000}}); err != nil {
+			t.Errorf("%s refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"app.test", "app.localhost", "devbase.localhost", ".devbase.localhost", "app.devbase.localhost.evil.com", "app.example.com", "bad_name.devbase.localhost", "-a.devbase.localhost"} {
+		if _, err := normalizeProxyRules(443, []ProxyRule{{Domain: bad, LocalPort: 3000}}); err == nil {
+			t.Errorf("%s accepted", bad)
+		}
+	}
+	for in, want := range map[string]string{"app": "app.devbase.localhost", " App ": "app.devbase.localhost", "app.devbase.localhost": "app.devbase.localhost", "": ""} {
+		if got := LocalDomain(in); got != want {
+			t.Errorf("LocalDomain(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := DefaultTunnelWorkerName("api.app.devbase.localhost"); got != "devbase-api-app" {
+		t.Fatal(got)
+	}
+	if err := validatePublicTunnelHostname("app.localhost"); err == nil {
+		t.Fatal("a .localhost name must not be a public tunnel domain")
 	}
 }

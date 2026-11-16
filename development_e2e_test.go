@@ -202,10 +202,10 @@ func TestUIValidationDoesNotPersistInvalidInput(t *testing.T) {
 	}
 	h.click("HTTPS")
 	h.click("Add rule")
-	h.fill("Domain", "public-domain.com")
+	h.fill("Domain", "bad name")
 	h.fill("Local port", "3000")
 	h.click("Save HTTPS rules")
-	if !strings.Contains(h.a.dev.output, ".test") {
+	if !strings.Contains(h.a.dev.output, "invalid domain") {
 		t.Fatal(h.a.dev.output)
 	}
 	state, e = manager.Read()
@@ -648,7 +648,7 @@ func TestUIStandaloneRuntimeAndHTTPS(t *testing.T) {
 				h.click("HTTPS")
 				h.fill("HTTPS listener port", fmt.Sprint(httpsPort))
 				h.click("Add rule")
-				h.fill("Domain", "standalone.test")
+				h.fill("Domain", "standalone.devbase.localhost")
 				h.fill("Local port", fmt.Sprint(localPort))
 				h.click("Save HTTPS rules")
 				if strings.Contains(h.a.dev.output, "Error:") {
@@ -666,9 +666,9 @@ func TestUIStandaloneRuntimeAndHTTPS(t *testing.T) {
 				}
 				pool := x509.NewCertPool()
 				pool.AppendCertsFromPEM(ca)
-				client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: "standalone.test"}}, Timeout: 3 * time.Second}
+				client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: "standalone.devbase.localhost"}}, Timeout: 3 * time.Second}
 				req, _ := http.NewRequest("GET", fmt.Sprintf("https://127.0.0.1:%d/", httpsPort), nil)
-				req.Host = "standalone.test"
+				req.Host = "standalone.devbase.localhost"
 				var response *http.Response
 				for n := 0; n < 30; n++ {
 					response, e = client.Do(req)

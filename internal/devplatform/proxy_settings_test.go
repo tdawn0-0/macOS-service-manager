@@ -25,7 +25,7 @@ func TestProxyRulesForwardHeadersAndKeepLastGoodRouting(t *testing.T) {
 	m := testManager(t)
 	listener := integrationPort(t)
 	local := upstream.Listener.Addr().(*net.TCPAddr).Port
-	config := proxyPublishedConfig{SchemaVersion: 1, ListenerPort: listener, Rules: []ProxyRule{{Domain: "settings.test", LocalPort: local}}}
+	config := proxyPublishedConfig{SchemaVersion: 1, ListenerPort: listener, Rules: []ProxyRule{{Domain: "settings.devbase.localhost", LocalPort: local}}}
 	path := filepath.Join(m.Root, "proxy", "rules.json")
 	if e := writeJSON(path, config); e != nil {
 		t.Fatal(e)
@@ -48,7 +48,7 @@ func TestProxyRulesForwardHeadersAndKeepLastGoodRouting(t *testing.T) {
 			t.Error("proxy did not stop")
 		}
 	}()
-	if e = m.verifyProxyTLS(ctx, proxyRoute{Domain: "settings.test", Port: listener}); e != nil {
+	if e = m.verifyProxyTLS(ctx, proxyRoute{Domain: "settings.devbase.localhost", Port: listener}); e != nil {
 		t.Fatal(e)
 	}
 	roots := x509.NewCertPool()
@@ -59,7 +59,7 @@ func TestProxyRulesForwardHeadersAndKeepLastGoodRouting(t *testing.T) {
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 4 * time.Second}
 	request := func() (*http.Response, map[string]string) {
-		req, _ := http.NewRequest("GET", fmt.Sprintf("https://settings.test:%d/path%%2Fsegment?x=1&x=2", listener), nil)
+		req, _ := http.NewRequest("GET", fmt.Sprintf("https://settings.devbase.localhost:%d/path%%2Fsegment?x=1&x=2", listener), nil)
 		req.Header.Set("X-Forwarded-For", "198.51.100.99")
 		req.Header.Set("Forwarded", "host=spoofed.invalid")
 		res, e := client.Do(req)
@@ -76,10 +76,10 @@ func TestProxyRulesForwardHeadersAndKeepLastGoodRouting(t *testing.T) {
 		return res, row
 	}
 	res, row := request()
-	if res.StatusCode != 200 || row["host"] != fmt.Sprintf("settings.test:%d", listener) || row["path"] != "/path%2Fsegment?x=1&x=2" || row["for"] != "127.0.0.1" || row["proto"] != "https" || row["forwarded"] != "" {
+	if res.StatusCode != 200 || row["host"] != fmt.Sprintf("settings.devbase.localhost:%d", listener) || row["path"] != "/path%2Fsegment?x=1&x=2" || row["for"] != "127.0.0.1" || row["proto"] != "https" || row["forwarded"] != "" {
 		t.Fatal(res.StatusCode, row)
 	}
-	if e = os.WriteFile(path, []byte(`{"schemaVersion":1,"listenerPort":`+fmt.Sprint(listener)+`,"rules":[{"domain":"settings.test","localPort":`+fmt.Sprint(local)+`,"upstream":"http://evil.test"}]}`), 0600); e != nil {
+	if e = os.WriteFile(path, []byte(`{"schemaVersion":1,"listenerPort":`+fmt.Sprint(listener)+`,"rules":[{"domain":"settings.devbase.localhost","localPort":`+fmt.Sprint(local)+`,"upstream":"http://evil.devbase.localhost"}]}`), 0600); e != nil {
 		t.Fatal(e)
 	}
 	transport.CloseIdleConnections()
@@ -99,7 +99,7 @@ func TestProxyHeaderTimeoutAndLocalPortRules(t *testing.T) {
 	}))
 	defer upstream.Close()
 	local := upstream.Listener.Addr().(*net.TCPAddr).Port
-	route := newReverseRoute(proxyRoute{Domain: "timeout.test", LocalPort: local, Port: 8443})
+	route := newReverseRoute(proxyRoute{Domain: "timeout.devbase.localhost", LocalPort: local, Port: 8443})
 	defer route.transport.CloseIdleConnections()
 	route.transport.ResponseHeaderTimeout = time.Second
 	server := httptest.NewServer(route.proxy)
@@ -115,13 +115,13 @@ func TestProxyHeaderTimeoutAndLocalPortRules(t *testing.T) {
 		t.Fatal(res.StatusCode, string(body), time.Since(start))
 	}
 	m := testManager(t)
-	if e = m.ReplaceProxyRules(context.Background(), 0, 8443, []ProxyRule{{Domain: "timeout.test", LocalPort: local}}); e != nil {
+	if e = m.ReplaceProxyRules(context.Background(), 0, 8443, []ProxyRule{{Domain: "timeout.devbase.localhost", LocalPort: local}}); e != nil {
 		t.Fatal(e)
 	}
-	if _, e := normalizeProxyRules(8443, []ProxyRule{{Domain: "evil.test", LocalPort: 8443}}); e == nil {
+	if _, e := normalizeProxyRules(8443, []ProxyRule{{Domain: "evil.devbase.localhost", LocalPort: 8443}}); e == nil {
 		t.Fatal("accepted listener loop")
 	}
-	if e = os.WriteFile(filepath.Join(m.Root, "proxy", "rules.json"), []byte(`{"schemaVersion":1,"listenerPort":8443,"rules":[{"domain":"evil.test","localPort":3000,"upstream":"https://localhost:3000"}]}`), 0600); e != nil {
+	if e = os.WriteFile(filepath.Join(m.Root, "proxy", "rules.json"), []byte(`{"schemaVersion":1,"listenerPort":8443,"rules":[{"domain":"evil.devbase.localhost","localPort":3000,"upstream":"https://localhost:3000"}]}`), 0600); e != nil {
 		t.Fatal(e)
 	}
 	if _, e = readPublishedProxyConfig(m.Root); e == nil {
@@ -129,34 +129,3 @@ func TestProxyHeaderTimeoutAndLocalPortRules(t *testing.T) {
 	}
 }
 
-func TestHostsContentRejectsDuplicateOrMalformedBlocks(t *testing.T) {
-	site := proxyRoute{Domain: "site.test", LocalPort: 3000, Port: 8443}
-	validOld := "127.0.0.1 localhost\n"
-
-	// Duplicate modern block markers
-	dupBlock := fmt.Sprintf("127.0.0.1 localhost\n%s\n127.0.0.1 site1.test\n%s\n%s\n127.0.0.1 site2.test\n%s\n", hostsBegin, hostsEnd, hostsBegin, hostsEnd)
-	if _, err := HostsContent(dupBlock, []proxyRoute{site}); err == nil {
-		t.Fatal("accepted duplicate managed hosts blocks")
-	}
-
-	// Duplicate legacy block markers
-	dupLegacy := fmt.Sprintf("127.0.0.1 localhost\n%s\n127.0.0.1 site1.test\n%s\n%s\n127.0.0.1 site2.test\n%s\n", legacyHostsBegin, legacyHostsEnd, legacyHostsBegin, legacyHostsEnd)
-	if _, err := HostsContent(dupLegacy, []proxyRoute{site}); err == nil {
-		t.Fatal("accepted duplicate legacy managed hosts blocks")
-	}
-
-	// Marker embedded mid-line
-	midLine := fmt.Sprintf("127.0.0.1 localhost # %s\n%s\n", hostsBegin, hostsEnd)
-	if _, err := HostsContent(midLine, []proxyRoute{site}); err == nil {
-		t.Fatal("accepted mid-line marker")
-	}
-
-	// Valid content succeeds
-	out, err := HostsContent(validOld, []proxyRoute{site})
-	if err != nil {
-		t.Fatalf("unexpected error on valid hosts: %v", err)
-	}
-	if !strings.Contains(out, "127.0.0.1 site.test") {
-		t.Fatalf("missing route in output: %s", out)
-	}
-}

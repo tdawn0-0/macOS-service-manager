@@ -79,47 +79,47 @@ func TestTunnelConfigValidationAndSecretIsolation(t *testing.T) {
 	}
 
 	// Validate per-rule worker names, URLs, custom domain validation, and collision checks.
-	if got := DefaultTunnelWorkerName("api.app.test"); got != "devbase-api-app" {
+	if got := DefaultTunnelWorkerName("api.app.devbase.localhost"); got != "devbase-api-app" {
 		t.Fatalf("DefaultTunnelWorkerName = %q", got)
 	}
 	longWorker := DefaultTunnelWorkerName(strings.Repeat("ab.", 25) + "test")
 	if len(longWorker) > 63 || strings.HasSuffix(longWorker, "-") || !strings.HasPrefix(longWorker, "devbase-") {
 		t.Fatalf("invalid truncated worker name %q (len=%d)", longWorker, len(longWorker))
 	}
-	if got := (ProxyRule{Domain: "api.test", Tunnel: true}).PreviewTunnelURL("demo"); got != "https://devbase-api.demo.workers.dev" {
+	if got := (ProxyRule{Domain: "api.devbase.localhost", Tunnel: true}).PreviewTunnelURL("demo"); got != "https://devbase-api.demo.workers.dev" {
 		t.Fatalf("workers.dev preview URL = %q", got)
 	}
-	if got := (ProxyRule{Domain: "api.test", Tunnel: true, TunnelDomain: "api.example.com"}).PreviewTunnelURL("demo"); got != "https://api.example.com" {
+	if got := (ProxyRule{Domain: "api.devbase.localhost", Tunnel: true, TunnelDomain: "api.example.com"}).PreviewTunnelURL("demo"); got != "https://api.example.com" {
 		t.Fatalf("custom domain preview URL = %q", got)
 	}
 
 	if err := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{
-		{Domain: "a.b.test", LocalPort: 3000, Tunnel: true},
-		{Domain: "a-b.test", LocalPort: 3001, Tunnel: true},
+		{Domain: "a.b.devbase.localhost", LocalPort: 3000, Tunnel: true},
+		{Domain: "a-b.devbase.localhost", LocalPort: 3001, Tunnel: true},
 	}); err == nil || !strings.Contains(err.Error(), "duplicate tunnel worker") {
 		t.Fatalf("accepted duplicate resolved worker name: %v", err)
 	}
 	if err := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{
-		{Domain: "app.test", LocalPort: 3000, Tunnel: true, TunnelWorker: "other-worker"},
+		{Domain: "app.devbase.localhost", LocalPort: 3000, Tunnel: true, TunnelWorker: "other-worker"},
 	}); err == nil || !strings.Contains(err.Error(), "devbase-") {
 		t.Fatalf("accepted non-devbase worker name: %v", err)
 	}
-	for _, badDomain := range []string{"app.test", "devbase-app.demo.workers.dev", "singlelabel", "bad/path.example.com"} {
+	for _, badDomain := range []string{"app.devbase.localhost", "devbase-app.demo.workers.dev", "singlelabel", "bad/path.example.com"} {
 		if err := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{
-			{Domain: "app.test", LocalPort: 3000, Tunnel: true, TunnelDomain: badDomain},
+			{Domain: "app.devbase.localhost", LocalPort: 3000, Tunnel: true, TunnelDomain: badDomain},
 		}); err == nil {
 			t.Fatalf("accepted invalid custom domain %q", badDomain)
 		}
 	}
 	if err := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{
-		{Domain: "a.test", LocalPort: 3000, Tunnel: true, TunnelDomain: "same.example.com"},
-		{Domain: "b.test", LocalPort: 3001, Tunnel: true, TunnelDomain: "same.example.com"},
+		{Domain: "a.devbase.localhost", LocalPort: 3000, Tunnel: true, TunnelDomain: "same.example.com"},
+		{Domain: "b.devbase.localhost", LocalPort: 3001, Tunnel: true, TunnelDomain: "same.example.com"},
 	}); err == nil || !strings.Contains(err.Error(), "duplicate tunnel custom domain") {
 		t.Fatalf("accepted duplicate custom domain: %v", err)
 	}
 	if err := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{
-		{Domain: "a.b.test", LocalPort: 3000, Tunnel: true, TunnelWorker: "devbase-api", TunnelDomain: "api.example.com"},
-		{Domain: "a-b.test", LocalPort: 3001, Tunnel: true},
+		{Domain: "a.b.devbase.localhost", LocalPort: 3000, Tunnel: true, TunnelWorker: "devbase-api", TunnelDomain: "api.example.com"},
+		{Domain: "a-b.devbase.localhost", LocalPort: 3001, Tunnel: true},
 	}); err != nil {
 		t.Fatalf("valid disambiguated tunnel rules failed: %v", err)
 	}
@@ -818,8 +818,8 @@ func TestCloudflareAPISyncDiscoveryAndCleanup(t *testing.T) {
 
 	// Deploy 1 workers.dev rule + 1 Custom Domain rule.
 	if err := m.ReplaceProxyRules(ctx, s.ProxyRulesRevision, 8443, []ProxyRule{
-		{Domain: "api.test", LocalPort: 3000, Tunnel: true},
-		{Domain: "web.test", LocalPort: 4000, Tunnel: true, TunnelDomain: "web.example.com"},
+		{Domain: "api.devbase.localhost", LocalPort: 3000, Tunnel: true},
+		{Domain: "web.devbase.localhost", LocalPort: 4000, Tunnel: true, TunnelDomain: "web.example.com"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -867,8 +867,8 @@ func TestCloudflareAPISyncDiscoveryAndCleanup(t *testing.T) {
 
 	// Invalid custom domain outside active zones must fail before mutating deployed workers.
 	if err := m.ReplaceProxyRules(ctx, s.ProxyRulesRevision, 8443, []ProxyRule{
-		{Domain: "api.test", LocalPort: 3000, Tunnel: true},
-		{Domain: "web.test", LocalPort: 4000, Tunnel: true, TunnelDomain: "bad.unowned.org"},
+		{Domain: "api.devbase.localhost", LocalPort: 3000, Tunnel: true},
+		{Domain: "web.devbase.localhost", LocalPort: 4000, Tunnel: true, TunnelDomain: "bad.unowned.org"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -876,11 +876,11 @@ func TestCloudflareAPISyncDiscoveryAndCleanup(t *testing.T) {
 		t.Fatalf("expected unowned zone rejection, got %v", err)
 	}
 
-	// Disabling Tunnel on web.test deletes devbase-web cleanly and leaves devbase-api + unrelated existing-blog untouched.
+	// Disabling Tunnel on web.devbase.localhost deletes devbase-web cleanly and leaves devbase-api + unrelated existing-blog untouched.
 	s, _ = m.Read()
 	if err := m.ReplaceProxyRules(ctx, s.ProxyRulesRevision, 8443, []ProxyRule{
-		{Domain: "api.test", LocalPort: 3000, Tunnel: true},
-		{Domain: "web.test", LocalPort: 4000, Tunnel: false},
+		{Domain: "api.devbase.localhost", LocalPort: 3000, Tunnel: true},
+		{Domain: "web.devbase.localhost", LocalPort: 4000, Tunnel: false},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -991,7 +991,7 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{
-		{Domain: "app.test", LocalPort: localPort, Tunnel: true, TunnelURL: "https://devbase-app.demo.workers.dev"},
+		{Domain: "app.devbase.localhost", LocalPort: localPort, Tunnel: true, TunnelURL: "https://devbase-app.demo.workers.dev"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -999,7 +999,7 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 		SchemaVersion: 1,
 		ClientID:      "mac-test",
 		Routes: []TunnelRoute{
-			{WorkerName: "devbase-app", PublicURL: "https://devbase-app.demo.workers.dev", ConnectURL: gwApp.server.URL, LocalDomain: "app.test", LocalPort: localPort},
+			{WorkerName: "devbase-app", PublicURL: "https://devbase-app.demo.workers.dev", ConnectURL: gwApp.server.URL, LocalDomain: "app.devbase.localhost", LocalPort: localPort},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -1130,9 +1130,9 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 		SchemaVersion: 1,
 		ClientID:      "mac-test",
 		Routes: []TunnelRoute{
-			{WorkerName: "devbase-app", PublicURL: "https://devbase-app.demo.workers.dev", ConnectURL: gwApp.server.URL, LocalDomain: "app.test", LocalPort: localPort},
-			{WorkerName: "devbase-admin", PublicURL: "https://admin.example.com", ConnectURL: gwAdmin.server.URL, LocalDomain: "admin.test", LocalPort: secondPort},
-			{WorkerName: "devbase-conflict", PublicURL: "https://conflict.example.com", ConnectURL: gwConflict.server.URL, LocalDomain: "conflict.test", LocalPort: secondPort},
+			{WorkerName: "devbase-app", PublicURL: "https://devbase-app.demo.workers.dev", ConnectURL: gwApp.server.URL, LocalDomain: "app.devbase.localhost", LocalPort: localPort},
+			{WorkerName: "devbase-admin", PublicURL: "https://admin.example.com", ConnectURL: gwAdmin.server.URL, LocalDomain: "admin.devbase.localhost", LocalPort: secondPort},
+			{WorkerName: "devbase-conflict", PublicURL: "https://conflict.example.com", ConnectURL: gwConflict.server.URL, LocalDomain: "conflict.devbase.localhost", LocalPort: secondPort},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -1180,7 +1180,7 @@ func TestTunnelEndToEndHTTPWebSocketHotReloadAndConflict(t *testing.T) {
 		SchemaVersion: 1,
 		ClientID:      "mac-test",
 		Routes: []TunnelRoute{
-			{WorkerName: "devbase-app", PublicURL: "https://devbase-app.demo.workers.dev", ConnectURL: gwApp.server.URL, LocalDomain: "app.test", LocalPort: localPort},
+			{WorkerName: "devbase-app", PublicURL: "https://devbase-app.demo.workers.dev", ConnectURL: gwApp.server.URL, LocalDomain: "app.devbase.localhost", LocalPort: localPort},
 		},
 	}); err != nil {
 		t.Fatal(err)

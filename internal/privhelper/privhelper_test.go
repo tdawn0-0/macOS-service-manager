@@ -73,65 +73,14 @@ func startTestHelper(t *testing.T, cfg ServerConfig) (*Client, string, func()) {
 }
 
 func TestPeerUIDAuthorization(t *testing.T) {
-	dir := t.TempDir()
-	hostsFile := filepath.Join(dir, "hosts")
-	if err := os.WriteFile(hostsFile, []byte("127.0.0.1 localhost\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 	wrongUID := os.Geteuid() + 1
 	client, _, _ := startTestHelper(t, ServerConfig{
-		OwnerUID:  wrongUID,
-		HostsPath: hostsFile,
+		OwnerUID: wrongUID,
 	})
 	// Test PeerUID mismatch returns HTTP 403 error message.
 	_, err := client.Ping(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "not authorized") {
 		t.Fatalf("expected peer uid rejection, got %v", err)
-	}
-}
-
-func TestHostsSyncSuccessAndConflict(t *testing.T) {
-	dir := t.TempDir()
-	hostsFile := filepath.Join(dir, "hosts")
-	orig := "127.0.0.1 localhost\n"
-	if err := os.WriteFile(hostsFile, []byte(orig), 0644); err != nil {
-		t.Fatal(err)
-	}
-	client, _, _ := startTestHelper(t, ServerConfig{
-		HostsPath: hostsFile,
-	})
-
-	next := orig + "127.0.0.1 app.test\n"
-	if err := client.SyncHosts(context.Background(), HostsSyncRequest{
-		ExpectedOld: orig,
-		NewContent:  next,
-	}); err != nil {
-		t.Fatalf("SyncHosts: %v", err)
-	}
-	got, err := os.ReadFile(hostsFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != next {
-		t.Fatalf("hosts mismatch: got %q, want %q", string(got), next)
-	}
-
-	// Stale ExpectedOld should fail with conflict and leave file unchanged.
-	err = client.SyncHosts(context.Background(), HostsSyncRequest{
-		ExpectedOld: orig,
-		NewContent:  orig + "127.0.0.1 stale.test\n",
-	})
-	if err == nil || !strings.Contains(err.Error(), "changed concurrently") {
-		t.Fatalf("expected conflict error, got %v", err)
-	}
-
-	// NUL bytes must be rejected.
-	err = client.SyncHosts(context.Background(), HostsSyncRequest{
-		ExpectedOld: next,
-		NewContent:  next + "\x00bad",
-	})
-	if err == nil || !strings.Contains(err.Error(), "NUL") {
-		t.Fatalf("expected NUL rejection, got %v", err)
 	}
 }
 
@@ -690,14 +639,8 @@ func TestPeerAuditTokenIdentifiesSelf(t *testing.T) {
 }
 
 func TestPeerCodeAuthorizationRejectsForeignCode(t *testing.T) {
-	hostsFile := filepath.Join(t.TempDir(), "hosts")
-	orig := []byte("127.0.0.1 localhost\n")
-	if err := os.WriteFile(hostsFile, orig, 0644); err != nil {
-		t.Fatal(err)
-	}
 	client, _, _ := startTestHelper(t, ServerConfig{
 		PeerAuthorized: func(net.Conn) error { return errors.New("foreign") },
-		HostsPath:      hostsFile,
 	})
 	_, err := client.Ping(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "reinstall the helper in Settings") {
@@ -706,19 +649,9 @@ func TestPeerCodeAuthorizationRejectsForeignCode(t *testing.T) {
 	if !errors.Is(err, ErrPeerRejected) || !NeedsReinstall(err) {
 		t.Fatalf("rejection is not recognisable by callers: %v", err)
 	}
-	err = client.SyncHosts(context.Background(), HostsSyncRequest{
-		ExpectedOld: string(orig),
-		NewContent:  string(orig) + "127.0.0.1 evil.test\n",
-	})
-	if err == nil {
-		t.Fatal("SyncHosts must fail for foreign code")
-	}
-	got, rerr := os.ReadFile(hostsFile)
-	if rerr != nil {
-		t.Fatal(rerr)
-	}
-	if string(got) != string(orig) {
-		t.Fatalf("hosts file changed: %q", got)
+	// Every endpoint is refused, not only Ping.
+	if err = client.LaunchdControl(context.Background(), [][]string{{"print", "system/x"}}); err == nil || !errors.Is(err, ErrPeerRejected) {
+		t.Fatalf("a privileged request must fail for foreign code, got %v", err)
 	}
 }
 

@@ -109,7 +109,7 @@ func TestInstanceInitializationParallelReservationsAndUnrelatedConfiguration(t *
 	}
 	short, stop := context.WithTimeout(ctx, 2*time.Second)
 	defer stop()
-	if e := New(m.Root).ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "during-init.test", LocalPort: 3000}}); e != nil {
+	if e := New(m.Root).ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "during-init.devbase.localhost", LocalPort: 3000}}); e != nil {
 		unblock()
 		t.Fatal(e)
 	}
@@ -140,7 +140,7 @@ func TestInstanceInitializationParallelReservationsAndUnrelatedConfiguration(t *
 		}
 	}
 	state, e := m.Read()
-	if e != nil || len(state.Instances) != 2 || len(state.ProxyRules) != 1 || state.ProxyRules[0].Domain != "during-init.test" {
+	if e != nil || len(state.Instances) != 2 || len(state.ProxyRules) != 1 || state.ProxyRules[0].Domain != "during-init.devbase.localhost" {
 		t.Fatal(state, e)
 	}
 	for _, i := range []Instance{a, b} {

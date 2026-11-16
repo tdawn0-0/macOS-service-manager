@@ -25,11 +25,11 @@ func findDiagnostic(t *testing.T, r DiagnosticReport, layer, resource string) Di
 }
 
 func TestDiagnosticDNSRejectsForeignAndWrongLoopbackAddresses(t *testing.T) {
-	for _, addresses := range [][]string{nil, {"127.0.0.1"}, {"127.0.0.1", "127.0.0.1"}, {"203.0.113.5"}, {"127.0.0.2"}, {"::1"}, {"127.0.0.1", "203.0.113.5"}, {"not-an-ip"}} {
+	for _, addresses := range [][]string{nil, {"127.0.0.1"}, {"127.0.0.1", "127.0.0.1"}, {"127.0.0.1", "::1"}, {"203.0.113.5"}, {"127.0.0.2"}, {"::1"}, {"127.0.0.1", "203.0.113.5"}, {"not-an-ip"}} {
 		t.Run(fmt.Sprint(addresses), func(t *testing.T) {
 			m := testManager(t)
 			s := emptyState()
-			s.ProxyRules = []ProxyRule{{Domain: "dns.test", LocalPort: 1}}
+			s.ProxyRules = []ProxyRule{{Domain: "dns.devbase.localhost", LocalPort: 1}}
 			s.ProxyListenerPort = 65432
 			r, err := m.diagnose(context.Background(), s, diagnosticProbes{
 				lookup: func(context.Context, string) ([]string, error) { return addresses, nil },
@@ -39,14 +39,20 @@ func TestDiagnosticDNSRejectsForeignAndWrongLoopbackAddresses(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			check := findDiagnostic(t, r, "DNS", "dns.test")
+			check := findDiagnostic(t, r, "DNS", "dns.devbase.localhost")
 			want := "Failed"
 			if len(addresses) > 0 {
 				want = "OK"
+				hasIPv4 := false
 				for _, ip := range addresses {
-					if ip != "127.0.0.1" {
+					if ip == "127.0.0.1" {
+						hasIPv4 = true
+					} else if ip != "::1" {
 						want = "Failed"
 					}
+				}
+				if !hasIPv4 {
+					want = "Failed"
 				}
 			}
 			if check.Status != want || (want == "Failed" && check.Remedy == "") {
@@ -59,7 +65,7 @@ func TestDiagnosticDNSRejectsForeignAndWrongLoopbackAddresses(t *testing.T) {
 func TestDiagnosticRedactionAndUnavailableLocalPort(t *testing.T) {
 	m := testManager(t)
 	s := emptyState()
-	s.ProxyRules = []ProxyRule{{Domain: "sensitive.test", LocalPort: 1}}
+	s.ProxyRules = []ProxyRule{{Domain: "sensitive.devbase.localhost", LocalPort: 1}}
 	s.ProxyListenerPort = integrationPort(t)
 	if err := writeJSON(filepath.Join(m.Root, "state.json"), s); err != nil {
 		t.Fatal(err)
@@ -68,14 +74,14 @@ func TestDiagnosticRedactionAndUnavailableLocalPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c := findDiagnostic(t, r, "Upstream", "sensitive.test"); c.Status != "Failed" {
+	if c := findDiagnostic(t, r, "Upstream", "sensitive.devbase.localhost"); c.Status != "Failed" {
 		t.Fatal(c)
 	}
 	b, err := r.RedactedJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(b), "sensitive.test") || strings.Contains(string(b), m.Root) {
+	if strings.Contains(string(b), "sensitive.devbase.localhost") || strings.Contains(string(b), m.Root) {
 		t.Fatal("redaction leaked private data")
 	}
 	path, err := m.ExportDiagnostics(context.Background(), r)
@@ -106,7 +112,7 @@ func TestDiagnosticToleratesSlowLocalResolverAndReportsTimeoutSeparately(t *test
 		t.Run(fmt.Sprint(timeout), func(t *testing.T) {
 			m := testManager(t)
 			s := emptyState()
-			s.ProxyRules = []ProxyRule{{Domain: "slow.test", LocalPort: 1}}
+			s.ProxyRules = []ProxyRule{{Domain: "slow.devbase.localhost", LocalPort: 1}}
 			s.ProxyListenerPort = 65432
 			r, err := m.diagnose(context.Background(), s, diagnosticProbes{
 				lookup: func(ctx context.Context, name string) ([]string, error) {
@@ -126,7 +132,7 @@ func TestDiagnosticToleratesSlowLocalResolverAndReportsTimeoutSeparately(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
-			check := findDiagnostic(t, r, "DNS", "slow.test")
+			check := findDiagnostic(t, r, "DNS", "slow.devbase.localhost")
 			want := "OK"
 			if timeout {
 				want = "Warning"
@@ -139,7 +145,7 @@ func TestDiagnosticToleratesSlowLocalResolverAndReportsTimeoutSeparately(t *test
 }
 
 func TestResourceDiagnosticExport(t *testing.T) {
-	for _, secret := range []string{"private-domain.test", "/Users/private/path", "Bearer-secret", "private-user"} {
+	for _, secret := range []string{"private-domain.devbase.localhost", "/Users/private/path", "Bearer-secret", "private-user"} {
 		r := DiagnosticReport{SchemaVersion: 1, Checks: []DiagnosticCheck{{Layer: secret, Resource: secret, Status: secret, Summary: secret, Remedy: secret, Target: DiagnosticTarget{Kind: "proxy", ID: secret}}}}
 		b, err := r.RedactedJSON()
 		if err != nil {
@@ -149,8 +155,8 @@ func TestResourceDiagnosticExport(t *testing.T) {
 			t.Fatal("export leaked private value", string(b))
 		}
 	}
-	a := DiagnosticReport{SchemaVersion: 1, Checks: []DiagnosticCheck{{Layer: "DNS", Resource: "one.test", Status: "Failed", Summary: "private-one"}}}
-	b := DiagnosticReport{SchemaVersion: 1, Checks: []DiagnosticCheck{{Layer: "DNS", Resource: "two.test", Status: "Failed", Summary: "private-two"}}}
+	a := DiagnosticReport{SchemaVersion: 1, Checks: []DiagnosticCheck{{Layer: "DNS", Resource: "one.devbase.localhost", Status: "Failed", Summary: "private-one"}}}
+	b := DiagnosticReport{SchemaVersion: 1, Checks: []DiagnosticCheck{{Layer: "DNS", Resource: "two.devbase.localhost", Status: "Failed", Summary: "private-two"}}}
 	left, _ := a.RedactedJSON()
 	right, _ := b.RedactedJSON()
 	if string(left) != string(right) {

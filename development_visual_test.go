@@ -17,7 +17,7 @@ func designFixture(t *testing.T) *app {
 	a.copy = func(string) {}
 	a.reveal = func(string) {}
 	a.dev.loaded = true
-	s := devplatform.State{SchemaVersion: devplatform.Schema, Packages: map[string]devplatform.Package{}, Instances: map[string]devplatform.Instance{}, ProxyRules: []devplatform.ProxyRule{{Domain: "atlas.test", LocalPort: 3000}}, ProxyListenerPort: 443}
+	s := devplatform.State{SchemaVersion: devplatform.Schema, Packages: map[string]devplatform.Package{}, Instances: map[string]devplatform.Instance{}, ProxyRules: []devplatform.ProxyRule{{Domain: "atlas.devbase.localhost", LocalPort: 3000}}, ProxyListenerPort: 443}
 	for _, pair := range [][2]string{{"node", "22.14.0"}, {"mysql", "8.4.4"}, {"postgresql", "17.11_1"}, {"redis", "8.2.11"}, {"mongodb", "8.0.5"}} {
 		p := devplatform.Package{Name: pair[0], Version: pair[1], Arch: "arm64", License: "See included license"}
 		if p.Name == "postgresql" {

@@ -81,7 +81,7 @@ func TestPackageDownloadsRunConcurrentlyAndMergeCurrentState(t *testing.T) {
 	}
 	short, stop := context.WithTimeout(ctx, 2*time.Second)
 	defer stop()
-	if e := New(m.Root).ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "during-download.test", LocalPort: 3000}}); e != nil {
+	if e := New(m.Root).ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "during-download.devbase.localhost", LocalPort: 3000}}); e != nil {
 		unblock()
 		t.Fatal("download blocked unrelated configuration save", e)
 	}
@@ -163,7 +163,7 @@ func TestPackageCancellingOneDownloadKeepsOtherDownloadAndConfiguration(t *testi
 	if e := <-done1; !errors.Is(e, context.Canceled) {
 		t.Fatal(e)
 	}
-	if e := m.ReplaceProxyRules(second, 0, 8443, []ProxyRule{{Domain: "keep.test", LocalPort: 3000}}); e != nil {
+	if e := m.ReplaceProxyRules(second, 0, 8443, []ProxyRule{{Domain: "keep.devbase.localhost", LocalPort: 3000}}); e != nil {
 		t.Fatal(e)
 	}
 	unblock()
@@ -267,7 +267,7 @@ func TestPackageSharedLeaseWaitReportsResourceAndCanCancelWithoutStateLock(t *te
 	}
 	short, stop := context.WithTimeout(context.Background(), 2*time.Second)
 	defer stop()
-	if e = m.ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "while-leased.test", LocalPort: 3000}}); e != nil {
+	if e = m.ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "while-leased.devbase.localhost", LocalPort: 3000}}); e != nil {
 		t.Fatal("shared wait held global state", e)
 	}
 	cancel()

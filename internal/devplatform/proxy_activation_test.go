@@ -19,7 +19,7 @@ func TestProxyActivationStates(t *testing.T) {
 	if state, err := m.ProxyPublicationState(); err != nil || state != "Unknown" {
 		t.Fatal(state, err)
 	}
-	if err := m.ReplaceProxyRules(context.Background(), 0, 8443, []ProxyRule{{Domain: "state.test", LocalPort: 3000}}); err != nil {
+	if err := m.ReplaceProxyRules(context.Background(), 0, 8443, []ProxyRule{{Domain: "state.devbase.localhost", LocalPort: 3000}}); err != nil {
 		t.Fatal(err)
 	}
 	s, _ := m.Read()
@@ -50,7 +50,7 @@ func TestProxyActivationStates(t *testing.T) {
 
 func TestProxyRuleHTTPCheck(t *testing.T) {
 	m := testManager(t)
-	cert, err := m.leaf("check.test")
+	cert, err := m.leaf("check.devbase.localhost")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,16 +79,16 @@ func TestProxyRuleHTTPCheck(t *testing.T) {
 	defer server.Close()
 	_, portText, _ := net.SplitHostPort(server.Listener.Addr().String())
 	port, _ := strconv.Atoi(portText)
-	if err := m.ReplaceProxyRules(context.Background(), 0, port, []ProxyRule{{Domain: "check.test", LocalPort: 3000}}); err != nil {
+	if err := m.ReplaceProxyRules(context.Background(), 0, port, []ProxyRule{{Domain: "check.devbase.localhost", LocalPort: 3000}}); err != nil {
 		t.Fatal(err)
 	}
-	fp, revision, err := m.ProxyRuleFingerprint("check.test")
+	fp, revision, err := m.ProxyRuleFingerprint("check.devbase.localhost")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, status := range []int{200, 204, 301, 401, 404, 500, 502} {
 		code = status
-		r, e := m.checkProxyRuleHTTP(context.Background(), "check.test", revision, fp, roots)
+		r, e := m.checkProxyRuleHTTP(context.Background(), "check.devbase.localhost", revision, fp, roots)
 		if e != nil || r.StatusCode != status || r.Failure != "" {
 			t.Fatal(r, e)
 		}
@@ -96,17 +96,17 @@ func TestProxyRuleHTTPCheck(t *testing.T) {
 	if redirected.Load() != 0 {
 		t.Fatal("followed redirect")
 	}
-	r, e := m.checkProxyRuleHTTP(context.Background(), "check.test", revision, fp, x509.NewCertPool())
+	r, e := m.checkProxyRuleHTTP(context.Background(), "check.devbase.localhost", revision, fp, x509.NewCertPool())
 	if e != nil || r.Failure != "TLS" {
 		t.Fatal(r, e)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	r, e = m.checkProxyRuleHTTP(ctx, "check.test", revision, fp, roots)
+	r, e = m.checkProxyRuleHTTP(ctx, "check.devbase.localhost", revision, fp, roots)
 	if e != nil || r.Failure == "" {
 		t.Fatal(r, e)
 	}
-	if _, e = m.checkProxyRuleHTTP(context.Background(), "check.test", revision+1, fp, roots); e == nil {
+	if _, e = m.checkProxyRuleHTTP(context.Background(), "check.devbase.localhost", revision+1, fp, roots); e == nil {
 		t.Fatal("stale revision accepted")
 	}
 	s, _ := m.Read()
@@ -119,11 +119,11 @@ func TestProxyRuleHTTPCheck(t *testing.T) {
 // saved rules must not make an applied proxy look pending.
 func TestProxyPublicationIgnoresTunnelSettings(t *testing.T) {
 	m := testManager(t)
-	rules := []ProxyRule{{Domain: "tunnel.test", LocalPort: 8000, Tunnel: true, TunnelURL: "https://devbase-tunnel.example.workers.dev"}}
+	rules := []ProxyRule{{Domain: "tunnel.devbase.localhost", LocalPort: 8000, Tunnel: true, TunnelURL: "https://devbase-tunnel.example.workers.dev"}}
 	if err := m.ReplaceProxyRules(context.Background(), 0, 8443, rules); err != nil {
 		t.Fatal(err)
 	}
-	published := proxyPublishedConfig{SchemaVersion: 1, ListenerPort: 8443, Rules: []ProxyRule{{Domain: "tunnel.test", LocalPort: 8000}}}
+	published := proxyPublishedConfig{SchemaVersion: 1, ListenerPort: 8443, Rules: []ProxyRule{{Domain: "tunnel.devbase.localhost", LocalPort: 8000}}}
 	if err := writeJSON(filepath.Join(m.Root, "proxy", "rules.json"), published); err != nil {
 		t.Fatal(err)
 	}

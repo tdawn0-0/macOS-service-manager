@@ -17,7 +17,7 @@ func TestSocketJobBindsLoopbackAndDropsPrivileges(t *testing.T) {
 		t.Skip("normal-user job")
 	}
 	m := testManager(t)
-	sites := []proxyRoute{{Domain: "web.test", LocalPort: 3000, Port: 443}}
+	sites := []proxyRoute{{Domain: "web.devbase.localhost", LocalPort: 3000, Port: 443}}
 	data, e := m.socketJob(sites, "/Applications/Devbase.app/Contents/MacOS/Devbase", "developer")
 	if e != nil {
 		t.Fatal(e)
@@ -63,7 +63,7 @@ func TestSocketJobInstallAndStopDelegateToPrivilegedHelper(t *testing.T) {
 		}
 		return "", nil
 	}
-	sites := []proxyRoute{{Domain: "web.test", LocalPort: 3000, Port: 443}}
+	sites := []proxyRoute{{Domain: "web.devbase.localhost", LocalPort: 3000, Port: 443}}
 
 	if err := m.installSocketJob(context.Background(), sites); !errors.Is(err, privhelper.ErrNotInstalled) {
 		t.Fatalf("expected ErrNotInstalled without helper, got %v", err)

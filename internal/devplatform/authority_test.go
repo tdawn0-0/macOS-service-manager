@@ -235,7 +235,7 @@ func TestExpiredAuthorityRepairAndLeafLifetime(t *testing.T) {
 		t.Fatal("expired archive restored")
 	}
 	near, _, _ := legacyAuthorityFixture(t, time.Now().Add(7*24*time.Hour))
-	leaf, err := near.leaf("near-expiry.test")
+	leaf, err := near.leaf("near-expiry.devbase.localhost")
 	if err != nil {
 		t.Fatal(err)
 	}

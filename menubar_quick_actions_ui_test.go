@@ -30,14 +30,14 @@ func TestUIMenuBarQuickActions(t *testing.T) {
 	}
 	t.Run("proxy-url", func(t *testing.T) {
 		a := designFixture(t)
-		a.dev.state.ProxyRules = []devplatform.ProxyRule{{Domain: "app.test", LocalPort: 3000}}
+		a.dev.state.ProxyRules = []devplatform.ProxyRule{{Domain: "app.devbase.localhost", LocalPort: 3000}}
 		a.dev.statuses = map[string]string{"proxy": "Running"}
 		a.dev.state.ProxyListenerPort = 443
-		if got := a.panelProxyURL(); got != "https://app.test" {
+		if got := a.panelProxyURL(); got != "https://app.devbase.localhost" {
 			t.Fatal(got)
 		}
 		a.dev.state.ProxyListenerPort = 8443
-		if got := a.panelProxyURL(); got != "https://app.test:8443" {
+		if got := a.panelProxyURL(); got != "https://app.devbase.localhost:8443" {
 			t.Fatal(got)
 		}
 		a.dev.statuses["proxy"] = "Stopped"
@@ -45,7 +45,7 @@ func TestUIMenuBarQuickActions(t *testing.T) {
 			t.Fatal(got)
 		}
 		a.dev.statuses["proxy"] = "Running"
-		a.dev.state.ProxyRules = append(a.dev.state.ProxyRules, devplatform.ProxyRule{Domain: "b.test", LocalPort: 3001})
+		a.dev.state.ProxyRules = append(a.dev.state.ProxyRules, devplatform.ProxyRule{Domain: "b.devbase.localhost", LocalPort: 3001})
 		if got := a.panelProxyURL(); got != "" {
 			t.Fatal(got)
 		}
@@ -75,11 +75,11 @@ func TestUIMenuBarQuickActions(t *testing.T) {
 	})
 	t.Run("panel-text", func(t *testing.T) {
 		a := designFixture(t)
-		a.dev.state.ProxyRules = []devplatform.ProxyRule{{Domain: "secret-app.test", LocalPort: 3000}}
+		a.dev.state.ProxyRules = []devplatform.ProxyRule{{Domain: "secret-app.devbase.localhost", LocalPort: 3000}}
 		a.dev.statuses = map[string]string{"proxy": "Running"}
 		panel := ui.NewTester(func(c *ui.Context) { a.menubarView(c, func() {}) }, 320, a.panelHeight())
 		panel.Frame()
-		if shown := strings.Join(panel.Texts(), " "); strings.Contains(shown, "secret-app.test") {
+		if shown := strings.Join(panel.Texts(), " "); strings.Contains(shown, "secret-app.devbase.localhost") {
 			t.Fatal(shown)
 		}
 	})

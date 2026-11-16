@@ -14,7 +14,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,27 +26,6 @@ func testManager(t *testing.T) *Manager {
 		t.Fatal(e)
 	}
 	return m
-}
-func TestHostsPreserveAndConflict(t *testing.T) {
-	site := proxyRoute{Domain: "web.test", LocalPort: 3000, Port: 443}
-	old := "127.0.0.1 localhost\n\n# user comment\n"
-	got, e := HostsContent(old, []proxyRoute{site})
-	if e != nil {
-		t.Fatal(e)
-	}
-	if !strings.Contains(got, "# user comment") || !strings.Contains(got, "127.0.0.1 web.test") {
-		t.Fatal(got)
-	}
-	again, e := HostsContent(got, []proxyRoute{site})
-	if e != nil || again != got {
-		t.Fatalf("not idempotent: %q %v", again, e)
-	}
-	if _, e = HostsContent(old+"127.0.0.2 web.test\n", []proxyRoute{site}); e == nil {
-		t.Fatal("overwrote external domain")
-	}
-	if _, e = HostsContent(hostsBegin, []proxyRoute{site}); e == nil {
-		t.Fatal("accepted broken block")
-	}
 }
 func TestStateConcurrentAndSchema(t *testing.T) {
 	m := testManager(t)
@@ -101,14 +79,14 @@ func TestHTTPSProxyWithTrustedCAAndReload(t *testing.T) {
 	}
 	port := l.Addr().(*net.TCPAddr).Port
 	l.Close()
-	route := proxyRoute{Domain: "web.test", LocalPort: up.Listener.Addr().(*net.TCPAddr).Port, Port: port}
+	route := proxyRoute{Domain: "web.devbase.localhost", LocalPort: up.Listener.Addr().(*net.TCPAddr).Port, Port: port}
 	localPort := up.Listener.Addr().(*net.TCPAddr).Port
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if _, _, e = m.ca(); e != nil {
 		t.Fatal(e)
 	}
-	if e = writeJSON(filepath.Join(m.Root, "proxy", "rules.json"), proxyPublishedConfig{SchemaVersion: 1, ListenerPort: port, Rules: []ProxyRule{{Domain: "web.test", LocalPort: localPort}}}); e != nil {
+	if e = writeJSON(filepath.Join(m.Root, "proxy", "rules.json"), proxyPublishedConfig{SchemaVersion: 1, ListenerPort: port, Rules: []ProxyRule{{Domain: "web.devbase.localhost", LocalPort: localPort}}}); e != nil {
 		t.Fatal(e)
 	}
 	done := make(chan error, 1)
@@ -118,14 +96,14 @@ func TestHTTPSProxyWithTrustedCAAndReload(t *testing.T) {
 	if !roots.AppendCertsFromPEM(b) {
 		t.Fatal("CA missing")
 	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: "web.test"}, DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: "web.devbase.localhost"}, DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: time.Second}
 	var res *http.Response
 	for n := 0; n < 40; n++ {
-		res, e = client.Get(fmt.Sprintf("https://web.test:%d/path?q=1", port))
+		res, e = client.Get(fmt.Sprintf("https://web.devbase.localhost:%d/path?q=1", port))
 		if e == nil {
 			break
 		}
@@ -140,7 +118,7 @@ func TestHTTPSProxyWithTrustedCAAndReload(t *testing.T) {
 		t.Fatal(string(body))
 	}
 	cert := res.TLS.PeerCertificates[0]
-	if e = cert.VerifyHostname("web.test"); e != nil {
+	if e = cert.VerifyHostname("web.devbase.localhost"); e != nil {
 		t.Fatal(e)
 	}
 	block, _ := pem.Decode(b)
@@ -150,8 +128,8 @@ func TestHTTPSProxyWithTrustedCAAndReload(t *testing.T) {
 	}
 	route.LocalPort = 1
 	localPort = 1
-	writeJSON(filepath.Join(m.Root, "proxy", "rules.json"), proxyPublishedConfig{SchemaVersion: 1, ListenerPort: port, Rules: []ProxyRule{{Domain: "web.test", LocalPort: localPort}}})
-	res, e = client.Get(fmt.Sprintf("https://web.test:%d/", port))
+	writeJSON(filepath.Join(m.Root, "proxy", "rules.json"), proxyPublishedConfig{SchemaVersion: 1, ListenerPort: port, Rules: []ProxyRule{{Domain: "web.devbase.localhost", LocalPort: localPort}}})
+	res, e = client.Get(fmt.Sprintf("https://web.devbase.localhost:%d/", port))
 	if e != nil {
 		t.Fatal(e)
 	}

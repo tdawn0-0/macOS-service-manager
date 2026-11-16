@@ -90,7 +90,11 @@ func (a *app) devHTTPS(c *ui.Context) {
 			row := &d.proxyDraft[i]
 			devInset(c, func() {
 				ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
-					mono(ui.TextInput(c, &row.Domain).Placeholder("app.test").Label("Domain").Grow(1).MinWidth(200))
+					// The name is typed; the namespace after it is fixed, and macOS resolves it to this Mac.
+					ui.Row(c).Grow(1).MinWidth(220).Gap(2).AlignItems(ui.Center).Children(func() {
+						mono(ui.TextInput(c, &row.Domain).Placeholder("app").Label("Domain").Grow(1).MinWidth(0))
+						mono(ui.Text(c, devplatform.LocalDomainSuffix).FontSize(textSmall).TextColor(tk.TextTertiary).SingleLine().Shrink(0))
+					})
 					// The route: the domain goes to a port of this Mac.
 					// The upstream is empty for this Mac (127.0.0.1) or any IP address or host name.
 					ui.Row(c).Width(320).Shrink(0).Gap(6).AlignItems(ui.Center).Children(func() {
@@ -105,7 +109,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 					})
 					ui.Row(c).Width(64).Shrink(0).Gap(4).Justify(ui.End).Children(func() {
 						if !dirty && iconButton(c, icoLink, "Open HTTPS URL", tk.TextSecondary).Clicked() {
-							url := "https://" + row.Domain
+							url := "https://" + devplatform.LocalDomain(row.Domain)
 							if d.state.ProxyListenerPort != 443 {
 								url = fmt.Sprintf("%s:%d", url, d.state.ProxyListenerPort)
 							}
@@ -131,7 +135,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 						}
 						if row.TunnelMode == tunnelModeCustomDomain {
 							mono(ui.TextInput(c, &row.TunnelDomain).Placeholder("app.example.com").Label(fmt.Sprintf("Custom domain %d", i+1)).Width(210))
-							if suggestions := cloudflareHostSuggestions(d.state, row.Domain); len(suggestions) > 0 {
+							if suggestions := cloudflareHostSuggestions(d.state, devplatform.LocalDomain(row.Domain)); len(suggestions) > 0 {
 								pick := "Existing DNS..."
 								opts := append([]string{pick}, suggestions...)
 								if ui.Select(c, &pick, opts).Label(fmt.Sprintf("DNS suggestion %d", i+1)).Width(164).Changed() && pick != "Existing DNS..." {
@@ -140,7 +144,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 							}
 						}
 						previewRule := devplatform.ProxyRule{
-							Domain:       row.Domain,
+							Domain:       devplatform.LocalDomain(row.Domain),
 							Tunnel:       true,
 							TunnelWorker: row.TunnelWorker,
 							TunnelDomain: effectiveDraftTunnelDomain(*row),
@@ -173,7 +177,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 					})
 				}
 				if !dirty {
-					a.devProxyActivation(c, row.Domain)
+					a.devProxyActivation(c, devplatform.LocalDomain(row.Domain))
 				}
 			})
 		}
@@ -225,7 +229,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 						break
 					}
 					rules = append(rules, devplatform.ProxyRule{
-						Domain:       row.Domain,
+						Domain:       devplatform.LocalDomain(row.Domain),
 						LocalPort:    port,
 						UpstreamHost: row.UpstreamHost,
 						Tunnel:       row.Tunnel,
@@ -269,8 +273,6 @@ func (a *app) devHTTPS(c *ui.Context) {
 				e = m.RestartProxy(m.Context)
 			case "Stop HTTPS proxy":
 				e = m.StopProxy(m.Context)
-			case "Configure local domains":
-				e = m.ConfigureHosts(m.Context)
 			case "Trust local CA":
 				e = m.ConfigureTrust(m.Context, false)
 			case "Remove CA trust":
@@ -412,7 +414,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 		})
 	})
 
-	devCardWith(c, icoKey, "Local domains & trust", "", func() {
+	devCardWith(c, icoKey, "Local certificate trust", "Rules use *"+devplatform.LocalDomainSuffix+", which macOS resolves to this Mac", func() {
 		if btn(c, "Local certificates", icoArrow, btnText).Disabled(d.busy).Clicked() {
 			d.authorityOpen = true
 			a.authorityTask(nil)
@@ -423,7 +425,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 				label string
 				icon  *ui.SVG
 				kind  btnKind
-			}{{"Configure local domains", icoGlobe, btnDefault}, {"Trust local CA", icoShield, btnDefault}, {"Remove CA trust", nil, btnText}} {
+			}{{"Trust local CA", icoShield, btnDefault}, {"Remove CA trust", nil, btnText}} {
 				if btn(c, act.label, act.icon, act.kind).Disabled(d.busy || dirty).Clicked() {
 					proxyAction(act.label)
 				}

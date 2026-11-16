@@ -51,7 +51,7 @@ func TestUIResourceOnlyNavigation(t *testing.T) {
 		t.Fatal(e)
 	}
 	tt.Frame()
-	a.dev.proxyDraft = []proxyRuleDraft{{Domain: "draft.test", LocalPort: "3000"}}
+	a.dev.proxyDraft = []proxyRuleDraft{{Domain: "draft.devbase.localhost", LocalPort: "3000"}}
 	a.dev.proxyDraftLoaded = true
 	tt.Frame()
 	if strings.Count(strings.Join(tt.Texts(), "\n"), "HTTPS proxy rules") != 1 {
@@ -68,7 +68,7 @@ func TestUIResourceOnlyNavigation(t *testing.T) {
 		t.Fatal(e)
 	}
 	tt.Frame()
-	if len(a.dev.proxyDraft) != 1 || a.dev.proxyDraft[0].Domain != "draft.test" {
+	if len(a.dev.proxyDraft) != 1 || a.dev.proxyDraft[0].Domain != "draft.devbase.localhost" {
 		t.Fatal("proxy draft lost on tab change")
 	}
 }
@@ -78,17 +78,17 @@ func TestUIHTTPSRulesCanSaveSuccessiveRevisions(t *testing.T) {
 	h.click("HTTPS")
 	h.fill("HTTPS listener port", "8443")
 	h.click("Add rule")
-	h.fill("Domain", "first.test")
+	h.fill("Domain", "first.devbase.localhost")
 	h.fill("Local port", "3000")
 	h.click("Save HTTPS rules")
 	if h.a.dev.proxyDraftRevision != 1 {
 		t.Fatal("first save did not refresh revision", h.a.dev.proxyDraftRevision, h.a.dev.output)
 	}
-	h.fill("Domain", "second.test")
+	h.fill("Domain", "second.devbase.localhost")
 	h.fill("Local port", "4000")
 	h.click("Save HTTPS rules")
 	state, err := devplatform.New(h.root).Read()
-	if err != nil || state.ProxyRulesRevision != 2 || len(state.ProxyRules) != 1 || state.ProxyRules[0].Domain != "second.test" || state.ProxyRules[0].LocalPort != 4000 {
+	if err != nil || state.ProxyRulesRevision != 2 || len(state.ProxyRules) != 1 || state.ProxyRules[0].Domain != "second.devbase.localhost" || state.ProxyRules[0].LocalPort != 4000 {
 		t.Fatal(state, err, h.a.dev.output)
 	}
 }
@@ -96,7 +96,7 @@ func TestUIHTTPSRulesCanSaveSuccessiveRevisions(t *testing.T) {
 func TestUIHTTPSRemoveFirstRuleKeepsFollowingRule(t *testing.T) {
 	a := designFixture(t)
 	a.dev.tab = devTabHTTPS
-	a.dev.proxyDraft = []proxyRuleDraft{{Domain: "first.test", LocalPort: "3000"}, {Domain: "second.test", LocalPort: "4000"}}
+	a.dev.proxyDraft = []proxyRuleDraft{{Domain: "first.devbase.localhost", LocalPort: "3000"}, {Domain: "second.devbase.localhost", LocalPort: "4000"}}
 	a.dev.proxyDraftLoaded = true
 	tt := ui.NewTester(a.view, 900, 520)
 	tt.Frame()
@@ -104,7 +104,7 @@ func TestUIHTTPSRemoveFirstRuleKeepsFollowingRule(t *testing.T) {
 		t.Fatal(e)
 	}
 	tt.Frame()
-	if len(a.dev.proxyDraft) != 1 || a.dev.proxyDraft[0].Domain != "second.test" {
+	if len(a.dev.proxyDraft) != 1 || a.dev.proxyDraft[0].Domain != "second.devbase.localhost" {
 		t.Fatal(a.dev.proxyDraft)
 	}
 }

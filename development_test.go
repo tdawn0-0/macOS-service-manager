@@ -16,7 +16,7 @@ import (
 
 func TestStatusPollCannotOverwriteAnOperationOrUnsavedDraft(t *testing.T) {
 	a := designFixture(t)
-	a.dev.proxyDraft = []proxyRuleDraft{{Domain: "unsaved.test", LocalPort: "3000"}}
+	a.dev.proxyDraft = []proxyRuleDraft{{Domain: "unsaved.devbase.localhost", LocalPort: "3000"}}
 	a.dev.proxyDraftLoaded = true
 	a.dev.statusLast = time.Now().Add(-time.Minute)
 	var work []func()
@@ -35,7 +35,7 @@ func TestStatusPollCannotOverwriteAnOperationOrUnsavedDraft(t *testing.T) {
 	a.dev.taskSequence++
 	a.dev.statuses["instance:atlas-postgres"] = "Starting"
 	work[0]()
-	if a.dev.statusPolling || a.dev.statuses["instance:atlas-postgres"] != "Starting" || a.dev.proxyDraft[0].Domain != "unsaved.test" {
+	if a.dev.statusPolling || a.dev.statuses["instance:atlas-postgres"] != "Starting" || a.dev.proxyDraft[0].Domain != "unsaved.devbase.localhost" {
 		t.Fatal("stale status poll replaced an operation or draft")
 	}
 	a.dev.statusLast = time.Now().Add(-time.Minute)
@@ -44,7 +44,7 @@ func TestStatusPollCannotOverwriteAnOperationOrUnsavedDraft(t *testing.T) {
 		t.Fatal("poll did not become available again")
 	}
 	work[1]()
-	if a.dev.statuses["instance:atlas-postgres"] != "Stopped" || a.dev.proxyDraft[0].Domain != "unsaved.test" {
+	if a.dev.statuses["instance:atlas-postgres"] != "Stopped" || a.dev.proxyDraft[0].Domain != "unsaved.devbase.localhost" {
 		t.Fatal("fresh poll failed or replaced the form")
 	}
 }
@@ -148,12 +148,12 @@ func TestDevelopmentHasNoJSONEditor(t *testing.T) {
 	}
 }
 func TestProxyDraftDoesNotMutateSavedConfiguration(t *testing.T) {
-	s := devplatform.State{ProxyListenerPort: 443, ProxyRules: []devplatform.ProxyRule{{Domain: "app.test", LocalPort: 3000}}}
+	s := devplatform.State{ProxyListenerPort: 443, ProxyRules: []devplatform.ProxyRule{{Domain: "app.devbase.localhost", LocalPort: 3000}}}
 	d := developmentState{state: s}
 	d.loadProxyDraft(s)
-	d.proxyDraft[0].Domain = "changed.test"
+	d.proxyDraft[0].Domain = "changed.devbase.localhost"
 	d.proxyListenerPort = "8443"
-	if s.ProxyRules[0].Domain != "app.test" || s.ProxyListenerPort != 443 || !d.proxyDraftDirty() {
+	if s.ProxyRules[0].Domain != "app.devbase.localhost" || s.ProxyListenerPort != 443 || !d.proxyDraftDirty() {
 		t.Fatal("editing draft changed saved configuration")
 	}
 }

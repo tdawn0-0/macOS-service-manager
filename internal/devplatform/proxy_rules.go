@@ -30,12 +30,27 @@ type ProxyRule struct {
 	TunnelURL    string `json:"tunnelUrl,omitempty"`
 }
 
+// LocalDomainSuffix is the only namespace a rule's domain may use. macOS
+// resolves every *.localhost name to this Mac, so no hosts-file entry or DNS
+// setting is needed.
+const LocalDomainSuffix = ".devbase.localhost"
+
+// LocalDomain is the full domain of a rule from the name typed for it.
+// A name that already carries the suffix is kept as it is.
+func LocalDomain(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" || strings.HasSuffix(name, LocalDomainSuffix) {
+		return name
+	}
+	return name + LocalDomainSuffix
+}
+
 // DefaultTunnelWorkerName derives the Cloudflare Worker script name for a
-// local .test domain, always prefixed with "devbase-" so Devbase only manages
+// local domain, always prefixed with "devbase-" so Devbase only manages
 // Workers it owns.
 func DefaultTunnelWorkerName(domain string) string {
 	d := strings.ToLower(strings.TrimSpace(domain))
-	d = strings.TrimSuffix(d, ".test")
+	d = strings.TrimSuffix(d, LocalDomainSuffix)
 	slug := strings.ReplaceAll(d, ".", "-")
 	slug = strings.Trim(slug, "-")
 	if slug == "" {
@@ -97,8 +112,8 @@ func validatePublicTunnelHostname(host string) error {
 	if !strings.Contains(host, ".") {
 		return errors.New("custom domain must include a zone domain (e.g. app.example.com)")
 	}
-	if strings.HasSuffix(host, ".test") {
-		return errors.New("custom domain cannot be a local .test domain")
+	if strings.HasSuffix(host, ".localhost") {
+		return errors.New("custom domain cannot be a local .localhost domain")
 	}
 	if strings.HasSuffix(host, ".workers.dev") {
 		return errors.New("clear Custom domain to use automatic workers.dev URLs")
@@ -181,8 +196,8 @@ func normalizeProxyRules(listenerPort int, rules []ProxyRule) ([]ProxyRule, erro
 	seenTunnelDomains := make(map[string]bool, len(rules))
 	for i, rule := range rules {
 		rule.Domain = strings.ToLower(strings.TrimSpace(rule.Domain))
-		if len(rule.Domain) > 253 || !strings.HasSuffix(rule.Domain, ".test") {
-			return nil, fmt.Errorf("rule %d: use a local .test domain", i+1)
+		if len(rule.Domain) > 253 || !strings.HasSuffix(rule.Domain, LocalDomainSuffix) || len(rule.Domain) == len(LocalDomainSuffix) {
+			return nil, fmt.Errorf("rule %d: use a name under %s", i+1, LocalDomainSuffix)
 		}
 		for _, part := range strings.Split(rule.Domain, ".") {
 			if !proxyDomainPart.MatchString(part) {

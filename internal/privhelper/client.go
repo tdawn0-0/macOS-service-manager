@@ -474,11 +474,6 @@ func (c *Client) Ping(ctx context.Context) (StatusResponse, error) {
 	return resp, err
 }
 
-// SyncHosts atomically replaces hosts content if ExpectedOld still matches on disk.
-func (c *Client) SyncHosts(ctx context.Context, req HostsSyncRequest) error {
-	return c.doJSON(ctx, http.MethodPost, "/v1/hosts/sync", req, nil)
-}
-
 // InstallProxySocket writes the Devbase HTTPS socket daemon plist and bootstraps it.
 func (c *Client) InstallProxySocket(ctx context.Context, req ProxySocketInstallRequest) error {
 	return c.doJSON(ctx, http.MethodPost, "/v1/proxy-socket/install", req, nil)

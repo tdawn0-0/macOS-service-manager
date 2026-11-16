@@ -73,7 +73,7 @@ func TestInstanceLifecycleReadinessRunsConcurrentlyAndKeepsConfigurationAvailabl
 	waitLifecycleEntry(t, m, b.ID)
 	short, stop := context.WithTimeout(ctx, 3*time.Second)
 	defer stop()
-	if e := m.ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "during-readiness.test", LocalPort: 3000}}); e != nil {
+	if e := m.ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "during-readiness.devbase.localhost", LocalPort: 3000}}); e != nil {
 		t.Fatal("readiness blocked unrelated configuration", e)
 	}
 	var busy *ResourceBusyError
@@ -107,7 +107,7 @@ func TestInstanceLifecycleReadinessRunsConcurrentlyAndKeepsConfigurationAvailabl
 		t.Fatal("cancelling the other startup stopped a ready instance")
 	}
 	s, e := m.Read()
-	if e != nil || len(s.ProxyRules) != 1 || s.ProxyRules[0].Domain != "during-readiness.test" {
+	if e != nil || len(s.ProxyRules) != 1 || s.ProxyRules[0].Domain != "during-readiness.devbase.localhost" {
 		t.Fatal("lifecycle overwrote newly saved configuration", e)
 	}
 }
@@ -156,7 +156,7 @@ func TestInstanceLifecycleStopWaitDoesNotHoldWorkspaceLock(t *testing.T) {
 	}
 	short, stop := context.WithTimeout(ctx, 2*time.Second)
 	defer stop()
-	if e := m.ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "during-stop.test", LocalPort: 3000}}); e != nil {
+	if e := m.ReplaceProxyRules(short, 0, 8443, []ProxyRule{{Domain: "during-stop.devbase.localhost", LocalPort: 3000}}); e != nil {
 		t.Fatal("stop held the workspace lock", e)
 	}
 	if !m.loaded(ctx, "db-"+a.ID) || !m.loaded(ctx, "db-"+b.ID) {

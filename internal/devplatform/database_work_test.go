@@ -56,7 +56,7 @@ func TestDatabaseWorkCallerDeathKeepsReservationAndCompletedBackup(t *testing.T)
 	m, p := databaseToolFixture(t)
 	r := crashDatabaseCaller(t, m)
 	ctx := context.Background()
-	if e := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{{Domain: "during-orphan.test", LocalPort: 3000}}); e != nil {
+	if e := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{{Domain: "during-orphan.devbase.localhost", LocalPort: 3000}}); e != nil {
 		t.Fatal(e)
 	}
 	for _, action := range []string{"start", "stop", "restart", "remove"} {

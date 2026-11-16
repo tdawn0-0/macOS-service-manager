@@ -17,7 +17,7 @@ func TestUIIndependentResourceLifecycle(t *testing.T) {
 		a := designFixture(t)
 		a.dev.state.Instances["one"] = devplatform.Instance{ID: "one", Kind: "redis"}
 		a.dev.state.Instances["two"] = devplatform.Instance{ID: "two", Kind: "redis"}
-		a.dev.state.ProxyRules = []devplatform.ProxyRule{{Domain: "one.test", LocalPort: 3000}, {Domain: "two.test", LocalPort: 4000}}
+		a.dev.state.ProxyRules = []devplatform.ProxyRule{{Domain: "one.devbase.localhost", LocalPort: 3000}, {Domain: "two.devbase.localhost", LocalPort: 4000}}
 		a.dev.statuses = map[string]string{"instance:one": "Running", "instance:two": "Unknown", "proxy": "Running"}
 		opened := 0
 		panel := ui.NewTester(func(c *ui.Context) { a.menubarView(c, func() { opened++ }) }, 320, a.panelHeight())
@@ -28,7 +28,7 @@ func TestUIIndependentResourceLifecycle(t *testing.T) {
 				t.Fatalf("missing %q: %s", want, shown)
 			}
 		}
-		if strings.Contains(shown, "one.test") || strings.Contains(shown, "two.test") {
+		if strings.Contains(shown, "one.devbase.localhost") || strings.Contains(shown, "two.devbase.localhost") {
 			t.Fatal("proxy rules became menu resources")
 		}
 		if err := panel.Click("HTTPS settings"); err != nil || opened != 1 || a.nav != "development" || a.dev.tab != devTabHTTPS {
@@ -43,7 +43,7 @@ func TestUIIndependentResourceLifecycle(t *testing.T) {
 		a.quit.open = true
 		a.quit.plan = &devplatform.ShutdownPlan{Instances: []devplatform.ShutdownResource{{ID: "db", Name: "redis"}}}
 		a.dev.proxyDraftLoaded = true
-		a.dev.proxyDraft = []proxyRuleDraft{{Domain: "unsaved.test", LocalPort: "3000"}}
+		a.dev.proxyDraft = []proxyRuleDraft{{Domain: "unsaved.devbase.localhost", LocalPort: "3000"}}
 		quitCount := 0
 		a.quitApp = func() { quitCount++ }
 		tt := ui.NewTester(a.view, 900, 520)
@@ -73,7 +73,7 @@ func TestUIIndependentResourceLifecycle(t *testing.T) {
 		}{{false, 900, 520}, {true, 900, 520}, {false, 1120, 720}, {true, 1120, 720}} {
 			a := designFixture(t)
 			a.dev.state.Instances["long-database-instance-name"] = devplatform.Instance{ID: "long-database-instance-name", Kind: "redis"}
-			a.dev.state.ProxyRules = []devplatform.ProxyRule{{Domain: "one.test", LocalPort: 3000}, {Domain: "two.test", LocalPort: 4000}}
+			a.dev.state.ProxyRules = []devplatform.ProxyRule{{Domain: "one.devbase.localhost", LocalPort: 3000}, {Domain: "two.devbase.localhost", LocalPort: 4000}}
 			a.dev.statuses = map[string]string{"instance:long-database-instance-name": "Stopped", "proxy": "Running"}
 			panel := ui.NewTester(func(c *ui.Context) { a.menubarView(c, func() {}) }, 320, a.panelHeight())
 			panel.SetDark(tc.dark)

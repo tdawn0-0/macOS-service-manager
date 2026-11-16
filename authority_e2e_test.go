@@ -184,7 +184,7 @@ func TestUIAuthorityRepairTrustCancellationActivationRollbackAndTLS(t *testing.T
 			port := freeUIPort(t)
 			h.fill("HTTPS listener port", fmt.Sprint(port))
 			h.click("Add rule")
-			h.fill("Domain", "ca-repair.test")
+			h.fill("Domain", "ca-repair.devbase.localhost")
 			h.fill("Local port", fmt.Sprint(upstream.Listener.Addr().(*net.TCPAddr).Port))
 			h.click("Save HTTPS rules")
 			h.click("Apply proxy")
@@ -199,11 +199,11 @@ func TestUIAuthorityRepairTrustCancellationActivationRollbackAndTLS(t *testing.T
 			pool.AppendCertsFromPEM(ca)
 			check := func() {
 				t.Helper()
-				transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: "ca-repair.test"}}
+				transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: "ca-repair.devbase.localhost"}}
 				defer transport.CloseIdleConnections()
 				client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
 				req, _ := http.NewRequest("GET", fmt.Sprintf("https://127.0.0.1:%d", port), nil)
-				req.Host = "ca-repair.test"
+				req.Host = "ca-repair.devbase.localhost"
 				res, err := client.Do(req)
 				if err != nil {
 					t.Fatal(err)

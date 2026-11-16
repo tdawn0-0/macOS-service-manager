@@ -24,7 +24,7 @@ import (
 func proxyRoutesFromState(s *State) []proxyRoute {
 	sites := make([]proxyRoute, 0, len(s.ProxyRules))
 	for _, rule := range s.ProxyRules {
-		sites = append(sites, proxyRoute{Domain: rule.Domain, LocalPort: rule.LocalPort, Port: s.ProxyListenerPort})
+		sites = append(sites, proxyRoute{Domain: rule.Domain, LocalPort: rule.LocalPort, UpstreamHost: rule.UpstreamHost, Port: s.ProxyListenerPort})
 	}
 	sort.Slice(sites, func(i, j int) bool { return sites[i].Domain < sites[j].Domain })
 	return sites

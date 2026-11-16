@@ -187,6 +187,8 @@ type TunnelRoute struct {
 	ConnectURL  string `json:"connectUrl,omitempty"`
 	LocalDomain string `json:"localDomain"`
 	LocalPort   int    `json:"localPort"`
+	// UpstreamHost is the rule's upstream; empty means 127.0.0.1.
+	UpstreamHost string `json:"upstreamHost,omitempty"`
 }
 
 func (r TunnelRoute) PublicHost() string {
@@ -253,6 +255,8 @@ func tunnelConfigFromState(s *State) (tunnelPublishedConfig, error) {
 			ConnectURL:  publicURL,
 			LocalDomain: rule.Domain,
 			LocalPort:   rule.LocalPort,
+
+			UpstreamHost: rule.UpstreamHost,
 		})
 	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i].WorkerName < routes[j].WorkerName })
@@ -310,6 +314,9 @@ func readPublishedTunnelConfig(root string) (tunnelPublishedConfig, error) {
 	for _, r := range cfg.Routes {
 		if !strings.HasPrefix(r.WorkerName, "devbase-") || r.PublicURL == "" || r.LocalPort < 1 || r.LocalPort > 65535 {
 			return cfg, errors.New("invalid tunnel route in snapshot")
+		}
+		if host, hostErr := normalizeUpstreamHost(r.UpstreamHost); hostErr != nil || host != r.UpstreamHost {
+			return cfg, errors.New("invalid tunnel route upstream in snapshot")
 		}
 		if seen[r.WorkerName] {
 			return cfg, fmt.Errorf("duplicate tunnel route %s", r.WorkerName)

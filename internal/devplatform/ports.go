@@ -296,7 +296,9 @@ func (m *Manager) AvailableLocalPort(ctx context.Context) (int, error) {
 	}
 	reserved[s.ProxyListenerPort] = true
 	for _, rule := range s.ProxyRules {
-		reserved[rule.LocalPort] = true
+		if rule.UpstreamHost == "" {
+			reserved[rule.LocalPort] = true
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return 0, err

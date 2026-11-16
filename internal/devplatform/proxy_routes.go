@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
-	"fmt"
 	"html/template"
 	"net"
 	"net/http"
@@ -46,7 +45,7 @@ func (routes *liveProxyRoutes) build(sites []proxyRoute, old *proxySnapshot) *pr
 	for _, site := range sites {
 		id := routeID(site)
 		if old != nil {
-			if route := old.routes[id]; route != nil && route.site.LocalPort == site.LocalPort {
+			if route := old.routes[id]; route != nil && route.site.LocalPort == site.LocalPort && route.site.UpstreamHost == site.UpstreamHost {
 				next.routes[id] = route
 				continue
 			}
@@ -112,17 +111,19 @@ func dialLocalUpstream(ctx context.Context, port string) (net.Conn, error) {
 	return nil, err
 }
 
-// loopbackUpstreamDialer adapts dialLocalUpstream to http.Transport.DialContext.
-// It ignores the host of addr: forwarding targets are loopback by construction.
-func loopbackUpstreamDialer(ctx context.Context, _ string, addr string) (net.Conn, error) {
+// upstreamDialer adapts forwarding to http.Transport.DialContext. The default
+// target, this Mac's 127.0.0.1, also tries IPv6 loopback; any other host that
+// a rule names is dialled as written. Addresses come from validated rules.
+func upstreamDialer(ctx context.Context, _ string, addr string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
 	}
-	if host != "127.0.0.1" {
-		return nil, fmt.Errorf("upstream host %q is not loopback 127.0.0.1", host)
+	if host == "127.0.0.1" {
+		return dialLocalUpstream(ctx, port)
 	}
-	return dialLocalUpstream(ctx, port)
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	return dialer.DialContext(ctx, "tcp", addr)
 }
 
 func newReverseRoute(site proxyRoute) *reverseRoute {
@@ -132,7 +133,7 @@ func newReverseRoute(site proxyRoute) *reverseRoute {
 		transport = defaults.Clone()
 	}
 	transport.Proxy = nil
-	transport.DialContext = loopbackUpstreamDialer
+	transport.DialContext = upstreamDialer
 	transport.TLSHandshakeTimeout = 10 * time.Second
 	transport.ResponseHeaderTimeout = 30 * time.Second
 	proxy := &httputil.ReverseProxy{Transport: transport, FlushInterval: -1}

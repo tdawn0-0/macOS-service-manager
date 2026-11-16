@@ -7,18 +7,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
 // ProxyRule is configuration for one local HTTP port. It has no independent
 // process, identity, or lifecycle.
 type ProxyRule struct {
-	Domain       string `json:"domain"`
-	LocalPort    int    `json:"localPort"`
+	Domain    string `json:"domain"`
+	LocalPort int    `json:"localPort"`
+	// UpstreamHost is where the local port is: an IP address or a host name.
+	// Empty means this Mac's loopback, 127.0.0.1.
+	UpstreamHost string `json:"upstreamHost,omitempty"`
 	Tunnel       bool   `json:"tunnel,omitempty"`
 	TunnelWorker string `json:"tunnelWorker,omitempty"`
 	TunnelDomain string `json:"tunnelDomain,omitempty"`
@@ -108,21 +113,60 @@ func validatePublicTunnelHostname(host string) error {
 
 // proxyRoute is a derived transport entry, never a saved resource.
 type proxyRoute struct {
-	Domain    string
-	LocalPort int
-	Port      int
+	Domain       string
+	LocalPort    int
+	UpstreamHost string
+	Port         int
 }
 
-func (r proxyRoute) upstream() string { return fmt.Sprintf("http://127.0.0.1:%d", r.LocalPort) }
+// upstreamHostPort is the address a rule forwards to.
+func upstreamHostPort(host string, port int) string {
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port))
+}
+
+func (r proxyRoute) upstream() string {
+	return "http://" + upstreamHostPort(r.UpstreamHost, r.LocalPort)
+}
 func (r proxyRoute) Validate() error {
 	if r.Port < 1 || r.Port > 65535 {
 		return errors.New("HTTPS port must be 1–65535")
 	}
-	_, err := normalizeProxyRules(r.Port, []ProxyRule{{Domain: r.Domain, LocalPort: r.LocalPort}})
+	_, err := normalizeProxyRules(r.Port, []ProxyRule{{Domain: r.Domain, LocalPort: r.LocalPort, UpstreamHost: r.UpstreamHost}})
 	return err
 }
 
 var proxyDomainPart = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// normalizeUpstreamHost checks where a rule forwards to. It accepts an IPv4 or
+// IPv6 address, or a DNS name such as host.docker.internal or devbox.local,
+// never a URL, a port or a path. This Mac's own loopback is the default and
+// is saved as empty.
+func normalizeUpstreamHost(host string) (string, error) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	switch host {
+	case "", "127.0.0.1", "localhost":
+		return "", nil
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsUnspecified() || ip.IsMulticast() {
+			return "", errors.New("upstream address must be a host, not 0.0.0.0, :: or a multicast address")
+		}
+		return ip.String(), nil
+	}
+	if len(host) > 253 || strings.ContainsAny(host, ":/@?#% \t") {
+		return "", errors.New("upstream must be an IP address or a host name, without a scheme, port or path")
+	}
+	for _, part := range strings.Split(strings.TrimSuffix(host, "."), ".") {
+		if !proxyDomainPart.MatchString(part) {
+			return "", errors.New("upstream must be an IP address or a valid host name")
+		}
+	}
+	return strings.TrimSuffix(host, "."), nil
+}
 
 func normalizeProxyRules(listenerPort int, rules []ProxyRule) ([]ProxyRule, error) {
 	if listenerPort < 1 || listenerPort > 65535 {
@@ -145,7 +189,13 @@ func normalizeProxyRules(listenerPort int, rules []ProxyRule) ([]ProxyRule, erro
 				return nil, fmt.Errorf("rule %d: invalid domain", i+1)
 			}
 		}
-		if rule.LocalPort < 1 || rule.LocalPort > 65535 || rule.LocalPort == listenerPort {
+		host, hostErr := normalizeUpstreamHost(rule.UpstreamHost)
+		if hostErr != nil {
+			return nil, fmt.Errorf("rule %d: %w", i+1, hostErr)
+		}
+		rule.UpstreamHost = host
+		// The HTTPS port only collides with a server on this Mac's loopback.
+		if rule.LocalPort < 1 || rule.LocalPort > 65535 || (host == "" && rule.LocalPort == listenerPort) {
 			return nil, fmt.Errorf("rule %d: local port must be 1–65535 and differ from HTTPS port", i+1)
 		}
 		if seen[rule.Domain] {
@@ -220,7 +270,7 @@ func proxyConfigFromRoutes(sites []proxyRoute) proxyPublishedConfig {
 		config.ListenerPort = sites[0].Port
 	}
 	for _, site := range sites {
-		config.Rules = append(config.Rules, ProxyRule{Domain: site.Domain, LocalPort: site.LocalPort})
+		config.Rules = append(config.Rules, ProxyRule{Domain: site.Domain, LocalPort: site.LocalPort, UpstreamHost: site.UpstreamHost})
 	}
 	return config
 }
@@ -275,7 +325,7 @@ func sameProxyRouting(a, b []ProxyRule) bool {
 	strip := func(rules []ProxyRule) []ProxyRule {
 		out := make([]ProxyRule, len(rules))
 		for i, r := range rules {
-			out[i] = ProxyRule{Domain: r.Domain, LocalPort: r.LocalPort}
+			out[i] = ProxyRule{Domain: r.Domain, LocalPort: r.LocalPort, UpstreamHost: r.UpstreamHost}
 		}
 		return out
 	}

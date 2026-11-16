@@ -27,7 +27,7 @@ type ProxyHTTPResult struct {
 }
 
 func proxyRuleFingerprint(s State, rule ProxyRule) string {
-	payload := fmt.Sprintf("%d:%s:%d", s.ProxyListenerPort, rule.Domain, rule.LocalPort)
+	payload := fmt.Sprintf("%d:%s:%s", s.ProxyListenerPort, rule.Domain, upstreamHostPort(rule.UpstreamHost, rule.LocalPort))
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
 }
 func (m *Manager) ProxyRuleFingerprint(domain string) (string, uint64, error) {

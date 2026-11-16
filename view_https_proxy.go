@@ -89,13 +89,15 @@ func (a *app) devHTTPS(c *ui.Context) {
 		for i := range d.proxyDraft {
 			row := &d.proxyDraft[i]
 			devInset(c, func() {
-				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					mono(ui.TextInput(c, &row.Domain).Placeholder("app.test").Label("Domain").Grow(1).MinWidth(0))
+				ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
+					mono(ui.TextInput(c, &row.Domain).Placeholder("app.test").Label("Domain").Grow(1).MinWidth(200))
 					// The route: the domain goes to a port of this Mac.
-					ui.Row(c).Width(188).Shrink(0).Gap(8).AlignItems(ui.Center).Children(func() {
+					// The upstream is empty for this Mac (127.0.0.1) or any IP address or host name.
+					ui.Row(c).Width(320).Shrink(0).Gap(6).AlignItems(ui.Center).Children(func() {
 						ui.Icon(c, icoArrow).FontSize(14).TextColor(tk.TextQuaternary).Shrink(0)
-						mono(ui.Text(c, "127.0.0.1:").FontSize(textSmall).TextColor(tk.TextTertiary).SingleLine().Shrink(0))
-						mono(ui.TextInput(c, &row.LocalPort).Placeholder("3000").Label("Local port").Grow(1).MinWidth(0))
+						mono(ui.TextInput(c, &row.UpstreamHost).Placeholder("127.0.0.1").Label("Upstream host").Grow(1).MinWidth(0))
+						mono(ui.Text(c, ":").FontSize(textSmall).TextColor(tk.TextTertiary).SingleLine().Shrink(0))
+						mono(ui.TextInput(c, &row.LocalPort).Placeholder("3000").Label("Local port").Width(76).Shrink(0))
 					})
 					ui.Row(c).Shrink(0).Gap(6).AlignItems(ui.Center).Children(func() {
 						choice.Switch(c, &row.Tunnel, choice.SwitchProps{Size: theme.Small}).Label(fmt.Sprintf("Tunnel rule %d", i+1)).Tooltip("Expose this rule through the Cloudflare tunnel")
@@ -225,6 +227,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 					rules = append(rules, devplatform.ProxyRule{
 						Domain:       row.Domain,
 						LocalPort:    port,
+						UpstreamHost: row.UpstreamHost,
 						Tunnel:       row.Tunnel,
 						TunnelWorker: row.TunnelWorker,
 						TunnelDomain: effectiveDraftTunnelDomain(row),

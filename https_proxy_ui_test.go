@@ -254,3 +254,26 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 		}
 	})
 }
+
+func TestUIHTTPSRuleUpstreamHost(t *testing.T) {
+	h := newDevUIHarness(t)
+	h.click("HTTPS")
+	h.click("Add rule")
+	h.fill("Domain", "lan.test")
+	h.fill("Upstream host", " 192.168.1.20 ")
+	h.fill("Local port", "8080")
+	h.click("Save HTTPS rules")
+	state, err := devplatform.New(h.root).Read()
+	if err != nil || len(state.ProxyRules) != 1 || state.ProxyRules[0].UpstreamHost != "192.168.1.20" || state.ProxyRules[0].LocalPort != 8080 {
+		t.Fatal(state.ProxyRules, err, h.a.dev.output)
+	}
+	if h.a.dev.proxyDraftDirty() {
+		t.Fatal("a saved upstream host left the table dirty")
+	}
+	h.fill("Upstream host", "not a host")
+	h.click("Save HTTPS rules")
+	state, _ = devplatform.New(h.root).Read()
+	if state.ProxyRules[0].UpstreamHost != "192.168.1.20" || !strings.Contains(h.a.dev.output, "Error:") {
+		t.Fatal("an invalid upstream was saved or went unreported", state.ProxyRules, h.a.dev.output)
+	}
+}

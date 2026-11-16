@@ -181,7 +181,7 @@ func newTunnelUpstreamTransport() *http.Transport {
 		DisableCompression:    true,
 		IdleConnTimeout:       90 * time.Second,
 		MaxIdleConns:          100,
-		DialContext:           loopbackUpstreamDialer,
+		DialContext:           upstreamDialer,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 60 * time.Second,
 	}
@@ -695,13 +695,13 @@ func (s *tunnelSession) forwardHTTP(ctx context.Context, streamID uint32, route 
 	if path == "" || !strings.HasPrefix(path, "/") {
 		path = "/" + strings.TrimPrefix(path, "/")
 	}
-	targetURL := fmt.Sprintf("http://127.0.0.1:%d%s", route.LocalPort, path)
+	targetURL := "http://" + upstreamHostPort(route.UpstreamHost, route.LocalPort) + path
 	req, err := http.NewRequestWithContext(ctx, head.Method, targetURL, body)
 	if err != nil {
 		s.sendSimpleHTTPResponse(streamID, http.StatusBadRequest, "text/plain; charset=utf-8", []byte("Invalid tunneled request"))
 		return
 	}
-	localHost := fmt.Sprintf("localhost:%d", route.LocalPort)
+	localHost := route.localHostHeader()
 	req.Host = localHost
 	applyTunnelForwardedHeaders(req.Header, head.Headers, route.PublicHost(), localHost, head.RemoteAddr)
 
@@ -843,13 +843,13 @@ func (s *tunnelSession) handleWSOpen(ctx context.Context, frame tunnelFrame) {
 	if path == "" || !strings.HasPrefix(path, "/") {
 		path = "/" + strings.TrimPrefix(path, "/")
 	}
-	localHost := fmt.Sprintf("localhost:%d", route.LocalPort)
+	localHost := route.localHostHeader()
 	reqHeaders := http.Header{}
 	reqHeaders.Set("Host", localHost)
 	applyTunnelForwardedHeaders(reqHeaders, head.Headers, route.PublicHost(), localHost, "")
 
 	dialCtx, dialCancel := context.WithTimeout(ctx, 10*time.Second)
-	localWS, resp, err := dialWebSocketVia(dialCtx, fmt.Sprintf("ws://127.0.0.1:%d%s", route.LocalPort, path), reqHeaders, head.Protocols, nil, loopbackUpstreamDialer)
+	localWS, resp, err := dialWebSocketVia(dialCtx, "ws://"+upstreamHostPort(route.UpstreamHost, route.LocalPort)+path, reqHeaders, head.Protocols, nil, upstreamDialer)
 	dialCancel()
 	if err != nil {
 		<-s.sem
@@ -1262,7 +1262,7 @@ func filterResponseHeaders(h http.Header) [][2]string {
 	return out
 }
 
-var tunnelFailurePage = template.Must(template.New("tunnel-failure").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{{.Title}}</title><style>body{font:16px/1.6 system-ui;margin:12vh auto;padding:24px;max-width:640px;color:#202124;background:#f5f6f8}main{background:white;padding:32px;border-radius:16px}h1{line-height:1.2;font-size:28px}code{word-break:break-all}p{color:#555}</style></head><body><main><h1>{{.Title}}</h1><p>{{.Message}}</p><p><strong>{{.PublicHost}}</strong> → <code>http://127.0.0.1:{{.LocalPort}}</code></p><p>Open Devbase to check the local service and tunnel status.</p></main></body></html>`))
+var tunnelFailurePage = template.Must(template.New("tunnel-failure").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{{.Title}}</title><style>body{font:16px/1.6 system-ui;margin:12vh auto;padding:24px;max-width:640px;color:#202124;background:#f5f6f8}main{background:white;padding:32px;border-radius:16px}h1{line-height:1.2;font-size:28px}code{word-break:break-all}p{color:#555}</style></head><body><main><h1>{{.Title}}</h1><p>{{.Message}}</p><p><strong>{{.PublicHost}}</strong> → <code>http://{{.Upstream}}</code></p><p>Open Devbase to check the local service and tunnel status.</p></main></body></html>`))
 
 func renderTunnelFailure(route TunnelRoute, err error) (int, []byte) {
 	status := http.StatusBadGateway
@@ -1277,7 +1277,16 @@ func renderTunnelFailure(route TunnelRoute, err error) (int, []byte) {
 	var buf bytes.Buffer
 	_ = tunnelFailurePage.Execute(&buf, struct {
 		Title, Message, PublicHost string
-		LocalPort                  int
-	}{title, message, route.PublicHost(), route.LocalPort})
+		Upstream                   string
+	}{title, message, route.PublicHost(), upstreamHostPort(route.UpstreamHost, route.LocalPort)})
 	return status, buf.Bytes()
+}
+
+// localHostHeader is the Host the upstream sees for tunneled requests:
+// localhost for this Mac, otherwise the upstream's own address.
+func (r TunnelRoute) localHostHeader() string {
+	if r.UpstreamHost == "" {
+		return fmt.Sprintf("localhost:%d", r.LocalPort)
+	}
+	return upstreamHostPort(r.UpstreamHost, r.LocalPort)
 }

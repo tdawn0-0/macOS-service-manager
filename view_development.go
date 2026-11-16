@@ -30,6 +30,7 @@ const (
 type proxyRuleDraft struct {
 	Domain       string
 	LocalPort    string
+	UpstreamHost string
 	Tunnel       bool
 	TunnelWorker string
 	TunnelMode   string
@@ -596,6 +597,7 @@ func (d *developmentState) loadProxyDraft(s devplatform.State) {
 		d.proxyDraft[i] = proxyRuleDraft{
 			Domain:       rule.Domain,
 			LocalPort:    strconv.Itoa(rule.LocalPort),
+			UpstreamHost: rule.UpstreamHost,
 			Tunnel:       rule.Tunnel,
 			TunnelWorker: rule.TunnelWorker,
 			TunnelMode:   mode,
@@ -622,6 +624,7 @@ func (d *developmentState) proxyDraftDirty() bool {
 		rule := d.state.ProxyRules[i]
 		if row.Domain != rule.Domain ||
 			row.LocalPort != strconv.Itoa(rule.LocalPort) ||
+			strings.TrimSpace(row.UpstreamHost) != rule.UpstreamHost ||
 			row.Tunnel != rule.Tunnel ||
 			row.TunnelWorker != rule.TunnelWorker ||
 			effectiveDraftTunnelDomain(row) != rule.TunnelDomain {

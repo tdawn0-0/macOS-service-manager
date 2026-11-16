@@ -285,7 +285,7 @@ func (m *Manager) diagnose(ctx context.Context, s State, p diagnosticProbes) (Di
 		} else {
 			add("DNS", site.Domain, "Failed", "Domain is unresolved or includes an address other than 127.0.0.1.", "Use Configure local domains; remove conflicting DNS or hosts entries, then retry.")
 		}
-		address := net.JoinHostPort("127.0.0.1", fmt.Sprint(site.LocalPort))
+		address := upstreamHostPort(site.UpstreamHost, site.LocalPort)
 		probeCtx, done := context.WithTimeout(ctx, 2*time.Second)
 		conn, err := p.dial(probeCtx, "tcp", address)
 		if conn != nil {

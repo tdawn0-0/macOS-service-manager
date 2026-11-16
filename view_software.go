@@ -131,6 +131,55 @@ func (a *app) devSoftware(c *ui.Context) {
 	}
 }
 
+// askUninstall asks before removing an installed version. A non-empty message
+// replaces the standard text of an ordinary uninstall.
+func (a *app) askUninstall(id string, p devplatform.Package, message string) {
+	name := softwareTitle(p.Name) + " " + p.Version
+	ask := askState{
+		open:    true,
+		title:   "Uninstall " + name + "?",
+		message: "Removes " + name + " from Devbase. You can install it again later.",
+		button:  "Uninstall Version",
+	}
+	if p.Formula != "" {
+		ask.title = "Remove " + name + " from the workspace?"
+		ask.message = "Devbase stops managing it. The shared Homebrew installation is kept."
+		ask.button = "Remove Version"
+	}
+	ask.run = func() {
+		a.devTask(func(m *devplatform.Manager) (string, error) {
+			if p.Formula != "" {
+				return "Removed workspace registration. The shared Homebrew installation is kept.", m.Uninstall(m.Context, id)
+			}
+			return "Uninstalled " + p.Name, m.Uninstall(m.Context, id)
+		})
+	}
+	if message != "" && p.Formula == "" {
+		ask.message = message
+	}
+	a.ask = ask
+}
+
+// packageUnused reports whether no database instance uses an installed
+// database version. Other software is never bound to an instance.
+func packageUnused(s devplatform.State, id string) bool {
+	p, ok := s.Packages[id]
+	if !ok {
+		return false
+	}
+	switch p.Name {
+	case "mysql", "postgresql", "redis", "mongodb":
+	default:
+		return false
+	}
+	for _, i := range s.Instances {
+		if i.Package == id {
+			return false
+		}
+	}
+	return true
+}
+
 // devInstalledPackage is an installed version in the list of its software:
 // its name and version, whether it is the default, and what can be done
 // with it, with the checks of its files under them.
@@ -146,6 +195,9 @@ func (a *app) devInstalledPackage(c *ui.Context, id string, p devplatform.Packag
 				if v := devplatform.NewerListedPatch(p.Version, devplatform.AvailableVersions(p.Name)); v != "" {
 					devTag(c, v+" available", display.TagColor(""))
 				}
+			}
+			if packageUnused(d.state, id) {
+				devTag(c, "Unused", display.TagColor(""))
 			}
 			if p.Name == "node" && id == d.state.NodeDefault {
 				display.Tag(c, "Default", display.TagProps{Color: display.TagGreen, Size: theme.Small})
@@ -175,27 +227,7 @@ func (a *app) devInstalledPackage(c *ui.Context, id string, p devplatform.Packag
 			}
 			// It sits in the row of everyday actions: it asks first.
 			if btn(c, removeText, icoTrash, btnDanger).Disabled(d.busy || a.packageTaskRunning(id)).Clicked() {
-				name := softwareTitle(p.Name) + " " + p.Version
-				ask := askState{
-					open:    true,
-					title:   "Uninstall " + name + "?",
-					message: "Removes " + name + " from Devbase. You can install it again later.",
-					button:  "Uninstall Version",
-				}
-				if p.Formula != "" {
-					ask.title = "Remove " + name + " from the workspace?"
-					ask.message = "Devbase stops managing it. The shared Homebrew installation is kept."
-					ask.button = "Remove Version"
-				}
-				ask.run = func() {
-					a.devTask(func(m *devplatform.Manager) (string, error) {
-						if p.Formula != "" {
-							return "Removed workspace registration. The shared Homebrew installation is kept.", m.Uninstall(m.Context, id)
-						}
-						return "Uninstalled " + p.Name, m.Uninstall(m.Context, id)
-					})
-				}
-				a.ask = ask
+				a.askUninstall(id, p, "")
 			}
 		})
 	})

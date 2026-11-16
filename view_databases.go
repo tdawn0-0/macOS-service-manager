@@ -386,8 +386,17 @@ func (a *app) devUpgradeControl(c *ui.Context, instance devplatform.Instance, st
 				message: "The instance will use the newer server the next time it starts. Its data is not copied or deleted, and no backup is taken: back up the databases you need before continuing. After the newer server has started, going back to " + current + " is not supported.",
 				button:  "Upgrade Instance",
 				run: func() {
-					a.devTask(func(m *devplatform.Manager) (string, error) {
+					oldID := instance.Package
+					oldPackage := d.state.Packages[oldID]
+					a.devTaskThen(func(m *devplatform.Manager) (string, error) {
 						return "Upgraded " + id + " to " + version + ". Start the instance to use it.", m.UpgradeInstancePackage(m.Context, instance, target)
+					}, func(err error) {
+						// The state is already refreshed when this runs.
+						if err != nil || !packageUnused(a.dev.state, oldID) {
+							return
+						}
+						name := softwareTitle(oldPackage.Name) + " " + oldPackage.Version
+						a.askUninstall(oldID, oldPackage, "No instance uses "+name+" any more. Uninstalling removes it from Devbase; you can install it again later. Keep it if you plan to create another instance on this version.")
 					})
 				},
 			}

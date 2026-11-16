@@ -10,7 +10,7 @@ Install a checked version of Node.js, MySQL, PostgreSQL, Redis, or MongoDB. Revi
 
 Create an independent instance with an installed engine, instance name, and local port. Start, stop, restart, create a database or user when the engine supports it, and back up or restore data in the Databases entry. Redis uses database numbers 0–15. Before destructive data deletion, review the target path and typed confirmation. Connection profiles store a database, username, and engine-specific metadata, not a business password. Copy URI and Open client use the selected instance's current port. The administrator connection and password action remain separate from business profiles. Removing a profile does not remove a real database or user.
 
-A stopped MySQL or MongoDB instance can be moved to a newer installed patch release of the same series from its page. Data is not copied or deleted, and no backup is taken automatically, so back up what you need first. Going back to the older patch release is not supported.
+A stopped MySQL or MongoDB instance can be moved to a newer installed patch release of the same series from its page. Data is not copied or deleted, and no backup is taken automatically, so back up what you need first. Going back to the older patch release is not supported. Afterwards Devbase offers to uninstall the older version when no instance uses it, and the Software page marks installed database versions that no instance uses.
 
 Each instance's Backups card lists its backups with the database, date and size. Use for restore selects a backup, and restoring always creates a new database. Deleting a backup removes only that file and does not change any database.
 

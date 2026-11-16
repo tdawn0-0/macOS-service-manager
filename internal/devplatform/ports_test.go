@@ -174,6 +174,8 @@ func TestInspectPrivilegedPortAvailableAndOccupiedViaConnectProbe(t *testing.T) 
 			switch name {
 			case "/usr/sbin/lsof":
 				return "", errors.New("exit status 1")
+			case "/bin/launchctl":
+				return "", errors.New("Could not find service") // the app's proxy job is not loaded
 			case "/usr/sbin/netstat":
 				return strings.Join([]string{
 					"Active Internet connections (including servers)",
@@ -191,7 +193,7 @@ func TestInspectPrivilegedPortAvailableAndOccupiedViaConnectProbe(t *testing.T) 
 		if err != nil || r.Status != "In use" {
 			t.Fatalf("expected occupied port 443, got %+v err=%v", r, err)
 		}
-		if !reflect.DeepEqual(calls, []string{"/usr/sbin/lsof", "/usr/sbin/netstat"}) {
+		if !reflect.DeepEqual(calls, []string{"/usr/sbin/lsof", "/usr/sbin/netstat", "/bin/launchctl"}) {
 			t.Fatalf("unexpected lookup sequence: %v", calls)
 		}
 		want := []PortListener{
@@ -261,5 +263,51 @@ func TestPrivilegedSocketProxyPreflightDetectsOccupiedPortBeforeAuthorizing(t *t
 	}
 	if err := m.preflightProxyPorts(context.Background(), []proxyRoute{{Domain: "ok.test", LocalPort: 3000, Port: 443}}, nil, false); err != nil {
 		t.Fatalf("expected free privileged port preflight to pass, got %v", err)
+	}
+}
+
+func TestInspectPortRecognizesOwnProxyListener(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		savedPort func(port int) int
+		jobPID    func() int
+		own       bool
+	}{
+		{"own job process", func(p int) int { return p }, os.Getpid, true},
+		{"another process", func(p int) int { return p }, func() int { return os.Getpid() + 100000 }, false},
+		{"port is not the saved proxy port", func(p int) int { return p + 1 }, os.Getpid, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := testManager(t)
+			l, err := net.Listen("tcp4", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer l.Close()
+			port := l.Addr().(*net.TCPAddr).Port
+			if err = m.withState(context.Background(), func(s *State) error {
+				s.ProxyListenerPort = tc.savedPort(port)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			realRun := m.Run
+			m.Run = func(ctx context.Context, name string, args ...string) (string, error) {
+				if name == "/bin/launchctl" {
+					return "{\n\tstate = running\n\tpid = " + strconv.Itoa(tc.jobPID()) + "\n}", nil
+				}
+				return realRun(ctx, name, args...)
+			}
+			r, err := m.InspectPort(context.Background(), port)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.own && r.Status != "Devbase proxy" {
+				t.Fatal("own proxy was reported as foreign", r)
+			}
+			if !tc.own && r.Status != "In use" {
+				t.Fatal("foreign listener was reported as ours", r)
+			}
+		})
 	}
 }

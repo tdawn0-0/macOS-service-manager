@@ -31,17 +31,19 @@ func (a *app) devPortResult(c *ui.Context, port int) {
 	}
 	tk := theme.TokensOf(c)
 	devInset(c, func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, fmt.Sprintf("Port %d", port)).FontSize(textSmall).FontWeight(500)
 			statusTag(c, r.Status)
+			if r.Status == "Devbase proxy" {
+				return
+			}
 		})
 		for _, listener := range r.Listeners {
 			owner := "UID unknown"
 			if listener.UID >= 0 {
 				owner = fmt.Sprintf("UID %d", listener.UID)
 			}
-			ui.Text(c, fmt.Sprintf("PID %d · %s · %s", listener.PID, owner, listener.Name)).FontSize(textSmall)
-			ui.Text(c, listener.Address).FontSize(textSmall).TextColor(tk.TextDescription)
+			mono(ui.Text(c, fmt.Sprintf("PID %d · %s · %s · %s", listener.PID, owner, listener.Name, listener.Address)).FontSize(textCaption).TextColor(tk.TextDescription).Selectable().MinWidth(0))
 		}
 		if r.Truncated {
 			devSubtle(c, "Showing the first 64 listener records.")

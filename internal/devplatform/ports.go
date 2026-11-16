@@ -30,6 +30,7 @@ func (e *PortUnavailableError) Unwrap() error { return e.Err }
 type PortListener struct {
 	PID, UID      int
 	Name, Address string
+	Own           bool // the listener is this app's HTTPS proxy job
 }
 type PortInspection struct {
 	Port      int
@@ -269,8 +270,12 @@ func (m *Manager) InspectPort(ctx context.Context, port int) (PortInspection, er
 		r.Listeners = r.Listeners[:64]
 		r.Truncated = true
 	}
+	own := m.markOwnProxyListeners(query, port, r.Listeners)
 	if len(r.Listeners) == 0 {
 		r.Detail = "IPv4 loopback is in use. Listener details were unavailable or the process changed during this check."
+	} else if own {
+		r.Status = "Devbase proxy"
+		r.Detail = "This port is held by the Devbase HTTPS proxy. Saving it keeps the proxy where it is."
 	} else {
 		r.Detail = "Listeners reported for this TCP port. Names and PIDs do not prove app ownership. Stop an external service in its own app, or choose another port."
 	}
@@ -357,4 +362,29 @@ func freeInstancePort(preferred int, reserved map[int]bool) (int, error) {
 		}
 	}
 	return 0, errors.New("could not select a free database port")
+}
+
+// markOwnProxyListeners flags the listeners that belong to this app's own
+// proxy launchd job: the job's process, or launchd itself, which holds the
+// socket before the process starts. It reports whether every listener is the
+// app's own. Anything it cannot establish stays "not ours".
+func (m *Manager) markOwnProxyListeners(ctx context.Context, port int, listeners []PortListener) bool {
+	if len(listeners) == 0 {
+		return false
+	}
+	s, err := m.Read()
+	if err != nil || s.ProxyListenerPort != port {
+		return false
+	}
+	out, err := m.Run(ctx, "/bin/launchctl", "print", m.socketTarget())
+	if err != nil {
+		return false
+	}
+	pid := parseLaunchctlPID(out)
+	all := true
+	for i := range listeners {
+		listeners[i].Own = (pid > 0 && listeners[i].PID == pid) || (pid == 0 && listeners[i].PID == 1)
+		all = all && listeners[i].Own
+	}
+	return all
 }

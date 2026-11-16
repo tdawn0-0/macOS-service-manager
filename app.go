@@ -609,9 +609,7 @@ func (a *app) do(it service.Item, act service.Action) {
 			delete(a.busy, it.ID)
 			if err != nil {
 				a.toast("%s: %s", it.Name, err)
-				if errors.Is(err, privhelper.ErrNotInstalled) {
-					a.promptInstallHelper(func() { a.do(it, act) })
-				}
+				a.helperProblem(err, func() { a.do(it, act) })
 			} else {
 				a.toast("%s %s", it.Name, act.Past())
 			}
@@ -714,9 +712,7 @@ func (a *app) doAll(src service.Source, items []service.Item, act service.Action
 			}
 			if err != nil {
 				a.toast("%s", err)
-				if errors.Is(err, privhelper.ErrNotInstalled) {
-					a.promptInstallHelper(func() { a.doAll(src, items, act) })
-				}
+				a.helperProblem(err, func() { a.doAll(src, items, act) })
 			} else {
 				a.toast("%d items %s", len(items), act.Past())
 			}
@@ -1146,6 +1142,33 @@ func (a *app) installHelperThen(after func()) {
 	})
 }
 
+// helperProblem asks the user to install or reinstall the privileged helper
+// when err says the helper is missing or refuses this build, and reports
+// whether it did. Nothing about a helper failure is left silent.
+func (a *app) helperProblem(err error, retry func()) bool {
+	switch {
+	case errors.Is(err, privhelper.ErrNotInstalled):
+		a.promptInstallHelper(retry)
+	case privhelper.NeedsReinstall(err):
+		a.promptReinstallHelper(retry)
+	default:
+		return false
+	}
+	return true
+}
+
+// promptReinstallHelper asks to install the helper again: the installed one
+// was set up by another Devbase build, so it refuses this build's requests.
+func (a *app) promptReinstallHelper(retry func()) {
+	a.ask = askState{
+		open:    true,
+		title:   "Reinstall the privileged helper?",
+		message: "The installed helper was set up by a different Devbase build, so it refuses requests from this one and nothing that needs administrator rights can run. Reinstalling asks for your administrator password once. Your settings and data are not changed.",
+		button:  "Reinstall Helper",
+		run:     func() { a.installHelperThen(retry) },
+	}
+}
+
 func (a *app) promptInstallHelper(retry func()) {
 	a.ask = askState{
 		open:    true,
@@ -1294,8 +1317,8 @@ func (a *app) writeJob(spec launchd.Spec) {
 					// The file was saved; only loading failed. Saving again edits it.
 					a.editor.existing = path
 					a.refresh(src)
-				} else if errors.Is(err, privhelper.ErrNotInstalled) {
-					a.promptInstallHelper(func() { a.writeJob(spec) })
+				} else {
+					a.helperProblem(err, func() { a.writeJob(spec) })
 				}
 				return
 			}

@@ -703,6 +703,9 @@ func TestPeerCodeAuthorizationRejectsForeignCode(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "reinstall the helper in Settings") {
 		t.Fatalf("expected peer code rejection, got %v", err)
 	}
+	if !errors.Is(err, ErrPeerRejected) || !NeedsReinstall(err) {
+		t.Fatalf("rejection is not recognisable by callers: %v", err)
+	}
 	err = client.SyncHosts(context.Background(), HostsSyncRequest{
 		ExpectedOld: string(orig),
 		NewContent:  string(orig) + "127.0.0.1 evil.test\n",
@@ -734,5 +737,14 @@ func TestDefaultPeerAuthorizationAcceptsSameBinary(t *testing.T) {
 	client, _, _ := startTestHelper(t, ServerConfig{})
 	if _, err := client.Ping(context.Background()); err != nil {
 		t.Fatalf("Ping with default authorization: %v", err)
+	}
+}
+
+func TestNeedsReinstall(t *testing.T) {
+	if NeedsReinstall(nil) || NeedsReinstall(errors.New("other")) || NeedsReinstall(ErrNotInstalled) {
+		t.Fatal("unrelated error asks for a reinstall")
+	}
+	if !NeedsReinstall(ErrPeerRejected) || !NeedsReinstall(errors.New("apply: "+PeerRejectedMessage)) {
+		t.Fatal("rejection, even with its wrapping lost, must ask for a reinstall")
 	}
 }

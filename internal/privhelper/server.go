@@ -204,7 +204,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		}
 		if err := s.cfg.PeerAuthorized(conn); err != nil {
 			fmt.Fprintln(os.Stderr, "privhelper: peer code check failed:", err)
-			writeError(w, http.StatusForbidden, "peer is not the Devbase build this helper was installed from; reinstall the helper in Settings")
+			writeError(w, http.StatusForbidden, PeerRejectedMessage)
 			return
 		}
 		next.ServeHTTP(w, r)

@@ -560,6 +560,9 @@ func (c *Client) doJSON(ctx context.Context, method, path string, in, out any) e
 	if resp.StatusCode >= 400 {
 		var errResp ErrorResponse
 		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error != "" {
+			if errResp.Error == PeerRejectedMessage {
+				return ErrPeerRejected
+			}
 			return errors.New(errResp.Error)
 		}
 		return fmt.Errorf("helper %s %s failed with HTTP %d", method, path, resp.StatusCode)

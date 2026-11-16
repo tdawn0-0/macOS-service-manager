@@ -2,11 +2,28 @@
 // privileged helper protocol, server, and client.
 package privhelper
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // ErrNotInstalled reports that privileged operations cannot run because the
 // Devbase privileged helper is missing.
 var ErrNotInstalled = errors.New("privileged helper is not installed; install the helper in Devbase first")
+
+// PeerRejectedMessage is what the helper tells a caller whose code it does not
+// trust: the helper was installed from another Devbase build.
+const PeerRejectedMessage = "peer is not the Devbase build this helper was installed from; reinstall the helper in Settings"
+
+// ErrPeerRejected reports that the installed helper refused this build.
+var ErrPeerRejected = errors.New(PeerRejectedMessage)
+
+// NeedsReinstall reports whether err means the installed helper must be
+// installed again before it will serve this build. It also recognises the
+// helper's message in an error that lost its wrapping on the way.
+func NeedsReinstall(err error) bool {
+	return err != nil && (errors.Is(err, ErrPeerRejected) || strings.Contains(err.Error(), PeerRejectedMessage))
+}
 
 const (
 	// Label is the launchd job label for the Devbase privileged helper.

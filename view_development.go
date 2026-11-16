@@ -224,8 +224,9 @@ func (a *app) devTaskKeepingDraft(fn func(*devplatform.Manager) (string, error),
 			a.dev.statusLast = time.Now()
 			if e != nil {
 				out += "\nError: " + e.Error()
-				if errors.Is(e, privhelper.ErrNotInstalled) {
-					a.promptInstallHelper(nil)
+				a.helperProblem(e, nil)
+				if privhelper.NeedsReinstall(e) {
+					a.helperStatus = privhelper.HelperStatus{State: privhelper.StateNotInstalled, Message: "The installed helper was set up by a different Devbase build. Reinstall it."}
 				}
 			}
 			if se != nil {

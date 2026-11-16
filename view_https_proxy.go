@@ -75,14 +75,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 	}
 	pageHeader(c, icoShield, ui.RGB(10, 132, 255), "HTTPS proxy rules", fmt.Sprintf("%s · listener :%d", plural(len(d.state.ProxyRules), "rule"), listener), func() {
 		statusTag(c, state)
-	}, func() {
-		if btn(c, "Apply proxy", icoPlay, btnPrimary).Disabled(d.busy || dirty).Clicked() {
-			a.devTask(func(m *devplatform.Manager) (string, error) {
-				err := m.ApplyProxy(m.Context)
-				return "Proxy configuration published. Check DNS, TLS and upstream separately.", err
-			})
-		}
-	})
+	}, nil)
 
 	devCardWith(c, icoRoute, "Rules", "", func() {
 		if btn(c, "Add rule", icoPlus, btnText).Clicked() {
@@ -190,18 +183,37 @@ func (a *app) devHTTPS(c *ui.Context) {
 		})
 		a.devPortControls(c, &d.proxyListenerPort, "HTTPS")
 		ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Margin(4, 0, 0).Children(func() {
-			if dirty {
-				ui.Row(c).Gap(6).AlignItems(ui.Center).Grow(1).MinWidth(0).Children(func() {
-					ui.Box(c).Size(6, 6).Radius(3).Background(tk.Warning).Shrink(0)
-					ui.Text(c, "Unsaved changes").FontSize(textSmall).TextColor(tk.TextDescription).SingleLine()
-				})
-			} else {
-				ui.Spacer(c)
+			// One line says where the rules stand; the one button beside it is
+			// the next step: save the edits, then apply what was saved.
+			note, dot := "Applied", tk.Success
+			switch {
+			case dirty:
+				note, dot = "Unsaved changes", tk.Warning
+			case state == "Pending":
+				note, dot = "Saved, not applied yet", tk.Warning
+			case state != "Published":
+				note, dot = "Not applied", tk.TextQuaternary
 			}
-			if btn(c, "Discard changes", icoUndo, btnDefault).Disabled(d.busy || !dirty).Clicked() {
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Grow(1).MinWidth(0).Children(func() {
+				ui.Box(c).Size(6, 6).Radius(3).Background(dot).Shrink(0)
+				ui.Text(c, note).FontSize(textSmall).TextColor(tk.TextDescription).SingleLine()
+			})
+			if dirty && btn(c, "Discard changes", icoUndo, btnDefault).Disabled(d.busy).Clicked() {
 				d.loadProxyDraft(d.state)
 			}
-			if btn(c, "Save HTTPS rules", icoSave, btnPrimary).Disabled(d.busy || !dirty).Clicked() {
+			if !dirty {
+				kind := btnDefault
+				if state == "Pending" {
+					kind = btnPrimary
+				}
+				if btn(c, "Apply proxy", icoPlay, kind).Disabled(d.busy || len(d.state.ProxyRules) == 0).Clicked() {
+					a.devTask(func(m *devplatform.Manager) (string, error) {
+						err := m.ApplyProxy(m.Context)
+						return "Proxy configuration published. Check DNS, TLS and upstream separately.", err
+					})
+				}
+			}
+			if dirty && btn(c, "Save HTTPS rules", icoSave, btnPrimary).Disabled(d.busy).Clicked() {
 				listener, err := strconv.Atoi(d.proxyListenerPort)
 				rules := make([]devplatform.ProxyRule, 0, len(d.proxyDraft))
 				for _, row := range d.proxyDraft {
@@ -295,7 +307,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 			for _, act := range []struct {
 				label string
 				icon  *ui.SVG
-			}{{"Restart HTTPS proxy", icoRotate}, {"Stop HTTPS proxy", icoStop}, {"Diagnose HTTPS", icoStetho}} {
+			}{{"Restart HTTPS proxy", icoRotate}, {"Diagnose HTTPS", icoStetho}} {
 				if btn(c, act.label, act.icon, btnDefault).Disabled(d.busy || dirty).Clicked() {
 					proxyAction(act.label)
 				}

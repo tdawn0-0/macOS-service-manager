@@ -226,7 +226,7 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 			tester := ui.NewTester(a.view, tc.width, tc.height)
 			tester.SetDark(tc.dark)
 			tester.Frame()
-			for _, label := range []string{"HTTPS proxy rules", "Domain", "Local port", "Save HTTPS rules", "Apply proxy", "HTTPS proxy service", "Cloudflare tunnel service", "Cloudflare API token", "Save Cloudflare settings", "Deploy Workers", "Refresh zones"} {
+			for _, label := range []string{"HTTPS proxy rules", "Domain", "Local port", "Save HTTPS rules", "Discard changes", "HTTPS proxy service", "Cloudflare tunnel service", "Cloudflare API token", "Save Cloudflare settings", "Deploy Workers", "Refresh zones"} {
 				if _, ok := tester.Find(label); !ok {
 					t.Fatalf("%dx%d %s missing", tc.width, tc.height, label)
 				}

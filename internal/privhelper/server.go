@@ -60,7 +60,7 @@ func NewServer(cfg ServerConfig) *Server {
 		cfg.IdleTimeout = defaultIdleTimeout
 	}
 	if cfg.HostsPath == "" {
-		cfg.HostsPath = "/etc/hosts"
+		cfg.HostsPath = "/private/etc/hosts" // /etc is a symlink to /private/etc on macOS; the helper refuses symlinked directories
 	}
 	if len(cfg.ManagedLaunchdDirs) == 0 {
 		cfg.ManagedLaunchdDirs = []string{"/Library/LaunchAgents", "/Library/LaunchDaemons"}

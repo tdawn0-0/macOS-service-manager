@@ -416,14 +416,14 @@ func (a *app) devStatusBar(c *ui.Context) {
 		} else {
 			devStatusDot(c, "Succeeded")
 		}
-		ui.Text(c, strings.ReplaceAll(d.output, "\n", " · ")).FontSize(textSmall).TextColor(tk.TextDescription).SingleLine().Grow(1).MinWidth(0)
+		ui.Text(c, firstLine(d.output)).FontSize(textSmall).TextColor(tk.TextDescription).SingleLine().Grow(1).MinWidth(0)
 		if action.Button(c, "Details", action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
 			d.showResult = !d.showResult
 		}
 	})
 	if d.showResult {
 		ui.Row(c).Shrink(0).Padding(0, 20, 12).Children(func() {
-			ui.TextArea(c, &d.output).Lines(3, 5).ReadOnly(true).Label("Operation result").Grow(1).MinWidth(0)
+			ui.TextArea(c, &d.output).Lines(3, 8).ReadOnly(true).Label("Operation result").Grow(1).MinWidth(0)
 		})
 	}
 }
@@ -651,3 +651,13 @@ func (a *app) devManager() *devplatform.Manager {
 	return devplatform.New(devplatform.DefaultRoot())
 }
 
+
+// firstLine is the first line of an operation result, for the status bar. The
+// rest is under Details.
+func firstLine(s string) string {
+	line, rest, more := strings.Cut(strings.TrimSpace(s), "\n")
+	if more && strings.TrimSpace(rest) != "" {
+		line += " …"
+	}
+	return line
+}

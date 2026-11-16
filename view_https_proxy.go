@@ -95,7 +95,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 		}
 		for i := range d.proxyDraft {
 			row := &d.proxyDraft[i]
-			ui.Column(c).Gap(6).Children(func() {
+			devInset(c, func() {
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					mono(ui.TextInput(c, &row.Domain).Placeholder("app.test").Label("Domain").Grow(1).MinWidth(0))
 					// The route: the domain goes to a port of this Mac.
@@ -185,7 +185,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 		if removeRule >= 0 {
 			d.proxyDraft = append(d.proxyDraft[:removeRule], d.proxyDraft[removeRule+1:]...)
 		}
-		devFieldGrid(c, func() {
+		ui.Column(c).Width(200).Children(func() {
 			devField(c, "HTTPS listener port", &d.proxyListenerPort, "443")
 		})
 		a.devPortControls(c, &d.proxyListenerPort, "HTTPS")

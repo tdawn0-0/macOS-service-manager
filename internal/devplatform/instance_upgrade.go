@@ -5,6 +5,7 @@ import (
 	"devbase/internal/logs"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -102,8 +103,9 @@ func (m *Manager) mysqlStoppedCleanly(id string) bool {
 }
 
 // UpgradeInstancePackage moves a stopped instance to target, a newer
-// installed patch release of the same engine and series. It changes only the
-// instance's saved package; data, port and credentials are untouched.
+// installed patch release of the same engine and series. It changes the saved
+// package and discards the instance's generated job file, which the next start
+// writes again; data, port and credentials are untouched.
 func (m *Manager) UpgradeInstancePackage(ctx context.Context, expected Instance, target string) error {
 	if err := validID(expected.ID); err != nil {
 		return err
@@ -162,6 +164,12 @@ func (m *Manager) UpgradeInstancePackage(ctx context.Context, expected Instance,
 		i.Package = target
 		s.Instances[i.ID] = i
 		m.emit("Moved " + i.ID + " to " + target)
-		return nil, nil, nil
+		job := filepath.Join(m.Root, "jobs", m.label("db-"+i.ID)+".plist")
+		commit := func() {
+			if e := os.Remove(job); e != nil && !errors.Is(e, os.ErrNotExist) {
+				m.emit("Could not remove the old job file for " + expected.ID + "; the next start replaces it")
+			}
+		}
+		return nil, commit, nil
 	})
 }

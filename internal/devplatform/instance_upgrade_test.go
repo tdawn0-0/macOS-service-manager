@@ -9,7 +9,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
+
+	"howett.net/plist"
 )
 
 const (
@@ -77,6 +80,32 @@ func upgradeWriteLog(t *testing.T, m *Manager, id, text string) {
 	if err := os.WriteFile(filepath.Join(dir, "db-"+id+".err.log"), []byte(text), 0600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// upgradeWriteJob writes a generated job file for the instance that names the
+// folder of the given package, and returns its path.
+func upgradeWriteJob(t *testing.T, m *Manager, id, pkg string) string {
+	t.Helper()
+	dir := filepath.Join(m.Root, "jobs")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	var p Package
+	s, err := m.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p = s.Packages[pkg]
+	job := map[string]any{"Label": m.label("db-" + id), "ProgramArguments": []string{filepath.Join(m.packageDir(p), "bin", "mysqld")}}
+	b, err := plist.Marshal(job, plist.XMLFormat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, m.label("db-"+id)+".plist")
+	if err := os.WriteFile(path, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func upgradeSaved(t *testing.T, m *Manager, id string) Instance {
@@ -287,6 +316,7 @@ func TestUpgradeInstancePackageRefuses(t *testing.T) {
 				i.Kind = "redis"
 			}
 			saved := upgradeSaved(t, m, i.ID)
+			job := upgradeWriteJob(t, m, i.ID, "mysql@8.4.4-arm64")
 			expected := i
 			if c.setup != nil {
 				c.setup(t, m, &expected)
@@ -297,6 +327,11 @@ func TestUpgradeInstancePackageRefuses(t *testing.T) {
 			}
 			if err := m.UpgradeInstancePackage(context.Background(), expected, to); err == nil {
 				t.Fatal("expected refusal")
+			}
+			if c.name == "job registered" || c.name == "lower patch" {
+				if _, err := os.Stat(job); err != nil {
+					t.Errorf("job file removed by a refused upgrade: %v", err)
+				}
 			}
 			if got := upgradeSaved(t, m, i.ID); got != saved {
 				t.Errorf("saved instance changed: %+v -> %+v", saved, got)
@@ -334,5 +369,36 @@ func TestUpgradeInstancePackageStateStaysDecodable(t *testing.T) {
 	}
 	if after := keys(); !reflect.DeepEqual(before, after) {
 		t.Errorf("instance keys changed: %v -> %v", before, after)
+	}
+}
+
+func TestUpgradeInstancePackageDropsStaleJobFile(t *testing.T) {
+	m, i, _ := upgradeFixture(t, "mysql")
+	job := upgradeWriteJob(t, m, i.ID, "mysql@8.4.4-arm64")
+	other := filepath.Join(m.Root, "jobs", m.label("db-other")+".plist")
+	if err := os.WriteFile(other, []byte("unrelated"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.UpgradeInstancePackage(context.Background(), i, upgradeNewMySQL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(job); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("instance job file still present: %v", err)
+	}
+	if b, err := os.ReadFile(other); err != nil || string(b) != "unrelated" {
+		t.Errorf("unrelated job file changed: %q %v", b, err)
+	}
+}
+
+func TestUpgradeThenUninstallOldPackage(t *testing.T) {
+	m, i, _ := upgradeFixture(t, "mysql")
+	upgradeWriteJob(t, m, i.ID, "mysql@8.4.4-arm64")
+	if err := m.UpgradeInstancePackage(context.Background(), i, upgradeNewMySQL); err != nil {
+		t.Fatal(err)
+	}
+	// Uninstall may still fail for a reason this fixture cannot satisfy; only
+	// the launchd job reference must be gone.
+	if err := m.Uninstall(context.Background(), "mysql@8.4.4-arm64"); err != nil && strings.Contains(err.Error(), "referenced by a launchd job") {
+		t.Errorf("old package still blocked by a job file: %v", err)
 	}
 }

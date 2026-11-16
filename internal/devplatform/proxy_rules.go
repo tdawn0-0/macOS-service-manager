@@ -261,10 +261,25 @@ func (m *Manager) ProxyPublicationState() (string, error) {
 	if err != nil {
 		return "Unknown", nil
 	}
-	if published.ListenerPort != s.ProxyListenerPort || !sameProxyRules(published.Rules, s.ProxyRules) {
+	if published.ListenerPort != s.ProxyListenerPort || !sameProxyRouting(published.Rules, s.ProxyRules) {
 		return "Pending", nil
 	}
 	return "Published", nil
+}
+
+// sameProxyRouting compares what the HTTPS proxy routes: domain and local
+// port. Tunnel settings belong to the Cloudflare tunnel, and the privileged
+// socket path publishes a snapshot without them, so they must not make a
+// published proxy look pending.
+func sameProxyRouting(a, b []ProxyRule) bool {
+	strip := func(rules []ProxyRule) []ProxyRule {
+		out := make([]ProxyRule, len(rules))
+		for i, r := range rules {
+			out[i] = ProxyRule{Domain: r.Domain, LocalPort: r.LocalPort}
+		}
+		return out
+	}
+	return sameProxyRules(strip(a), strip(b))
 }
 
 func sameProxyRules(a, b []ProxyRule) bool {

@@ -114,3 +114,27 @@ func TestProxyRuleHTTPCheck(t *testing.T) {
 		t.Fatal("check modified state")
 	}
 }
+
+// The privileged socket path publishes routing only. Tunnel settings in the
+// saved rules must not make an applied proxy look pending.
+func TestProxyPublicationIgnoresTunnelSettings(t *testing.T) {
+	m := testManager(t)
+	rules := []ProxyRule{{Domain: "tunnel.test", LocalPort: 8000, Tunnel: true, TunnelURL: "https://devbase-tunnel.example.workers.dev"}}
+	if err := m.ReplaceProxyRules(context.Background(), 0, 8443, rules); err != nil {
+		t.Fatal(err)
+	}
+	published := proxyPublishedConfig{SchemaVersion: 1, ListenerPort: 8443, Rules: []ProxyRule{{Domain: "tunnel.test", LocalPort: 8000}}}
+	if err := writeJSON(filepath.Join(m.Root, "proxy", "rules.json"), published); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := m.ProxyPublicationState(); err != nil || state != "Published" {
+		t.Fatal("applied proxy reads as", state, err)
+	}
+	published.Rules[0].LocalPort = 8001
+	if err := writeJSON(filepath.Join(m.Root, "proxy", "rules.json"), published); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := m.ProxyPublicationState(); err != nil || state != "Pending" {
+		t.Fatal("a different port must stay pending, got", state, err)
+	}
+}

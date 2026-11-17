@@ -97,7 +97,7 @@ func (a *app) devPackageIntegrity(c *ui.Context, id string, p devplatform.Packag
 		}
 	})
 	if checked {
-		devSubtle(c, fmt.Sprintf("%d entries · checked %s", result.Files, result.CheckedAt.Local().Format("2006-01-02 15:04:05")))
+		devSubtle(c, fmt.Sprintf("%d files checked", result.Files))
 		for _, issue := range result.Issues {
 			ui.Text(c, issue).FontSize(textSmall).TextColor(tk.ErrorText).Selectable()
 		}

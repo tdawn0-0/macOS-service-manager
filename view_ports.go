@@ -46,9 +46,11 @@ func (a *app) devPortResult(c *ui.Context, port int) {
 			mono(ui.Text(c, fmt.Sprintf("PID %d · %s · %s · %s", listener.PID, owner, listener.Name, listener.Address)).FontSize(textCaption).TextColor(tk.TextDescription).Selectable().MinWidth(0))
 		}
 		if r.Truncated {
-			devSubtle(c, "Showing the first 64 listener records.")
+			devSubtle(c, "First 64 shown")
 		}
-		devSubtle(c, r.Detail)
+		if r.Detail != "" && r.Status != "Available" && r.Status != "Devbase proxy" && len(r.Listeners) == 0 {
+			devSubtle(c, r.Detail)
+		}
 	})
 }
 func (a *app) devPortControls(c *ui.Context, value *string, scope string) {

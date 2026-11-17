@@ -23,7 +23,7 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 			devHint(c, feedback.Warning, d.javaError, "")
 		}
 		if d.javaLoaded && d.javaError == "" && len(d.javaInstallations) == 0 {
-			devSubtle(c, "No JDK installations found in this directory.")
+			devSubtle(c, "No JDKs")
 		}
 		for _, row := range d.javaInstallations {
 			row := row
@@ -56,14 +56,9 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 				}
 				devSubtle(c, build)
 				ui.Text(c, row.Path).FontSize(textSmall).Selectable()
-				source := "Existing installation"
-				if row.Managed {
-					source = "Installed by Devbase"
-				}
 				if row.Symlink {
-					source = "Symbolic link → " + row.Home
+					devSubtle(c, "→ "+row.Home)
 				}
-				devSubtle(c, source)
 				if row.Problem != "" {
 					ui.Text(c, row.Problem).FontSize(textSmall).TextColor(c.Theme().Warning)
 				}
@@ -81,9 +76,8 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 							message = "Moves only this symbolic link to Trash. The target JDK is kept."
 							label = "Move link to Trash"
 						}
-						devSubtle(c, message)
 						devButtonRow(c, func() {
-							if btn(c, label, icoTrash, btnDanger).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
+							if btn(c, label, icoTrash, btnDanger).Tooltip(message).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
 								reviewed := *selected
 								a.devTaskThen(func(m *devplatform.Manager) (string, error) {
 									path, err := m.RemoveJavaInstallation(m.Context, reviewed)

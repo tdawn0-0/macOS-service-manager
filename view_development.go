@@ -84,7 +84,6 @@ type developmentState struct {
 	packageChecks                                                                                       map[string]devplatform.PackageIntegrityResult
 	detailScroll                                                                                        [3]ui.ScrollState
 	managerFactory                                                                                      func() *devplatform.Manager
-	softwareContext                                                                                     string
 	statuses                                                                                            map[string]string
 	statusPolling                                                                                       bool
 	statusLast                                                                                          time.Time
@@ -530,7 +529,6 @@ func (a *app) devMaster(c *ui.Context) {
 				icon, tint := softwareMeta(name)
 				if masterItem(c, "Software "+name, icon, tint, softwareTitle(name), trailing, "", d.software == name) {
 					d.software = name
-					d.softwareContext = ""
 					d.version = a.defaultVersion(name)
 				}
 			}

@@ -1626,7 +1626,7 @@ func TestSettingsPageConsolidatesPrivilegedHelperAndWorkspaceSettings(t *testing
 	if h.a.nav != navSettings {
 		t.Fatalf("expected nav %q, got %q", navSettings, h.a.nav)
 	}
-	h.wantText("Settings", "Privileged helper", "macOS permissions", "Workspace & maintenance", "Automatic log rotation")
+	h.wantText("Settings", "Privileged helper", "macOS permissions", "Workspace", "Automatic log rotation")
 
 	// With helper installed, refreshing Settings updates badge to Installed.
 	privhelper.InstallTestHelper(t, privhelper.ServerConfig{})

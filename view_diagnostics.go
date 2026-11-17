@@ -111,7 +111,7 @@ func (a *app) devDiagnostics(c *ui.Context) {
 	if report == nil {
 		return
 	}
-	devCardWith(c, nil, "Checks", "Checked "+report.GeneratedAt.Local().Format("2006-01-02 15:04:05"), nil, func() {
+	devCardWith(c, nil, "Checks", "", nil, func() {
 		for _, check := range report.Checks {
 			devInset(c, func() {
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {

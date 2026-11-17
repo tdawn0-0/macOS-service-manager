@@ -37,14 +37,12 @@ func (a *app) settingsView(c *ui.Context) {
 				if a.helperStatus.State == privhelper.StateInstalled {
 					helperBadge = "Installed"
 				}
-				helperMsg := a.helperStatus.Message
-				if helperMsg == "" {
-					helperMsg = "Install once to delegate local HTTPS port 443, port inspection, and system launchd jobs without password prompts."
-				}
-				devCardWith(c, icoShield, "Privileged helper", "System daemon · on-demand socket", func() {
+				devCardWith(c, icoShield, "Privileged helper", "", func() {
 					statusTag(c, helperBadge)
 				}, func() {
-					ui.Text(c, helperMsg).FontSize(textSmall).TextColor(tk.TextDescription)
+					if msg := a.helperStatus.Message; msg != "" {
+						ui.Text(c, msg).FontSize(textSmall).TextColor(tk.TextDescription)
+					}
 					devKV(c, "Daemon", privhelper.PlistPath)
 					devKV(c, "Socket", privhelper.SocketPath)
 					devKV(c, "Helper", privhelper.HelperDir)
@@ -71,10 +69,9 @@ func (a *app) settingsView(c *ui.Context) {
 				} else if a.fdaNeedsAccess {
 					fdaBadge = "Restricted"
 				}
-				devCardWith(c, icoKey, "macOS permissions", "Privacy & Login Items", func() {
+				devCardWith(c, icoKey, "macOS permissions", "", func() {
 					statusTag(c, fdaBadge)
 				}, func() {
-					devSubtle(c, "Full Disk Access lets Devbase inspect protected launchd and background task items. Login Items controls apps opened at login.")
 					devButtonRow(c, func() {
 						if btn(c, "Open Full Disk Access…", icoLink, btnDefault).Clicked() {
 							a.openFullDiskAccess()
@@ -85,20 +82,13 @@ func (a *app) settingsView(c *ui.Context) {
 					})
 				})
 
-				rotEnabled := !d.state.LogRotationDisabled
-				rotBadge := "Enabled"
-				if !rotEnabled {
-					rotBadge = "Disabled"
-				}
-				devCardWith(c, icoSettings, "Workspace & maintenance", "Logs, storage & diagnostics", func() {
-					statusTag(c, rotBadge)
-				}, func() {
-					rotValue := rotEnabled
+				devCardWith(c, icoSettings, "Workspace", "", nil, func() {
+					rotValue := !d.state.LogRotationDisabled
 					ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-						if choice.Switch(c, &rotValue, choice.SwitchProps{Size: theme.Small}).Label("Automatic log rotation").Disabled(d.busy).Changed() {
+						if choice.Switch(c, &rotValue, choice.SwitchProps{Size: theme.Small}).Label("Automatic log rotation").Tooltip("Trims managed service and database logs every 60 seconds").Disabled(d.busy).Changed() {
 							a.setLogRotation(rotValue)
 						}
-						ui.Text(c, "Trim managed service and database logs every 60 seconds").FontSize(textSmall).TextColor(tk.TextDescription).Grow(1).MinWidth(0)
+						ui.Text(c, "Automatic log rotation").FontSize(textSmall).Grow(1).MinWidth(0)
 					})
 					if a.workspaceRoot != "" {
 						devKV(c, "Workspace", a.workspaceRoot)

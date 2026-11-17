@@ -295,7 +295,10 @@ func (a *app) devHTTPS(c *ui.Context) {
 		}
 	}
 	proxyOn := proxyStatus == "Running"
-	devCardWith(c, iconServer, "Proxy", proxyStatus, func() {
+	devCardWith(c, iconServer, "Proxy", "", func() {
+		if proxyStatus != "Running" && proxyStatus != "Stopped" {
+			statusTag(c, proxyStatus)
+		}
 		if choice.Switch(c, &proxyOn, choice.SwitchProps{Size: theme.Small}).Label("HTTPS proxy service").Disabled(d.busy || dirty || (len(d.state.ProxyRules) == 0 && !proxyOn)).Tooltip("Start or stop the background HTTPS proxy launchd service").Changed() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				if proxyOn {
@@ -326,11 +329,10 @@ func (a *app) devHTTPS(c *ui.Context) {
 		tunnelStatus = "Stopped"
 	}
 	tunnelOn := tunnelStatus == "Running"
-	tunnelNote := tunnelStatus
-	if detail := d.statuses["tunnel:detail"]; tunnelOn && detail != "" {
-		tunnelNote = detail
-	}
-	devCardWith(c, icoGlobe, "Cloudflare tunnel", tunnelNote, func() {
+	devCardWith(c, icoGlobe, "Cloudflare tunnel", "", func() {
+		if tunnelStatus != "Running" && tunnelStatus != "Stopped" {
+			statusTag(c, tunnelStatus)
+		}
 		if choice.Switch(c, &tunnelOn, choice.SwitchProps{Size: theme.Small}).Label("Cloudflare tunnel service").Disabled(d.busy || tunnelDirty || (!hasTunnelRules && !tunnelOn)).Tooltip("Start or stop the background Cloudflare tunnel launchd service").Changed() {
 			a.devTask(func(m *devplatform.Manager) (string, error) {
 				if tunnelOn {
@@ -414,7 +416,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 		})
 	})
 
-	devCardWith(c, icoKey, "Local certificate trust", "Rules use *"+devplatform.LocalDomainSuffix+", which macOS resolves to this Mac", func() {
+	devCardWith(c, icoKey, "Local certificate trust", "", func() {
 		if btn(c, "Local certificates", icoArrow, btnText).Disabled(d.busy).Clicked() {
 			d.authorityOpen = true
 			a.authorityTask(nil)

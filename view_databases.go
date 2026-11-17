@@ -338,7 +338,7 @@ func (a *app) backupRows(c *ui.Context, id string, busy bool) {
 		return
 	}
 	if len(d.backups) == 0 {
-		devSubtle(c, "No backups yet.")
+		devSubtle(c, "No backups")
 		return
 	}
 	for _, row := range d.backups {

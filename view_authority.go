@@ -65,11 +65,7 @@ func (a *app) devAuthority(c *ui.Context) {
 		d.authorityOpen = false
 	}
 	r := d.authorityStatus
-	meta := ""
-	if r != nil {
-		meta = "Checked " + r.CheckedAt.Local().Format("2006-01-02 15:04:05")
-	}
-	pageHeader(c, icoShield, tk.TextSecondary, "Local certificates", meta, nil, func() {
+	pageHeader(c, icoShield, tk.TextSecondary, "Local certificates", "", nil, func() {
 		if btn(c, "Refresh certificate status", icoRotate, btnDefault).Disabled(d.busy).Clicked() {
 			a.authorityTask(nil)
 		}

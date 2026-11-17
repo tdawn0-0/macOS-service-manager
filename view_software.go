@@ -54,7 +54,6 @@ func (a *app) openSoftware(name string) {
 	d.tab = devTabSoftware
 	d.detailScroll[devTabSoftware].Y = 0
 	d.software = name
-	d.softwareContext = ""
 	d.version = a.defaultVersion(name)
 }
 
@@ -329,9 +328,6 @@ func packageDetailsText(info devplatform.PackageDetails) string {
 // comes first, and Install acts on what it showed.
 func (a *app) devPackageReview(c *ui.Context) {
 	d := &a.dev
-	if d.softwareContext != "" {
-		devSubtle(c, d.softwareContext)
-	}
 	valid := d.previewMatches()
 	if valid {
 		info := d.packagePreview
@@ -352,32 +348,18 @@ func (a *app) devPackageReview(c *ui.Context) {
 					a.copy(info.Package.SHA256)
 				}
 			})
-			size := "Download size is unavailable until transfer starts"
-			if info.ArchiveBytes > 0 {
-				size = fmt.Sprintf("Archive size: %.1f MiB", float64(info.ArchiveBytes)/(1<<20))
+			if info.ArchiveBytes > 0 && info.Package.Formula == "" {
+				devSubtle(c, fmt.Sprintf("%.1f MiB", float64(info.ArchiveBytes)/(1<<20)))
 			}
-			if info.Cached {
-				size += " · verified cache"
+			if !info.Compatible {
+				ui.Text(c, info.Compatibility).FontSize(textSmall).TextColor(c.Theme().Danger)
 			}
-			if info.Installed && info.ArchiveBytes == 0 {
-				size = "Installed version · download size unknown"
-			}
-			if info.Package.Formula != "" {
-				size = "Homebrew downloads and verifies the bottle and its dependencies."
-			}
-			devSubtle(c, size)
-			ui.Text(c, info.Compatibility).FontSize(textSmall).TextColor(func() ui.Color {
-				if !info.Compatible {
-					return c.Theme().Danger
-				}
-				return c.Theme().TextMuted
-			}())
 			ui.Text(c, d.packageDetailsText).FontSize(textSmall).Selectable().Label("Package details")
 			for _, reference := range info.References {
 				devSubtle(c, reference)
 			}
-			if info.Installed && info.Integrity != "" {
-				devSubtle(c, "Installed files: "+info.Integrity+". "+info.IntegrityNote)
+			if info.Installed && info.Integrity == "Needs repair" {
+				ui.Text(c, info.IntegrityNote).FontSize(textSmall).TextColor(c.Theme().Warning)
 			}
 		})
 	}

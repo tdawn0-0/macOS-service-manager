@@ -214,6 +214,10 @@ type app struct {
 	copy      func(string)
 	reveal    func(path string)
 	chooseApp func() (string, bool)
+	// dockOn shows or hides the Dock icon; dockShown is what it last did.
+	// The app starts with it shown, as its window does.
+	dockOn    func(bool)
+	dockShown bool
 	// showGuide, hideGuide and joinGuide show the guide's window, close it, and
 	// make it follow System Settings. redrawGuide redraws its windows.
 	showGuide, hideGuide, joinGuide, redrawGuide func()
@@ -279,7 +283,10 @@ func newAppWith(providers map[service.Source]service.Provider, adder interface{ 
 		hideGuide:   func() {},
 		joinGuide:   func() {},
 		redrawGuide: func() {},
-		settle:      1200 * time.Millisecond,
+		// The window opens with the app, so the Dock icon starts out shown.
+		dockOn:    func(bool) {},
+		dockShown: true,
+		settle:    1200 * time.Millisecond,
 		sources:     map[service.Source]*sourceState{},
 		busy:        map[string]bool{},
 		gone:        map[string]bool{},
@@ -307,6 +314,18 @@ func newAppWith(providers map[service.Source]service.Provider, adder interface{ 
 	a.list.KeepOffset = true
 	a.log.list.FollowEnd = true
 	return a
+}
+
+// showDockIcon shows or hides the Dock icon. The app keeps it only while its
+// main window is open: once the window is closed and the menu bar is all that
+// remains, the icon leaves the Dock. Repeat calls do nothing, so restoring
+// the icon does not activate the app over and over.
+func (a *app) showDockIcon(on bool) {
+	if a.dockShown == on {
+		return
+	}
+	a.dockShown = on
+	a.dockOn(on)
 }
 
 func (a *app) toast(format string, args ...any) {

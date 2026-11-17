@@ -14,7 +14,7 @@ The three main entries are **Software**, **Databases**, and **HTTPS**. Start you
 
 Java has separate defaults and explicit terminal integration for installed zsh, Bash, and fish. Python requires an installed uv executable; the app can discover it or use an absolute path you select. Its global uv pin does not replace the shell’s `python` command or override a virtual environment. See [runtime and data-location usage](docs/development-runtimes-and-data.md).
 
-The menu bar shows managed database instances and one HTTPS proxy status. Closing the window leaves them running. Quit offers a reviewed keep/stop choice for app-owned resources. System service controls remain under their own source list.
+The menu bar shows managed database instances and one HTTPS proxy status. Closing the window leaves them running, and leaves the menu bar icon as the app's only presence: the Dock icon goes away until the window opens again. Quit offers a reviewed keep/stop choice for app-owned resources. System service controls remain under their own source list.
 
 ## Installation and permissions
 

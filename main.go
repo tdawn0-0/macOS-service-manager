@@ -32,6 +32,15 @@ func main() {
 	}
 
 	a := newApp()
+	// The Dock icon follows the windows: the menu bar carries the app when
+	// they are closed.
+	a.dockOn = func(on bool) {
+		if on {
+			mygo.App.Dock.Show()
+			return
+		}
+		mygo.App.Dock.Hide()
+	}
 	a.copy = mygo.Clipboard.WriteText
 	a.reveal = mygo.Shell.ShowItemInFolder
 	system.Trash = mygo.Shell.TrashItem
@@ -71,15 +80,18 @@ func main() {
 			win.SetSize(max(width, minWidth), max(height, minHeight))
 		}
 
-		// The app stays in the menu bar when its window is closed.
+		// The app stays in the menu bar when its window is closed, and only
+		// there: no window, no Dock icon.
 		win.OnClose(func(e *mygo.CloseEvent) {
 			if !quitting {
 				e.PreventDefault()
 				win.Hide()
+				a.showDockIcon(false)
 			}
 		})
 		mygo.App.OnActivate(func(hasVisibleWindows bool) {
 			if !hasVisibleWindows {
+				a.showDockIcon(true)
 				win.Show()
 			}
 		})

@@ -578,6 +578,8 @@ func (m *menubar) showWindow() {
 	if m.panel != nil {
 		m.panel.Close()
 	}
+	// The icon comes back with the window; showing it activates the app.
+	m.a.showDockIcon(true)
 	m.win.Show()
 	m.win.Focus()
 }

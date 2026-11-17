@@ -22,7 +22,7 @@ Use Diagnostics to inspect DNS, proxy TLS, upstream and explicit HTTP response s
 
 ## Window, menu bar, and system services
 
-Closing the window keeps managed resources running. The menu bar has database rows and one proxy status/settings entry. Quit reviews which app-owned resources to keep or stop. The existing system-service inspector is a separate feature and follows its own permissions. No operation starts or stops an unrelated application server.
+Closing the window keeps managed resources running. The app then lives only in the menu bar: its Dock icon is hidden until the window opens again from the menu bar. The menu bar has database rows and one proxy status/settings entry. Quit reviews which app-owned resources to keep or stop. The existing system-service inspector is a separate feature and follows its own permissions. No operation starts or stops an unrelated application server.
 
 ## Verification status
 

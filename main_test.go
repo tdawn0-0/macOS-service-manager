@@ -822,6 +822,21 @@ func TestMenubarIconIsATemplate(t *testing.T) {
 	}
 }
 
+// The Dock icon goes and comes back with the window. Only transitions reach
+// the app: restoring an icon that shows activates the app every time.
+func TestShowDockIconMakesChangesOnly(t *testing.T) {
+	h := newHarness(t)
+	var changed []bool
+	h.a.dockOn = func(on bool) { changed = append(changed, on) }
+	h.a.showDockIcon(true)  // the window is open already
+	h.a.showDockIcon(false) // the window closed
+	h.a.showDockIcon(false)
+	h.a.showDockIcon(true) // the menu bar opened it again
+	if !slices.Equal(changed, []bool{false, true}) {
+		t.Errorf("Dock changes = %v, want [false true]", changed)
+	}
+}
+
 // restrictedLogin is a login source that macOS lets read only in part.
 type restrictedLogin struct {
 	*loginFake

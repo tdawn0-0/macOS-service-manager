@@ -1,5 +1,6 @@
 /build/
 /.mygo/
+/.cloudflare/
 mygo_windows_*.syso
 .DS_Store
 .idea

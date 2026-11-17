@@ -174,3 +174,13 @@ func TestAdditionalEnginesIntegration(t *testing.T) {
 		})
 	}
 }
+
+func (m *Manager) redisCommand(ctx context.Context, i Instance, db int, args ...[]byte) (any, error) {
+	var res any
+	e := m.withRedisSession(ctx, i, db, func(call func(args ...[]byte) (any, error)) error {
+		var err error
+		res, err = call(args...)
+		return err
+	})
+	return res, e
+}

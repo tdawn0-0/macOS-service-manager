@@ -21,7 +21,6 @@ import (
 var (
 	icoHexagon   = lu.Hexagon()
 	icoCoffee    = lu.Coffee()
-	icoRabbit    = lu.Rabbit()
 	icoCode      = lu.CodeXml()
 	icoDatabase  = lu.Database()
 	icoLeaf      = lu.Leaf()
@@ -166,12 +165,6 @@ func pageHeader(c *ui.Context, icon *ui.SVG, tint ui.Color, title, meta string, 
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Shrink(0).Children(actions)
 		}
 	})
-}
-
-// card groups the controls of one concern on an outlined Lobe Block, under
-// a title with optional controls at its end.
-func devCard(c *ui.Context, title string, extra func(), body func()) {
-	devCardWith(c, nil, title, "", extra, body)
 }
 
 // cardWith is a card whose title has an icon and a note after it.

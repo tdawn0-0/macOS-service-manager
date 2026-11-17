@@ -211,7 +211,7 @@ func (m *Manager) readAuthorityGeneration(id string) (authorityMaterial, error) 
 		return authorityMaterial{}, errors.New("authority generation must be a directory")
 	}
 	read := func(name string) ([]byte, error) {
-		b, err := readExportFile(dir, name, 1<<20)
+		b, err := readRegularFile(dir, name, 1<<20)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
@@ -226,7 +226,7 @@ func (m *Manager) readAuthorityGeneration(id string) (authorityMaterial, error) 
 		return authorityMaterial{}, err
 	}
 	a := parseAuthority(cert, key, id, filepath.Join(dir, "ca.pem"), time.Now())
-	metadata, err := readExportFile(dir, "metadata.json", 1<<20)
+	metadata, err := readRegularFile(dir, "metadata.json", 1<<20)
 	if err != nil || json.Unmarshal(metadata, &a.record) != nil || a.record.Schema != 1 || a.record.ID != id || a.record.PairDigest != a.digest {
 		a.info.Status = "Invalid"
 		a.info.Usable = false
@@ -247,7 +247,7 @@ func (m *Manager) readActiveAuthority() (authorityMaterial, error) {
 		if target, err := os.Readlink(path); err == nil && target == filepath.Join(authorityCurrent, name) {
 			return nil, nil
 		}
-		b, err := readExportFile(m.authorityRoot(), name, 1<<20)
+		b, err := readRegularFile(m.authorityRoot(), name, 1<<20)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
@@ -324,7 +324,7 @@ func (m *Manager) writeAuthorityPointer(name, id string) error {
 	if err := os.Rename(tmp, path); err != nil {
 		return err
 	}
-	return syncExportDirectory(m.authorityRoot())
+	return syncDirectory(m.authorityRoot())
 }
 func (m *Manager) ensureAuthorityAliases(replace bool) error {
 	for _, name := range []string{"ca.pem", "ca-key.pem"} {
@@ -359,7 +359,7 @@ func (m *Manager) ensureAuthorityAliases(replace bool) error {
 			return err
 		}
 	}
-	return syncExportDirectory(m.authorityRoot())
+	return syncDirectory(m.authorityRoot())
 }
 func (m *Manager) createAuthorityGeneration(cert, key []byte, kind, base string) (string, error) {
 	id := randomID()
@@ -386,13 +386,13 @@ func (m *Manager) createAuthorityGeneration(cert, key []byte, kind, base string)
 	if err = writeJSON(filepath.Join(stage, "metadata.json"), record); err != nil {
 		return "", err
 	}
-	if err = syncExportDirectory(stage); err != nil {
+	if err = syncDirectory(stage); err != nil {
 		return "", err
 	}
 	if err = os.Rename(stage, m.authorityDir(id)); err != nil {
 		return "", err
 	}
-	return id, syncExportDirectory(parent)
+	return id, syncDirectory(parent)
 }
 func (m *Manager) loadOrCreateAuthority() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	a, err := m.readActiveAuthority()
@@ -651,7 +651,7 @@ func (m *Manager) ActivateAuthority(ctx context.Context, revision string) error 
 				if err = os.Remove(filepath.Join(m.authorityRoot(), authorityPrepared)); err != nil {
 					return err
 				}
-				return syncExportDirectory(m.authorityRoot())
+				return syncDirectory(m.authorityRoot())
 			}
 			if prepared.record.BaseDigest != active.digest {
 				return errors.New("active authority changed since preparation; prepare a new replacement")
@@ -688,7 +688,7 @@ func (m *Manager) ActivateAuthority(ctx context.Context, revision string) error 
 			if err = os.Remove(filepath.Join(m.authorityRoot(), authorityPrepared)); err != nil {
 				return fmt.Errorf("authority activated; refresh and finish activation: %w", err)
 			}
-			return syncExportDirectory(m.authorityRoot())
+			return syncDirectory(m.authorityRoot())
 		})
 	})
 }
@@ -708,7 +708,7 @@ func (m *Manager) DiscardPreparedAuthority(ctx context.Context, revision string)
 			if err = os.Remove(filepath.Join(m.authorityRoot(), authorityPrepared)); err != nil {
 				return err
 			}
-			return syncExportDirectory(m.authorityRoot())
+			return syncDirectory(m.authorityRoot())
 		})
 	})
 }

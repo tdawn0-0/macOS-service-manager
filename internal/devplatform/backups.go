@@ -111,7 +111,7 @@ func (m *Manager) DeleteBackup(ctx context.Context, id, name string) error {
 		if e := os.Remove(b.Path); e != nil {
 			return e
 		}
-		return syncExportDirectory(filepath.Dir(b.Path))
+		return syncDirectory(filepath.Dir(b.Path))
 	}
 	return errors.New("backup not found for this instance")
 }

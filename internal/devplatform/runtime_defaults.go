@@ -9,7 +9,6 @@ import (
 )
 
 func validAdditionalRuntime(name string) bool { return name == "java" }
-func retiredAdditionalRuntime(name string) bool { return name == "go" }
 func (m *Manager) runtimeScript(name string) string {
 	return filepath.Join(m.Root, "runtimes", name, "init.sh")
 }
@@ -43,14 +42,8 @@ func (m *Manager) saveRuntimeDefault(s *State, name, id, binary string) (func() 
 }
 
 func (m *Manager) ConfigureRuntimeShell(ctx context.Context, name string, enable bool) error {
-	if enable {
-		if !validAdditionalRuntime(name) {
-			return errors.New("unsupported runtime")
-		}
-	} else {
-		if !validAdditionalRuntime(name) && !retiredAdditionalRuntime(name) {
-			return errors.New("unsupported runtime")
-		}
+	if !validAdditionalRuntime(name) {
+		return errors.New("unsupported runtime")
 	}
 	if e := ctx.Err(); e != nil {
 		return e
@@ -79,7 +72,7 @@ func (m *Manager) ConfigureRuntimeShell(ctx context.Context, name string, enable
 	if e != nil {
 		return e
 	}
-	if !enable && (validAdditionalRuntime(name) || retiredAdditionalRuntime(name)) {
+	if !enable {
 		if _, err := m.updateRuntimeScripts(name, nil); err != nil {
 			return err
 		}

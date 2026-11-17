@@ -62,7 +62,7 @@ func readDatabaseWork(dir, id string) (databaseWorkRecord, []byte, error) {
 	if e := plainDeletionDirectory(dir); e != nil {
 		return r, nil, e
 	}
-	b, e := readExportFile(dir, "record.json", 65536)
+	b, e := readRegularFile(dir, "record.json", 65536)
 	if e != nil {
 		return r, nil, e
 	}
@@ -149,7 +149,7 @@ func (m *Manager) recordDatabaseWorkJob(job, path string) error {
 	if job != "dbwork-"+c.record.ID {
 		return errors.New("unexpected database task job")
 	}
-	b, e := readExportFile(filepath.Dir(path), filepath.Base(path), 1<<20)
+	b, e := readRegularFile(filepath.Dir(path), filepath.Base(path), 1<<20)
 	if e != nil {
 		return e
 	}
@@ -157,12 +157,12 @@ func (m *Manager) recordDatabaseWorkJob(job, path string) error {
 	if e = writeJSON(filepath.Join(c.dir, "record.json"), c.record); e != nil {
 		return e
 	}
-	return syncExportDirectory(c.dir)
+	return syncDirectory(c.dir)
 }
 func (m *Manager) stopDatabaseWorkJob(ctx context.Context, r databaseWorkRecord) error {
 	job := "dbwork-" + r.ID
 	path := filepath.Join(m.Root, "jobs", m.label(job)+".plist")
-	b, e := readExportFile(filepath.Dir(path), filepath.Base(path), 1<<20)
+	b, e := readRegularFile(filepath.Dir(path), filepath.Base(path), 1<<20)
 	if e == nil {
 		if r.JobDigest == "" || digestBytes(b) != r.JobDigest {
 			return errors.New("database task job ownership changed; keep its files for inspection")
@@ -185,7 +185,7 @@ func (m *Manager) stopDatabaseWorkJob(ctx context.Context, r databaseWorkRecord)
 }
 func readDatabaseWorkResult(dir string) (databaseWorkResult, []byte, error) {
 	var r databaseWorkResult
-	b, e := readExportFile(dir, "result.json", 65536)
+	b, e := readRegularFile(dir, "result.json", 65536)
 	if e != nil {
 		return r, nil, e
 	}
@@ -198,7 +198,7 @@ func readDatabaseWorkResult(dir string) (databaseWorkResult, []byte, error) {
 	return r, b, nil
 }
 func (m *Manager) workArtifact(dir string, r databaseWorkRecord) string {
-	b, e := readExportFile(dir, "artifact.json", 8192)
+	b, e := readRegularFile(dir, "artifact.json", 8192)
 	if e != nil {
 		return ""
 	}
@@ -221,7 +221,7 @@ func (m *Manager) clearDatabaseWork(dir string) error {
 	if e = os.RemoveAll(dir); e != nil {
 		return e
 	}
-	return syncExportDirectory(filepath.Dir(dir))
+	return syncDirectory(filepath.Dir(dir))
 }
 func (m *Manager) runDatabaseWork(ctx context.Context, req databaseWorkRequest, input databaseWorkInput) (string, error) {
 	if e := validID(req.InstanceID); e != nil {
@@ -302,10 +302,10 @@ func (m *Manager) runDatabaseWork(ctx context.Context, req databaseWorkRequest, 
 	if e = writeJSON(path, record); e != nil {
 		return "", e
 	}
-	if e = syncExportDirectory(dir); e != nil {
+	if e = syncDirectory(dir); e != nil {
 		return "", e
 	}
-	if e = syncExportDirectory(filepath.Dir(dir)); e != nil {
+	if e = syncDirectory(filepath.Dir(dir)); e != nil {
 		return "", e
 	}
 	m.operationArtifact(path)
@@ -376,7 +376,7 @@ func (m *Manager) runDatabaseWork(ctx context.Context, req databaseWorkRequest, 
 	var operationErr error
 	if result.Status != "Succeeded" {
 		message := "Database operation did not complete."
-		if b, e := readExportFile(dir, "error.log", 16384); e == nil && len(b) > 0 {
+		if b, e := readRegularFile(dir, "error.log", 16384); e == nil && len(b) > 0 {
 			message = string(b)
 		}
 		operationErr = errors.New(message)
@@ -430,7 +430,7 @@ func (m *Manager) RunDatabaseWorker(ctx context.Context, id string) error {
 	}
 	defer closeOperationLease(execution)
 	path := filepath.Join(m.Root, "jobs", m.label("dbwork-"+id)+".plist")
-	b, e := readExportFile(filepath.Dir(path), filepath.Base(path), 1<<20)
+	b, e := readRegularFile(filepath.Dir(path), filepath.Base(path), 1<<20)
 	if e != nil || record.JobDigest == "" || digestBytes(b) != record.JobDigest {
 		return errors.New("database task job ownership is not verified")
 	}
@@ -439,7 +439,7 @@ func (m *Manager) RunDatabaseWorker(ctx context.Context, id string) error {
 		return errors.New("database task must run as its recorded launchd job")
 	}
 	var input databaseWorkInput
-	b, e = readExportFile(dir, "input.json", 1<<20)
+	b, e = readRegularFile(dir, "input.json", 1<<20)
 	if e != nil {
 		return e
 	}
@@ -493,7 +493,7 @@ func (m *Manager) RunDatabaseWorker(ctx context.Context, id string) error {
 	if err := writeJSON(filepath.Join(dir, "result.json"), result); err != nil {
 		return err
 	}
-	if err := syncExportDirectory(dir); err != nil {
+	if err := syncDirectory(dir); err != nil {
 		return err
 	}
 	if e != nil {
@@ -525,7 +525,7 @@ func (m *Manager) databaseWorkInfo(ctx context.Context, id string) (DatabaseWork
 		return info, resultErr
 	}
 	path := filepath.Join(m.Root, "jobs", m.label("dbwork-"+id)+".plist")
-	jobBytes, pathErr := readExportFile(filepath.Dir(path), filepath.Base(path), 1<<20)
+	jobBytes, pathErr := readRegularFile(filepath.Dir(path), filepath.Base(path), 1<<20)
 	owned := pathErr == nil && r.JobDigest != "" && digestBytes(jobBytes) == r.JobDigest
 	absent := false
 	job, observeErr := m.readJobState(ctx, "dbwork-"+id)
@@ -610,7 +610,7 @@ func (m *Manager) ResolveDatabaseWork(ctx context.Context, id, revision string) 
 		if e = atomicWrite(filepath.Join(dir, "retain-output"), []byte(r.ID), 0600); e != nil {
 			return e
 		}
-		if e = syncExportDirectory(dir); e != nil {
+		if e = syncDirectory(dir); e != nil {
 			return e
 		}
 		if e = w.stopDatabaseWorkJob(ctx, r); e != nil {
@@ -635,6 +635,6 @@ func (m *Manager) retainDatabaseWorkOutput() bool {
 	if c == nil {
 		return false
 	}
-	b, e := readExportFile(c.dir, "retain-output", 1024)
+	b, e := readRegularFile(c.dir, "retain-output", 1024)
 	return e == nil && string(b) == c.record.ID
 }

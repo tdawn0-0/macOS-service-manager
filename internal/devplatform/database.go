@@ -317,7 +317,7 @@ func (m *Manager) backup(ctx context.Context, id, name string) (string, error) {
 		if e = os.Rename(partial, path); e != nil {
 			return e
 		}
-		if e = syncExportDirectory(filepath.Dir(path)); e != nil {
+		if e = syncDirectory(filepath.Dir(path)); e != nil {
 			return e
 		}
 		m.operationArtifact(path)

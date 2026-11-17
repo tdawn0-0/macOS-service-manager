@@ -20,7 +20,7 @@ func findDiagnostic(t *testing.T, r DiagnosticReport, layer, resource string) Di
 			return check
 		}
 	}
-	t.Fatalf("missing diagnostic %s %s: %s", layer, resource, r.Text())
+	t.Fatalf("missing diagnostic %s %s: %+v", layer, resource, r.Checks)
 	return DiagnosticCheck{}
 }
 

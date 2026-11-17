@@ -43,7 +43,7 @@ func writeOperationRecord(path string, r OperationRecord) error {
 	if e := writeJSON(path, r); e != nil {
 		return e
 	}
-	return syncExportDirectory(filepath.Dir(path))
+	return syncDirectory(filepath.Dir(path))
 }
 func (w *operationWriter) save() {
 	if w.err == nil {
@@ -64,7 +64,7 @@ func (m *Manager) operationArtifact(path string) {
 		if e := writeJSON(filepath.Join(m.databaseWork.dir, "artifact.json"), struct{ Path string }{path}); e != nil {
 			m.emit("Could not record database output")
 		}
-		_ = syncExportDirectory(m.databaseWork.dir)
+		_ = syncDirectory(m.databaseWork.dir)
 	}
 	if m.operation == nil {
 		return
@@ -162,7 +162,7 @@ func (m *Manager) runOperation(ctx context.Context, req OperationRequest, retryO
 	if w.err != nil {
 		return w.err
 	}
-	if e = syncExportDirectory(m.operationRoot()); e != nil {
+	if e = syncDirectory(m.operationRoot()); e != nil {
 		return e
 	}
 	worker := *m
@@ -362,7 +362,7 @@ func (m *Manager) DismissOperation(ctx context.Context, id, revision string) err
 		if e := os.Remove(path); e != nil {
 			return e
 		}
-		return syncExportDirectory(filepath.Dir(path))
+		return syncDirectory(filepath.Dir(path))
 	})
 }
 func OperationCanRetry(r OperationRecord) bool {

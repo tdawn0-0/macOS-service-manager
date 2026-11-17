@@ -53,50 +53,27 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	switch args[0] {
 	case "help":
 		fmt.Fprintln(out, `Development commands:
+ status                           Print configuration (no stored passwords)
+ install <software> <version>     Node.js, Java, MySQL, PostgreSQL, Redis or MongoDB
  port <number>                    Inspect IPv4 loopback and listener metadata
  available-port                   Suggest an unused high local port
  db-port <instance-id> <number>    Change a stopped database port, keeping its data
  db-port-repair <instance-id>      Reconcile endpoint files with the saved port
- install <software> <version>     Node.js, Java, MySQL, PostgreSQL, Redis or MongoDB
- install-manifest <package.json>   Install a verified binary archive
- check-package <package-id>        Check installed files against the installation index
- repair <package-id>               Restore the same exact software version; stop its users first
- status                           Print configuration (no stored passwords)
- doctor [--json|--export]          Diagnose layers; anonymize JSON and exported reports
- proxy                            Apply proxy configuration
- trust|untrust                    Install/remove this app's CA trust
- db-work                          Review unfinished database data tasks
- db-work-resolve <id> <revision>   Stop the reviewed owned task, keeping database and output files
  db-initializations               Review unfinished database preparations
  db-initialization-resolve <id> <revision> Stop owned jobs and retain prepared data
  db-delete-preview <id>           Preview data path, references and deletion impact
  db-delete-data <id> <fingerprint> <confirm-id> Permanently delete confirmed instance data
  db-deletions                     Review interrupted data deletions
- db-deletion-finish <id> <revision> <confirm-instance> Finish a confirmed deletion
- db-deletion-restore <id> <revision> Restore data moved before removal committed
  tasks                            List private operation records
- task-retry <id> <revision>        Retry safe work after inspecting its record
  task-dismiss <id> <revision>      Dismiss a record, retaining all resource files
  ca-info                          Inspect CA material, expiry and macOS verification
  ca-prepare                       Prepare a replacement without changing active trust
- ca-trust <revision>              Trust the exact prepared CA
- ca-activate <revision>           Activate after trust, with HTTPS stopped
  ca-discard <revision>            Discard the prepared selection, keep saved material
- ca-use <id> <fingerprint> <revision> Restore a valid, trusted saved CA
- ca-saved-trust <id> <fingerprint> Trust a reviewed saved CA
- ca-saved-untrust <id> <fingerprint> Remove only the reviewed saved CA trust
- instance <instance.json>         Initialize an isolated database instance
- db <start|stop|restart|remove> <id> Manage database instance
- createdb <id> <database>          Create a SQL or MongoDB database
- backup <id> <database>            Write a private logical backup
- restore <id> <new-db> <dump>      Restore into a new database
- connection <id>                  Show endpoint and credential file
  log-rotation <on|off>            Configure the scheduled user log maintenance task
- maintain <root>                 Internal finite log rotation task
+ maintenance-stop                 Stop the scheduled user log maintenance task
+ maintain <root>                  Internal finite log rotation task
  serve <root>                     Internal launchd proxy entry point
- tunnel <root>                    Internal launchd Cloudflare tunnel entry point
- tunnel-start|tunnel-stop|tunnel-restart Manage the background Cloudflare tunnel
- tunnel-export                    Write Cloudflare Worker template into workspace`)
+ tunnel <root>                    Internal launchd Cloudflare tunnel entry point`)
 		return nil
 	case "node":
 		return runNode(ctx, m, args[1:], out)
@@ -105,17 +82,6 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 			return e
 		}
 		return devplatform.New(args[1]).RunDatabaseWorker(ctx, args[2])
-	case "db-work":
-		records, e := m.PendingDatabaseWork(ctx)
-		if e != nil {
-			return e
-		}
-		return json.NewEncoder(out).Encode(records)
-	case "db-work-resolve":
-		if e := need(3); e != nil {
-			return e
-		}
-		return m.ResolveDatabaseWork(ctx, args[1], args[2])
 	case "db-initializations":
 		records, e := m.PendingInstanceInitializations(ctx)
 		if e != nil {
@@ -151,28 +117,15 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 			return e
 		}
 		return json.NewEncoder(out).Encode(records)
-	case "db-deletion-finish":
-		if e := need(4); e != nil {
-			return e
-		}
-		return m.FinishInstanceDeletion(ctx, args[1], args[2], args[3])
-	case "db-deletion-restore":
-		if e := need(3); e != nil {
-			return e
-		}
-		return m.RestoreInstanceDeletion(ctx, args[1], args[2])
 	case "tasks":
 		records, e := m.Operations(ctx)
 		if e != nil {
 			return e
 		}
 		return json.NewEncoder(out).Encode(records)
-	case "task-retry", "task-dismiss":
+	case "task-dismiss":
 		if e := need(3); e != nil {
 			return e
-		}
-		if args[0] == "task-retry" {
-			return m.RetryOperation(ctx, args[1], args[2])
 		}
 		return m.DismissOperation(ctx, args[1], args[2])
 	case "ca-info":
@@ -183,27 +136,11 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		return json.NewEncoder(out).Encode(r)
 	case "ca-prepare":
 		return m.PrepareAuthority(ctx)
-	case "ca-trust", "ca-activate", "ca-discard":
+	case "ca-discard":
 		if e := need(2); e != nil {
 			return e
 		}
-		if args[0] == "ca-trust" {
-			return m.TrustPreparedAuthority(ctx, args[1])
-		}
-		if args[0] == "ca-activate" {
-			return m.ActivateAuthority(ctx, args[1])
-		}
 		return m.DiscardPreparedAuthority(ctx, args[1])
-	case "ca-use":
-		if e := need(4); e != nil {
-			return e
-		}
-		return m.RestoreAuthority(ctx, args[1], args[2], args[3])
-	case "ca-saved-trust", "ca-saved-untrust":
-		if e := need(3); e != nil {
-			return e
-		}
-		return m.ConfigureSavedAuthorityTrust(ctx, args[1], args[2], args[0] == "ca-saved-untrust")
 	case "port":
 		if e := need(2); e != nil {
 			return e
@@ -259,24 +196,6 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 			return errors.New("instance not found")
 		}
 		return m.ChangeInstancePort(ctx, instance, port)
-	case "check-package":
-		if e := need(2); e != nil {
-			return e
-		}
-		r, e := m.VerifyPackage(ctx, args[1])
-		if e != nil {
-			return e
-		}
-		fmt.Fprintln(out, r.Text())
-		if r.Status == "Needs repair" {
-			return errors.New("package needs repair")
-		}
-		return nil
-	case "repair":
-		if e := need(2); e != nil {
-			return e
-		}
-		return m.RepairPackage(ctx, args[1])
 	case "maintain":
 		if e := need(2); e != nil {
 			return e
@@ -316,47 +235,6 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 			return e
 		}
 		return devplatform.New(args[1]).ServeTunnel(ctx)
-	case "tunnel-start":
-		return m.ApplyTunnel(ctx)
-	case "tunnel-stop":
-		return m.StopTunnel(ctx)
-	case "tunnel-restart":
-		return m.RestartTunnel(ctx)
-	case "tunnel-sync":
-		return m.SyncTunnels(ctx)
-	case "doctor":
-		if len(args) > 2 || (len(args) == 2 && args[1] != "--json" && args[1] != "--export") {
-			return errors.New("use doctor [--json|--export]")
-		}
-		if len(args) == 2 {
-			report, err := m.Diagnose(ctx)
-			if err != nil {
-				return err
-			}
-			if args[1] == "--export" {
-				path, err := m.ExportDiagnostics(ctx, report)
-				if err == nil {
-					fmt.Fprintln(out, path)
-				}
-				return err
-			}
-			b, err := report.RedactedJSON()
-			if err == nil {
-				_, err = out.Write(b)
-			}
-			return err
-		}
-		text, e := m.Doctor(ctx)
-		fmt.Fprintln(out, text)
-		return e
-	case "logs":
-		if e := need(2); e != nil {
-			return e
-		}
-		if err := readLog(m, args[1], out); err != nil {
-			return err
-		}
-		return nil
 	case "status":
 		s, e := m.Read()
 		if e != nil {
@@ -377,82 +255,6 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 			return e
 		}
 		return m.Install(ctx, p)
-	case "install-manifest":
-		if e := need(2); e != nil {
-			return e
-		}
-		var p devplatform.Package
-		if e := read(args[1], &p); e != nil {
-			return e
-		}
-		return m.Install(ctx, p)
-	case "proxy-verify":
-		return m.VerifySocketLifecycle(ctx)
-	case "proxy-restart":
-		return m.RestartProxy(ctx)
-	case "proxy-stop":
-		return m.StopProxy(ctx)
-	case "proxy":
-		if e := m.EnsureLogMaintenance(ctx); e != nil {
-			return e
-		}
-		return m.ApplyProxy(ctx)
-	case "trust", "untrust":
-		return m.ConfigureTrust(ctx, args[0] == "untrust")
-	case "instance":
-		if e := need(2); e != nil {
-			return e
-		}
-		var i devplatform.Instance
-		if e := read(args[1], &i); e != nil {
-			return e
-		}
-		if e := m.EnsureLogMaintenance(ctx); e != nil {
-			return e
-		}
-		return m.CreateInstance(ctx, i)
-	case "db":
-		if e := need(3); e != nil {
-			return e
-		}
-		if args[1] == "start" || args[1] == "restart" {
-			if e := m.EnsureLogMaintenance(ctx); e != nil {
-				return e
-			}
-		}
-		return m.InstanceAction(ctx, args[2], args[1])
-	case "createuser":
-		if e := need(4); e != nil {
-			return e
-		}
-		password := os.Getenv("MSM_DB_PASSWORD")
-		return m.CreateUser(ctx, args[1], args[2], password, args[3])
-	case "createdb":
-		if e := need(3); e != nil {
-			return e
-		}
-		return m.CreateDatabase(ctx, args[1], args[2])
-	case "backup":
-		if e := need(3); e != nil {
-			return e
-		}
-		path, e := m.Backup(ctx, args[1], args[2])
-		if e == nil {
-			fmt.Fprintln(out, path)
-		}
-		return e
-	case "restore":
-		if e := need(4); e != nil {
-			return e
-		}
-		return m.Restore(ctx, args[1], args[2], args[3])
-	case "connection":
-		if e := need(2); e != nil {
-			return e
-		}
-		text, e := m.Connection(args[1])
-		fmt.Fprintln(out, text)
-		return e
 	case "helper":
 		return runHelper(ctx, args[1:])
 	}
@@ -472,19 +274,4 @@ func runHelper(ctx context.Context, args []string) error {
 		}
 	}
 	return privhelper.ServeActivated(ctx, ownerUID)
-}
-func read(path string, v any) error {
-	b, e := os.ReadFile(path)
-	if e != nil {
-		return e
-	}
-	return json.Unmarshal(b, v)
-}
-
-func readLog(m *devplatform.Manager, id string, out io.Writer) error {
-	text, err := m.Logs(id)
-	if err == nil {
-		_, err = fmt.Fprintln(out, text)
-	}
-	return err
 }

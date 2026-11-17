@@ -612,3 +612,7 @@ func TestRefreshNodeShellIfPresentRepairsStaleWrapper(t *testing.T) {
 		t.Fatalf("wrapper not refreshed: got %q, want %q", string(got), wantExe)
 	}
 }
+
+func (m *Manager) nodeBlock() string {
+	return nodeBlockBegin + "\n[ ! -r " + shellQuote(m.nodeInitPath()) + " ] || . " + shellQuote(m.nodeInitPath()) + "\n" + nodeBlockEnd + "\n"
+}

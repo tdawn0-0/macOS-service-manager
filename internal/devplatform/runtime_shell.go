@@ -31,26 +31,6 @@ func (m *Manager) zshStartupFiles() ([]string, error) {
 
 func updateShellBlock(data []byte, begin, end, block string, enable bool) ([]byte, error) {
 	b := bytes.Clone(data)
-	legacyBegin := strings.Replace(begin, "Devbase", "Service Manager", 1)
-	legacyEnd := strings.Replace(end, "Devbase", "Service Manager", 1)
-	if begin == nodeBlockBegin {
-		legacyBegin = "# BEGIN Service Manager node"
-		legacyEnd = "# END Service Manager node"
-	}
-	if legacyBegin != begin && bytes.Contains(b, []byte(legacyBegin)) {
-		if cleaned, err := updateShellBlock(b, legacyBegin, legacyEnd, "", false); err == nil {
-			b = cleaned
-		}
-	}
-	if begin == nodeBlockBegin {
-		legacyNodeBegin := "# >>> Service Manager Node.js >>>"
-		legacyNodeEnd := "# <<< Service Manager Node.js <<<"
-		if bytes.Contains(b, []byte(legacyNodeBegin)) {
-			if cleaned, err := updateShellBlock(b, legacyNodeBegin, legacyNodeEnd, "", false); err == nil {
-				b = cleaned
-			}
-		}
-	}
 	start, stop := bytes.Index(b, []byte(begin)), bytes.Index(b, []byte(end))
 	if bytes.Count(b, []byte(begin)) > 1 || bytes.Count(b, []byte(end)) > 1 {
 		return nil, errors.New("duplicate runtime shell blocks")
@@ -313,39 +293,7 @@ func (m *Manager) configureRuntimeShellFiles(ctx context.Context, name, begin, e
 			changes = append(changes, change{config, data})
 		}
 	}
-	if enable && m.hasShell("fish") {
-		home, err := m.home()
-		if err != nil {
-			return label, err
-		}
-		configHome := filepath.Join(home, ".config")
-		if dir := os.Getenv("XDG_CONFIG_HOME"); m.Home == "" && dir != "" && filepath.IsAbs(dir) {
-			configHome = dir
-		}
-		legacyPaths := []string{
-			filepath.Join(configHome, "fish", "conf.d", "service-manager.fish"),
-			filepath.Join(home, ".config", "fish", "conf.d", "service-manager.fish"),
-		}
-		for _, legacyPath := range legacyPaths {
-			if _, err := os.Lstat(legacyPath); err == nil {
-				config, err := readNodeShellConfiguration(legacyPath)
-				if err != nil {
-					return label, fmt.Errorf("%s: %w", legacyPath, err)
-				}
-				if seen[config.target] {
-					continue
-				}
-				seen[config.target] = true
-				data, err := updateShellBlock(config.data, begin, end, "", false)
-				if err != nil {
-					return label, fmt.Errorf("%s: %w; review this file", legacyPath, err)
-				}
-				if !bytes.Equal(config.data, data) {
-					changes = append(changes, change{config, data})
-				}
-			}
-		}
-	}
+
 	if enable {
 		unique := map[string]bool{}
 		var saved []string

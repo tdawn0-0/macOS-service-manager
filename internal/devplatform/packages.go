@@ -394,9 +394,6 @@ func hasDigestContext(ctx context.Context, path, want string) bool {
 	_, e = io.Copy(h, contextReader{ctx, f})
 	return e == nil && hex.EncodeToString(h.Sum(nil)) == want
 }
-func download(ctx context.Context, address, dest, want string) error {
-	return downloadProgress(ctx, address, dest, want, nil)
-}
 
 type contextReader struct {
 	ctx    context.Context
@@ -504,9 +501,6 @@ func archivePath(root, name string, strip int) (string, error) {
 		return "", errors.New("archive path escapes root")
 	}
 	return path, nil
-}
-func extract(src, root, format string, strip int) error {
-	return extractContext(context.Background(), src, root, format, strip)
 }
 func extractContext(ctx context.Context, src, root, format string, strip int) error {
 	if e := ctx.Err(); e != nil {

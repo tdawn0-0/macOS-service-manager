@@ -81,5 +81,5 @@ func (m *Manager) bundleHelperExecutable(source, digest string) (string, bool, e
 			return "", true, e
 		}
 	}
-	return program, true, syncExportDirectory(parent)
+	return program, true, syncDirectory(parent)
 }

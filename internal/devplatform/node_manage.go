@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 	"syscall"
-	"time"
 )
 
 // What Node.js version management leaves where: the default as a link, the
@@ -55,15 +54,6 @@ func installedNodes(s State, index []NodeRelease) []InstalledNode {
 	}
 	sort.Slice(out, func(i, j int) bool { return versionGreater(out[i].Version, out[j].Version) })
 	return out
-}
-
-// InstalledNodes lists the installed Node.js versions, newest first.
-func (m *Manager) InstalledNodes() ([]InstalledNode, error) {
-	s, e := m.Read()
-	if e != nil {
-		return nil, e
-	}
-	return installedNodes(s, m.cachedNodeReleases()), nil
 }
 
 // defaultFirstNode makes the first Node.js version installed the default, as
@@ -304,10 +294,6 @@ func (m *Manager) home() (string, error) {
 	return os.UserHomeDir()
 }
 
-func (m *Manager) nodeBlock() string {
-	return nodeBlockBegin + "\n[ ! -r " + shellQuote(m.nodeInitPath()) + " ] || . " + shellQuote(m.nodeInitPath()) + "\n" + nodeBlockEnd + "\n"
-}
-
 // NodeShellEnabled requires all supported shells and startup modes, so older rc-only setups offer
 // Enable again to upgrade without silently editing more user files.
 func (m *Manager) NodeShellEnabled() bool {
@@ -343,11 +329,7 @@ func (m *Manager) RuntimeShellEnabled(name string) bool {
 		if e != nil {
 			return false
 		}
-		hasNew := bytes.Contains(b, []byte(begin)) && bytes.Contains(b, []byte(end))
-		legacyBegin := strings.Replace(begin, "Devbase", "Service Manager", 1)
-		legacyEnd := strings.Replace(end, "Devbase", "Service Manager", 1)
-		hasLegacy := bytes.Contains(b, []byte(legacyBegin)) && bytes.Contains(b, []byte(legacyEnd))
-		if !hasNew && !hasLegacy {
+		if !bytes.Contains(b, []byte(begin)) || !bytes.Contains(b, []byte(end)) {
 			return false
 		}
 	}
@@ -467,13 +449,4 @@ func (m *Manager) EnableNodeShell(ctx context.Context) (string, error) {
 // DisableNodeShell removes only this runtime's marked blocks in all modes.
 func (m *Manager) DisableNodeShell(ctx context.Context) (string, error) {
 	return m.configureRuntimeShellFiles(ctx, "node", nodeBlockBegin, nodeBlockEnd, false)
-}
-
-// NodeIndexAge says how old the cached release list is, zero when there is none.
-func (m *Manager) NodeIndexAge() time.Duration {
-	var cached nodeIndexCache
-	if b, e := os.ReadFile(m.nodeIndexPath()); e == nil && json.Unmarshal(b, &cached) == nil {
-		return time.Since(cached.FetchedAt)
-	}
-	return 0
 }

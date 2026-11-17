@@ -197,7 +197,7 @@ def cleanup_local_jobs(root):
         if file.parent.name != 'jobs': continue
         data = plistlib.loads(file.read_bytes())
         label = data.get('Label','')
-        if not re.fullmatch(r'xyz\.jyeu\.msm\.dev\.[a-f0-9]{8}\.[A-Za-z0-9._-]+',label) or file.stem != label:
+        if not re.fullmatch(r'xyz\.jyeu\.devbase\.dev\.[a-f0-9]{8}\.[A-Za-z0-9._-]+',label) or file.stem != label:
             raise RuntimeError('local cleanup cannot confirm job ownership; private root retained')
         target='gui/'+str(os.getuid())+'/'+label
         subprocess.run(['launchctl','bootout',target],capture_output=True,timeout=40)

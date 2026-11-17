@@ -164,5 +164,5 @@ func (m *Manager) prepareDataLocation(i *Instance) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	return syncExportDirectory(i.DataDirectory)
+	return syncDirectory(i.DataDirectory)
 }

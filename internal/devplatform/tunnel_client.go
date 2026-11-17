@@ -69,11 +69,6 @@ func (m *Manager) needsTunnelSync(s State) bool {
 	return false
 }
 
-// StartTunnel ensures the background Cloudflare tunnel launchd job is running.
-func (m *Manager) StartTunnel(ctx context.Context) error {
-	return m.ApplyTunnel(ctx)
-}
-
 // StopTunnel stops the background Cloudflare tunnel launchd job.
 func (m *Manager) StopTunnel(ctx context.Context) error {
 	return m.withState(ctx, func(*State) error {
@@ -576,9 +571,8 @@ func (s *tunnelSession) readLoop(ctx context.Context) error {
 			return err
 		}
 		if op == wsOpText {
-			if string(data) == tunnelControlPong {
-				continue
-			}
+			// Tunnel frames are binary; the gateway's text control replies
+			// answer text pings, which this client never sends.
 			continue
 		}
 		frame, err := decodeTunnelFrame(data)

@@ -214,7 +214,7 @@ func (m *Manager) deletionPaths(id string) (dir, record, staged string, e error)
 }
 func readInstanceDeletion(path, id string) (instanceDeletionRecord, []byte, error) {
 	var r instanceDeletionRecord
-	b, e := readExportFile(filepath.Dir(path), filepath.Base(path), 65536)
+	b, e := readRegularFile(filepath.Dir(path), filepath.Base(path), 65536)
 	if e != nil {
 		return r, nil, e
 	}
@@ -432,10 +432,10 @@ func (m *Manager) DeleteInstanceData(ctx context.Context, id, fingerprint, confi
 				if e = writeJSON(record, r); e != nil {
 					return nil, nil, e
 				}
-				if e = syncExportDirectory(filepath.Dir(record)); e != nil {
+				if e = syncDirectory(filepath.Dir(record)); e != nil {
 					return nil, nil, e
 				}
-				if e = syncExportDirectory(filepath.Dir(filepath.Dir(record))); e != nil {
+				if e = syncDirectory(filepath.Dir(filepath.Dir(record))); e != nil {
 					return nil, nil, e
 				}
 				w.operationArtifact(record)
@@ -460,23 +460,23 @@ func (m *Manager) DeleteInstanceData(ctx context.Context, id, fingerprint, confi
 					}
 					return base.Rename(to, from)
 				}
-				if e = syncExportDirectory(filepath.Join(w.Root, "instances")); e != nil {
+				if e = syncDirectory(filepath.Join(w.Root, "instances")); e != nil {
 					return undo, nil, e
 				}
-				if e = syncExportDirectory(filepath.Dir(staged)); e != nil {
+				if e = syncDirectory(filepath.Dir(staged)); e != nil {
 					return undo, nil, e
 				}
 				w.emit("Database data staged for deletion")
 				delete(s.Instances, id)
 				removeInstanceProfiles(s, id)
 				return undo, func() {
-					commitErr = syncExportDirectory(w.Root)
+					commitErr = syncDirectory(w.Root)
 					if commitErr == nil {
 						r.Committed = true
 						commitErr = writeJSON(record, r)
 					}
 					if commitErr == nil {
-						commitErr = syncExportDirectory(filepath.Dir(record))
+						commitErr = syncDirectory(filepath.Dir(record))
 					}
 					if commitErr == nil {
 						w.emit("Database deletion committed")
@@ -537,7 +537,7 @@ func (m *Manager) eraseInstanceDeletion(ctx context.Context, record, staged, rev
 			if err = writeJSON(record, r); err != nil {
 				return err
 			}
-			if err = syncExportDirectory(filepath.Dir(record)); err != nil {
+			if err = syncDirectory(filepath.Dir(record)); err != nil {
 				return err
 			}
 		}
@@ -549,7 +549,7 @@ func (m *Manager) eraseInstanceDeletion(ctx context.Context, record, staged, rev
 	}); e != nil {
 		return e
 	}
-	if e = syncExportDirectory(m.Root); e != nil {
+	if e = syncDirectory(m.Root); e != nil {
 		return e
 	}
 	m.operation.phase("Erasing data")
@@ -610,7 +610,7 @@ func (m *Manager) eraseInstanceDeletion(ctx context.Context, record, staged, rev
 	if e = os.Remove(record); e != nil {
 		return e
 	}
-	return syncExportDirectory(filepath.Dir(record))
+	return syncDirectory(filepath.Dir(record))
 }
 func (m *Manager) FinishInstanceDeletion(ctx context.Context, id, revision, confirmation string) error {
 	return m.runOperation(ctx, OperationRequest{Kind: "finish-deletion", Resource: id}, "", func(w *Manager) error {
@@ -662,7 +662,7 @@ func (m *Manager) RestoreInstanceDeletion(ctx context.Context, id, revision stri
 					return nil, nil, errors.New("deletion changed or cannot be restored; refresh its status")
 				}
 				if info.Status == "Not moved" {
-					return nil, func() { _ = os.Remove(record); _ = syncExportDirectory(filepath.Dir(record)) }, nil
+					return nil, func() { _ = os.Remove(record); _ = syncDirectory(filepath.Dir(record)) }, nil
 				}
 				root, e := os.OpenRoot(w.Root)
 				if e != nil {
@@ -684,7 +684,7 @@ func (m *Manager) RestoreInstanceDeletion(ctx context.Context, id, revision stri
 					defer base.Close()
 					return base.Rename(to, from)
 				}
-				return undo, func() { _ = os.Remove(record); _ = syncExportDirectory(filepath.Dir(record)) }, nil
+				return undo, func() { _ = os.Remove(record); _ = syncDirectory(filepath.Dir(record)) }, nil
 			})
 		})
 	})

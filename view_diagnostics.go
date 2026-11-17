@@ -10,18 +10,6 @@ import (
 	"devbase/internal/devplatform"
 )
 
-func devStatusColor(c *ui.Context, status string) ui.Color {
-	switch status {
-	case "Healthy":
-		return c.Theme().Success
-	case "Failed":
-		return c.Theme().Danger
-	case "Not ready", "Partly running", "Restarting", "Unknown":
-		return c.Theme().Warning
-	}
-	return c.Theme().TextMuted
-}
-
 func (a *app) showDevDiagnostics(report devplatform.DiagnosticReport) {
 	a.dev.diagnosticReport = &report
 	a.dev.diagnosticsOpen = true

@@ -3,6 +3,8 @@ import io
 import json
 import os
 from pathlib import Path
+import plistlib
+import re
 import subprocess
 import tempfile
 import unittest
@@ -256,6 +258,40 @@ class NativeReleaseTests(unittest.TestCase):
                     self.assertEqual(len(call.args),3)
                     self.assertEqual(call.args[1]['TMPDIR'],str(root/'tests'))
             finally:os.chdir(previous)
+
+    def test_local_cleanup_accepts_the_platform_job_labels(self):
+        m = module()
+        # The label format of Manager.label; a rename there must fail here too.
+        engine = (Path(__file__).parent.parent / 'internal/devplatform/engine.go').read_text()
+        prefix = re.search(r'fmt\.Sprintf\("([a-z.]+)%x\.%s"', engine).group(1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            jobs = root / 'tests' / 'TestNative' / 'jobs'
+            jobs.mkdir(parents=True)
+            label = prefix + '0123abcd.proxy'
+            (jobs / (label + '.plist')).write_bytes(plistlib.dumps({'Label': label}))
+            calls = []
+            def run(argv, **kwargs):
+                calls.append(argv)
+                output = b'Could not find service' if argv[1] == 'print' else b''
+                return subprocess.CompletedProcess(argv, 113 if argv[1] == 'print' else 0, output, b'')
+            with mock.patch.object(m.subprocess, 'run', side_effect=run):
+                m.cleanup_local_jobs(root)
+        target = 'gui/' + str(os.getuid()) + '/' + label
+        self.assertEqual([['launchctl', 'bootout', target], ['launchctl', 'print', target]], calls)
+
+    def test_local_cleanup_refuses_foreign_job_labels(self):
+        m = module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            jobs = root / 'tests' / 'jobs'
+            jobs.mkdir(parents=True)
+            label = 'com.example.foreign'
+            (jobs / (label + '.plist')).write_bytes(plistlib.dumps({'Label': label}))
+            with mock.patch.object(m.subprocess, 'run') as run:
+                with self.assertRaisesRegex(RuntimeError, 'cannot confirm job ownership'):
+                    m.cleanup_local_jobs(root)
+            run.assert_not_called()
 
     def test_changed_keg_prevents_native_phase(self):
         m=module()

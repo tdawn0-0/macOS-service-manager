@@ -3,7 +3,6 @@ package devplatform
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,13 +10,8 @@ import (
 	"syscall"
 )
 
-func exportJSON(v any) ([]byte, error) {
-	b, err := json.MarshalIndent(v, "", "  ")
-	return append(b, '\n'), err
-}
-
 // Refuse symlinks and special files, including a FIFO swapped in before open.
-func readExportFile(dir, name string, limit int64) ([]byte, error) {
+func readRegularFile(dir, name string, limit int64) ([]byte, error) {
 	p := filepath.Join(dir, name)
 	info, err := os.Lstat(p)
 	if err != nil {
@@ -45,7 +39,7 @@ func readExportFile(dir, name string, limit int64) ([]byte, error) {
 	}
 	return b, err
 }
-func syncExportDirectory(dir string) error {
+func syncDirectory(dir string) error {
 	f, err := os.Open(dir)
 	if err != nil {
 		return err

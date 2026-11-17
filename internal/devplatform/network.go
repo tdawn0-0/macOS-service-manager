@@ -18,7 +18,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -291,75 +290,6 @@ func (m *Manager) helperExecutable(name string) (string, error) {
 		}
 	}
 	return dest, nil
-}
-
-// VerifySocketLifecycle delegates the privileged socket lifecycle verification
-// to the privileged helper. Its cleanup restores the existing job even if a check fails.
-func (m *Manager) VerifySocketLifecycle(ctx context.Context) error {
-	return m.withState(ctx, func(s *State) error {
-		sites := proxyRoutesFromState(s)
-		if !m.socketLoaded(ctx) || len(sites) == 0 {
-			return errors.New("start the socket-activated HTTPS proxy before running this test")
-		}
-		hc, err := privhelper.Require()
-		if err != nil {
-			return err
-		}
-		if err := m.verifySocketLifecycleViaHelper(ctx, hc, sites); err != nil {
-			return err
-		}
-		for _, site := range sites {
-			if e := m.verifyProxyTLS(ctx, site); e != nil {
-				return e
-			}
-		}
-		return nil
-	})
-}
-
-func (m *Manager) verifySocketLifecycleViaHelper(ctx context.Context, hc *privhelper.Client, sites []proxyRoute) error {
-	target, jobPath := m.socketTarget(), m.socketJobPath()
-	printResp, _ := hc.PrintProxySocket(ctx, target)
-	pid := parseLaunchctlPID(string(printResp.Output))
-
-	restored := false
-	defer func() {
-		if !restored {
-			_ = hc.LaunchdControl(context.Background(), [][]string{{"bootstrap", "system", jobPath}})
-		}
-	}()
-
-	if err := hc.LaunchdControl(ctx, [][]string{{"bootout", target}}); err != nil {
-		return err
-	}
-	if pid > 0 {
-		deadline := time.Now().Add(10 * time.Second)
-		for syscall.Kill(pid, 0) == nil {
-			if time.Now().After(deadline) {
-				return errors.New("proxy did not stop")
-			}
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(100 * time.Millisecond):
-			}
-		}
-	}
-	for _, port := range proxyListenerPorts(sites) {
-		conn, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
-		if err == nil {
-			conn.Close()
-			return errors.New("HTTPS port was not released")
-		}
-	}
-	if err := hc.LaunchdControl(ctx, [][]string{
-		{"bootstrap", "system", jobPath},
-		{"kickstart", "-k", target},
-	}); err != nil {
-		return err
-	}
-	restored = true
-	return nil
 }
 
 func parseLaunchctlPID(out string) int {

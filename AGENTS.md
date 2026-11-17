@@ -25,7 +25,7 @@
   - Shell startup integration scripts (zsh, Bash, fish) and PATH management.
   - Diagnostics, status gathering, and file-locked transactional state persistence (`Manager.withState`/`withStateTransaction` over `state.json` + `state.lock`). The UI's own `developmentState` lives in the root package.
 - **`internal/devcli/` & `cmd/devmgr/`**:
-  - `internal/devcli/`: Internal `--dev` subcommands. launchd jobs run `serve` (proxy), `tunnel`, `maintain` (log rotation), and `database-worker`; `node` is the shell shim. The rest (`db-*`, `ca-*`, `tunnel-*`, `port`, `repair`, `doctor`, …) exist for headless use and tests. The shipped `.app` has no public user-facing CLI.
+  - `internal/devcli/`: Internal `--dev` subcommands. launchd jobs run `serve` (proxy), `tunnel`, `maintain` (log rotation), and `database-worker`; `node` is the shell shim; `helper` is the privileged helper. The rest (`status`, `install`, `log-rotation`, `maintenance-stop` for `scripts/verify-native-release.py`; `db-*`, `ca-*`, `task-dismiss`, `port` for `internal/devcli` tests) are reachable only through `cmd/devmgr`; add one only together with its caller. The shipped `.app` has no public user-facing CLI.
   - `cmd/devmgr/`: Unshipped developer test harness for headless verification, fixtures, and diagnostics.
 - **Inspector & System Packages**:
   - `internal/launchd/`: Native macOS launchd job discovery, property list parsing, and lifecycle control.
@@ -67,8 +67,8 @@ go test ./internal/system ./internal/logs
   - **NEVER** write into `~/Library/Java/JavaVirtualMachines` or real user `~/Library/LaunchAgents`.
   - Always isolate tests using `t.TempDir()`, configure `MSM_DEV_HOME`, and mock `system.RunAdmin` or `Manager.Run`.
 - **Documentation Screenshot Environment Variables**:
-  - **NEVER** set `MSM_README_SHOTS`, `MSM_DEV_SHOTS`, or `MSM_ADDITIONAL_SHOTS` during standard test runs.
-  - Use these variables only when deliberately regenerating documentation assets.
+  - **NEVER** set `MSM_DEV_SHOTS` or `MSM_ADDITIONAL_SHOTS` during standard test runs.
+  - Use these variables only when deliberately regenerating screenshots, and write into the ignored `build/` directory; commit an image only when a document links to it.
 
 ## 5. Non-Negotiable Architecture & Safety Invariants
 

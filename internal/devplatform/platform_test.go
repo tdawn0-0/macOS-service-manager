@@ -161,3 +161,7 @@ func TestPackageReferenceProtectsData(t *testing.T) {
 		t.Fatal("removed referenced package")
 	}
 }
+
+func extract(src, root, format string, strip int) error {
+	return extractContext(context.Background(), src, root, format, strip)
+}

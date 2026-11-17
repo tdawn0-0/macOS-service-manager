@@ -97,7 +97,7 @@ EOF
 custom=$(gh api 'repos/{owner}/{repo}/environments/release' --jq '.deployment_branch_policy.custom_branch_policies')
 [ "$custom" = true ] || die "the release environment does not limit which tags can use it"
 policies=$(gh api 'repos/{owner}/{repo}/environments/release/deployment-branch-policies' --jq '.branch_policies // [] | .[].name')
-for pattern in 'v*' 'devbase-v*' 'msm-v*'; do
+for pattern in 'v*'; do
 	printf '%s\n' "$policies" | grep -qxF "$pattern" ||
 		gh api -X POST 'repos/{owner}/{repo}/environments/release/deployment-branch-policies' --silent -f name="$pattern" -f type=tag
 	echo "    $pattern"

@@ -2,7 +2,6 @@
 # Builds the app signed with a Developer ID, in a disk image, and checks them.
 #
 #   scripts/package.sh                 an Apple Silicon app (arm64)
-#   scripts/package.sh --arch arm64    explicitly select the supported architecture
 #   scripts/package.sh --skip-tests    without running the tests first
 #
 # Environment:
@@ -30,20 +29,12 @@ platform=darwin/arm64
 run_tests=1
 while [ $# -gt 0 ]; do
 	case "$1" in
-	--arch)
-		[ $# -ge 2 ] || die "only --arch arm64 is supported"
-		case "$2" in
-		arm64) platform="darwin/$2" ;;
-		*) die "only Apple Silicon (arm64) is supported, not $2" ;;
-		esac
-		shift 2
-		;;
 	--skip-tests)
 		run_tests=0
 		shift
 		;;
 	-h | --help)
-		sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+		sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
 		exit 0
 		;;
 	*) die "unknown argument: $1 (see --help)" ;;

@@ -36,18 +36,6 @@ type DiagnosticReport struct {
 	ProxyRevision uint64            `json:"-"`
 }
 
-func (r DiagnosticReport) Text() string {
-	var lines []string
-	for _, c := range r.Checks {
-		line := fmt.Sprintf("[%s] %s / %s: %s", c.Status, c.Layer, c.Resource, c.Summary)
-		if c.Remedy != "" {
-			line += " — " + c.Remedy
-		}
-		lines = append(lines, line)
-	}
-	return strings.Join(lines, "\n")
-}
-
 // RedactedJSON replaces local resource names and domains with report-local aliases.
 // Fixed summaries preserve the failing layer and repair instruction. No state or
 // filesystem traversal is part of export; even private keys are never read.

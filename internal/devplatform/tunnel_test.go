@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -19,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -272,12 +274,6 @@ func newMockGatewayServer(t *testing.T, secret string) *mockGatewayServer {
 	g.server = httptest.NewTLSServer(http.HandlerFunc(g.serveHTTP))
 	t.Cleanup(g.server.Close)
 	return g
-}
-
-func (g *mockGatewayServer) tlsConfig() *tls.Config {
-	pool := x509.NewCertPool()
-	pool.AddCert(g.server.Certificate())
-	return &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 }
 
 func (g *mockGatewayServer) dropClient(clientID string) {
@@ -1852,3 +1848,87 @@ func TestTunnelWorkerScriptSyntax(t *testing.T) {
 		}
 	}
 }
+
+func verifyTunnelHandshake(secret, clientID, timestamp, nonce, signature string, now time.Time) bool {
+	if secret == "" || clientID == "" || nonce == "" || signature == "" {
+		return false
+	}
+	ts, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		return false
+	}
+	diff := now.Unix() - ts
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > 60 {
+		return false
+	}
+	expected := signTunnelHandshake(secret, clientID, timestamp, nonce)
+	if len(expected) != len(signature) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(signature)) == 1
+}
+
+func upgradeWebSocket(w http.ResponseWriter, r *http.Request, responseHeaders http.Header) (*wsConn, error) {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") || !headerContainsToken(r.Header.Get("Connection"), "upgrade") {
+		http.Error(w, "expected websocket upgrade", http.StatusUpgradeRequired)
+		return nil, errors.New("not a websocket upgrade request")
+	}
+	key := strings.TrimSpace(r.Header.Get("Sec-WebSocket-Key"))
+	if key == "" {
+		http.Error(w, "missing Sec-WebSocket-Key", http.StatusBadRequest)
+		return nil, errors.New("missing Sec-WebSocket-Key")
+	}
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "websocket hijack unsupported", http.StatusInternalServerError)
+		return nil, errors.New("response writer does not support hijacking")
+	}
+	conn, rw, err := hj.Hijack()
+	if err != nil {
+		return nil, err
+	}
+	var sb strings.Builder
+	sb.WriteString("HTTP/1.1 101 Switching Protocols\r\n")
+	sb.WriteString("Upgrade: websocket\r\n")
+	sb.WriteString("Connection: Upgrade\r\n")
+	sb.WriteString("Sec-WebSocket-Accept: ")
+	sb.WriteString(wsAcceptKey(key))
+	sb.WriteString("\r\n")
+	for k, vals := range responseHeaders {
+		lk := strings.ToLower(k)
+		if lk == "upgrade" || lk == "connection" || lk == "sec-websocket-accept" {
+			continue
+		}
+		for _, v := range vals {
+			sb.WriteString(k)
+			sb.WriteString(": ")
+			sb.WriteString(strings.ReplaceAll(strings.ReplaceAll(v, "\r", ""), "\n", ""))
+			sb.WriteString("\r\n")
+		}
+	}
+	sb.WriteString("\r\n")
+	if _, err = rw.WriteString(sb.String()); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if err = rw.Flush(); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return &wsConn{conn: conn, br: rw.Reader, isClient: false}, nil
+}
+
+func (c *wsConn) WriteText(data []byte) error {
+	return c.WriteMessage(wsOpText, data)
+}
+
+// The gateway answers this text keep-alive (CONTROL_PING in
+// tunnel_worker_template.go); the client keeps the connection alive with
+// protocol pings instead and must never send it.
+const (
+	tunnelControlPing = "__devbase_ping__"
+	tunnelControlPong = "__devbase_pong__"
+)

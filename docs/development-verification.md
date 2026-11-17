@@ -6,38 +6,10 @@ Only the two latest macOS releases (currently 26 and 27) are verified: CI runs o
 
 The code-level gates are `go test ./...`, `go test -race ./...`, `go vet ./...`, `go mod verify`, Python script tests, notice check, and `go tool mygo build -sign - -skip-notarize`. They show compilation, behavior and an ad-hoc local build. A native release gate on a disposable GitHub-hosted macOS runner requires real installed packages and all parent/child events from `scripts/verify-native-release.py --run`; no skip is accepted. A separate Developer ID signed App must pass local CA authorization and Chrome without a certificate interstitial on an authorized disposable Mac.
 
-Current implementation and checks should be appended below with exact commit and result. Any unavailable runner, signing identity, Chrome machine or cleanup evidence remains **NOT RUN/BLOCKED**, never inferred from a mock, CLI TLS client, or prior version.
+Update the status below only when a gate actually changes it, naming the exact commit, command, environment and result. Any unavailable runner, signing identity, Chrome machine or cleanup evidence remains **NOT RUN/BLOCKED**, never inferred from a mock, CLI TLS client, or prior version.
 
-## 015-B isolated worktree evidence
+## Current status
 
-The 015-B implementation was checked in an isolated worktree based on `d76d545`; this record is not a release sign-off. `go test ./... -count=1` and `go test -race ./... -count=1` passed. `go vet ./...`, `go mod verify`, 31 Python tests, and the third-party notice check passed. `go tool mygo build -sign - -skip-notarize` built an **ad-hoc signed** arm64 App/DMG. The new native parent test is present but SKIP locally without the verified package cache; this is not a PASS for release acceptance.
+All rows of the [acceptance matrix](resources-acceptance.md) remain **NOT RUN** for full acceptance. The native release gate (`scripts/verify-native-release.py --run`) needs a disposable GitHub-hosted macOS arm64 runner, and the signed App, system CA authorization, privileged listener and Chrome runbook needs an authorized disposable machine with a matching Developer ID build. Neither has been observed for the current product. Real upstream Java/Python installation, real PostgreSQL 18 servers, database backup/restore on an external volume and cross-volume hardware behavior are also unverified.
 
-The 012, 013, 014, 016, and 017 UI layout suites were each run in this worktree with the Go JSON event gate. Each produced fresh light/dark 900×520 and 1120×720 PNGs in ignored `build/resource-shots/` directories. The event gate confirmed parent and `layouts` child PASS, PNG dimensions and current-run times. Light 900×520 HTTPS and dark 1120×720 connection-profile screenshots were visually inspected. These synthetic screenshots do not include private machine data and are not system-trust evidence.
-
-**NOT RUN/BLOCKED:** `scripts/verify-native-release.py --run` requires a disposable GitHub-hosted macOS arm64 runner. The signed App, system CA authorization, privileged listener and Chrome runbook requires an authorized disposable machine and matching Developer ID build. This local worktree has neither prerequisite; no keychain trust, privileged port, or browser acceptance was attempted. All nine acceptance rows remain NOT RUN until their required native evidence is recorded.
-
-## 018 runtimes and database locations
-
-> Historical record. Go runtime management, part of 018, has since been removed; Go mentions below describe that commit only.
-
-Implementation commit **`2f221b5`**, branch `codex/018-runtimes-database-locations`, based on `c4246ae`, was verified in the isolated `service-manager-018` worktree on 2026-11-08. The [usage and boundaries](development-runtimes-and-data.md) describe the exact feature contract.
-
-| Check | Observed result |
-|---|---|
-| Required tests listed with `go test ./... -list` | All seven requested parent names present |
-| Focused `go test -race ./... -run '^(TestRuntimeCatalogs\|TestUVPythonManagement\|TestAdditionalRuntimeSelection\|TestUIAdditionalRuntimes\|TestDatabaseCustomDataDirectory\|TestDatabaseVersionIsolation\|TestUIDatabaseLocations)$' -count=1 -json` | PASS: 32 parent/child test events, zero SKIP; each required parent has actual run and pass events |
-| `go test ./... -count=1 -json` | PASS: 502 test PASS events, 30 environment-gated test SKIP events |
-| `go test -race ./... -count=1 -json` | PASS: 502 test PASS events, the same 30 test SKIP events |
-| `go vet ./...` and `go mod verify` | PASS |
-| `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'` | PASS: 31 tests |
-| `python3 scripts/collect-third-party-notices.py --check` | PASS: 15 modules, 50 distribution notice files |
-| `git diff --check` | PASS |
-| `go tool mygo build -sign - -skip-notarize` | PASS: ad-hoc signed arm64 App and DMG; not Developer ID/notarized acceptance |
-
-The focused gate covers verified archive-shaped Java/Go fixtures, independent default selection and dotfile-symlink preservation, uv command arguments and managed-only removal, catalog failure/cancellation, custom-directory ownership and path rejection, initialization cancel/state-write recovery, start/restart/stop and port change, Remove retention, disabled external permanent deletion, logical backup/restore worker dispatch, and PostgreSQL 17/18 exact-keg fixture isolation. The PostgreSQL fixtures use `17.11_1` and `18.6_1`; they do not run native PostgreSQL servers.
-
-Sixteen fresh PNGs were generated by `TestUIAdditionalRuntimes` and `TestUIDatabaseLocations` in [images/development/additional](images/development/additional), covering all four features at 900×520 and 1120×720 in both themes. PNG dimensions were checked. All layouts were reviewed together and representative full-size images were inspected; Java action clipping found during review was corrected before the final run. Scroll reachability and actual custom-location submission are also tested.
-
-The 30 full-suite SKIPs are existing environment-gated real-package/native cases and opt-in screenshot cases. In particular, `TestUISoftwareCatalogAllFive`, `TestNativeResourceProduct`, native engine integration, live Homebrew metadata, and real Redis repair remain SKIP without an authorized disposable native runner/package cache. No required 018 focused parent or child skipped. Raw Go JSON event files for this run are `/tmp/msm018-focused.json`, `/tmp/msm018-full-final.json`, and `/tmp/msm018-race-final.json`; these are temporary local evidence, not distribution artifacts.
-
-**NOT RUN:** real upstream Java/Go/Python installation and removal, real PostgreSQL 18 servers, real database backup/restore against an external volume, hardware cross-volume behavior, and the existing signed App/system-trust/Chrome gate. No real user database, uv interpreter store, shell configuration, hosts entry, or trust store was mutated. Test shell configuration, data and launchd jobs use isolated temporary fixtures. External permanent erasure remains explicitly unsupported; Remove retains those files.
+Records of earlier per-change runs (015-B, 018) are in this file's git history; they describe those commits only.

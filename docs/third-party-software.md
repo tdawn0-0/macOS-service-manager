@@ -27,6 +27,6 @@ App 随包包含 LICENSE、NOTICE 和 licenses 目录。`scripts/collect-third-p
 
 `icons.go` 沿用的 Lucide SVG 路径保留上游 ISC 及 Feather 衍生图标的 MIT 声明。完整许可证来自 [Lucide 固定提交](https://github.com/lucide-icons/lucide/blob/e715245d62667c800e7f54c94b1b023692e900a3/LICENSE)，原样保存在 assets/notices/lucide，生成时核对固定摘要并纳入 licenses/third-party-assets/lucide/LICENSE。该提交固定的是许可证快照；旧图标几何的具体上游版本没有记录，不把两者等同。
 
-Go LICENSE 必须存在；PATENTS 不能替代它。对于 Homebrew 分发，收集器也会检查同一公式前缀的 LICENSE，不要求最终用户安装 Homebrew。当前清单为 15 个模块、50 个生成文件，加顶层 LICENSE/NOTICE 共 52 个随包声明文件。详见 [来源核对](source-provenance.md)。
+Go LICENSE 必须存在；PATENTS 不能替代它。对于 Homebrew 分发，收集器也会检查同一公式前缀的 LICENSE，不要求最终用户安装 Homebrew。当前清单为 15 个模块、50 个生成文件，加顶层 LICENSE/NOTICE 共 52 个随包声明文件。
 
 更新依赖后先 `go mod download`，再运行生成脚本并审阅差异。`--check` 只核对，模块网络访问关闭；缺少缓存或存在替换模块会拒绝。发布脚本和 CI 均检查清单。第三方开发运行时按需下载，不包含在此 App 的 Go 依赖清单中，其原始归档许可仍需保留。

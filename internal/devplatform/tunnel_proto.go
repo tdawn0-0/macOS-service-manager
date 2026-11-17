@@ -3,14 +3,11 @@ package devplatform
 import (
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
-	"time"
 )
 
 const (
@@ -34,9 +31,6 @@ const (
 	frameWSOpenAck byte = 0x21
 	frameWSData    byte = 0x22
 	frameWSClose   byte = 0x23
-
-	tunnelControlPing = "__devbase_ping__"
-	tunnelControlPong = "__devbase_pong__"
 )
 
 type tunnelFrame struct {
@@ -126,26 +120,4 @@ func signTunnelHandshake(secret, clientID, timestamp, nonce string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte("v1\n" + clientID + "\n" + timestamp + "\n" + nonce))
 	return hex.EncodeToString(mac.Sum(nil))
-}
-
-func verifyTunnelHandshake(secret, clientID, timestamp, nonce, signature string, now time.Time) bool {
-	if secret == "" || clientID == "" || nonce == "" || signature == "" {
-		return false
-	}
-	ts, err := strconv.ParseInt(timestamp, 10, 64)
-	if err != nil {
-		return false
-	}
-	diff := now.Unix() - ts
-	if diff < 0 {
-		diff = -diff
-	}
-	if diff > 60 {
-		return false
-	}
-	expected := signTunnelHandshake(secret, clientID, timestamp, nonce)
-	if len(expected) != len(signature) {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(expected), []byte(signature)) == 1
 }

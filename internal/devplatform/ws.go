@@ -199,56 +199,6 @@ func dialWebSocketVia(ctx context.Context, rawURL string, headers http.Header, p
 	return &wsConn{conn: conn, br: br, isClient: true}, resp, nil
 }
 
-func upgradeWebSocket(w http.ResponseWriter, r *http.Request, responseHeaders http.Header) (*wsConn, error) {
-	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") || !headerContainsToken(r.Header.Get("Connection"), "upgrade") {
-		http.Error(w, "expected websocket upgrade", http.StatusUpgradeRequired)
-		return nil, errors.New("not a websocket upgrade request")
-	}
-	key := strings.TrimSpace(r.Header.Get("Sec-WebSocket-Key"))
-	if key == "" {
-		http.Error(w, "missing Sec-WebSocket-Key", http.StatusBadRequest)
-		return nil, errors.New("missing Sec-WebSocket-Key")
-	}
-	hj, ok := w.(http.Hijacker)
-	if !ok {
-		http.Error(w, "websocket hijack unsupported", http.StatusInternalServerError)
-		return nil, errors.New("response writer does not support hijacking")
-	}
-	conn, rw, err := hj.Hijack()
-	if err != nil {
-		return nil, err
-	}
-	var sb strings.Builder
-	sb.WriteString("HTTP/1.1 101 Switching Protocols\r\n")
-	sb.WriteString("Upgrade: websocket\r\n")
-	sb.WriteString("Connection: Upgrade\r\n")
-	sb.WriteString("Sec-WebSocket-Accept: ")
-	sb.WriteString(wsAcceptKey(key))
-	sb.WriteString("\r\n")
-	for k, vals := range responseHeaders {
-		lk := strings.ToLower(k)
-		if lk == "upgrade" || lk == "connection" || lk == "sec-websocket-accept" {
-			continue
-		}
-		for _, v := range vals {
-			sb.WriteString(k)
-			sb.WriteString(": ")
-			sb.WriteString(strings.ReplaceAll(strings.ReplaceAll(v, "\r", ""), "\n", ""))
-			sb.WriteString("\r\n")
-		}
-	}
-	sb.WriteString("\r\n")
-	if _, err = rw.WriteString(sb.String()); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	if err = rw.Flush(); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	return &wsConn{conn: conn, br: rw.Reader, isClient: false}, nil
-}
-
 func headerContainsToken(headerVal, token string) bool {
 	for _, part := range strings.Split(headerVal, ",") {
 		if strings.EqualFold(strings.TrimSpace(part), token) {
@@ -271,10 +221,6 @@ func (c *wsConn) Close() error {
 		err = c.conn.Close()
 	})
 	return err
-}
-
-func (c *wsConn) WriteText(data []byte) error {
-	return c.WriteMessage(wsOpText, data)
 }
 
 func (c *wsConn) WriteBinary(data []byte) error {

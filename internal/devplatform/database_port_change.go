@@ -121,7 +121,7 @@ func (m *Manager) changeInstancePort(ctx context.Context, expected Instance, por
 				name = "client.cnf"
 				replace = replaceManagedMySQLPort
 			}
-			previous, err := readExportFile(dir, name, 1<<20)
+			previous, err := readRegularFile(dir, name, 1<<20)
 			if err != nil {
 				return nil, nil, err
 			}

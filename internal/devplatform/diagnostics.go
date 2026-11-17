@@ -11,14 +11,6 @@ import (
 	"time"
 )
 
-func (m *Manager) Doctor(ctx context.Context) (string, error) {
-	report, err := m.Diagnose(ctx)
-	if err != nil {
-		return "", err
-	}
-	return report.Text(), nil
-}
-
 type RuntimeSnapshot struct {
 	States map[string]string `json:"states"`
 }
@@ -185,7 +177,4 @@ func (m *Manager) formatTunnelDetail() string {
 		return st.Phase
 	}
 	return ""
-}
-func (m *Manager) Statuses(ctx context.Context, s State) map[string]string {
-	return m.Snapshot(ctx, s).States
 }

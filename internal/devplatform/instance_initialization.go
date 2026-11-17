@@ -63,7 +63,7 @@ func (m *Manager) initializationPaths(id string) (string, string, string, error)
 }
 func readInitialization(path, id string) (initializationRecord, []byte, error) {
 	var r initializationRecord
-	b, e := readExportFile(filepath.Dir(path), filepath.Base(path), 65536)
+	b, e := readRegularFile(filepath.Dir(path), filepath.Base(path), 65536)
 	if e != nil {
 		return r, nil, e
 	}
@@ -88,7 +88,7 @@ func (m *Manager) recordInitializationJob(job, path string) error {
 	if job != "init-"+c.record.ID+"-tool" && job != "init-"+c.record.ID+"-server" {
 		return errors.New("unexpected initialization job")
 	}
-	b, e := readExportFile(filepath.Dir(path), filepath.Base(path), 1<<20)
+	b, e := readRegularFile(filepath.Dir(path), filepath.Base(path), 1<<20)
 	if e != nil {
 		return e
 	}
@@ -99,7 +99,7 @@ func (m *Manager) recordInitializationJob(job, path string) error {
 	if e = writeJSON(c.path, c.record); e != nil {
 		return e
 	}
-	return syncExportDirectory(filepath.Dir(c.path))
+	return syncDirectory(filepath.Dir(c.path))
 }
 func (m *Manager) runInitializationTool(ctx context.Context, bin string, args ...string) (string, error) {
 	c := m.initialization
@@ -140,7 +140,7 @@ func (m *Manager) runInitializationTool(ctx context.Context, bin string, args ..
 func (m *Manager) stopInitializationJobs(ctx context.Context, r initializationRecord) error {
 	for _, job := range diagnosticKeys(r.Jobs) {
 		path := filepath.Join(m.Root, "jobs", m.label(job)+".plist")
-		b, e := readExportFile(filepath.Dir(path), filepath.Base(path), 1<<20)
+		b, e := readRegularFile(filepath.Dir(path), filepath.Base(path), 1<<20)
 		if e == nil && digestBytes(b) != r.Jobs[job] {
 			return errors.New("initialization job configuration changed; keep its data for inspection")
 		}
@@ -265,10 +265,10 @@ func (m *Manager) createInstance(ctx context.Context, i Instance) (err error) {
 	if e = writeJSON(path, c.record); e != nil {
 		return e
 	}
-	if e = syncExportDirectory(dir); e != nil {
+	if e = syncDirectory(dir); e != nil {
 		return e
 	}
-	if e = syncExportDirectory(filepath.Dir(dir)); e != nil {
+	if e = syncDirectory(filepath.Dir(dir)); e != nil {
 		return e
 	}
 	worker := *m
@@ -305,7 +305,7 @@ func (m *Manager) createInstance(ctx context.Context, i Instance) (err error) {
 	if e = writeJSON(path, c.record); e != nil {
 		return e
 	}
-	if e = syncExportDirectory(dir); e != nil {
+	if e = syncDirectory(dir); e != nil {
 		return e
 	}
 	worker.emit("Database initialization prepared")
@@ -336,10 +336,10 @@ func (m *Manager) createInstance(ctx context.Context, i Instance) (err error) {
 			}
 			return base.Rename(to, from)
 		}
-		if e = syncExportDirectory(dir); e != nil {
+		if e = syncDirectory(dir); e != nil {
 			return undo, nil, e
 		}
-		if e = syncExportDirectory(filepath.Join(m.Root, "instances")); e != nil {
+		if e = syncDirectory(filepath.Join(m.Root, "instances")); e != nil {
 			return undo, nil, e
 		}
 		worker.emit("Database initialization data published")
@@ -349,13 +349,13 @@ func (m *Manager) createInstance(ctx context.Context, i Instance) (err error) {
 	if e != nil {
 		return e
 	}
-	if e = syncExportDirectory(m.Root); e != nil {
+	if e = syncDirectory(m.Root); e != nil {
 		return e
 	}
 	if e = os.Remove(path); e != nil {
 		return e
 	}
-	return syncExportDirectory(dir)
+	return syncDirectory(dir)
 }
 func initializationIdentity(path string) (string, error) {
 	info, e := os.Lstat(path)
@@ -560,10 +560,10 @@ func (m *Manager) ResolveInstanceInitialization(ctx context.Context, id, revisio
 				defer base.Close()
 				return base.Rename(to, from)
 			}
-			if e = syncExportDirectory(filepath.Join(w.Root, "retained-initializations")); e != nil {
+			if e = syncDirectory(filepath.Join(w.Root, "retained-initializations")); e != nil {
 				return undo, nil, e
 			}
-			if e = syncExportDirectory(filepath.Join(w.Root, filepath.Dir(from))); e != nil {
+			if e = syncDirectory(filepath.Join(w.Root, filepath.Dir(from))); e != nil {
 				return undo, nil, e
 			}
 			return undo, func() {
@@ -576,7 +576,7 @@ func (m *Manager) ResolveInstanceInitialization(ctx context.Context, id, revisio
 		if e = os.Remove(path); e != nil {
 			return e
 		}
-		return syncExportDirectory(dir)
+		return syncDirectory(dir)
 	})
 	return archive, err
 }

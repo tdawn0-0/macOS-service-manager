@@ -212,7 +212,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/proxy-socket/install", s.handleProxySocketInstall)
 	s.mux.HandleFunc("POST /v1/proxy-socket/stop", s.handleProxySocketStop)
 	s.mux.HandleFunc("POST /v1/proxy-socket/kickstart", s.handleProxySocketKickstart)
-	s.mux.HandleFunc("POST /v1/proxy-socket/print", s.handleProxySocketPrint)
 	s.mux.HandleFunc("POST /v1/ports/inspect", s.handlePortInspect)
 	s.mux.HandleFunc("POST /v1/launchd/control", s.handleLaunchdControl)
 	s.mux.HandleFunc("POST /v1/launchd/save", s.handleLaunchdSave)
@@ -290,31 +289,6 @@ func (s *Server) handleProxySocketKickstart(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (s *Server) handleProxySocketPrint(w http.ResponseWriter, r *http.Request) {
-	var req ProxySocketPrintRequest
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-	if err := validateProxySocketTarget(req.Target); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	out, err := s.cfg.Run(r.Context(), "/bin/launchctl", "print", req.Target)
-	code := 0
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			code = exitErr.ExitCode()
-		} else {
-			code = 1
-		}
-	}
-	writeJSON(w, http.StatusOK, ProxySocketPrintResponse{
-		Output:   out,
-		ExitCode: code,
-	})
 }
 
 func (s *Server) handlePortInspect(w http.ResponseWriter, r *http.Request) {

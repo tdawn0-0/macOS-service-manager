@@ -46,7 +46,6 @@ func (m *Manager) javaDirectory() string {
 }
 
 const javaOwnerFile = ".devbase-java-owner"
-const legacyJavaOwnerFile = ".service-manager-java-owner"
 
 var javaFolderSuffix = regexp.MustCompile(`^[1-9][0-9]*$`)
 var javaInstallNameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,119}$`)
@@ -98,14 +97,6 @@ func (m *Manager) checkJavaOwnership(p Package) error {
 	}
 	marker := filepath.Join(dir, javaOwnerFile)
 	info, err := os.Lstat(marker)
-	if err != nil {
-		legacyMarker := filepath.Join(dir, legacyJavaOwnerFile)
-		if lInfo, lErr := os.Lstat(legacyMarker); lErr == nil {
-			marker = legacyMarker
-			info = lInfo
-			err = nil
-		}
-	}
 	if err != nil || !info.Mode().IsRegular() {
 		return fmt.Errorf("Java installation ownership is missing or invalid; inspect %s", dir)
 	}

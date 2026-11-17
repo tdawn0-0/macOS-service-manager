@@ -429,11 +429,6 @@ func (a *app) devStatusBar(c *ui.Context) {
 	}
 }
 
-// devHeading titles a detail. meta is data about the subject, never prose.
-func devHeading(c *ui.Context, title, meta string) {
-	pageHeader(c, nil, ui.Color{}, title, meta, nil, nil)
-}
-
 // devDivider heads a group of controls inside a pane: a small title over a
 // line that runs to the end of the row.
 func devDivider(c *ui.Context, title string) {

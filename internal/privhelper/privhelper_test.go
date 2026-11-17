@@ -84,7 +84,7 @@ func TestPeerUIDAuthorization(t *testing.T) {
 	}
 }
 
-func TestProxySocketInstallStopKickstartAndPrint(t *testing.T) {
+func TestProxySocketInstallStopAndKickstart(t *testing.T) {
 	dir := t.TempDir()
 	var ran [][]string
 	client, _, _ := startTestHelper(t, ServerConfig{
@@ -118,13 +118,6 @@ func TestProxySocketInstallStopKickstartAndPrint(t *testing.T) {
 	if err := client.KickstartProxySocket(context.Background(), target); err != nil {
 		t.Fatalf("KickstartProxySocket: %v", err)
 	}
-	printResp, err := client.PrintProxySocket(context.Background(), target)
-	if err != nil {
-		t.Fatalf("PrintProxySocket: %v", err)
-	}
-	if printResp.ExitCode != 0 || !strings.Contains(string(printResp.Output), "active") {
-		t.Fatalf("unexpected PrintProxySocket response: %+v", printResp)
-	}
 	if err := client.StopProxySocket(context.Background(), ProxySocketStopRequest{
 		JobPath: jobPath,
 		Target:  target,
@@ -139,8 +132,7 @@ func TestProxySocketInstallStopKickstartAndPrint(t *testing.T) {
 		{"/bin/launchctl", "bootout", target},
 		{"/bin/launchctl", "bootstrap", "system", jobPath},
 		{"/bin/launchctl", "kickstart", "-k", target},
-		{"/bin/launchctl", "print", target},
-		{"/bin/launchctl", "print", target},
+		{"/bin/launchctl", "print", target}, // kickstart confirms the job is running
 		{"/bin/launchctl", "bootout", target},
 	}
 	if len(ran) != len(wantCmds) {

@@ -80,17 +80,6 @@ type ProxySocketKickstartRequest struct {
 	Target string `json:"target"`
 }
 
-// ProxySocketPrintRequest is sent to POST /v1/proxy-socket/print.
-type ProxySocketPrintRequest struct {
-	Target string `json:"target"`
-}
-
-// ProxySocketPrintResponse is returned by POST /v1/proxy-socket/print.
-type ProxySocketPrintResponse struct {
-	Output   []byte `json:"output,omitempty"`
-	ExitCode int    `json:"exitCode"`
-}
-
 // PortInspectRequest is sent to POST /v1/ports/inspect.
 type PortInspectRequest struct {
 	Port int `json:"port"`

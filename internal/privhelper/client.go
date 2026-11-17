@@ -491,15 +491,6 @@ func (c *Client) KickstartProxySocket(ctx context.Context, target string) error 
 	}, nil)
 }
 
-// PrintProxySocket runs launchctl print on the proxy socket target as root.
-func (c *Client) PrintProxySocket(ctx context.Context, target string) (ProxySocketPrintResponse, error) {
-	var resp ProxySocketPrintResponse
-	err := c.doJSON(ctx, http.MethodPost, "/v1/proxy-socket/print", ProxySocketPrintRequest{
-		Target: target,
-	}, &resp)
-	return resp, err
-}
-
 // InspectPort runs lsof as root for the given TCP listening port.
 func (c *Client) InspectPort(ctx context.Context, port int) ([]byte, error) {
 	var resp PortInspectResponse

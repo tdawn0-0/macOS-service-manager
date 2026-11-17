@@ -12,7 +12,7 @@ PostgreSQL 通过 Apple Silicon Homebrew core 的版本公式管理。Java 使�
 | Redis | Redis 8.2（Homebrew `redis@8.2`） | [Homebrew core](https://formulae.brew.sh/formula/redis@8.2) | AGPL-3.0-only AND BSD-2-Clause AND BSL-1.0 AND MIT AND (CC0-1.0 OR BSD-2-Clause) |
 | MongoDB | 8.0.38、8.0.5 | [MongoDB 官方下载源](https://fastdl.mongodb.org/osx/) | SSPL-1.0 |
 
-MySQL 和 MongoDB 归档包要求 macOS 26 或更新版本；更旧的系统不在测试范围内。
+MySQL 和 MongoDB 归档包在目录中声明最低 macOS 26（`catalog.go` 的 `MinMacOS`）。App 只验证并支持最新的两版 macOS（目前为 26 和 27），更旧的系统不在支持范围内。
 
 Redis 实例直接使用 Homebrew keg 中的 redis-server，不用 Valkey 替代。PHP 不再由应用管理。
 

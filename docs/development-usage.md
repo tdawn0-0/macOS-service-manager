@@ -18,11 +18,17 @@ Each instance's Backups card lists its backups with the database, date and size.
 
 Type a name for each forwarding rule; its domain is always `<name>.devbase.localhost`, which macOS resolves to this Mac, so no hosts-file entry or DNS setting is needed. Enter a local HTTP port for each forwarding rule. The proxy forwards to `127.0.0.1` on that port, or to the IP address or host name in the rule's Upstream host field (for example a machine on your network, a container address, or `host.docker.internal`). The upstream is plain HTTP, and an empty field or `localhost` means this Mac. The incoming HTTPS listener port is global. Save validates and stores the entire table. Apply publishes the saved table; remove a row and Save/Apply to stop forwarding that domain. Trust local CA is a separate action that may require macOS authorization. Stopping the proxy leaves the saved rules and external application process alone.
 
+### Cloudflare tunnel (optional)
+
+To reach a rule from outside this Mac, paste a Cloudflare API token in the **Cloudflare tunnel** card and choose Save Cloudflare settings; the account ID is detected if left blank. The token is written to a private file in application storage, not to app state. Turn on **Tunnel** for a rule and pick a mode: `workers.dev` serves it at the account's `*.workers.dev` subdomain, and a Custom Domain binds a host name in one of your Cloudflare zones (existing DNS names are suggested). Saving the rules deploys one dedicated `devbase-<name>` Worker + Durable Object per tunneled rule and deletes the Devbase Workers of rules that no longer tunnel. Copy or open the tunnel URL from the rule row.
+
+The **Cloudflare tunnel service** switch, on the HTTPS page and in the menu bar, starts or stops a background launchd client that connects to those Workers and forwards their requests to each rule's upstream. Stopping it leaves saved rules, deployed Workers, and the upstream application alone. Anyone with the URL can reach the upstream while the tunnel runs; add your own authentication if the app needs it.
+
 Use Diagnostics to inspect DNS, proxy TLS, upstream and explicit HTTP response separately. Check HTTPS response sends one bounded GET `/` on request; a status such as 401 or 404 proves an HTTP response arrived, not that the application is healthy. The export removes domain, username, paths, raw errors, and response data. Missing or changed rules invalidate older observations.
 
 ## Window, menu bar, and system services
 
-Closing the window keeps managed resources running. The app then lives only in the menu bar: its Dock icon is hidden until the window opens again from the menu bar. The menu bar has database rows and one proxy status/settings entry. Quit reviews which app-owned resources to keep or stop. The existing system-service inspector is a separate feature and follows its own permissions. No operation starts or stops an unrelated application server.
+Closing the window keeps managed resources running. The app then lives only in the menu bar: its Dock icon is hidden until the window opens again from the menu bar. The menu bar has database rows, one HTTPS proxy switch, and a Cloudflare tunnel switch once a tunnel is configured. Quit reviews which app-owned resources to keep or stop. The existing system-service inspector is a separate feature and follows its own permissions. No operation starts or stops an unrelated application server.
 
 ## Verification status
 

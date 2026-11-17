@@ -2,6 +2,8 @@
 
 This is a new-version record. Earlier Project/PHP/Site verification does not establish the current Software/Databases/HTTPS product. The [acceptance matrix](resources-acceptance.md) starts each result at NOT RUN; update a row only with the actual commit, command, environment, PASS/SKIP result and evidence.
 
+Only the two latest macOS releases (currently 26 and 27) are verified: CI runs on GitHub `macos-26` runners, and macOS 27 is checked on the development machine. Older releases are out of scope.
+
 The code-level gates are `go test ./...`, `go test -race ./...`, `go vet ./...`, `go mod verify`, Python script tests, notice check, and `go tool mygo build -sign - -skip-notarize`. They show compilation, behavior and an ad-hoc local build. A native release gate on a disposable GitHub-hosted macOS runner requires real installed packages and all parent/child events from `scripts/verify-native-release.py --run`; no skip is accepted. A separate Developer ID signed App must pass local CA authorization and Chrome without a certificate interstitial on an authorized disposable Mac.
 
 Current implementation and checks should be appended below with exact commit and result. Any unavailable runner, signing identity, Chrome machine or cleanup evidence remains **NOT RUN/BLOCKED**, never inferred from a mock, CLI TLS client, or prior version.
@@ -15,6 +17,8 @@ The 012, 013, 014, 016, and 017 UI layout suites were each run in this worktree 
 **NOT RUN/BLOCKED:** `scripts/verify-native-release.py --run` requires a disposable GitHub-hosted macOS arm64 runner. The signed App, system CA authorization, privileged listener and Chrome runbook requires an authorized disposable machine and matching Developer ID build. This local worktree has neither prerequisite; no keychain trust, privileged port, or browser acceptance was attempted. All nine acceptance rows remain NOT RUN until their required native evidence is recorded.
 
 ## 018 runtimes and database locations
+
+> Historical record. Go runtime management, part of 018, has since been removed; Go mentions below describe that commit only.
 
 Implementation commit **`2f221b5`**, branch `codex/018-runtimes-database-locations`, based on `c4246ae`, was verified in the isolated `service-manager-018` worktree on 2026-11-08. The [usage and boundaries](development-runtimes-and-data.md) describe the exact feature contract.
 

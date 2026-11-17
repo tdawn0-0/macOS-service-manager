@@ -2,7 +2,7 @@
 
 ## Runtime versions
 
-Software now includes Node.js, Java, Python (uv), MySQL, PostgreSQL, Redis, and MongoDB. The original five-software native release gate remains unchanged; additional runtime fixtures and UI tests are separate evidence.
+Software now includes Node.js, Java, Python (uv), MySQL, PostgreSQL, Redis, and MongoDB. Go was added in 018 and later removed; Go SDK versions are left to Go's own toolchain resolution. The original five-software native release gate remains unchanged; additional runtime fixtures and UI tests are separate evidence.
 
 For Java, choose **Refresh available versions**, select an exact entry, then review and install the package. Java uses the [JetBrains JDK catalog](https://download.jetbrains.com/jdk/feed/v1/jdks.json) used by IDEA, filtered to listed, non-preview macOS arm64 archives with supported layouts. The selection key includes the distribution/flavour and version (for example `temurin-21.0.13` or `semeru-25.0.4.15`), so equal Java versions from different vendors do not share a package identity. Download review shows the vendor/product/flavour, version, archive URL, SHA256, license notice and destination. Installed versions remain selectable if a catalog request fails.
 
@@ -66,9 +66,9 @@ This layout does not move database files across volumes. Initial preparation use
 
 ## Sources and verification boundaries
 
-Source contracts were checked against the [JetBrains JDK parser and feed configuration](https://github.com/JetBrains/intellij-community/blob/master/platform/lang-impl/src/com/intellij/openapi/projectRoots/impl/jdkDownloader/JdkList.kt), the [official Go release index](https://go.dev/dl/?mode=json&include=all), [uv CLI documentation](https://docs.astral.sh/uv/reference/cli/), [uv storage](https://docs.astral.sh/uv/reference/storage/), and [PostgreSQL 18’s Homebrew formula](https://formulae.brew.sh/formula/postgresql@18). uv CLI help and JSON enumeration were checked read-only on the development machine. No real interpreter install/uninstall or user database changes were performed.
+Source contracts were checked against the [JetBrains JDK parser and feed configuration](https://github.com/JetBrains/intellij-community/blob/master/platform/lang-impl/src/com/intellij/openapi/projectRoots/impl/jdkDownloader/JdkList.kt), [uv CLI documentation](https://docs.astral.sh/uv/reference/cli/), [uv storage](https://docs.astral.sh/uv/reference/storage/), and [PostgreSQL 18’s Homebrew formula](https://formulae.brew.sh/formula/postgresql@18). uv CLI help and JSON enumeration were checked read-only on the development machine. No real interpreter install/uninstall or user database changes were performed.
 
-Focused tests use temporary roots, injected HTTP/uv runners, and exact-keg command fixtures. The custom-location lifecycle fixture runs an isolated launchd socket process; it is not a real database server. PostgreSQL 17/18 fixtures prove separate package, port, metadata and data-path handling, not native SQL compatibility. Native upstream Java/Go/Python installs, real PostgreSQL 18, actual database backup/restore on an external volume, and hardware cross-volume acceptance remain unverified. Signed App/system trust/Chrome acceptance from 015-B also remains unverified.
+Focused tests use temporary roots, injected HTTP/uv runners, and exact-keg command fixtures. The custom-location lifecycle fixture runs an isolated launchd socket process; it is not a real database server. PostgreSQL 17/18 fixtures prove separate package, port, metadata and data-path handling, not native SQL compatibility. Native upstream Java/Python installs, real PostgreSQL 18, actual database backup/restore on an external volume, and hardware cross-volume acceptance remain unverified. Signed App/system trust/Chrome acceptance from 015-B also remains unverified.
 
 Run the focused gate with:
 

@@ -6,24 +6,26 @@
 - **Go Module & Identity**: `module devbase`, bundle identifier `xyz.jyeu.devbase`.
 - **Toolchain**: Go `1.27+` using `egoist/mygo` and `lobehub/lobe-mygo` for native macOS rendering.
 - **Architecture**: Apple Silicon (`darwin/arm64`) only. Intel (`darwin/amd64`) builds and packages are rejected by design.
-- **OS Requirement**: macOS 13.0 (Ventura) or newer.
+- **OS Support**: only the two latest macOS releases, currently macOS 26 and 27. The bundle declares `minimumSystemVersion` 26.0 (`mygo.json`). Older releases are neither tested nor supported; don't add compatibility code or test paths for them. When a new macOS ships, raise the minimum to the older of the two latest releases.
 
 ## 2. Package & File Map
 
 - **Root Desktop App**:
   - `main.go`, `app.go`: Application lifecycle, window creation, menu bar initialization, and main loop.
-  - `menubar.go`: Native menu bar panel interface, quick service toggles, and status readouts.
+  - `menubar.go`: Native menu bar panel: database instance rows, the HTTPS proxy switch, the Cloudflare tunnel switch (shown once a tunnel is configured), and status readouts.
   - `ui_kit.go`: Immediate-mode UI layout components, typography helpers, and color primitives.
-  - `view_*.go`: Immediate-mode views for development status, services, databases, proxy, logs, and authority.
+  - `view_*.go`: Immediate-mode views. Development workspace: `view_development.go` (shell), `view_software.go`, `view_java.go`, `view_additional_runtimes.go`, `view_runtime_terminal.go`, `view_package_*.go`, `view_databases.go`, `view_database_*.go`, `view_instance_deletion.go`, `view_https_proxy.go` (rules, proxy and Cloudflare tunnel cards), `view_proxy_activation.go`, `view_authority.go` (local CA), `view_diagnostics.go`, `view_ports.go`, `view_operations.go`, `view_quit.go`, `view_settings.go`. System-service inspector: `view.go`, `view_detail.go`, `view_editor.go`, `view_status.go`.
+  - `guide.go`, `theme.go`, `icons.go`: First-run guide, theme tokens, and embedded Lucide icons.
   - `*_test.go`: End-to-end desktop and UI lifecycle test suites.
 - **`internal/devplatform/`**:
   - Software catalog, installation, health checks, and repairs for supported runtimes: Node.js, JetBrains JDKs, `uv` Python, MySQL, Homebrew PostgreSQL (16/17/18), Redis, and MongoDB.
   - Database instance orchestration, port allocation, isolated runtimes, connection profiles, backups, and restores.
-  - Local HTTPS reverse proxy with SNI matching, host routing, loopback interface bindings, and generational local CA certificate management.
+  - Local HTTPS reverse proxy with SNI matching, host routing, loopback interface bindings, and generational local CA certificate management. Rule domains are always `<name>.devbase.localhost`; the hosts file is never edited.
+  - Optional Cloudflare tunnel (`tunnel_*.go`, `cloudflare_api.go`, `ws.go`): per-rule `devbase-<slug>` Worker + Durable Object deployed via the Cloudflare API, on `*.workers.dev` or a Custom Domain, with a local launchd client that streams requests over WebSocket. The API token lives in `proxy/cloudflare.key` (0600), never in `state.json`.
   - Shell startup integration scripts (zsh, Bash, fish) and PATH management.
   - Diagnostics, status gathering, and file-locked transactional state persistence (`Manager.withState`/`withStateTransaction` over `state.json` + `state.lock`). The UI's own `developmentState` lives in the root package.
 - **`internal/devcli/` & `cmd/devmgr/`**:
-  - `internal/devcli/`: Internal `--dev` subcommands (`serve`, `maintain`, `database-worker`, `node`). The shipped `.app` has no public user-facing CLI.
+  - `internal/devcli/`: Internal `--dev` subcommands. launchd jobs run `serve` (proxy), `tunnel`, `maintain` (log rotation), and `database-worker`; `node` is the shell shim. The rest (`db-*`, `ca-*`, `tunnel-*`, `port`, `repair`, `doctor`, …) exist for headless use and tests. The shipped `.app` has no public user-facing CLI.
   - `cmd/devmgr/`: Unshipped developer test harness for headless verification, fixtures, and diagnostics.
 - **Inspector & System Packages**:
   - `internal/launchd/`: Native macOS launchd job discovery, property list parsing, and lifecycle control.
@@ -31,7 +33,8 @@
   - `internal/brew/`: Homebrew formula/keg detection and inventory helpers.
   - `internal/loginitem/`: macOS Login Items inspection and user preference queries.
   - `internal/logs/`: Bounded tail reads of log files (`Stat`, `Tail`), used by the log viewer.
-  - `internal/system/`: OS utilities, command execution, and privileged `osascript` authorization wrappers.
+  - `internal/system/`: OS utilities, command execution, and privileged `osascript` authorization (`system.RunAdmin`, replaceable in tests).
+  - `internal/privhelper/`: Optional privileged helper (installed from Settings) that serves only the Devbase build it was installed from, running as the installing user.
 
 ## 3. Verification Gates (Run Before Finishing Code Changes)
 
@@ -80,7 +83,7 @@ go test ./internal/system ./internal/logs
   - Never delete shared Homebrew kegs or terminate unowned process groups.
 - **Product Scope Boundaries**:
   - Upstream web and application servers are started by the developer in their own terminal or IDE, never spawned or supervised by Devbase.
-  - Devbase manages foundational runtimes, databases, the local proxy, and development CAs.
+  - Devbase manages foundational runtimes, databases, the local proxy, the optional Cloudflare tunnel, and development CAs.
   - Go runtime management was intentionally removed (`a86aac5`); PHP, automatic project registration, and legacy state migrations are out of scope (`docs/product-scope.md:19-21`).
 - **Credentials & License Notices**:
   - Never log, export, or pass plaintext passwords via process command-line arguments (`argv`).

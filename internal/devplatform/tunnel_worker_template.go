@@ -5,6 +5,9 @@ const cloudflareWorkerIndexMJS = `import { DurableObject } from "cloudflare:work
 const PROTO_VERSION = 1;
 const HEADER_SIZE = 9;
 const MAX_CHUNK = 256 * 1024;
+const MAX_WS_MESSAGE = 4 * 1024 * 1024;
+const HTTP_HEAD_TIMEOUT_MS = 65000;
+const WS_OPEN_TIMEOUT_MS = 15000;
 const WS_OPEN = WebSocket.READY_STATE_OPEN ?? WebSocket.OPEN ?? 1;
 
 const FLAG_FIN = 0x01;
@@ -114,10 +117,40 @@ async function verifyHandshake(request, secret) {
   return { ok: true, clientId };
 }
 
+function truncateUTF8(str, maxBytes) {
+  if (!str) return "";
+  if (textEncoder.encode(str).byteLength <= maxBytes) return str;
+  let out = "";
+  let used = 0;
+  for (const ch of str) {
+    const b = textEncoder.encode(ch).byteLength;
+    if (used + b > maxBytes) break;
+    out += ch;
+    used += b;
+  }
+  return out;
+}
+
+function safeClose(ws, code, reason) {
+  if (!ws) return;
+  const validCode = Number.isInteger(code) && ((code >= 1000 && code <= 1014 && code !== 1004 && code !== 1005 && code !== 1006) || (code >= 3000 && code <= 4999))
+    ? code
+    : 1000;
+  const safeReason = truncateUTF8(typeof reason === "string" ? reason : String(reason || ""), 123);
+  try {
+    ws.close(validCode, safeReason);
+  } catch {
+    try { ws.close(1000); } catch {}
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/__devbase/connect") {
+      if (request.method !== "GET") {
+        return new Response("Method Not Allowed", { status: 405 });
+      }
       if ((request.headers.get("Upgrade") || "").toLowerCase() !== "websocket") {
         return new Response("Expected WebSocket upgrade", { status: 426 });
       }
@@ -128,6 +161,9 @@ export default {
       const stub = env.TUNNEL_GATEWAY.get(env.TUNNEL_GATEWAY.idFromName("gateway"));
       return stub.fetch(request);
     }
+    if (url.pathname.startsWith("/__devbase/")) {
+      return new Response("Not Found", { status: 404 });
+    }
     const stub = env.TUNNEL_GATEWAY.get(env.TUNNEL_GATEWAY.idFromName("gateway"));
     return stub.fetch(request);
   },
@@ -136,7 +172,9 @@ export default {
 export class TunnelGateway extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
-    this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(CONTROL_PING, CONTROL_PONG));
+    if (typeof this.ctx.getWebSocketAutoResponse !== "function" || !this.ctx.getWebSocketAutoResponse()) {
+      this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(CONTROL_PING, CONTROL_PONG));
+    }
     this.agentWs = null;
     this.agentClientId = "";
     this.httpStreams = new Map();
@@ -148,27 +186,79 @@ export class TunnelGateway extends DurableObject {
     for (const ws of this.ctx.getWebSockets("agent")) {
       const att = ws.deserializeAttachment() || {};
       if (att.active && att.clientId && ws.readyState === WS_OPEN) {
+        if (this.agentWs && this.agentWs !== ws) {
+          const prev = this.agentWs;
+          const prevAtt = prev.deserializeAttachment() || {};
+          try { prev.serializeAttachment({ clientId: prevAtt.clientId || "", active: false }); } catch {}
+          safeClose(prev, 1000, "superseded");
+        }
         this.agentWs = ws;
         this.agentClientId = att.clientId;
+        if (Number.isInteger(att.nextStreamId) && att.nextStreamId >= 1 && att.nextStreamId <= 0x7fffffff) {
+          this.nextStreamId = att.nextStreamId;
+        }
       }
     }
     for (const ws of this.ctx.getWebSockets("visitor")) {
+      if (!this.agentWs) {
+        safeClose(ws, 1001, "Tunnel offline");
+        continue;
+      }
       const att = ws.deserializeAttachment() || {};
-      if (att.streamId) {
+      if (ws.readyState === WS_OPEN && Number.isInteger(att.streamId) && att.streamId > 0) {
         this.wsVisitors.set(att.streamId, ws);
+        if (att.streamId >= this.nextStreamId) {
+          this.nextStreamId = att.streamId >= 0x7fffffff ? 1 : att.streamId + 1;
+        }
       }
     }
   }
 
-  allocStreamId() {
-    const id = this.nextStreamId;
-    this.nextStreamId = this.nextStreamId >= 0x7fffffff ? 1 : this.nextStreamId + 1;
-    return id;
+  getActiveAgent() {
+    if (this.agentWs && this.agentWs.readyState === WS_OPEN) {
+      return this.agentWs;
+    }
+    if (this.agentWs) {
+      this.agentWs = null;
+      this.agentClientId = "";
+    }
+    return null;
   }
 
-  cleanupAgent(keepWs) {
+  allocStreamId() {
+    for (let i = 0; i < 0x7fffffff; i++) {
+      const id = this.nextStreamId;
+      this.nextStreamId = id >= 0x7fffffff ? 1 : id + 1;
+      if (!this.wsVisitors.has(id) && !this.httpStreams.has(id) && !this.wsPending.has(id)) {
+        if (this.agentWs && this.agentClientId) {
+          try {
+            this.agentWs.serializeAttachment({
+              clientId: this.agentClientId,
+              active: true,
+              nextStreamId: this.nextStreamId,
+            });
+          } catch {}
+        }
+        return id;
+      }
+    }
+    throw new Error("No available tunnel stream IDs");
+  }
+
+  cleanupAgent(keepWs, keepClientId = "") {
     if (this.agentWs && this.agentWs !== keepWs) {
-      try { this.agentWs.close(1000, "superseded"); } catch {}
+      const prev = this.agentWs;
+      const prevAtt = prev.deserializeAttachment() || {};
+      try { prev.serializeAttachment({ clientId: prevAtt.clientId || "", active: false }); } catch {}
+      safeClose(prev, 1000, "superseded");
+    }
+    for (const ws of this.ctx.getWebSockets("agent")) {
+      if (ws === keepWs || ws === this.agentWs) continue;
+      const att = ws.deserializeAttachment() || {};
+      if (att.active || (keepClientId && att.clientId === keepClientId)) {
+        try { ws.serializeAttachment({ clientId: att.clientId || "", active: false }); } catch {}
+        safeClose(ws, 1000, "superseded");
+      }
     }
     if (!keepWs) {
       this.agentWs = null;
@@ -184,16 +274,20 @@ export class TunnelGateway extends DurableObject {
     for (const [streamId, vws] of this.wsVisitors.entries()) {
       this.wsVisitors.delete(streamId);
       this.wsInboundChunks.delete(streamId);
-      try { vws.close(1001, "Tunnel disconnected"); } catch {}
+      safeClose(vws, 1001, "Tunnel disconnected");
     }
   }
 
   findVisitor(streamId) {
     let ws = this.wsVisitors.get(streamId);
-    if (ws) return ws;
+    if (ws) {
+      if (ws.readyState === WS_OPEN) return ws;
+      this.wsVisitors.delete(streamId);
+      return null;
+    }
     for (const candidate of this.ctx.getWebSockets("visitor")) {
       const att = candidate.deserializeAttachment() || {};
-      if (att.streamId === streamId) {
+      if (att.streamId === streamId && candidate.readyState === WS_OPEN) {
         this.wsVisitors.set(streamId, candidate);
         return candidate;
       }
@@ -201,15 +295,24 @@ export class TunnelGateway extends DurableObject {
     return null;
   }
 
-  failHTTPStream(streamId, message) {
+  failHTTPStream(streamId, message, status = 502) {
     const st = this.httpStreams.get(streamId);
     if (!st) return;
     this.httpStreams.delete(streamId);
+    if (st.timer) {
+      clearTimeout(st.timer);
+      st.timer = null;
+    }
+    if (st.cleanupAbort) {
+      st.cleanupAbort();
+      st.cleanupAbort = null;
+    }
     if (!st.responded) {
       st.responded = true;
-      st.resolve(new Response(message, { status: 502 }));
-    } else if (st.writer) {
-      st.writer.abort(new Error(message)).catch(() => {});
+      st.resolve(new Response(message, { status }));
+    } else if (st.controller) {
+      try { st.controller.error(new Error(message)); } catch {}
+      st.controller = null;
     }
   }
 
@@ -224,15 +327,16 @@ export class TunnelGateway extends DurableObject {
       return new Response(null, { status: 101, webSocket: client });
     }
 
-    if (!this.agentWs || this.agentWs.readyState !== WS_OPEN) {
+    const agentWs = this.getActiveAgent();
+    if (!agentWs) {
       return new Response("Devbase tunnel offline", { status: 502 });
     }
 
     const host = url.hostname.toLowerCase();
     if ((request.headers.get("Upgrade") || "").toLowerCase() === "websocket") {
-      return this.handleVisitorWebSocket(request, url, host, this.agentWs);
+      return this.handleVisitorWebSocket(request, url, host, agentWs);
     }
-    return this.handleVisitorHTTP(request, url, host, this.agentWs);
+    return this.handleVisitorHTTP(request, url, host, agentWs);
   }
 
   async handleVisitorHTTP(request, url, host, agentWs) {
@@ -247,21 +351,43 @@ export class TunnelGateway extends DurableObject {
     const respPromise = new Promise((resolve) => {
       resolveResp = resolve;
     });
-    this.httpStreams.set(streamId, {
+    const st = {
       method: request.method,
       responded: false,
       resolve: resolveResp,
-      writer: null,
-      chain: Promise.resolve(),
-    });
+      controller: null,
+      timer: null,
+      cleanupAbort: null,
+    };
+    this.httpStreams.set(streamId, st);
+
+    st.timer = setTimeout(() => {
+      const cur = this.getActiveAgent();
+      if (cur) {
+        try { cur.send(encodeFrame(FRAME_STREAM_RESET, FLAG_FIN, streamId, 0)); } catch {}
+      }
+      this.failHTTPStream(streamId, "Gateway timeout waiting for local upstream", 504);
+    }, HTTP_HEAD_TIMEOUT_MS);
 
     const onAbort = () => {
-      try {
-        agentWs.send(encodeFrame(FRAME_STREAM_RESET, FLAG_FIN, streamId, 0));
-      } catch {}
+      const cur = this.getActiveAgent();
+      if (cur) {
+        try {
+          cur.send(encodeFrame(FRAME_STREAM_RESET, FLAG_FIN, streamId, 0));
+        } catch {}
+      }
       this.failHTTPStream(streamId, "Client aborted request");
     };
-    request.signal?.addEventListener("abort", onAbort, { once: true });
+    if (request.signal) {
+      if (request.signal.aborted) {
+        onAbort();
+        return respPromise;
+      }
+      request.signal.addEventListener("abort", onAbort, { once: true });
+      st.cleanupAbort = () => {
+        try { request.signal.removeEventListener("abort", onAbort); } catch {}
+      };
+    }
 
     try {
       agentWs.send(
@@ -277,6 +403,10 @@ export class TunnelGateway extends DurableObject {
         const reader = request.body.getReader();
         while (true) {
           const { done, value } = await reader.read();
+          if (!this.httpStreams.has(streamId)) {
+            try { await reader.cancel(); } catch {}
+            break;
+          }
           if (done) {
             agentWs.send(encodeFrame(FRAME_HTTP_REQ_DATA, FLAG_FIN, streamId, 0));
             break;
@@ -296,6 +426,9 @@ export class TunnelGateway extends DurableObject {
   }
 
   async handleVisitorWebSocket(request, url, host, agentWs) {
+    if (request.signal?.aborted) {
+      return new Response("Client aborted WebSocket upgrade", { status: 499 });
+    }
     const streamId = this.allocStreamId();
     const protoHeader = request.headers.get("Sec-WebSocket-Protocol") || "";
     const protocols = protoHeader
@@ -307,16 +440,30 @@ export class TunnelGateway extends DurableObject {
       headers.push([k, v]);
     }
 
+    let timer = null;
     const ackPromise = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         this.wsPending.delete(streamId);
         reject(new Error("WebSocket upstream timed out"));
-      }, 15000);
+      }, WS_OPEN_TIMEOUT_MS);
       this.wsPending.set(streamId, {
         resolve: (val) => { clearTimeout(timer); resolve(val); },
         reject: (err) => { clearTimeout(timer); reject(err); },
       });
     });
+
+    const onAbort = () => {
+      const pending = this.wsPending.get(streamId);
+      if (pending) {
+        this.wsPending.delete(streamId);
+        pending.reject(new Error("Client aborted WebSocket upgrade"));
+      }
+      const cur = this.getActiveAgent();
+      if (cur) {
+        try { cur.send(encodeFrame(FRAME_STREAM_RESET, FLAG_FIN, streamId, 0)); } catch {}
+      }
+    };
+    request.signal?.addEventListener("abort", onAbort, { once: true });
 
     try {
       agentWs.send(
@@ -343,6 +490,10 @@ export class TunnelGateway extends DurableObject {
       return new Response(null, { status: 101, webSocket: client, headers: respHeaders });
     } catch (err) {
       return new Response(err?.message || "WebSocket tunnel failed", { status: 502 });
+    } finally {
+      clearTimeout(timer);
+      this.wsPending.delete(streamId);
+      try { request.signal?.removeEventListener("abort", onAbort); } catch {}
     }
   }
 
@@ -350,9 +501,9 @@ export class TunnelGateway extends DurableObject {
     const tags = this.ctx.getTags(ws);
     if (tags.includes("visitor")) {
       const att = ws.deserializeAttachment() || {};
-      const agentWs = this.agentWs;
-      if (!agentWs || agentWs.readyState !== WS_OPEN) {
-        try { ws.close(1001, "Tunnel offline"); } catch {}
+      const agentWs = this.getActiveAgent();
+      if (!agentWs) {
+        safeClose(ws, 1001, "Tunnel offline");
         return;
       }
       const isText = typeof message === "string";
@@ -386,25 +537,40 @@ export class TunnelGateway extends DurableObject {
 
     switch (frame.type) {
       case FRAME_REGISTER: {
-        const req = JSON.parse(textDecoder.decode(frame.payload));
+        let req;
+        try {
+          req = JSON.parse(textDecoder.decode(frame.payload));
+        } catch {
+          return;
+        }
         const att = ws.deserializeAttachment() || {};
         const clientId = req.clientId || att.clientId;
         if (!clientId) return;
-        if (this.agentClientId && this.agentClientId !== clientId && this.agentWs && this.agentWs.readyState === WS_OPEN) {
+        if (this.agentClientId && this.agentClientId !== clientId && this.getActiveAgent()) {
           ws.send(encodeFrame(FRAME_REGISTER_ACK, FLAG_FIN, 0, 0, { ok: false, conflictOwner: this.agentClientId }));
           return;
         }
-        this.cleanupAgent(ws);
+        this.cleanupAgent(ws, clientId);
         this.agentWs = ws;
         this.agentClientId = clientId;
-        ws.serializeAttachment({ clientId, active: true });
+        ws.serializeAttachment({ clientId, active: true, nextStreamId: this.nextStreamId });
         ws.send(encodeFrame(FRAME_REGISTER_ACK, FLAG_FIN, 0, 0, { ok: true }));
         break;
       }
       case FRAME_HTTP_RES_HEAD: {
         const st = this.httpStreams.get(frame.streamId);
         if (!st || st.responded) return;
-        const head = JSON.parse(textDecoder.decode(frame.payload));
+        if (st.timer) {
+          clearTimeout(st.timer);
+          st.timer = null;
+        }
+        let head;
+        try {
+          head = JSON.parse(textDecoder.decode(frame.payload));
+        } catch {
+          this.failHTTPStream(frame.streamId, "Invalid tunnel response header");
+          return;
+        }
         const status = head.status || frame.code || 200;
         const headers = new Headers();
         for (const [k, v] of head.headers || []) {
@@ -414,32 +580,65 @@ export class TunnelGateway extends DurableObject {
         st.responded = true;
         if (noBody) {
           this.httpStreams.delete(frame.streamId);
+          if (st.cleanupAbort) {
+            st.cleanupAbort();
+            st.cleanupAbort = null;
+          }
           st.resolve(new Response(null, { status, headers }));
           return;
         }
-        const ts = new TransformStream();
-        st.writer = ts.writable.getWriter();
-        st.resolve(new Response(ts.readable, { status, headers }));
+        const streamId = frame.streamId;
+        const readable = new ReadableStream({
+          start: (controller) => {
+            st.controller = controller;
+          },
+          cancel: () => {
+            if (this.httpStreams.delete(streamId)) {
+              st.controller = null;
+              if (st.cleanupAbort) {
+                st.cleanupAbort();
+                st.cleanupAbort = null;
+              }
+              const cur = this.getActiveAgent();
+              if (cur) {
+                try { cur.send(encodeFrame(FRAME_STREAM_RESET, FLAG_FIN, streamId, 0)); } catch {}
+              }
+            }
+          },
+        });
+        st.resolve(new Response(readable, { status, headers }));
         break;
       }
       case FRAME_HTTP_RES_DATA: {
         const st = this.httpStreams.get(frame.streamId);
-        if (!st || !st.writer) return;
-        const chunk = frame.payload.byteLength > 0 ? new Uint8Array(frame.payload) : null;
+        if (!st || !st.controller) return;
         const isFin = (frame.flags & FLAG_FIN) !== 0;
-        const streamId = frame.streamId;
-        st.chain = st.chain.then(async () => {
-          if (!st.writer) return;
-          if (chunk) {
-            await st.writer.write(chunk);
+        try {
+          if (frame.payload.byteLength > 0) {
+            st.controller.enqueue(frame.payload.slice());
           }
           if (isFin) {
-            this.httpStreams.delete(streamId);
-            await st.writer.close();
+            this.httpStreams.delete(frame.streamId);
+            if (st.cleanupAbort) {
+              st.cleanupAbort();
+              st.cleanupAbort = null;
+            }
+            const controller = st.controller;
+            st.controller = null;
+            controller.close();
           }
-        }).catch(() => {
-          this.httpStreams.delete(streamId);
-        });
+        } catch {
+          this.httpStreams.delete(frame.streamId);
+          st.controller = null;
+          if (st.cleanupAbort) {
+            st.cleanupAbort();
+            st.cleanupAbort = null;
+          }
+          const cur = this.getActiveAgent();
+          if (cur) {
+            try { cur.send(encodeFrame(FRAME_STREAM_RESET, FLAG_FIN, frame.streamId, 0)); } catch {}
+          }
+        }
         break;
       }
       case FRAME_STREAM_RESET: {
@@ -453,7 +652,7 @@ export class TunnelGateway extends DurableObject {
         if (visitor) {
           this.wsVisitors.delete(frame.streamId);
           this.wsInboundChunks.delete(frame.streamId);
-          try { visitor.close(1001, "Stream reset"); } catch {}
+          safeClose(visitor, 1001, "Stream reset");
         }
         break;
       }
@@ -461,34 +660,88 @@ export class TunnelGateway extends DurableObject {
         const pending = this.wsPending.get(frame.streamId);
         if (!pending) return;
         this.wsPending.delete(frame.streamId);
-        const body = frame.payload.byteLength > 0 ? JSON.parse(textDecoder.decode(frame.payload)) : {};
+        let body = {};
+        if (frame.payload.byteLength > 0) {
+          try {
+            body = JSON.parse(textDecoder.decode(frame.payload));
+          } catch {}
+        }
         pending.resolve({ status: frame.code, protocol: body.protocol || "", error: body.error || "" });
         break;
       }
       case FRAME_WS_DATA: {
         const visitor = this.findVisitor(frame.streamId);
         if (!visitor) return;
-        const chunks = this.wsInboundChunks.get(frame.streamId) || [];
-        if (frame.payload.byteLength > 0) {
-          chunks.push(new Uint8Array(frame.payload));
+        const isFin = (frame.flags & FLAG_FIN) !== 0;
+        const isText = (frame.flags & FLAG_TEXT) !== 0;
+        let entry = this.wsInboundChunks.get(frame.streamId);
+        if (!entry && isFin) {
+          if (frame.payload.byteLength > MAX_WS_MESSAGE) {
+            this.wsVisitors.delete(frame.streamId);
+            safeClose(visitor, 1009, "Message too big");
+            const cur = this.getActiveAgent();
+            if (cur) {
+              try { cur.send(encodeFrame(FRAME_STREAM_RESET, FLAG_FIN, frame.streamId, 0)); } catch {}
+            }
+            return;
+          }
+          try {
+            if (isText) {
+              visitor.send(textDecoder.decode(frame.payload));
+            } else {
+              visitor.send(frame.payload);
+            }
+          } catch {
+            this.wsVisitors.delete(frame.streamId);
+            safeClose(visitor, 1001, "Visitor send failed");
+            const cur = this.getActiveAgent();
+            if (cur) {
+              try { cur.send(encodeFrame(FRAME_STREAM_RESET, FLAG_FIN, frame.streamId, 0)); } catch {}
+            }
+          }
+          return;
         }
-        if ((frame.flags & FLAG_FIN) === 0) {
-          this.wsInboundChunks.set(frame.streamId, chunks);
+        if (!entry) {
+          entry = { chunks: [], total: 0 };
+          this.wsInboundChunks.set(frame.streamId, entry);
+        }
+        if (frame.payload.byteLength > 0) {
+          if (entry.total + frame.payload.byteLength > MAX_WS_MESSAGE) {
+            this.wsInboundChunks.delete(frame.streamId);
+            this.wsVisitors.delete(frame.streamId);
+            safeClose(visitor, 1009, "Message too big");
+            const cur = this.getActiveAgent();
+            if (cur) {
+              try { cur.send(encodeFrame(FRAME_STREAM_RESET, FLAG_FIN, frame.streamId, 0)); } catch {}
+            }
+            return;
+          }
+          entry.chunks.push(frame.payload.slice());
+          entry.total += frame.payload.byteLength;
+        }
+        if (!isFin) {
           return;
         }
         this.wsInboundChunks.delete(frame.streamId);
-        let total = 0;
-        for (const c of chunks) total += c.byteLength;
-        const combined = new Uint8Array(total);
+        const combined = new Uint8Array(entry.total);
         let offset = 0;
-        for (const c of chunks) {
+        for (const c of entry.chunks) {
           combined.set(c, offset);
           offset += c.byteLength;
         }
-        if ((frame.flags & FLAG_TEXT) !== 0) {
-          visitor.send(textDecoder.decode(combined));
-        } else {
-          visitor.send(combined);
+        try {
+          if (isText) {
+            visitor.send(textDecoder.decode(combined));
+          } else {
+            visitor.send(combined);
+          }
+        } catch {
+          this.wsVisitors.delete(frame.streamId);
+          safeClose(visitor, 1001, "Visitor send failed");
+          const cur = this.getActiveAgent();
+          if (cur) {
+            try { cur.send(encodeFrame(FRAME_STREAM_RESET, FLAG_FIN, frame.streamId, 0)); } catch {}
+          }
         }
         break;
       }
@@ -497,9 +750,8 @@ export class TunnelGateway extends DurableObject {
         if (visitor) {
           this.wsVisitors.delete(frame.streamId);
           this.wsInboundChunks.delete(frame.streamId);
-          const code = frame.code >= 1000 && frame.code <= 4999 ? frame.code : 1000;
           const reason = textDecoder.decode(frame.payload);
-          try { visitor.close(code, reason); } catch {}
+          safeClose(visitor, frame.code, reason);
         }
         break;
       }
@@ -512,15 +764,26 @@ export class TunnelGateway extends DurableObject {
     if (tags.includes("visitor")) {
       this.wsVisitors.delete(att.streamId);
       this.wsInboundChunks.delete(att.streamId);
-      const agentWs = this.agentWs;
-      if (agentWs && agentWs.readyState === WS_OPEN) {
-        agentWs.send(encodeFrame(FRAME_WS_CLOSE, FLAG_FIN, att.streamId, code || 1000, reason || ""));
+      const agentWs = this.getActiveAgent();
+      if (agentWs && att.streamId) {
+        try {
+          agentWs.send(encodeFrame(FRAME_WS_CLOSE, FLAG_FIN, att.streamId, code || 1000, reason || ""));
+        } catch {}
       }
+      safeClose(ws, code, reason);
       return;
     }
-    if (ws === this.agentWs || (att.active && (!this.agentWs || this.agentWs === ws))) {
+    const isCurrentAgent = ws === this.agentWs;
+    const activeAgent = this.getActiveAgent();
+    if (isCurrentAgent || (att.active && (!activeAgent || activeAgent === ws))) {
+      try { ws.serializeAttachment({ clientId: att.clientId || "", active: false }); } catch {}
+      if (this.agentWs === ws) {
+        this.agentWs = null;
+        this.agentClientId = "";
+      }
       this.cleanupAgent(null);
     }
+    safeClose(ws, code, reason);
   }
 
   async webSocketError(ws) {

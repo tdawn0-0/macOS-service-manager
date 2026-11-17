@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	tunnelKeepAliveInterval = 20 * time.Second
-	tunnelReadTimeout       = 45 * time.Second
+	tunnelKeepAliveInterval = 30 * time.Second
+	tunnelReadTimeout       = 75 * time.Second
 	tunnelMaxStreamBuffer   = 16 << 20 // 16 MiB per stream upload buffer
 	tunnelMaxStreams        = 256
 )
@@ -57,7 +57,7 @@ func (m *Manager) needsTunnelSync(s State) bool {
 			}
 			continue
 		}
-		if w.PublicURL == "" || w.CustomDomain != rule.EffectiveTunnelDomain() {
+		if w.PublicURL == "" || w.CustomDomain != rule.EffectiveTunnelDomain() || w.ScriptDigest != currentTunnelWorkerDigest() {
 			return true
 		}
 	}
@@ -518,7 +518,7 @@ func (r *tunnelWorkerRunner) runOnce(ctx context.Context) (authFailed bool, err 
 			sessionCancel()
 			return false, readErr
 		case <-pingTick.C:
-			if err := ws.WriteText([]byte(tunnelControlPing)); err != nil {
+			if err := ws.WritePing(nil); err != nil {
 				sessionCancel()
 				<-readErrCh
 				return false, err
@@ -718,7 +718,7 @@ func (s *tunnelSession) forwardHTTP(ctx context.Context, streamID uint32, route 
 	defer resp.Body.Close()
 
 	respHeaders := filterResponseHeaders(resp.Header)
-	bodyless := strings.EqualFold(head.Method, http.MethodHead) || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotModified || resp.StatusCode == http.StatusSwitchingProtocols
+	bodyless := strings.EqualFold(head.Method, http.MethodHead) || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotModified || resp.StatusCode == http.StatusSwitchingProtocols || resp.ContentLength == 0
 	var headFlags byte
 	if bodyless {
 		headFlags = tunnelFlagFIN
@@ -738,9 +738,21 @@ func (s *tunnelSession) forwardHTTP(ctx context.Context, streamID uint32, route 
 		return
 	}
 
-	buf := make([]byte, 64<<10)
+	buf := make([]byte, tunnelMaxChunk)
+	var bytesRead int64
 	for {
 		n, readErr := resp.Body.Read(buf)
+		bytesRead += int64(n)
+		if readErr == nil && resp.ContentLength > 0 && bytesRead >= resp.ContentLength {
+			var probe [1]byte
+			pn, pErr := resp.Body.Read(probe[:])
+			if pn > 0 {
+				buf = append(buf[:n], probe[:pn]...)
+				n += pn
+				bytesRead += int64(pn)
+			}
+			readErr = pErr
+		}
 		if n > 0 {
 			for off := 0; off < n; off += tunnelMaxChunk {
 				end := off + tunnelMaxChunk

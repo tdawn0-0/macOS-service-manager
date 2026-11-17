@@ -64,6 +64,7 @@ type wsConn struct {
 	closeOnce  sync.Once
 	closed     bool
 	onActivity func()
+	onPing     func()
 }
 
 func wsAcceptKey(key string) string {
@@ -413,6 +414,9 @@ func (c *wsConn) ReadMessage() (byte, []byte, error) {
 		}
 		switch op {
 		case wsOpPing:
+			if c.onPing != nil {
+				c.onPing()
+			}
 			_ = c.writeFrame(wsOpPong, payload)
 			continue
 		case wsOpPong:

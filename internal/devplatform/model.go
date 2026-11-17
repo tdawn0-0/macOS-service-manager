@@ -130,6 +130,7 @@ type TunnelWorkerState struct {
 	ZoneID       string `json:"zoneId,omitempty"`
 	LocalDomain  string `json:"localDomain"`
 	LocalPort    int    `json:"localPort"`
+	ScriptDigest string `json:"scriptDigest,omitempty"`
 }
 
 type State struct {

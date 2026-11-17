@@ -3,6 +3,8 @@ package devplatform
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,9 +19,15 @@ import (
 )
 
 const (
-	defaultCloudflareAPIBase  = "https://api.cloudflare.com/client/v4"
+	defaultCloudflareAPIBase   = "https://api.cloudflare.com/client/v4"
 	cloudflareScriptDateHeader = "2025-08-01"
+	cloudflareWorkerCompatDate = "2026-04-07"
 )
+
+func currentTunnelWorkerDigest() string {
+	sum := sha256.Sum256([]byte(cloudflareWorkerCompatDate + "\n" + cloudflareWorkerIndexMJS))
+	return hex.EncodeToString(sum[:8])
+}
 
 type cfAPIError struct {
 	Code    int    `json:"code"`
@@ -272,7 +280,7 @@ func (c *cloudflareClient) putWorkerScript(ctx context.Context, accountID, scrip
 	}
 	meta := map[string]any{
 		"main_module":        "index.mjs",
-		"compatibility_date": "2025-01-01",
+		"compatibility_date": cloudflareWorkerCompatDate,
 		"bindings": []map[string]any{
 			{
 				"name":       "TUNNEL_GATEWAY",
@@ -633,6 +641,7 @@ func (m *Manager) SyncTunnels(ctx context.Context) error {
 			ZoneID:       zoneID,
 			LocalDomain:  rule.Domain,
 			LocalPort:    rule.LocalPort,
+			ScriptDigest: currentTunnelWorkerDigest(),
 		}
 		urlsByLocalDomain[rule.Domain] = publicURL
 	}

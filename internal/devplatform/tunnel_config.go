@@ -20,6 +20,7 @@ import (
 var (
 	tunnelClientIDRE      = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,39}$`)
 	cloudflareAccountIDRE = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,64}$`)
+	tunnelScriptDigestRE  = regexp.MustCompile(`^[0-9a-f]{16,64}$`)
 )
 
 func normalizeTunnelClientID(raw string) (string, error) {
@@ -70,6 +71,9 @@ func validateTunnelState(s *State) error {
 		}
 		if worker.PublicURL == "" || worker.LocalPort < 1 || worker.LocalPort > 65535 {
 			return fmt.Errorf("incomplete tunnel worker state %q", name)
+		}
+		if worker.ScriptDigest != "" && !tunnelScriptDigestRE.MatchString(worker.ScriptDigest) {
+			return fmt.Errorf("invalid tunnel worker digest %q", name)
 		}
 	}
 	return nil

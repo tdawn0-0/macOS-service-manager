@@ -68,7 +68,7 @@ func TestLogRotationLaunchdLifecycle(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	defer m.StopLogMaintenance(context.Background())
+	defer m.SetLogRotation(context.Background(), false)
 	pathScheduled := filepath.Join(m.Root, "logs", "scheduled.log")
 	if e := os.WriteFile(pathScheduled, make([]byte, logLimit+1), 0600); e != nil {
 		t.Fatal(e)

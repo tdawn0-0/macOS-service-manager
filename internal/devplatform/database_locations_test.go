@@ -252,7 +252,7 @@ func customDataArguments(t *testing.T) {
 func customPostgresVersionInstances(t *testing.T) {
 	// Exact-keg fixtures exercise the supported Homebrew catalog contract. These
 	// are command fixtures, not native PostgreSQL server acceptance.
-	m, p, _ := brewFixture(t, "postgresql")
+	m, p, _ := brewFixture(t)
 	m.Run = runCommand
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

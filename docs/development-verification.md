@@ -10,6 +10,6 @@ Update the status below only when a gate actually changes it, naming the exact c
 
 ## Current status
 
-All rows of the [acceptance matrix](resources-acceptance.md) remain **NOT RUN** for full acceptance. The native release gate (`scripts/verify-native-release.py --run`) needs a disposable GitHub-hosted macOS arm64 runner, and the signed App, system CA authorization, privileged listener and Chrome runbook needs an authorized disposable machine with a matching Developer ID build. Neither has been observed for the current product. Real upstream Java/Python installation, real PostgreSQL 18 servers, database backup/restore on an external volume and cross-volume hardware behavior are also unverified.
+All rows of the [acceptance matrix](resources-acceptance.md) remain **NOT RUN** for full acceptance. The native release gate (`scripts/verify-native-release.py --run`) needs a disposable GitHub-hosted macOS arm64 runner, and the signed App, system CA authorization, privileged listener and Chrome runbook needs an authorized disposable machine with a matching Developer ID build. Neither has been observed for the current product. Real upstream Java/Python installation, real PostgreSQL 18 servers, database backup/restore on an external volume and cross-volume hardware behavior are also unverified. The Cloudflare tunnel has no row in the acceptance matrix yet, so nothing defines its full acceptance; its code-level tests use a fake Cloudflare API.
 
 Records of earlier per-change runs (015-B, 018) are in this file's git history; they describe those commits only.

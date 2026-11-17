@@ -599,3 +599,33 @@ func TestAuthorityStatusOrdersPreviousFirstThenNewestArchive(t *testing.T) {
 		t.Errorf("expected archive[2] to be oldest non-previous ('0000000000000001'), got %q", status.Archives[2].ID)
 	}
 }
+
+// Discarding a prepared replacement needs the reviewed revision, removes only
+// the prepared material and leaves the active authority as it was.
+func TestDiscardPreparedAuthorityKeepsTheActiveAuthority(t *testing.T) {
+	m, _, active := legacyAuthorityFixture(t, time.Now().Add(90*24*time.Hour))
+	ctx := context.Background()
+	if err := m.PrepareAuthority(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r, err := m.AuthorityStatus(ctx)
+	if err != nil || r.Prepared == nil || r.Active.Fingerprint != active {
+		t.Fatal(r, err)
+	}
+	if err = m.DiscardPreparedAuthority(ctx, "stale"); err == nil {
+		t.Fatal("discarded with an unreviewed revision")
+	}
+	if err = m.DiscardPreparedAuthority(ctx, r.Revision); err != nil {
+		t.Fatal(err)
+	}
+	after, err := m.AuthorityStatus(ctx)
+	if err != nil || after.Prepared != nil || after.Active.Fingerprint != active {
+		t.Fatal("discard changed the active authority or kept the prepared one", after, err)
+	}
+	if _, err = os.Stat(filepath.Join(m.authorityRoot(), authorityPrepared)); !os.IsNotExist(err) {
+		t.Fatal("prepared material remains", err)
+	}
+	if err = m.DiscardPreparedAuthority(ctx, after.Revision); err == nil {
+		t.Fatal("discarded a replacement that does not exist")
+	}
+}

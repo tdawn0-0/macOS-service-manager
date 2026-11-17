@@ -138,9 +138,6 @@ func resolveHomebrew(ctx context.Context, name, requested string, run commandRun
 // ResolvePackage uses the same runner as installation, including GUI/CLI test
 // fixtures. Preview only reads metadata; adding a tap is a separate user action.
 func (m *Manager) ResolvePackage(ctx context.Context, name, version string) (Package, error) {
-	if err := requireAppleSiliconHost(); err != nil {
-		return Package{}, err
-	}
 	if name == "postgresql" || name == "redis" {
 		return resolveHomebrew(ctx, name, version, m.Run)
 	}

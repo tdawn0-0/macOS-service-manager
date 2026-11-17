@@ -58,9 +58,6 @@ func (m *Manager) ensureLogMaintenance(ctx context.Context, s *State) error {
 	return e
 }
 
-func (m *Manager) StopLogMaintenance(ctx context.Context) error {
-	return m.withState(ctx, func(*State) error { return m.stopLogMaintenance(ctx) })
-}
 func (m *Manager) stopLogMaintenance(ctx context.Context) error {
 	if e := m.stopJob(ctx, "maintenance"); e != nil {
 		return e

@@ -78,9 +78,6 @@ func (a *app) devInstanceDeletionPreview(c *ui.Context) {
 		color = c.Theme().Danger
 	}
 	ui.Text(c, p.Detail).FontSize(textSmall).TextColor(color)
-	for _, ref := range p.References {
-		ui.Text(c, "Linked project: "+ref).FontSize(textSmall)
-	}
 	devField(c, "Confirm instance ID", &d.deleteConfirmation, p.InstanceID)
 	if action.Button(c, "Permanently delete instance data", action.ButtonProps{Variant: action.Primary, Size: theme.Small}).AlignSelf(ui.Start).Tooltip("Once erasure begins, cancelling can leave a pending deletion. Erased files cannot be restored.").Disabled(d.busy || !p.CanDelete || d.deleteConfirmation != p.InstanceID).Clicked() {
 		id, fingerprint, confirmation := p.InstanceID, p.Fingerprint, d.deleteConfirmation

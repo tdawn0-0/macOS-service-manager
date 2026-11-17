@@ -11,20 +11,16 @@ import (
 	"testing"
 )
 
-func brewMetadata(name string) string {
+func brewMetadata() string {
 	f := homebrewFormula{SourceChecksum: struct {
 		SHA256 string `json:"sha256"`
 	}{strings.Repeat("a", 64)}, License: "test license"}
-	if name == "php" {
-		f.Name, f.FullName, f.Versions.Stable = "php", "shivammathur/php/php", "8.5.12"
-	} else {
-		f.Name, f.FullName, f.Versions.Stable, f.Revision = "postgresql@17", "postgresql@17", "17.11", 1
-	}
+	f.Name, f.FullName, f.Versions.Stable, f.Revision = "postgresql@17", "postgresql@17", "17.11", 1
 	b, _ := json.Marshal(map[string]any{"formulae": []homebrewFormula{f}})
 	return string(b)
 }
 
-func brewFixture(t *testing.T, name string) (*Manager, Package, *[][]string) {
+func brewFixture(t *testing.T) (*Manager, Package, *[][]string) {
 	t.Helper()
 	m := testManager(t)
 	m.brewCellar = t.TempDir()
@@ -42,23 +38,20 @@ func brewFixture(t *testing.T, name string) (*Manager, Package, *[][]string) {
 		command := append([]string{}, args[4:]...)
 		calls = append(calls, command)
 		if command[0] == "info" {
-			return brewMetadata(name), nil
+			return brewMetadata(), nil
 		}
 		if command[0] == "install" {
-			p, err := resolveHomebrew(ctx, name, map[string]string{"php": "8.5", "postgresql": "17"}[name], m.Run)
+			p, err := resolveHomebrew(ctx, "postgresql", "17", m.Run)
 			if err != nil {
 				t.Fatal(err)
 			}
-			writeBrewKeg(t, m, p, map[string]string{"php": "shivammathur/php", "postgresql": "homebrew/core"}[name])
+			writeBrewKeg(t, m, p, "homebrew/core")
 			return "installed", nil
-		}
-		if command[0] == "tap" {
-			return "", nil
 		}
 		t.Fatalf("unexpected Homebrew mutation %v", command)
 		return "", nil
 	}
-	p, err := m.ResolvePackage(context.Background(), name, map[string]string{"php": "8.5", "postgresql": "17"}[name])
+	p, err := m.ResolvePackage(context.Background(), "postgresql", "17")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +78,7 @@ func writeBrewKeg(t *testing.T, m *Manager, p Package, tap string) {
 func TestHomebrewInstallSelectsTapAndExactKegWithoutGlobalServiceChanges(t *testing.T) {
 	for _, name := range []string{"postgresql"} {
 		t.Run(name, func(t *testing.T) {
-			m, p, calls := brewFixture(t, name)
+			m, p, calls := brewFixture(t)
 			ctx := context.Background()
 			info, err := m.PackageDetails(ctx, p)
 			if err != nil || info.Installed || info.Location != m.packageDir(p) || len(*calls) != 1 {
@@ -123,7 +116,7 @@ func TestHomebrewInstallSelectsTapAndExactKegWithoutGlobalServiceChanges(t *test
 }
 
 func TestHomebrewRejectsForeignTapAndFormulaDrift(t *testing.T) {
-	m, p, calls := brewFixture(t, "postgresql")
+	m, p, calls := brewFixture(t)
 	ctx := context.Background()
 	writeBrewKeg(t, m, p, "other/tap")
 	if err := m.Install(ctx, p); err == nil || !strings.Contains(err.Error(), "different tap") {
@@ -154,7 +147,7 @@ func TestHomebrewRejectsForeignTapAndFormulaDrift(t *testing.T) {
 
 func TestHomebrewFailureAndCancellationNeverFallBackToArchive(t *testing.T) {
 	for _, cancel := range []bool{false, true} {
-		m, p, _ := brewFixture(t, "postgresql")
+		m, p, _ := brewFixture(t)
 		m.Run = func(context.Context, string, ...string) (string, error) { return "", errors.New("brew unavailable") }
 		ctx, stop := context.WithCancel(context.Background())
 		if cancel {
@@ -177,7 +170,7 @@ func TestHomebrewFailureAndCancellationNeverFallBackToArchive(t *testing.T) {
 }
 
 func TestHomebrewDoesNotFollowUpdatedOptLinkOrAcceptMissingKeg(t *testing.T) {
-	m, p, _ := brewFixture(t, "postgresql")
+	m, p, _ := brewFixture(t)
 	ctx := context.Background()
 	writeBrewKeg(t, m, p, "homebrew/core")
 	if err := m.Install(ctx, p); err != nil {
@@ -200,12 +193,12 @@ func TestHomebrewDoesNotFollowUpdatedOptLinkOrAcceptMissingKeg(t *testing.T) {
 }
 
 func TestHomebrewResolutionRejectsUnavailableExactVersionAndWrongTap(t *testing.T) {
-	m, _, _ := brewFixture(t, "postgresql")
+	m, _, _ := brewFixture(t)
 	if _, err := m.ResolvePackage(context.Background(), "postgresql", "17.10"); err == nil {
 		t.Fatal("silently changed an exact requested version")
 	}
 	m.Run = func(context.Context, string, ...string) (string, error) {
-		return strings.ReplaceAll(brewMetadata("postgresql"), "postgresql@17", "other/tap/postgresql@17"), nil
+		return strings.ReplaceAll(brewMetadata(), "postgresql@17", "other/tap/postgresql@17"), nil
 	}
 	if _, err := m.ResolvePackage(context.Background(), "postgresql", "17"); err == nil {
 		t.Fatal("resolved foreign PostgreSQL tap")
@@ -213,7 +206,7 @@ func TestHomebrewResolutionRejectsUnavailableExactVersionAndWrongTap(t *testing.
 }
 
 func TestHomebrewInstallRefusesVersionUsedByAnotherCommand(t *testing.T) {
-	m, p, calls := brewFixture(t, "postgresql")
+	m, p, calls := brewFixture(t)
 	old := p
 	old.Version = "17.10"
 	ctx := context.Background()
@@ -240,7 +233,7 @@ func TestHomebrewInstallRefusesVersionUsedByAnotherCommand(t *testing.T) {
 }
 
 func TestHomebrewDescriptorsRejectRemovedSourcesAndForeignBinaryPaths(t *testing.T) {
-	_, p, _ := brewFixture(t, "postgresql")
+	_, p, _ := brewFixture(t)
 	for _, change := range []func(*Package){
 		func(p *Package) { p.Formula = ""; p.Format = "dmg.postgres" },
 		func(p *Package) { p.Formula = "other/tap/postgresql@17" },
@@ -256,7 +249,7 @@ func TestHomebrewDescriptorsRejectRemovedSourcesAndForeignBinaryPaths(t *testing
 }
 
 func TestHomebrewDiagnosticsDoNotOfferArchiveRepair(t *testing.T) {
-	m, p, _ := brewFixture(t, "postgresql")
+	m, p, _ := brewFixture(t)
 	ctx := context.Background()
 	writeBrewKeg(t, m, p, "homebrew/core")
 	if err := m.Install(ctx, p); err != nil {

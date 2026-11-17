@@ -151,7 +151,7 @@ class NativeReleaseTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError,'install failed'):m.run_native()
             self.assertFalse(root.exists())
             last=run.call_args
-            self.assertEqual(last.args[0],[str(root/'devmgr'),'maintenance-stop'])
+            self.assertEqual(last.args[0],[str(root/'devmgr'),'log-rotation','off'])
             self.assertEqual(last.kwargs['env']['MSM_DEV_HOME'],str(root))
 
     def test_test_phase_validates_events_and_timeout_reaps_group(self):

@@ -57,7 +57,7 @@ func (m *Manager) PackageDetails(ctx context.Context, p Package) (PackageDetails
 	if e := ctx.Err(); e != nil {
 		return info, e
 	}
-	info.Compatible = requireAppleSiliconHost() == nil && (p.Arch == "arm64" || p.Arch == "universal")
+	info.Compatible = p.Arch == "arm64" || p.Arch == "universal"
 	info.Compatibility = "Compatible architecture"
 	if !info.Compatible {
 		info.Compatibility = "This archive is for a different architecture"

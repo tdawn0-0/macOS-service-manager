@@ -177,10 +177,8 @@ func (m *Manager) checkNewInstance(ctx context.Context, s State, i Instance) err
 			return errors.New("instance port already assigned")
 		}
 	}
-	for _, site := range proxyRoutesFromState(&s) {
-		if site.Port == i.Port {
-			return errors.New("database port is assigned to an enabled HTTPS site")
-		}
+	if len(s.ProxyRules) > 0 && s.ProxyListenerPort == i.Port {
+		return errors.New("database port is the HTTPS proxy's listener port")
 	}
 	if _, e := os.Lstat(filepath.Join(m.Root, "instances", i.ID)); e == nil {
 		return errors.New("instance data already exists; choose another ID")

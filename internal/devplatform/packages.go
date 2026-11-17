@@ -51,9 +51,6 @@ func (m *Manager) Binary(s *State, id, name string) (string, error) {
 	if p.ID() != id {
 		return "", errors.New("installed package identity mismatch")
 	}
-	if p.Name == "php" || p.Name == "php-fpm" {
-		return "", errors.New("PHP is not managed by this app")
-	}
 	if p.Formula != "" || p.Name == "postgresql" || p.Name == "redis" || p.Name == "java" {
 		if e := p.Validate(); e != nil {
 			return "", e
@@ -79,9 +76,6 @@ func (m *Manager) Binary(s *State, id, name string) (string, error) {
 	if !f.Mode().IsRegular() || f.Mode()&0111 == 0 {
 		return "", fmt.Errorf("%s is not executable", path)
 	}
-	if e := requireAppleSiliconHost(); e != nil {
-		return "", e
-	}
 	if e := requireAppleSiliconExecutable(path); e != nil {
 		return "", e
 	}
@@ -96,9 +90,6 @@ type stagedPackage struct {
 
 func (m *Manager) stagePackage(ctx context.Context, p Package) (*stagedPackage, error) {
 	if e := p.Validate(); e != nil {
-		return nil, e
-	}
-	if e := requireAppleSiliconHost(); e != nil {
 		return nil, e
 	}
 	if p.MinMacOS != "" {
@@ -215,9 +206,6 @@ func (m *Manager) stagePackage(ctx context.Context, p Package) (*stagedPackage, 
 
 func (m *Manager) install(ctx context.Context, p Package) error {
 	if e := p.Validate(); e != nil {
-		return e
-	}
-	if e := requireAppleSiliconHost(); e != nil {
 		return e
 	}
 	if e := m.init(); e != nil {

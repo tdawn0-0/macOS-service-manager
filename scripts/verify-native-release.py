@@ -251,7 +251,7 @@ def run_native(local_existing=False):
     finally:
         # The runner itself is disposable. Never scan or stop jobs outside this root.
         if built:
-            run([str(harness), 'maintenance-stop'], env=env, timeout=40)
+            run([str(harness), 'log-rotation', 'off'], env=env, timeout=40)
         if local_existing:
             cleanup_local_jobs(root)
         shutil.rmtree(root)

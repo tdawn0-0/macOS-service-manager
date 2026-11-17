@@ -19,7 +19,6 @@ type InstanceDeletionPreview struct {
 	identity, treeDigest                                 string
 	InstanceID, Kind, Package, Path, Fingerprint, Detail string
 	Entries, Bytes                                       int64
-	References                                           []string
 	CanDelete                                            bool
 }
 type InstanceDeletionInfo struct {

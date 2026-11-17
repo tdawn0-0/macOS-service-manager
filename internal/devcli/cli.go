@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"time"
 )
 
 // internalCommands are the only entries the shipped app answers to when it is
@@ -55,22 +54,7 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		fmt.Fprintln(out, `Development commands:
  status                           Print configuration (no stored passwords)
  install <software> <version>     Node.js, Java, MySQL, PostgreSQL, Redis or MongoDB
- port <number>                    Inspect IPv4 loopback and listener metadata
- available-port                   Suggest an unused high local port
- db-port <instance-id> <number>    Change a stopped database port, keeping its data
- db-port-repair <instance-id>      Reconcile endpoint files with the saved port
- db-initializations               Review unfinished database preparations
- db-initialization-resolve <id> <revision> Stop owned jobs and retain prepared data
- db-delete-preview <id>           Preview data path, references and deletion impact
- db-delete-data <id> <fingerprint> <confirm-id> Permanently delete confirmed instance data
- db-deletions                     Review interrupted data deletions
- tasks                            List private operation records
- task-dismiss <id> <revision>      Dismiss a record, retaining all resource files
- ca-info                          Inspect CA material, expiry and macOS verification
- ca-prepare                       Prepare a replacement without changing active trust
- ca-discard <revision>            Discard the prepared selection, keep saved material
  log-rotation <on|off>            Configure the scheduled user log maintenance task
- maintenance-stop                 Stop the scheduled user log maintenance task
  maintain <root>                  Internal finite log rotation task
  serve <root>                     Internal launchd proxy entry point
  tunnel <root>                    Internal launchd Cloudflare tunnel entry point`)
@@ -82,127 +66,11 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 			return e
 		}
 		return devplatform.New(args[1]).RunDatabaseWorker(ctx, args[2])
-	case "db-initializations":
-		records, e := m.PendingInstanceInitializations(ctx)
-		if e != nil {
-			return e
-		}
-		return json.NewEncoder(out).Encode(records)
-	case "db-initialization-resolve":
-		if e := need(3); e != nil {
-			return e
-		}
-		path, e := m.ResolveInstanceInitialization(ctx, args[1], args[2])
-		if e == nil {
-			fmt.Fprintln(out, path)
-		}
-		return e
-	case "db-delete-preview":
-		if e := need(2); e != nil {
-			return e
-		}
-		p, e := m.PreviewInstanceDeletion(ctx, args[1])
-		if e != nil {
-			return e
-		}
-		return json.NewEncoder(out).Encode(p)
-	case "db-delete-data":
-		if e := need(4); e != nil {
-			return e
-		}
-		return m.DeleteInstanceData(ctx, args[1], args[2], args[3])
-	case "db-deletions":
-		records, e := m.PendingInstanceDeletions(ctx)
-		if e != nil {
-			return e
-		}
-		return json.NewEncoder(out).Encode(records)
-	case "tasks":
-		records, e := m.Operations(ctx)
-		if e != nil {
-			return e
-		}
-		return json.NewEncoder(out).Encode(records)
-	case "task-dismiss":
-		if e := need(3); e != nil {
-			return e
-		}
-		return m.DismissOperation(ctx, args[1], args[2])
-	case "ca-info":
-		r, e := m.AuthorityStatus(ctx)
-		if e != nil {
-			return e
-		}
-		return json.NewEncoder(out).Encode(r)
-	case "ca-prepare":
-		return m.PrepareAuthority(ctx)
-	case "ca-discard":
-		if e := need(2); e != nil {
-			return e
-		}
-		return m.DiscardPreparedAuthority(ctx, args[1])
-	case "port":
-		if e := need(2); e != nil {
-			return e
-		}
-		port, e := strconv.Atoi(args[1])
-		if e != nil {
-			return errors.New("enter a numeric TCP port")
-		}
-		r, e := m.InspectPort(ctx, port)
-		if e != nil {
-			return e
-		}
-		fmt.Fprintf(out, "Port %d: %s\nChecked: %s\n", r.Port, r.Status, r.CheckedAt.Format(time.RFC3339))
-		for _, listener := range r.Listeners {
-			fmt.Fprintf(out, "PID %d / UID %d / %s / %s\n", listener.PID, listener.UID, listener.Name, listener.Address)
-		}
-		fmt.Fprintln(out, r.Detail)
-		return nil
-	case "available-port":
-		port, e := m.AvailableLocalPort(ctx)
-		if e != nil {
-			return e
-		}
-		fmt.Fprintln(out, port)
-		return nil
-	case "db-port-repair":
-		if e := need(2); e != nil {
-			return e
-		}
-		s, e := m.Read()
-		if e != nil {
-			return e
-		}
-		instance, ok := s.Instances[args[1]]
-		if !ok {
-			return errors.New("instance not found")
-		}
-		return m.RepairInstancePort(ctx, instance)
-	case "db-port":
-		if e := need(3); e != nil {
-			return e
-		}
-		port, e := strconv.Atoi(args[2])
-		if e != nil {
-			return errors.New("enter a numeric database port")
-		}
-		s, e := m.Read()
-		if e != nil {
-			return e
-		}
-		instance, ok := s.Instances[args[1]]
-		if !ok {
-			return errors.New("instance not found")
-		}
-		return m.ChangeInstancePort(ctx, instance, port)
 	case "maintain":
 		if e := need(2); e != nil {
 			return e
 		}
 		return devplatform.New(args[1]).RotateLogs(ctx)
-	case "maintenance-stop":
-		return m.StopLogMaintenance(ctx)
 	case "log-rotation":
 		if e := need(2); e != nil {
 			return e

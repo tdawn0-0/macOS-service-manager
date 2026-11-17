@@ -5,7 +5,7 @@
 - **Application**: Devbase is a native Apple Silicon macOS desktop application.
 - **Go Module & Identity**: `module devbase`, bundle identifier `xyz.jyeu.devbase`.
 - **Toolchain**: Go `1.27+` using `egoist/mygo` and `lobehub/lobe-mygo` for native macOS rendering.
-- **Architecture**: Apple Silicon (`darwin/arm64`) only. Intel (`darwin/amd64`) builds and packages are rejected by design.
+- **Architecture**: Apple Silicon (`darwin/arm64`) only. Any other target fails to compile (`internal/devplatform/platform_unsupported.go`), so code never checks the host architecture at run time; it only checks that downloaded executables contain an arm64 slice.
 - **OS Support**: only the two latest macOS releases, currently macOS 26 and 27. The bundle declares `minimumSystemVersion` 26.0 (`mygo.json`). Older releases are neither tested nor supported; don't add compatibility code or test paths for them. When a new macOS ships, raise the minimum to the older of the two latest releases.
 
 ## 2. Package & File Map
@@ -25,7 +25,7 @@
   - Shell startup integration scripts (zsh, Bash, fish) and PATH management.
   - Diagnostics, status gathering, and file-locked transactional state persistence (`Manager.withState`/`withStateTransaction` over `state.json` + `state.lock`). The UI's own `developmentState` lives in the root package.
 - **`internal/devcli/` & `cmd/devmgr/`**:
-  - `internal/devcli/`: Internal `--dev` subcommands. launchd jobs run `serve` (proxy), `tunnel`, `maintain` (log rotation), and `database-worker`; `node` is the shell shim; `helper` is the privileged helper. The rest (`status`, `install`, `log-rotation`, `maintenance-stop` for `scripts/verify-native-release.py`; `db-*`, `ca-*`, `task-dismiss`, `port` for `internal/devcli` tests) are reachable only through `cmd/devmgr`; add one only together with its caller. The shipped `.app` has no public user-facing CLI.
+  - `internal/devcli/`: Internal `--dev` subcommands. launchd jobs run `serve` (proxy), `tunnel`, `maintain` (log rotation), and `database-worker`; `node` is the shell shim; `helper` is the privileged helper. The rest (`status`, `install`, `log-rotation`) exist only for `scripts/verify-native-release.py` and are reachable only through `cmd/devmgr`. Add a command only together with a real caller; test `Manager` methods directly in `devplatform`, never through a command that only its own test calls. The shipped `.app` has no public user-facing CLI.
   - `cmd/devmgr/`: Unshipped developer test harness for headless verification, fixtures, and diagnostics.
 - **Inspector & System Packages**:
   - `internal/launchd/`: Native macOS launchd job discovery, property list parsing, and lifecycle control.
@@ -60,7 +60,7 @@ go test ./internal/system ./internal/logs
 
 - **`python3 scripts/verify-native-release.py --run`**:
   - **NEVER** run this command on a personal developer machine.
-  - It performs host-level mutations and is reserved strictly for disposable GitHub-hosted macOS runners (`README.md:37`).
+  - It performs host-level mutations and is reserved strictly for disposable GitHub-hosted macOS runners (`README.md:38`).
 - **Host System Mutations in Automated Tests**:
   - **NEVER** mutate host `/etc/hosts` directly in tests.
   - **NEVER** modify the user login keychain or install real local CA trust anchors during tests.

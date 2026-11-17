@@ -3,18 +3,9 @@ package devplatform
 import (
 	"debug/macho"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"os"
-	"runtime"
 )
-
-func requireAppleSiliconHost() error {
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		return errors.New("managed development software requires macOS on Apple Silicon (arm64)")
-	}
-	return nil
-}
 
 // Upstream universal archives remain usable without changing saved package IDs.
 // Every managed Mach-O entry point must contain an arm64 slice. Scripts retain

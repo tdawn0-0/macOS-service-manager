@@ -168,3 +168,37 @@ func TestOperationSpecialRecordsNeverBlockOrFollowLinks(t *testing.T) {
 		t.Fatal("accepted FIFO")
 	}
 }
+
+// Listing tasks on a new root only reads; dismissing a task removes its
+// record and nothing it worked on.
+func TestOperationsReadOnlyListingAndDismissKeepsResources(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "new-root")
+	m := New(root)
+	ctx := context.Background()
+	if records, e := m.Operations(ctx); e != nil || len(records) != 0 {
+		t.Fatal(records, e)
+	}
+	if _, e := os.Stat(root); !os.IsNotExist(e) {
+		t.Fatal("listing tasks created storage", e)
+	}
+	if e := m.InstanceAction(ctx, "missing", "start"); e == nil {
+		t.Fatal("started a missing instance")
+	}
+	records, e := m.Operations(ctx)
+	if e != nil || len(records) != 1 || records[0].Revision == "" {
+		t.Fatal(records, e)
+	}
+	kept := filepath.Join(root, "instances", "keep")
+	if e = os.MkdirAll(kept, 0700); e != nil {
+		t.Fatal(e)
+	}
+	if e = m.DismissOperation(ctx, records[0].ID, records[0].Revision); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = os.Stat(kept); e != nil {
+		t.Fatal("dismiss removed a resource", e)
+	}
+	if records, e = m.Operations(ctx); e != nil || len(records) != 0 {
+		t.Fatal("dismissed task is still listed", records, e)
+	}
+}

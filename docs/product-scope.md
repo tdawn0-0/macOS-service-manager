@@ -19,7 +19,3 @@ Closing the window leaves managed work running. Quitting leaves background HTTPS
 ## Explicitly outside scope
 
 Project registration, source-directory management, command execution, dependency installation, app orchestration, project autostart, environment import/export, Go runtime management (Go SDK version management uses Go's native toolchain resolution and is outside scope), PHP, independent site management, arbitrary remote upstreams, FastCGI, SQL IDE, cloud sync, and team environment sharing. The existing secondary system-service capability remains available under its own controls.
-
-## Delivery sequence
-
-015-A fixes this target and its acceptance matrix. 011 deletes the old model and prepares the new core. 012 handles Node terminal use; 013 handles resource lifecycle; 014 builds the HTTPS rule page; 016 adds diagnostics; 017 adds database connection profiles. 015-B updates public usage documentation and executes the full test gates. 018 adds Java/uv Python and external database locations with multi-version instance coverage (018 also added Go, which was later removed). The Cloudflare tunnel was added to HTTPS after 018 and has no acceptance row yet. The signed App/system-trust/Chrome gate has not been observed, so this is not a release acceptance claim.

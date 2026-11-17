@@ -70,9 +70,6 @@ func fetch(ctx context.Context, address string, v any) error {
 func Resolve(ctx context.Context, name, version string) (Package, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if e := requireAppleSiliconHost(); e != nil {
-		return Package{}, e
-	}
 	arch := "arm64"
 	p := Package{Name: name, Version: strings.TrimPrefix(version, "v"), Arch: arch, Format: "tar.gz", Strip: 1, Binaries: map[string]string{}}
 	if !nameRE.MatchString(p.Name) || !nameRE.MatchString(p.Version) {

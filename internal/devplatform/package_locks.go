@@ -11,11 +11,13 @@ import (
 	"time"
 )
 
-// CLI exec holds a shared lease; replacement/uninstall take an exclusive one.
-// launchd jobs are checked separately because no resident supervisor holds a
-// lease on their behalf. Preparation holds a package lease without the state
-// lock. State holders may only try exclusive leases without waiting, so an
-// operation waiting to publish cannot deadlock against uninstall.
+// Work that uses an installed package (starting or preparing an instance,
+// database work, checking files) holds a shared lease; replacement, repair and
+// uninstall take an exclusive one. launchd jobs are checked separately because
+// no resident supervisor holds a lease on their behalf. Preparation holds a
+// package lease without the state lock. State holders may only try exclusive
+// leases without waiting, so an operation waiting to publish cannot deadlock
+// against uninstall.
 type PackageBusyError struct{ PackageID string }
 
 func (e *PackageBusyError) Error() string {

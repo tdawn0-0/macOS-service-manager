@@ -567,3 +567,35 @@ func TestInstanceInitializationForeignArchiveIsNotAccepted(t *testing.T) {
 		t.Fatal("changed the unowned archive", e)
 	}
 }
+
+// A new instance may not take the port the HTTPS proxy listens on while the
+// proxy has rules to serve; with no rules the proxy does not listen at all.
+func TestNewInstanceCannotTakeTheProxyListenerPort(t *testing.T) {
+	m := testManager(t)
+	port := integrationPort(t)
+	i := Instance{ID: "db", Kind: "redis", Package: "redis@8.2.1-arm64", Port: port}
+	s := emptyState()
+	s.ProxyListenerPort = port
+	s.ProxyRules = []ProxyRule{{Domain: "app.devbase.localhost", LocalPort: 3000}}
+	if e := m.checkNewInstance(context.Background(), s, i); e == nil || !strings.Contains(e.Error(), "listener port") {
+		t.Fatalf("instance took the proxy listener port: %v", e)
+	}
+	s.ProxyListenerPort = 443
+	if e := m.checkNewInstance(context.Background(), s, i); e != nil {
+		t.Fatalf("a different listener port blocked the instance: %v", e)
+	}
+	s.ProxyListenerPort, s.ProxyRules = port, nil
+	if e := m.checkNewInstance(context.Background(), s, i); e != nil {
+		t.Fatalf("a proxy without rules blocked the instance: %v", e)
+	}
+}
+
+func TestListingInitializationsOnANewRootCreatesNoStorage(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "new-root")
+	if rows, e := New(root).PendingInstanceInitializations(context.Background()); e != nil || len(rows) != 0 {
+		t.Fatal(rows, e)
+	}
+	if _, e := os.Stat(root); !os.IsNotExist(e) {
+		t.Fatal("listing initializations created storage", e)
+	}
+}

@@ -1814,6 +1814,45 @@ orphanV.serializeAttachment({ streamId: 99 });
 const gwOrphan = new TunnelGateway(ctxOrphan, env);
 assert.equal(gwOrphan.wsVisitors.size, 0);
 assert.equal(orphanV.readyState, 3);
+
+// 10. Optional ACCESS_TOKEN edge protection blocks unauthorized visitors before waking DO,
+// while allowing Bearer, Basic, X-Devbase-Token, and signed /__devbase/connect agent handshakes.
+const protectedEnv = { ...env, ACCESS_TOKEN: "visitor-edge-token-0123456789abcdef" };
+const beforeStubCalls = stubGetCalls;
+const unauthRes = await worker.fetch(new Request("https://devbase-app.demo.workers.dev/private"), protectedEnv);
+assert.equal(unauthRes.status, 401);
+assert.ok((unauthRes.headers.get("WWW-Authenticate") || "").includes("Basic"));
+assert.equal(unauthRes.headers.get("Cache-Control"), "no-store");
+assert.equal(stubGetCalls, beforeStubCalls, "unauthorized visitor must not wake DO");
+
+const badBearerRes = await worker.fetch(new Request("https://devbase-app.demo.workers.dev/private", {
+  headers: { Authorization: "Bearer wrong-token" },
+}), protectedEnv);
+assert.equal(badBearerRes.status, 401);
+assert.equal(stubGetCalls, beforeStubCalls);
+
+const connectProtectedRes = await worker.fetch(await makeSignedConnectReq(secret, "mac-edge"), protectedEnv);
+assert.equal(connectProtectedRes.status, 101);
+assert.equal(stubGetCalls, beforeStubCalls + 1);
+
+const bearerRes = await worker.fetch(new Request("https://devbase-app.demo.workers.dev/private", {
+  headers: { Authorization: "Bearer visitor-edge-token-0123456789abcdef" },
+}), protectedEnv);
+assert.equal(bearerRes.status, 502); // reached DO (agent2 closed), passed edge auth
+assert.equal(stubGetCalls, beforeStubCalls + 2);
+
+const basicHeader = "Basic " + Buffer.from("dev:visitor-edge-token-0123456789abcdef").toString("base64");
+const basicRes = await worker.fetch(new Request("https://devbase-app.demo.workers.dev/private", {
+  headers: { Authorization: basicHeader },
+}), protectedEnv);
+assert.equal(basicRes.status, 502);
+assert.equal(stubGetCalls, beforeStubCalls + 3);
+
+const customHdrRes = await worker.fetch(new Request("https://devbase-app.demo.workers.dev/private", {
+  headers: { "X-Devbase-Token": "visitor-edge-token-0123456789abcdef" },
+}), protectedEnv);
+assert.equal(customHdrRes.status, 502);
+assert.equal(stubGetCalls, beforeStubCalls + 4);
 `
 	if err := os.WriteFile(filepath.Join(dir, "cf_mock.mjs"), []byte(cfMockJS), 0600); err != nil {
 		t.Fatal(err)
@@ -1846,6 +1885,132 @@ func TestTunnelWorkerScriptSyntax(t *testing.T) {
 		if err != nil {
 			t.Fatalf("node --check failed: %v\n%s", err, string(out))
 		}
+	}
+}
+
+func TestTunnelAccessTokenProtectionAndSync(t *testing.T) {
+	var mu sync.Mutex
+	boundAccessTokens := map[string]string{}
+	cfSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/accounts":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": []map[string]string{{"id": "acc-auth-1", "name": "Dev"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/accounts/acc-auth-1/workers/subdomain":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": map[string]string{"subdomain": "auth-dev"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/zones":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": []any{}})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/accounts/acc-auth-1/workers/services/"):
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "errors": []map[string]any{{"code": 10007, "message": "not found"}}})
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/accounts/acc-auth-1/workers/scripts/") && !strings.HasSuffix(r.URL.Path, "/domains/records"):
+			name := strings.TrimPrefix(r.URL.Path, "/accounts/acc-auth-1/workers/scripts/")
+			_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			mr := multipart.NewReader(r.Body, params["boundary"])
+			var metaRaw []byte
+			for {
+				p, err := mr.NextPart()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if p.FormName() == "metadata" {
+					metaRaw, _ = io.ReadAll(p)
+				}
+			}
+			var meta struct {
+				Bindings []map[string]any `json:"bindings"`
+			}
+			if err := json.Unmarshal(metaRaw, &meta); err != nil {
+				t.Fatal(err)
+			}
+			tok := ""
+			for _, b := range meta.Bindings {
+				if b["name"] == "ACCESS_TOKEN" {
+					tok, _ = b["text"].(string)
+				}
+			}
+			mu.Lock()
+			boundAccessTokens[name] = tok
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": map[string]any{}})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/subdomain"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": map[string]any{"enabled": true}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer cfSrv.Close()
+
+	m := testManager(t)
+	m.CloudflareAPIBase = cfSrv.URL
+	if err := m.SaveCloudflareSettings(context.Background(), "cf-token-auth-0123456789", "", "mac-auth"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ReplaceProxyRules(context.Background(), 0, 443, []ProxyRule{
+		{Domain: "guarded.devbase.localhost", LocalPort: 3000, Tunnel: true, TunnelAuth: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SyncTunnels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	tok1, err := m.TunnelAccessToken("guarded.devbase.localhost")
+	if err != nil || len(tok1) < 16 {
+		t.Fatalf("expected generated token, got %q err=%v", tok1, err)
+	}
+	mu.Lock()
+	deployedTok := boundAccessTokens["devbase-guarded"]
+	mu.Unlock()
+	if deployedTok != tok1 {
+		t.Fatalf("worker bound %q, want %q", deployedTok, tok1)
+	}
+
+	info, err := os.Stat(m.tunnelAccessPath())
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("unexpected tunnel-access.json mode: %v err=%v", info.Mode().Perm(), err)
+	}
+	stateRaw, err := os.ReadFile(filepath.Join(m.Root, "state.json"))
+	if err != nil || strings.Contains(string(stateRaw), tok1) {
+		t.Fatalf("access token leaked into state.json: err=%v", err)
+	}
+
+	s, err := m.Read()
+	if err != nil || m.needsTunnelSync(s) {
+		t.Fatalf("expected synced state after SyncTunnels: needsSync=%v err=%v", m.needsTunnelSync(s), err)
+	}
+
+	tok2, err := m.RotateTunnelAccessToken(context.Background(), "guarded.devbase.localhost")
+	if err != nil || tok2 == "" || tok2 == tok1 {
+		t.Fatalf("token rotation failed: tok1=%q tok2=%q err=%v", tok1, tok2, err)
+	}
+	mu.Lock()
+	deployedAfterRotate := boundAccessTokens["devbase-guarded"]
+	mu.Unlock()
+	if deployedAfterRotate != tok2 {
+		t.Fatalf("rotated token %q not deployed (got %q)", tok2, deployedAfterRotate)
+	}
+
+	// Turning protection off removes ACCESS_TOKEN binding on next SyncTunnels.
+	if err := m.ReplaceProxyRules(context.Background(), s.ProxyRulesRevision, 443, []ProxyRule{
+		{Domain: "guarded.devbase.localhost", LocalPort: 3000, Tunnel: true, TunnelAuth: false},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SyncTunnels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	clearedTok := boundAccessTokens["devbase-guarded"]
+	mu.Unlock()
+	if clearedTok != "" {
+		t.Fatalf("expected empty ACCESS_TOKEN after disabling protection, got %q", clearedTok)
 	}
 }
 

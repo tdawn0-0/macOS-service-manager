@@ -32,6 +32,7 @@ type proxyRuleDraft struct {
 	LocalPort    string
 	UpstreamHost string
 	Tunnel       bool
+	TunnelAuth   bool
 	TunnelWorker string
 	TunnelMode   string
 	TunnelDomain string
@@ -103,6 +104,9 @@ type developmentState struct {
 	backups                                                                                             []devplatform.BackupFile
 	backupsFor, backupsError                                                                            string
 	backupsLoading                                                                                      bool
+	dbCatalog                                                                                           devplatform.InstanceCatalog
+	dbCatalogFor                                                                                        string
+	dbCatalogLoading                                                                                    bool
 	proxyDraft                                                                                          []proxyRuleDraft
 	proxyListenerPort                                                                                   string
 	proxyDraftRevision                                                                                  uint64
@@ -113,6 +117,9 @@ type developmentState struct {
 	proxyChecks                                                                                         map[string]devplatform.ProxyHTTPResult
 	proxyChecking                                                                                       map[string]bool
 	proxyCheckGeneration                                                                                uint64
+	tunnelChecks                                                                                        map[string]devplatform.ProxyHTTPResult
+	tunnelChecking                                                                                      map[string]bool
+	tunnelCheckGeneration                                                                               uint64
 	nodeReleases                                                                                        []devplatform.NodeRelease
 	nodeReleasesTried, nodeReleasesRefresh, nodeReleasesStale                                           bool
 	nodeReleasesError                                                                                   string
@@ -591,6 +598,7 @@ func (d *developmentState) loadProxyDraft(s devplatform.State) {
 			LocalPort:    strconv.Itoa(rule.LocalPort),
 			UpstreamHost: rule.UpstreamHost,
 			Tunnel:       rule.Tunnel,
+			TunnelAuth:   rule.TunnelAuth,
 			TunnelWorker: rule.TunnelWorker,
 			TunnelMode:   mode,
 			TunnelDomain: rule.TunnelDomain,
@@ -618,6 +626,7 @@ func (d *developmentState) proxyDraftDirty() bool {
 			row.LocalPort != strconv.Itoa(rule.LocalPort) ||
 			strings.TrimSpace(row.UpstreamHost) != rule.UpstreamHost ||
 			row.Tunnel != rule.Tunnel ||
+			row.TunnelAuth != rule.TunnelAuth ||
 			row.TunnelWorker != rule.TunnelWorker ||
 			effectiveDraftTunnelDomain(row) != rule.TunnelDomain {
 			return true

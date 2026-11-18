@@ -368,3 +368,51 @@ func TestUpgradeThenUninstallOldPackage(t *testing.T) {
 		t.Errorf("old package still blocked by a job file: %v", err)
 	}
 }
+
+func TestNewerNodeRelease(t *testing.T) {
+	releases := []NodeRelease{
+		{Version: "24.1.0"},
+		{Version: "22.15.2", LTS: "Jod"},
+		{Version: "22.14.0", LTS: "Jod"},
+		{Version: "20.19.1", LTS: "Iron"},
+	}
+	if got := NewerNodeRelease("22.14.0", releases, nil); got != "22.15.2" {
+		t.Fatalf("got %q, want 22.15.2", got)
+	}
+	if got := NewerNodeRelease("22.15.2", releases, nil); got != "" {
+		t.Fatalf("got %q, want empty", got)
+	}
+	if got := NewerNodeRelease("18.20.8", releases, nil); got != "" {
+		t.Fatalf("major line mismatch returned %q", got)
+	}
+	if got := NewerNodeRelease("22.13.0", nil, []string{"22.14.0", "20.19.0"}); got != "22.14.0" {
+		t.Fatalf("fallback returned %q", got)
+	}
+	if got := NewerNodeRelease("invalid", releases, nil); got != "" {
+		t.Fatalf("malformed version returned %q", got)
+	}
+}
+
+func TestNewerJavaCatalogVersion(t *testing.T) {
+	packages := map[string]Package{
+		"java@temurin-21.0.13-arm64": {Name: "java", Version: "temurin-21.0.13", JavaInstallName: "temurin-21.0.13", Arch: "arm64"},
+	}
+	catalog := []string{"temurin-21.0.13", "temurin-21.0.14", "temurin-25.0.1", "corretto-21.0.99"}
+	row := JavaInstallation{ID: "j1", PackageID: "java@temurin-21.0.13-arm64", Path: "/tmp/temurin-21.0.13", CanUse: true}
+	if got := NewerJavaCatalogVersion(row, packages, catalog); got != "temurin-21.0.14" {
+		t.Fatalf("got %q, want temurin-21.0.14", got)
+	}
+	packages["java@temurin-21.0.14-arm64"] = Package{Name: "java", Version: "temurin-21.0.14", Arch: "arm64"}
+	if got := NewerJavaCatalogVersion(row, packages, catalog); got != "" {
+		t.Fatalf("already-installed update returned %q", got)
+	}
+	row.CanUse = false
+	delete(packages, "java@temurin-21.0.14-arm64")
+	if got := NewerJavaCatalogVersion(row, packages, catalog); got != "" {
+		t.Fatalf("unusable JDK returned %q", got)
+	}
+	unmanaged := JavaInstallation{ID: "j2", Path: "/tmp/corretto-21.0.5", CanUse: true}
+	if got := NewerJavaCatalogVersion(unmanaged, packages, catalog); got != "corretto-21.0.99" {
+		t.Fatalf("unmanaged distro got %q, want corretto-21.0.99", got)
+	}
+}

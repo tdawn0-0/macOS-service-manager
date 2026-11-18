@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"devbase/internal/devplatform"
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -180,5 +181,44 @@ func TestUIDatabaseLocations(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestUINativeDirectoryAndExecutablePickers(t *testing.T) {
+	h := newDevUIHarnessSize(t, 1120, 780, false)
+	var gotOpts []mygo.OpenDialogOptions
+	chosenParent := "/Volumes/DevData"
+	chosenUV := "/opt/homebrew/bin/uv"
+	h.a.openDialog = func(opts mygo.OpenDialogOptions) ([]string, error) {
+		gotOpts = append(gotOpts, opts)
+		if opts.Directory {
+			return []string{chosenParent}, nil
+		}
+		return []string{chosenUV}, nil
+	}
+
+	h.click("Databases")
+	h.click("New database instance")
+	h.fill("Instance name", "orders-pg")
+	h.click("Choose parent folder…")
+	if len(gotOpts) != 1 || !gotOpts[0].Directory {
+		t.Fatalf("expected directory dialog options, got %+v", gotOpts)
+	}
+	if h.a.dev.dbDataDirectory != filepath.Join(chosenParent, "orders-pg") {
+		t.Fatalf("unexpected data directory: %q", h.a.dev.dbDataDirectory)
+	}
+	h.click("Use app storage")
+	if h.a.dev.dbDataDirectory != "" {
+		t.Fatalf("expected cleared data directory, got %q", h.a.dev.dbDataDirectory)
+	}
+
+	h.click("Software")
+	h.click("Software python")
+	h.click("Choose uv executable…")
+	if len(gotOpts) != 2 || gotOpts[1].Directory {
+		t.Fatalf("expected file dialog for uv, got %+v", gotOpts)
+	}
+	if h.a.dev.uvPath != chosenUV {
+		t.Fatalf("unexpected uvPath: %q", h.a.dev.uvPath)
 	}
 }

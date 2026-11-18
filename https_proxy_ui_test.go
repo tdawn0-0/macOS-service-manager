@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/egoist/mygo/ui"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -253,5 +256,86 @@ func TestUIHTTPSRuleUpstreamHost(t *testing.T) {
 	state, _ = devplatform.New(h.root).Read()
 	if state.ProxyRules[0].UpstreamHost != "192.168.1.20" || !strings.Contains(h.a.dev.output, "Error:") {
 		t.Fatal("an invalid upstream was saved or went unreported", state.ProxyRules, h.a.dev.output)
+	}
+}
+
+func TestUIHTTPSSaveAndApplyCopyProtectAndLogs(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+	upPort := upstream.Listener.Addr().(*net.TCPAddr).Port
+
+	h := newDevUIHarnessSize(t, 1120, 780, false)
+	defer devplatform.New(h.root).StopProxy(context.Background())
+
+	port := freeUIPort(t)
+	h.click("HTTPS")
+	h.fill("HTTPS listener port", fmt.Sprint(port))
+	h.click("Add rule")
+	h.fill("Domain", "quick.devbase.localhost")
+	h.fill("Local port", fmt.Sprint(upPort))
+	h.click("Tunnel rule 1")
+	h.click("Protect tunnel 1")
+	h.click("Save & apply")
+
+	if h.a.dev.proxyPublicationState != "Published" || h.a.dev.statuses["proxy"] != "Running" {
+		t.Fatalf("Save & apply did not publish and start proxy: pub=%q status=%q out=%q", h.a.dev.proxyPublicationState, h.a.dev.statuses["proxy"], h.a.dev.output)
+	}
+	wantURL := fmt.Sprintf("https://quick.devbase.localhost:%d", port)
+	h.click("Copy HTTPS URL")
+	if len(h.copied) == 0 || h.copied[len(h.copied)-1] != wantURL {
+		t.Fatalf("expected copied %q, got %v", wantURL, h.copied)
+	}
+
+	h.click("Copy tunnel token")
+	if len(h.copied) < 2 || len(h.copied[len(h.copied)-1]) < 16 {
+		t.Fatalf("expected copied tunnel access token, got %v", h.copied)
+	}
+	firstToken := h.copied[len(h.copied)-1]
+	h.click("Rotate tunnel token")
+	rotatedToken, err := devplatform.New(h.root).TunnelAccessToken("quick.devbase.localhost")
+	if err != nil || rotatedToken == "" || rotatedToken == firstToken {
+		t.Fatalf("expected rotated token, got %q (prev %q) err=%v", rotatedToken, firstToken, err)
+	}
+
+	// Logs actions: Read proxy logs & Read tunnel logs & Open in Console.
+	_ = devplatform.New(h.root).StopProxy(context.Background())
+	logsDir := filepath.Join(h.root, "logs")
+	if err := os.MkdirAll(logsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(filepath.Join(logsDir, "proxy.err.log"))
+	proxyLog := filepath.Join(logsDir, "proxy.log")
+	tunnelLog := filepath.Join(logsDir, "tunnel.err.log")
+	_ = os.WriteFile(proxyLog, []byte("proxy-log-line\n"), 0o600)
+	_ = os.WriteFile(tunnelLog, []byte("tunnel-log-line\n"), 0o600)
+
+	h.click("Read proxy logs")
+	if !strings.Contains(h.a.dev.output, "proxy-log-line") || !h.a.dev.showResult {
+		t.Fatalf("Read proxy logs failed: %q", h.a.dev.output)
+	}
+	h.click("Read tunnel logs")
+	if !strings.Contains(h.a.dev.output, "tunnel-log-line") || !h.a.dev.showResult {
+		t.Fatalf("Read tunnel logs failed: %q", h.a.dev.output)
+	}
+	var consoleCalls []string
+	origFactory := h.a.dev.managerFactory
+	h.a.dev.managerFactory = func() *devplatform.Manager {
+		m := origFactory()
+		prevRun := m.Run
+		m.Run = func(ctx context.Context, name string, args ...string) (string, error) {
+			if name == "/usr/bin/open" {
+				consoleCalls = append(consoleCalls, strings.Join(append([]string{name}, args...), " "))
+			}
+			return prevRun(ctx, name, args...)
+		}
+		return m
+	}
+
+	h.click("Open proxy logs in Console")
+	h.click("Open tunnel logs in Console")
+	if len(consoleCalls) != 2 || consoleCalls[0] != "/usr/bin/open -a Console "+proxyLog || consoleCalls[1] != "/usr/bin/open -a Console "+tunnelLog {
+		t.Fatalf("unexpected Console open targets: %v", consoleCalls)
 	}
 }

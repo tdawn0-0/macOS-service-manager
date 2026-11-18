@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"devbase/internal/devplatform"
 	"github.com/egoist/mygo/ui"
@@ -182,6 +183,44 @@ func (a *app) devDatabaseConnections(c *ui.Context, instance devplatform.Instanc
 						})
 					}
 					return "Connection URI copied", err
+				})
+			}
+			if btn(c, "Copy .env", icoCopy, btnDefault).Disabled(d.busy || d.profileSelected == "new").Clicked() {
+				id, profileID, kind, dbOverride := instance.ID, selected, instance.Kind, d.dbName
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					info, err := a.connectionInfoFor(id, profileID, m)
+					if err == nil {
+						if profileID == "" && strings.TrimSpace(dbOverride) != "" {
+							info = info.WithDatabase(kind, dbOverride)
+						}
+						a.post(func() {
+							if a.copy != nil {
+								a.copy(info.EnvAssignment())
+							}
+						})
+					}
+					return ".env connection copied", err
+				})
+			}
+			if (instance.Kind == "postgresql" || instance.Kind == "mysql") && btn(c, "Copy JDBC URL", icoCopy, btnDefault).Disabled(d.busy || d.profileSelected == "new").Clicked() {
+				id, profileID, kind, dbOverride := instance.ID, selected, instance.Kind, d.dbName
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					info, err := a.connectionInfoFor(id, profileID, m)
+					if err != nil {
+						return "", err
+					}
+					if profileID == "" && strings.TrimSpace(dbOverride) != "" {
+						info = info.WithDatabase(kind, dbOverride)
+					}
+					jdbc, err := info.JDBCURL(kind)
+					if err == nil {
+						a.post(func() {
+							if a.copy != nil {
+								a.copy(jdbc)
+							}
+						})
+					}
+					return "JDBC URL copied", err
 				})
 			}
 			if d.profileSelected == "" && btn(c, "Copy database password", icoKey, btnDefault).Disabled(d.busy).Clicked() {

@@ -49,7 +49,15 @@ func (m *Manager) needsTunnelSync(s State) bool {
 			}
 			continue
 		}
-		if w.PublicURL == "" || w.CustomDomain != rule.EffectiveTunnelDomain() || w.ScriptDigest != currentTunnelWorkerDigest() {
+		wantAuthDigest := ""
+		if rule.TunnelAuth {
+			tok, err := m.TunnelAccessToken(rule.Domain)
+			if err != nil || tok == "" {
+				return true
+			}
+			wantAuthDigest = tunnelAuthDigest(tok)
+		}
+		if w.PublicURL == "" || w.CustomDomain != rule.EffectiveTunnelDomain() || w.ScriptDigest != currentTunnelWorkerDigest() || w.AuthDigest != wantAuthDigest {
 			return true
 		}
 	}

@@ -47,6 +47,31 @@ func hasAnyTunnelRule(s devplatform.State) bool {
 	return false
 }
 
+func buildProxyRulesFromDraft(d *developmentState) (int, []devplatform.ProxyRule, error) {
+	listener, err := strconv.Atoi(d.proxyListenerPort)
+	if err != nil {
+		return 0, nil, err
+	}
+	rules := make([]devplatform.ProxyRule, 0, len(d.proxyDraft))
+	for _, row := range d.proxyDraft {
+		port, e := strconv.Atoi(row.LocalPort)
+		if e != nil {
+			return 0, nil, e
+		}
+		rules = append(rules, devplatform.ProxyRule{
+			Domain:       devplatform.LocalDomain(row.Domain),
+			LocalPort:    port,
+			UpstreamHost: row.UpstreamHost,
+			Tunnel:       row.Tunnel,
+			TunnelAuth:   row.TunnelAuth,
+			TunnelWorker: row.TunnelWorker,
+			TunnelDomain: effectiveDraftTunnelDomain(row),
+			TunnelURL:    row.TunnelURL,
+		})
+	}
+	return listener, rules, nil
+}
+
 // devHTTPS is the single page of the HTTPS proxy: the saved table of
 // Domain → Local port rules with its listener, background proxy & Cloudflare
 // tunnel switches, and local domains/CA trust.
@@ -107,16 +132,24 @@ func (a *app) devHTTPS(c *ui.Context) {
 						choice.Switch(c, &row.Tunnel, choice.SwitchProps{Size: theme.Small}).Label(fmt.Sprintf("Tunnel rule %d", i+1)).Tooltip("Expose this rule through the Cloudflare tunnel")
 						ui.Text(c, "Tunnel").FontSize(textCaption).TextColor(tk.TextSecondary).SingleLine().Shrink(0)
 					})
-					ui.Row(c).Width(64).Shrink(0).Gap(4).Justify(ui.End).Children(func() {
-						if !dirty && iconButton(c, icoLink, "Open HTTPS URL", tk.TextSecondary).Clicked() {
+					ui.Row(c).Shrink(0).Gap(4).Justify(ui.End).Children(func() {
+						if !dirty {
 							url := "https://" + devplatform.LocalDomain(row.Domain)
-							if d.state.ProxyListenerPort != 443 {
+							if d.state.ProxyListenerPort != 0 && d.state.ProxyListenerPort != 443 {
 								url = fmt.Sprintf("%s:%d", url, d.state.ProxyListenerPort)
 							}
-							a.devTask(func(m *devplatform.Manager) (string, error) {
-								_, err := m.Run(m.Context, "/usr/bin/open", url)
-								return "Opened saved HTTPS rule in browser.", err
-							})
+							if iconButton(c, icoCopy, "Copy HTTPS URL", tk.TextSecondary).Clicked() {
+								if a.copy != nil {
+									a.copy(url)
+								}
+								d.output = "Copied " + url
+							}
+							if iconButton(c, icoLink, "Open HTTPS URL", tk.TextSecondary).Clicked() {
+								a.devTask(func(m *devplatform.Manager) (string, error) {
+									_, err := m.Run(m.Context, "/usr/bin/open", url)
+									return "Opened saved HTTPS rule in browser.", err
+								})
+							}
 						}
 						if action := iconButton(c, icoTrash, "Remove rule", tk.TextSecondary); action.Clicked() {
 							removeRule = i
@@ -143,9 +176,14 @@ func (a *app) devHTTPS(c *ui.Context) {
 								}
 							}
 						}
+						ui.Row(c).Shrink(0).Gap(6).AlignItems(ui.Center).Children(func() {
+							choice.Switch(c, &row.TunnelAuth, choice.SwitchProps{Size: theme.Small}).Label(fmt.Sprintf("Protect tunnel %d", i+1)).Tooltip("Require an access token on public tunnel requests")
+							ui.Text(c, "Protect").FontSize(textCaption).TextColor(tk.TextSecondary).SingleLine().Shrink(0)
+						})
 						previewRule := devplatform.ProxyRule{
 							Domain:       devplatform.LocalDomain(row.Domain),
 							Tunnel:       true,
+							TunnelAuth:   row.TunnelAuth,
 							TunnelWorker: row.TunnelWorker,
 							TunnelDomain: effectiveDraftTunnelDomain(*row),
 							TunnelURL:    row.TunnelURL,
@@ -171,6 +209,31 @@ func (a *app) devHTTPS(c *ui.Context) {
 								a.devTask(func(m *devplatform.Manager) (string, error) {
 									_, err := m.Run(m.Context, "/usr/bin/open", previewURL)
 									return "Opened tunnel URL in browser.", err
+								})
+							}
+						}
+						if !dirty && row.TunnelAuth {
+							localDom := devplatform.LocalDomain(row.Domain)
+							if iconButton(c, icoKey, "Copy tunnel token", tk.TextSecondary).Disabled(d.busy).Clicked() {
+								a.devTask(func(m *devplatform.Manager) (string, error) {
+									tok, err := m.EnsureTunnelAccessToken(localDom)
+									if err == nil {
+										a.post(func() {
+											if a.copy != nil {
+												a.copy(tok)
+											}
+										})
+										return "Copied tunnel access token for " + localDom, nil
+									}
+									return "", err
+								})
+							}
+							if iconButton(c, icoRotate, "Rotate tunnel token", tk.TextSecondary).Disabled(d.busy).Clicked() {
+								a.devTask(func(m *devplatform.Manager) (string, error) {
+									if _, err := m.RotateTunnelAccessToken(m.Context, localDom); err != nil {
+										return "", err
+									}
+									return "Rotated tunnel access token for " + localDom, nil
 								})
 							}
 						}
@@ -219,25 +282,8 @@ func (a *app) devHTTPS(c *ui.Context) {
 					})
 				}
 			}
-			if dirty && btn(c, "Save HTTPS rules", icoSave, btnPrimary).Disabled(d.busy).Clicked() {
-				listener, err := strconv.Atoi(d.proxyListenerPort)
-				rules := make([]devplatform.ProxyRule, 0, len(d.proxyDraft))
-				for _, row := range d.proxyDraft {
-					port, e := strconv.Atoi(row.LocalPort)
-					if e != nil {
-						err = e
-						break
-					}
-					rules = append(rules, devplatform.ProxyRule{
-						Domain:       devplatform.LocalDomain(row.Domain),
-						LocalPort:    port,
-						UpstreamHost: row.UpstreamHost,
-						Tunnel:       row.Tunnel,
-						TunnelWorker: row.TunnelWorker,
-						TunnelDomain: effectiveDraftTunnelDomain(row),
-						TunnelURL:    row.TunnelURL,
-					})
-				}
+			if dirty && btn(c, "Save HTTPS rules", icoSave, btnDefault).Disabled(d.busy).Clicked() {
+				listener, rules, err := buildProxyRulesFromDraft(d)
 				if err != nil {
 					d.output = "Error: Enter valid numeric ports"
 				} else {
@@ -255,6 +301,59 @@ func (a *app) devHTTPS(c *ui.Context) {
 							return "Saved HTTPS rules and synced Cloudflare Workers.", nil
 						}
 						return "Saved HTTPS rules.", nil
+					}, func(err error) {
+						if err == nil || rulesSaved {
+							a.dev.loadProxyDraft(a.dev.state)
+						}
+					})
+				}
+			}
+			if dirty && btn(c, "Save & apply", icoPlay, btnPrimary).Disabled(d.busy).Clicked() {
+				listener, rules, err := buildProxyRulesFromDraft(d)
+				if err != nil {
+					d.output = "Error: Enter valid numeric ports"
+				} else {
+					revision := d.proxyDraftRevision
+					tunnelRunning := d.statuses["tunnel"] == "Running"
+					rulesSaved := false
+					a.devTaskThen(func(m *devplatform.Manager) (string, error) {
+						if err := m.ReplaceProxyRules(m.Context, revision, listener, rules); err != nil {
+							return "", err
+						}
+						rulesSaved = true
+						synced := false
+						if m.HasCloudflareToken() {
+							if err := m.SyncTunnels(m.Context); err != nil {
+								return "", fmt.Errorf("saved HTTPS rules; Cloudflare sync failed: %w", err)
+							}
+							synced = true
+						}
+						if err := m.EnsureLogMaintenance(m.Context); err != nil {
+							return "", err
+						}
+						if err := m.ApplyProxy(m.Context); err != nil {
+							return "", err
+						}
+						if tunnelRunning {
+							hasTunnel := false
+							for _, r := range rules {
+								if r.Tunnel {
+									hasTunnel = true
+									break
+								}
+							}
+							if hasTunnel {
+								if err := m.ApplyTunnel(m.Context); err != nil {
+									return "", err
+								}
+							} else if err := m.StopTunnel(m.Context); err != nil {
+								return "", err
+							}
+						}
+						if synced {
+							return "Saved, synced Cloudflare Workers, and applied proxy configuration.", nil
+						}
+						return "Saved and applied proxy configuration.", nil
 					}, func(err error) {
 						if err == nil || rulesSaved {
 							a.dev.loadProxyDraft(a.dev.state)
@@ -319,6 +418,13 @@ func (a *app) devHTTPS(c *ui.Context) {
 				if btn(c, act.label, act.icon, btnDefault).Disabled(d.busy || dirty).Clicked() {
 					proxyAction(act.label)
 				}
+			}
+			if btn(c, "Read proxy logs", icoScroll, btnText).Disabled(d.busy).Clicked() {
+				d.showResult = true
+				a.devTask(func(m *devplatform.Manager) (string, error) { return m.Logs("proxy") })
+			}
+			if btn(c, "Open proxy logs in Console", icoLink, btnText).Disabled(d.busy).Clicked() {
+				a.openJobLogs("proxy", "HTTPS proxy", nil)
 			}
 		})
 	})
@@ -412,6 +518,13 @@ func (a *app) devHTTPS(c *ui.Context) {
 				a.devTask(func(m *devplatform.Manager) (string, error) {
 					return "Restarted Cloudflare tunnel.", m.RestartTunnel(m.Context)
 				})
+			}
+			if btn(c, "Read tunnel logs", icoScroll, btnText).Disabled(d.busy).Clicked() {
+				d.showResult = true
+				a.devTask(func(m *devplatform.Manager) (string, error) { return m.Logs("tunnel") })
+			}
+			if btn(c, "Open tunnel logs in Console", icoLink, btnText).Disabled(d.busy).Clicked() {
+				a.openJobLogs("tunnel", "Cloudflare tunnel", nil)
 			}
 		})
 	})

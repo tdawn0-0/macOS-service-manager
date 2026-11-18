@@ -160,6 +160,10 @@ func (a *app) startDatabaseOperationWithOffer(i devplatform.Instance, kind strin
 			}
 			a.dev.databaseNeedsRefresh = true
 			a.reloadBackups()
+			switch kind {
+			case "create database", "create user", "restore", "start", "restart", "stop", "remove":
+				a.reloadInstanceCatalog()
+			}
 			a.dev.lastDatabaseTask = task
 			a.refreshFinishedPackages()
 		})

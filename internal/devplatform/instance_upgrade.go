@@ -83,6 +83,162 @@ func NewerListedPatch(installed string, listed []string) string {
 	return best
 }
 
+func parseSemver3(v string) (major, minor, patch int, ok bool) {
+	if !exactRuntimeVersion.MatchString(v) {
+		return 0, 0, 0, false
+	}
+	parts := strings.Split(v, ".")
+	maj, err1 := strconv.Atoi(parts[0])
+	min, err2 := strconv.Atoi(parts[1])
+	pat, err3 := strconv.Atoi(parts[2])
+	if err1 != nil || err2 != nil || err3 != nil {
+		return 0, 0, 0, false
+	}
+	return maj, min, pat, true
+}
+
+// NewerNodeRelease returns the newest available Node.js release in the same
+// major line as installed, or "" if installed is already up to date.
+func NewerNodeRelease(installed string, releases []NodeRelease, fallback []string) string {
+	instMaj, instMin, instPat, ok := parseSemver3(installed)
+	if !ok {
+		return ""
+	}
+	candidates := fallback
+	if len(releases) > 0 {
+		candidates = make([]string, 0, len(releases))
+		for _, r := range releases {
+			candidates = append(candidates, r.Version)
+		}
+	}
+	best := ""
+	bestMin, bestPat := instMin, instPat
+	for _, v := range candidates {
+		maj, min, pat, ok := parseSemver3(v)
+		if !ok || maj != instMaj {
+			continue
+		}
+		if min > bestMin || (min == bestMin && pat > bestPat) {
+			best, bestMin, bestPat = v, min, pat
+		}
+	}
+	return best
+}
+
+func parseJavaCatalogKey(key string) (distro string, nums []int, ok bool) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", nil, false
+	}
+	rest := key
+	if key[0] < '0' || key[0] > '9' {
+		idx := -1
+		for i := 0; i < len(key)-1; i++ {
+			if key[i] == '-' && key[i+1] >= '0' && key[i+1] <= '9' {
+				idx = i
+				break
+			}
+		}
+		if idx <= 0 {
+			return "", nil, false
+		}
+		distro = strings.ToLower(key[:idx])
+		rest = key[idx+1:]
+	}
+	nums = extractIntParts(rest)
+	if len(nums) == 0 {
+		return "", nil, false
+	}
+	return distro, nums, true
+}
+
+func extractIntParts(s string) []int {
+	var parts []int
+	i := 0
+	for i < len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			i++
+			continue
+		}
+		j := i
+		for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+			j++
+		}
+		if n, err := strconv.Atoi(s[i:j]); err == nil {
+			parts = append(parts, n)
+		}
+		i = j
+	}
+	return parts
+}
+
+func compareIntSlices(a, b []int) int {
+	n := len(a)
+	if len(b) > n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		av, bv := 0, 0
+		if i < len(a) {
+			av = a[i]
+		}
+		if i < len(b) {
+			bv = b[i]
+		}
+		if av < bv {
+			return -1
+		}
+		if av > bv {
+			return 1
+		}
+	}
+	return 0
+}
+
+// NewerJavaCatalogVersion returns a newer catalog version in the same distribution
+// and feature line as row, or "" if none is available or already installed.
+func NewerJavaCatalogVersion(row JavaInstallation, packages map[string]Package, catalogKeys []string) string {
+	if len(catalogKeys) == 0 || !row.CanUse {
+		return ""
+	}
+	baseKey := filepath.Base(row.Path)
+	if row.PackageID != "" {
+		if p, ok := packages[row.PackageID]; ok {
+			if p.JavaInstallName != "" {
+				baseKey = p.JavaInstallName
+			} else if p.Version != "" {
+				baseKey = p.Version
+			}
+		}
+	}
+	instDistro, instNums, ok := parseJavaCatalogKey(baseKey)
+	if !ok {
+		return ""
+	}
+	bestKey := ""
+	var bestNums []int
+	for _, cand := range catalogKeys {
+		candDistro, candNums, ok := parseJavaCatalogKey(cand)
+		if !ok || candDistro != instDistro || candNums[0] != instNums[0] {
+			continue
+		}
+		if compareIntSlices(candNums, instNums) <= 0 {
+			continue
+		}
+		if bestKey == "" || compareIntSlices(candNums, bestNums) > 0 {
+			bestKey, bestNums = cand, candNums
+		}
+	}
+	if bestKey == "" || bestKey == baseKey {
+		return ""
+	}
+	pkgVer := strings.ReplaceAll(bestKey, "+", "_")
+	if _, exists := packages["java@"+pkgVer+"-arm64"]; exists {
+		return ""
+	}
+	return bestKey
+}
+
 // mysqlStoppedCleanly reports whether the instance's last recorded server
 // event is a completed shutdown.
 func (m *Manager) mysqlStoppedCleanly(id string) bool {

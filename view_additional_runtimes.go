@@ -2,6 +2,7 @@ package main
 
 import (
 	"devbase/internal/devplatform"
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/display"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
@@ -45,6 +46,17 @@ func (a *app) devPython(c *ui.Context) {
 	devCardWith(c, icoTerminal, "uv", d.uvDescription, nil, func() {
 		devField(c, "uv executable", &d.uvPath, "/absolute/path/to/uv (optional)")
 		devButtonRow(c, func() {
+			if btn(c, "Choose uv executable…", icoFolder, btnDefault).Disabled(d.busy).Clicked() {
+				paths, e := a.pickPaths(mygo.OpenDialogOptions{
+					Title:           "Select uv executable",
+					ShowHiddenFiles: true,
+				})
+				if e != nil {
+					d.output = e.Error()
+				} else if len(paths) > 0 {
+					d.uvPath = paths[0]
+				}
+			}
 			if btn(c, "Use uv executable", icoCheck, btnDefault).Disabled(d.busy).Clicked() {
 				path := d.uvPath
 				a.devTask(func(m *devplatform.Manager) (string, error) {

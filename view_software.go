@@ -185,15 +185,20 @@ func packageUnused(s devplatform.State, id string) bool {
 func (a *app) devInstalledPackage(c *ui.Context, id string, p devplatform.Package) {
 	d := &a.dev
 	devInset(c, func() {
+		available := ""
+		switch p.Name {
+		case "mysql", "mongodb", "redis":
+			available = devplatform.NewerListedPatch(p.Version, devplatform.AvailableVersions(p.Name))
+		case "node":
+			available = devplatform.NewerNodeRelease(p.Version, d.nodeReleases, devplatform.AvailableVersions("node"))
+		}
 		ui.Row(c).Gap(8).AlignItems(ui.Center).MinWidth(0).Children(func() {
 			ui.Text(c, softwareTitle(p.Name)+" · "+p.Version).FontWeight(500).SingleLine().MinWidth(100)
 			if p.Formula != "" {
 				devTag(c, "Homebrew", display.TagColor(""))
 			}
-			if p.Name == "mysql" || p.Name == "mongodb" || p.Name == "redis" {
-				if v := devplatform.NewerListedPatch(p.Version, devplatform.AvailableVersions(p.Name)); v != "" {
-					devTag(c, v+" available", display.TagColor(""))
-				}
+			if available != "" {
+				devTag(c, available+" available", display.TagColor(""))
 			}
 			if packageUnused(d.state, id) {
 				devTag(c, "Unused", display.TagColor(""))
@@ -206,6 +211,13 @@ func (a *app) devInstalledPackage(c *ui.Context, id string, p devplatform.Packag
 			}
 		})
 		a.devPackageIntegrity(c, id, p, func() {
+			if available != "" {
+				if _, already := d.state.Packages[p.Name+"@"+available+"-arm64"]; !already {
+					if btn(c, "Review "+available, icoFileCheck, btnText).Disabled(d.busy).Clicked() {
+						a.reviewPackageVersion(p.Name, available)
+					}
+				}
+			}
 			if p.Name == "node" && id != d.state.NodeDefault {
 				if btn(c, "Set default", nil, btnDefault).Disabled(d.busy).Clicked() {
 					a.devTask(func(m *devplatform.Manager) (string, error) {
@@ -324,6 +336,32 @@ func packageDetailsText(info devplatform.PackageDetails) string {
 	return text
 }
 
+func (a *app) reviewPackageVersion(name, version string) {
+	version = strings.TrimSpace(version)
+	if name == "" || version == "" {
+		return
+	}
+	a.dev.software = name
+	a.dev.version = version
+	a.devTask(func(m *devplatform.Manager) (string, error) {
+		pkg, e := m.ResolveInstalledOrCatalog(m.Context, name, version)
+		if e != nil {
+			return "", e
+		}
+		info, e := m.PackageDetails(m.Context, pkg)
+		if e == nil {
+			a.post(func() {
+				a.dev.packagePreview = &info
+				a.dev.packageDetailsText = packageDetailsText(info)
+				if (pkg.Formula != "" || name == "node") && a.dev.software == name && strings.TrimSpace(a.dev.version) == version {
+					a.dev.version = pkg.Version
+				}
+			})
+		}
+		return "Package details ready.", e
+	})
+}
+
 // devPackageReview reviews the version chosen and installs it: the review
 // comes first, and Install acts on what it showed.
 func (a *app) devPackageReview(c *ui.Context) {
@@ -376,24 +414,7 @@ func (a *app) devPackageReview(c *ui.Context) {
 			reviewKind = btnDefault
 		}
 		if btn(c, "Review package", icoFileCheck, reviewKind).Disabled(d.busy || d.software == "" || strings.TrimSpace(d.version) == "").Clicked() {
-			name, version := d.software, strings.TrimSpace(d.version)
-			a.devTask(func(m *devplatform.Manager) (string, error) {
-				pkg, e := m.ResolveInstalledOrCatalog(m.Context, name, version)
-				if e != nil {
-					return "", e
-				}
-				info, e := m.PackageDetails(m.Context, pkg)
-				if e == nil {
-					a.post(func() {
-						a.dev.packagePreview = &info
-						a.dev.packageDetailsText = packageDetailsText(info)
-						if (pkg.Formula != "" || name == "node") && a.dev.software == name && strings.TrimSpace(a.dev.version) == version {
-							a.dev.version = pkg.Version
-						}
-					})
-				}
-				return "Package details ready.", e
-			})
+			a.reviewPackageVersion(d.software, d.version)
 		}
 		installKind := btnDefault
 		if valid {

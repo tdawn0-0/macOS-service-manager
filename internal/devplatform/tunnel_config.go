@@ -2,6 +2,7 @@ package devplatform
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -75,6 +77,9 @@ func validateTunnelState(s *State) error {
 		if worker.ScriptDigest != "" && !tunnelScriptDigestRE.MatchString(worker.ScriptDigest) {
 			return fmt.Errorf("invalid tunnel worker digest %q", name)
 		}
+		if worker.AuthDigest != "" && !tunnelScriptDigestRE.MatchString(worker.AuthDigest) {
+			return fmt.Errorf("invalid tunnel worker auth digest %q", name)
+		}
 	}
 	return nil
 }
@@ -115,6 +120,168 @@ func (m *Manager) tunnelConfigPath() string {
 
 func (m *Manager) tunnelStatusPath() string {
 	return filepath.Join(m.Root, "proxy", "tunnel-status.json")
+}
+
+func (m *Manager) tunnelAccessPath() string {
+	return filepath.Join(m.Root, "proxy", "tunnel-access.json")
+}
+
+func tunnelAuthDigest(token string) string {
+	if token == "" {
+		return ""
+	}
+	return digestBytes([]byte(token))[:16]
+}
+
+func validateTunnelAccessToken(token string) (string, error) {
+	trimmed := strings.TrimSpace(token)
+	if len(trimmed) < 16 || len(trimmed) > 256 {
+		return "", errors.New("tunnel access token must be 16–256 characters")
+	}
+	if strings.ContainsAny(trimmed, "\r\n\x00") {
+		return "", errors.New("tunnel access token must be a single line")
+	}
+	return trimmed, nil
+}
+
+func (m *Manager) withTunnelAccessLock(fn func() error) error {
+	if err := m.init(); err != nil {
+		return err
+	}
+	lockPath := filepath.Join(m.Root, "proxy", "tunnel-access.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
+}
+
+func (m *Manager) readTunnelAccessMap() (map[string]string, error) {
+	b, err := readRegularFile(filepath.Join(m.Root, "proxy"), "tunnel-access.json", 1<<20)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var raw map[string]string
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(raw))
+	for worker, tok := range raw {
+		if !strings.HasPrefix(worker, "devbase-") || !proxyDomainPart.MatchString(worker) {
+			return nil, fmt.Errorf("invalid tunnel access worker %q", worker)
+		}
+		cleaned, err := validateTunnelAccessToken(tok)
+		if err != nil {
+			return nil, err
+		}
+		out[worker] = cleaned
+	}
+	return out, nil
+}
+
+func (m *Manager) writeTunnelAccessMap(tokens map[string]string) error {
+	b, err := json.MarshalIndent(tokens, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWrite(m.tunnelAccessPath(), append(b, '\n'), 0600)
+}
+
+func resolveWorkerForDomain(s State, domain string) string {
+	d := LocalDomain(domain)
+	for _, rule := range s.ProxyRules {
+		if rule.Domain == d {
+			return rule.ResolvedTunnelWorker()
+		}
+	}
+	return DefaultTunnelWorkerName(d)
+}
+
+// TunnelAccessToken returns the saved edge access token for a rule's Worker, or "" if none is stored.
+func (m *Manager) TunnelAccessToken(domain string) (string, error) {
+	s, err := m.Read()
+	if err != nil {
+		return "", err
+	}
+	worker := resolveWorkerForDomain(s, domain)
+	if worker == "" {
+		return "", errors.New("invalid proxy domain")
+	}
+	tokens, err := m.readTunnelAccessMap()
+	if err != nil {
+		return "", err
+	}
+	return tokens[worker], nil
+}
+
+// EnsureTunnelAccessToken returns the saved edge access token for a rule's Worker,
+// generating and storing a private random token in proxy/tunnel-access.json (0600) if missing.
+func (m *Manager) EnsureTunnelAccessToken(domain string) (string, error) {
+	s, err := m.Read()
+	if err != nil {
+		return "", err
+	}
+	worker := resolveWorkerForDomain(s, domain)
+	if worker == "" || !strings.HasPrefix(worker, "devbase-") {
+		return "", errors.New("invalid proxy domain")
+	}
+	var token string
+	err = m.withTunnelAccessLock(func() error {
+		tokens, err := m.readTunnelAccessMap()
+		if err != nil {
+			return err
+		}
+		if existing := tokens[worker]; existing != "" {
+			token = existing
+			return nil
+		}
+		token = randomID() + randomID()
+		tokens[worker] = token
+		return m.writeTunnelAccessMap(tokens)
+	})
+	return token, err
+}
+
+// RotateTunnelAccessToken replaces a rule's edge access token and, when Cloudflare
+// settings are configured and protection is enabled on the saved rule, syncs Workers.
+func (m *Manager) RotateTunnelAccessToken(ctx context.Context, domain string) (string, error) {
+	s, err := m.Read()
+	if err != nil {
+		return "", err
+	}
+	d := LocalDomain(domain)
+	worker := resolveWorkerForDomain(s, d)
+	if worker == "" || !strings.HasPrefix(worker, "devbase-") {
+		return "", errors.New("invalid proxy domain")
+	}
+	token := randomID() + randomID()
+	if err := m.withTunnelAccessLock(func() error {
+		tokens, err := m.readTunnelAccessMap()
+		if err != nil {
+			return err
+		}
+		tokens[worker] = token
+		return m.writeTunnelAccessMap(tokens)
+	}); err != nil {
+		return "", err
+	}
+	for _, rule := range s.ProxyRules {
+		if rule.Domain == d && rule.Tunnel && rule.TunnelAuth && m.HasCloudflareToken() {
+			if err := m.SyncTunnels(ctx); err != nil {
+				return token, err
+			}
+			break
+		}
+	}
+	return token, nil
 }
 
 // HasCloudflareToken checks whether a Cloudflare API token file is stored

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	"devbase/internal/devplatform"
 	"devbase/internal/privhelper"
 	"github.com/egoist/mygo/ui"
@@ -93,9 +95,20 @@ func (a *app) settingsView(c *ui.Context) {
 					if a.workspaceRoot != "" {
 						devKV(c, "Workspace", a.workspaceRoot)
 					}
+					cacheText := "0 B"
+					if a.cacheInfo.Files > 0 {
+						cacheText = fmt.Sprintf("%s · %s", formatBackupSize(a.cacheInfo.Bytes), plural(a.cacheInfo.Files, "archive"))
+					}
+					devKV(c, "Download cache", cacheText)
+					if a.cacheInfo.Directory != "" {
+						devKV(c, "Cache folder", a.cacheInfo.Directory)
+					}
 					devButtonRow(c, func() {
 						if btn(c, "Show workspace in Finder", icoFolder, btnDefault).Disabled(a.reveal == nil || a.workspaceRoot == "").Clicked() {
 							a.reveal(a.workspaceRoot)
+						}
+						if btn(c, "Clear download cache", icoTrash, btnDefault).Disabled(d.busy || a.packageTasksRunning() || a.cacheInfo.Files == 0).Clicked() {
+							a.clearDownloadCache()
 						}
 						if btn(c, "Run diagnostics", icoStetho, btnDefault).Disabled(d.busy).Clicked() {
 							a.chosen.Clear()

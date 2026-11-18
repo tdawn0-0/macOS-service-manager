@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"devbase/internal/devplatform"
 	"devbase/internal/privhelper"
@@ -34,7 +35,8 @@ func (a *app) refreshSettings() {
 			providers = append(providers, r)
 		}
 	}
-	root := a.devManager().Root
+	mgr := a.devManager()
+	root := mgr.Root
 	a.spawn(func() {
 		st := privhelper.Default().Status()
 		needsAccess := false
@@ -44,14 +46,49 @@ func (a *app) refreshSettings() {
 				break
 			}
 		}
+		cacheInfo, _ := mgr.DownloadCacheInfo()
 		a.post(func() {
 			a.settingsBusy = false
 			a.settingsLoaded = true
 			a.helperStatus = st
 			a.fdaNeedsAccess = needsAccess
 			a.workspaceRoot = root
+			a.cacheInfo = cacheInfo
 		})
 	})
+}
+
+func (a *app) clearDownloadCache() {
+	if a.dev.busy || a.packageTasksRunning() || a.cacheInfo.Files == 0 {
+		return
+	}
+	a.ask = askState{
+		open:    true,
+		title:   "Clear download cache?",
+		message: "Removes cached installation archives. Installed runtimes and database engines are not changed.",
+		button:  "Clear Cache",
+		run: func() {
+			var info devplatform.DownloadCacheInfo
+			a.devTaskThen(func(m *devplatform.Manager) (string, error) {
+				removed, err := m.ClearDownloadCache(m.Context)
+				if refreshed, infoErr := m.DownloadCacheInfo(); infoErr == nil {
+					info = refreshed
+				}
+				if err != nil {
+					return "", err
+				}
+				if removed.Files == 0 {
+					return "Download cache is already empty.", nil
+				}
+				return fmt.Sprintf("Cleared %s (%s) from download cache.", plural(removed.Files, "archive"), formatBackupSize(removed.Bytes)), nil
+			}, func(err error) {
+				a.cacheInfo = info
+				if err == nil && a.dev.packagePreview != nil {
+					a.dev.packagePreview.Cached = false
+				}
+			})
+		},
+	}
 }
 
 func (a *app) openFullDiskAccess() {

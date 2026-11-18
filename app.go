@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"devbase/internal/brew"
@@ -115,11 +116,12 @@ type app struct {
 	// post runs a function on the main thread (Window.Update), spawn runs
 	// background work, copy puts text on the clipboard, and chooseApp asks
 	// the user for an app. Tests replace them.
-	post      func(func())
-	spawn     func(func())
-	copy      func(string)
-	reveal    func(path string)
-	chooseApp func() (string, bool)
+	post       func(func())
+	spawn      func(func())
+	copy       func(string)
+	reveal     func(path string)
+	chooseApp  func() (string, bool)
+	openDialog func(mygo.OpenDialogOptions) ([]string, error)
 	// dockOn shows or hides the Dock icon; dockShown is what it last did.
 	// The app starts with it shown, as its window does.
 	dockOn    func(bool)
@@ -165,6 +167,14 @@ type app struct {
 	settingsBusy   bool
 	fdaNeedsAccess bool
 	workspaceRoot  string
+	cacheInfo      devplatform.DownloadCacheInfo
+}
+
+func (a *app) pickPaths(opts mygo.OpenDialogOptions) ([]string, error) {
+	if a.openDialog != nil {
+		return a.openDialog(opts)
+	}
+	return mygo.Dialog.Open(opts)
 }
 
 func newApp() *app {

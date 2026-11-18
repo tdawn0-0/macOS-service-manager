@@ -207,3 +207,101 @@ func TestUIConnectionProfiles(t *testing.T) {
 		}
 	})
 }
+
+func TestUIInstanceInventoryBackupSelectorAndConnectionFormats(t *testing.T) {
+	h := newDevUIHarnessSize(t, 1120, 780, false)
+	inst := devplatform.Instance{ID: "app-pg", Kind: "postgresql", Package: "postgresql@17.11_1-arm64", Port: 55432, Persistent: true}
+	m := h.a.dev.managerFactory()
+	if err := os.MkdirAll(filepath.Join(h.root, "instances", inst.ID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.root, "instances", inst.ID, "password"), []byte("super-secret-pg-pw"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state := devplatform.State{
+		SchemaVersion: devplatform.Schema,
+		Packages:      map[string]devplatform.Package{},
+		Instances:     map[string]devplatform.Instance{inst.ID: inst},
+		ConnectionProfiles: map[string]devplatform.ConnectionProfile{
+			"app": {ID: "app", InstanceID: inst.ID, Name: "App", Database: "orders", Username: "svc"},
+		},
+		ProxyRules:        []devplatform.ProxyRule{},
+		ProxyListenerPort: 443,
+	}
+	b, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.root, "state.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	origFactory := h.a.dev.managerFactory
+	h.a.dev.managerFactory = func() *devplatform.Manager {
+		mgr := origFactory()
+		mgr.Run = func(_ context.Context, name string, args ...string) (string, error) {
+			if name == "launchctl" && len(args) > 0 && args[0] == "print" {
+				return "state = running\n", nil
+			}
+			return "", nil
+		}
+		mgr.InspectCatalog = func(context.Context, devplatform.Instance) (devplatform.InstanceCatalog, error) {
+			return devplatform.InstanceCatalog{
+				Databases: []string{"analytics", "orders", "postgres"},
+				Users:     []string{"devmanager", "svc"},
+			}, nil
+		}
+		return mgr
+	}
+	_ = m
+
+	h.a.dev.state = state
+	h.a.dev.statuses = map[string]string{"instance:app-pg": "Running"}
+	h.a.openInstance(inst.ID)
+	h.ui.Frame()
+	h.drain(func() bool { return h.a.dev.dbCatalogFor == inst.ID })
+	h.waitIdle()
+
+	// Database pills, user tags, and Target database selector should render.
+	for _, want := range []string{"analytics", "orders", "svc", "Target database", "Refresh databases"} {
+		if !h.ui.HasText(want) {
+			t.Fatalf("missing %q in running instance view: %v", want, h.ui.Texts())
+		}
+	}
+
+	// Clicking a database pill selects it for DB name, .env, and JDBC URL copy.
+	h.click("analytics")
+	if h.a.dev.dbName != "analytics" {
+		t.Fatalf("expected dbName=analytics after pill click, got %q", h.a.dev.dbName)
+	}
+	h.click("Copy .env")
+	if len(h.copied) == 0 || h.copied[len(h.copied)-1] != "DATABASE_URL=postgresql://devmanager@127.0.0.1:55432/analytics" {
+		t.Fatalf("unexpected copied .env: %v", h.copied)
+	}
+	h.click("Copy JDBC URL")
+	if len(h.copied) == 0 || h.copied[len(h.copied)-1] != "jdbc:postgresql://127.0.0.1:55432/analytics?user=devmanager" {
+		t.Fatalf("unexpected copied JDBC URL: %v", h.copied)
+	}
+
+	// Business profile uses profile DB and user without exposing admin password.
+	h.click("App")
+	h.click("Copy .env")
+	if h.copied[len(h.copied)-1] != "DATABASE_URL=postgresql://svc@127.0.0.1:55432/orders" {
+		t.Fatalf("unexpected profile .env: %v", h.copied)
+	}
+	h.click("Copy JDBC URL")
+	if h.copied[len(h.copied)-1] != "jdbc:postgresql://127.0.0.1:55432/orders?user=svc" {
+		t.Fatalf("unexpected profile JDBC URL: %v", h.copied)
+	}
+	for _, s := range h.copied {
+		if strings.Contains(s, "super-secret-pg-pw") {
+			t.Fatalf("copied string leaked password: %q", s)
+		}
+	}
+
+	// Selecting from Target database updates d.dbName.
+	h.choose("Target database", "orders")
+	if h.a.dev.dbName != "orders" {
+		t.Fatalf("expected dbName=orders after choosing Target database, got %q", h.a.dev.dbName)
+	}
+}

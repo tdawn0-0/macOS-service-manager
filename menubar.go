@@ -323,8 +323,17 @@ func (a *app) panelDatabase(c *ui.Context, instance devplatform.Instance, openWi
 // openInstanceLogs opens an instance's log file in Console, or its page in
 // the window when it has not written one yet.
 func (a *app) openInstanceLogs(id string, openWindow func()) {
+	a.openJobLogs("db-"+id, id, func() {
+		a.openInstance(id)
+		openWindow()
+	})
+}
+
+// openJobLogs opens a background job's log file in Console, or falls back to
+// displaying its bounded log tail in the workspace status drawer.
+func (a *app) openJobLogs(jobID, displayLabel string, onFallback func()) {
 	a.devTask(func(m *devplatform.Manager) (string, error) {
-		for _, name := range []string{"db-" + id + ".err.log", "db-" + id + ".log"} {
+		for _, name := range []string{jobID + ".err.log", jobID + ".log"} {
 			path := filepath.Join(m.Root, "logs", name)
 			info, err := os.Stat(path)
 			if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
@@ -333,15 +342,16 @@ func (a *app) openInstanceLogs(id string, openWindow func()) {
 			if _, err := m.Run(m.Context, "/usr/bin/open", "-a", "Console", path); err != nil {
 				break
 			}
-			a.post(func() { a.toasts = append(a.toasts, "Opened logs for "+id+" in Console") })
+			a.post(func() { a.toasts = append(a.toasts, "Opened logs for "+displayLabel+" in Console") })
 			return "Opened logs in Console", nil
 		}
 		a.post(func() {
-			a.openInstance(id)
+			if onFallback != nil {
+				onFallback()
+			}
 			a.dev.showResult = true
-			openWindow()
 		})
-		return m.Logs("db-" + id)
+		return m.Logs(jobID)
 	})
 }
 
@@ -357,6 +367,86 @@ func (a *app) panelProxyURL() string {
 		url = fmt.Sprintf("%s:%d", url, port)
 	}
 	return url
+}
+
+func (a *app) savedProxyURLs() []string {
+	d := &a.dev
+	urls := make([]string, 0, len(d.state.ProxyRules))
+	for _, rule := range d.state.ProxyRules {
+		if rule.Domain == "" {
+			continue
+		}
+		u := "https://" + rule.Domain
+		if port := d.state.ProxyListenerPort; port != 0 && port != 443 {
+			u = fmt.Sprintf("%s:%d", u, port)
+		}
+		urls = append(urls, u)
+	}
+	return urls
+}
+
+func (a *app) savedTunnelURLs() []string {
+	d := &a.dev
+	urls := make([]string, 0, len(d.state.ProxyRules))
+	for _, rule := range d.state.ProxyRules {
+		if !rule.Tunnel {
+			continue
+		}
+		u := ""
+		if w, ok := d.state.TunnelWorkers[rule.ResolvedTunnelWorker()]; ok && w.PublicURL != "" {
+			u = strings.TrimSpace(w.PublicURL)
+		} else {
+			u = rule.PreviewTunnelURL(d.state.CloudflareSubdomain)
+		}
+		if u != "" {
+			urls = append(urls, u)
+		}
+	}
+	return urls
+}
+
+func (a *app) panelURLHoverActions(c *ui.Context, active bool, urls []string, copyLabel, openLabel, openOutput string) {
+	if !active || len(urls) == 0 {
+		return
+	}
+	tint := theme.TokensOf(c).TextSecondary
+	if len(urls) == 1 {
+		u := urls[0]
+		if iconButton(c, icoCopy, copyLabel, tint).Clicked() {
+			if a.copy != nil {
+				a.copy(u)
+			}
+			a.toast("Copied %s", u)
+		}
+		if iconButton(c, icoLink, openLabel, tint).Disabled(a.dev.busy).Clicked() {
+			a.devTask(func(m *devplatform.Manager) (string, error) {
+				_, err := m.Run(m.Context, "/usr/bin/open", u)
+				return openOutput, err
+			})
+		}
+		return
+	}
+	iconButton(c, icoLink, openLabel, tint).Disabled(a.dev.busy).Menu(func(m *ui.Menu) {
+		for _, u := range urls {
+			u := u
+			if m.Item("Open " + u).Chosen() {
+				a.devTask(func(mgr *devplatform.Manager) (string, error) {
+					_, err := mgr.Run(mgr.Context, "/usr/bin/open", u)
+					return openOutput, err
+				})
+			}
+		}
+		m.Separator()
+		for _, u := range urls {
+			u := u
+			if m.Item("Copy " + u).Chosen() {
+				if a.copy != nil {
+					a.copy(u)
+				}
+				a.toast("Copied %s", u)
+			}
+		}
+	})
 }
 
 // openInstance goes to an instance's page in the window.
@@ -412,16 +502,7 @@ func (a *app) panelProxy(c *ui.Context, openWindow func()) {
 			})
 		})
 	}, "Proxy · "+status, sub, "Open HTTPS proxy", openSettings, func() {
-		url := a.panelProxyURL()
-		if url == "" {
-			return
-		}
-		if iconButton(c, icoLink, "Open HTTPS URL", theme.TokensOf(c).TextSecondary).Disabled(d.busy).Clicked() {
-			a.devTask(func(m *devplatform.Manager) (string, error) {
-				_, err := m.Run(m.Context, "/usr/bin/open", url)
-				return "Opened saved HTTPS rule in browser.", err
-			})
-		}
+		a.panelURLHoverActions(c, on, a.savedProxyURLs(), "Copy HTTPS URL", "Open HTTPS URL", "Opened saved HTTPS rule in browser.")
 	}, func() {
 		label := "Apply proxy"
 		if on {
@@ -465,7 +546,9 @@ func (a *app) panelProxy(c *ui.Context, openWindow func()) {
 					devStatusDot(c, tunnelStatus)
 				})
 			})
-		}, "Tunnel · "+tunnelStatus, tunnelSub, "Open Cloudflare tunnel settings", openSettings, nil, func() {
+		}, "Tunnel · "+tunnelStatus, tunnelSub, "Open Cloudflare tunnel settings", openSettings, func() {
+			a.panelURLHoverActions(c, tunnelOn, a.savedTunnelURLs(), "Copy tunnel URL", "Open tunnel URL", "Opened tunnel URL in browser.")
+		}, func() {
 			label := "Apply tunnel"
 			if tunnelOn {
 				label = "Stop tunnel"

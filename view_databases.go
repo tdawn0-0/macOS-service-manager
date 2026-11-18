@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/choice"
+	"github.com/lobehub/lobe-mygo/pkg/display"
 	"github.com/lobehub/lobe-mygo/pkg/feedback"
 )
 
@@ -126,6 +128,9 @@ func (a *app) devDatabases(c *ui.Context) {
 			d.showResult = true
 			a.devTask(func(m *devplatform.Manager) (string, error) { return m.Logs(id) })
 		}
+		if iconButton(c, icoLink, "Open logs in Console", c.Theme().TextMuted).Disabled(d.busy).Clicked() {
+			a.openJobLogs("db-"+instance.ID, instance.ID, nil)
+		}
 	})
 	a.devDatabaseTasks(c)
 	a.devDatabaseConnections(c, instance)
@@ -139,7 +144,29 @@ func (a *app) devDatabases(c *ui.Context) {
 	if d.dbKind == "redis" {
 		title = "Database"
 	}
-	devCardWith(c, icoDatabase, title, "", nil, func() {
+	running := status == "Running" || status == "Healthy"
+	if running {
+		a.loadInstanceCatalog(instance.ID)
+	}
+	catalogReady := running && d.dbCatalogFor == instance.ID
+	devCardWith(c, icoDatabase, title, "", func() {
+		if btn(c, "Refresh databases", icoRotate, btnText).Disabled(busy || !running).Clicked() {
+			a.reloadInstanceCatalog()
+		}
+	}, func() {
+		if catalogReady && len(d.dbCatalog.Databases) > 0 {
+			ui.Row(c).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
+				for _, dbName := range d.dbCatalog.Databases {
+					kind := btnDefault
+					if d.dbName == dbName {
+						kind = btnFilled
+					}
+					if btn(c.Key("db-item-"+dbName), dbName, icoDatabase, kind).Clicked() {
+						d.dbName = dbName
+					}
+				}
+			})
+		}
 		if d.dbKind == "redis" {
 			devField(c, "Database number (0–15)", &d.dbName, "0")
 			return
@@ -154,6 +181,13 @@ func (a *app) devDatabases(c *ui.Context) {
 			}, &connectionOperationOffer{InstanceID: id, Kind: d.dbKind, Database: name})
 		}
 		devDivider(c, "User")
+		if catalogReady && len(d.dbCatalog.Users) > 0 {
+			ui.Row(c).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
+				for _, user := range d.dbCatalog.Users {
+					devTag(c, user, display.TagColor(""))
+				}
+			})
+		}
 		devFieldGrid(c, func() {
 			devField(c, "Database user", &d.dbUser, "app_user")
 			ui.Field(c, "New user password", func() { ui.TextInput(c, &d.dbPassword).Password() })
@@ -168,6 +202,12 @@ func (a *app) devDatabases(c *ui.Context) {
 	})
 	devCardWith(c, icoArchive, "Backups", "", nil, func() {
 		a.loadBackups(instance.ID)
+		if catalogReady && len(d.dbCatalog.Databases) > 0 {
+			selectedDB := d.dbName
+			if devChoice(c, "Target database", &selectedDB, d.dbCatalog.Databases) {
+				d.dbName = selectedDB
+			}
+		}
 		if btn(c, "Back up database", icoArchive, btnDefault).AlignSelf(ui.Start).Disabled(busy).Clicked() {
 			id, name := d.dbID, d.dbName
 			a.startDatabaseOperation(d.state.Instances[id], "backup", func(m *devplatform.Manager) (string, error) { return m.Backup(m.Context, id, name) })
@@ -177,7 +217,7 @@ func (a *app) devDatabases(c *ui.Context) {
 		devField(c, "Backup file", &d.backupPath, "Select a backup file")
 		devButtonRow(c, func() {
 			if btn(c, "Choose backup file…", icoFolder, btnDefault).Clicked() {
-				paths, e := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "Restore database backup"})
+				paths, e := a.pickPaths(mygo.OpenDialogOptions{Title: "Restore database backup"})
 				if e != nil {
 					d.output = e.Error()
 				} else if len(paths) > 0 {
@@ -249,6 +289,27 @@ func (a *app) devNewInstance(c *ui.Context) {
 	})
 	devCardWith(c, icoFolder, "Storage", "", nil, func() {
 		devField(c, "Data location", &d.dbDataDirectory, "Blank for app storage, or a new absolute directory")
+		devButtonRow(c, func() {
+			if btn(c, "Choose parent folder…", icoFolder, btnDefault).Tooltip("Select an existing parent folder; Devbase creates a new subfolder for this instance").Disabled(d.busy).Clicked() {
+				paths, e := a.pickPaths(mygo.OpenDialogOptions{
+					Title:             "Choose parent folder for database data",
+					Directory:         true,
+					CreateDirectories: true,
+				})
+				if e != nil {
+					d.output = e.Error()
+				} else if len(paths) > 0 {
+					leaf := strings.TrimSpace(d.dbID)
+					if leaf == "" || leaf == "." || leaf == ".." || strings.ContainsAny(leaf, "/\\") {
+						leaf = d.dbKind + "-data"
+					}
+					d.dbDataDirectory = filepath.Join(paths[0], leaf)
+				}
+			}
+			if d.dbDataDirectory != "" && btn(c, "Use app storage", icoUndo, btnText).Disabled(d.busy).Clicked() {
+				d.dbDataDirectory = ""
+			}
+		})
 	})
 	if btn(c, "Create instance", icoPlus, btnPrimary).AlignSelf(ui.Start).Disabled(d.busy || d.databaseTasks[d.dbID] != nil && d.databaseTasks[d.dbID].Running).Clicked() {
 		port, e := strconv.Atoi(d.dbPort)
@@ -314,6 +375,32 @@ func (a *app) loadBackups(id string) {
 
 // reloadBackups marks the list stale so the next frame reads it again.
 func (a *app) reloadBackups() { a.dev.backupsFor = "" }
+
+// loadInstanceCatalog reads a running instance's databases and users in the background.
+func (a *app) loadInstanceCatalog(id string) {
+	d := &a.dev
+	if a.post == nil || d.dbCatalogLoading || d.dbCatalogFor == id {
+		return
+	}
+	d.dbCatalogLoading = true
+	m := a.devManager()
+	a.spawn(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		cat, err := m.InspectInstanceCatalog(ctx, id)
+		a.post(func() {
+			if err != nil {
+				cat = devplatform.InstanceCatalog{}
+			}
+			a.dev.dbCatalog = cat
+			a.dev.dbCatalogFor = id
+			a.dev.dbCatalogLoading = false
+		})
+	})
+}
+
+// reloadInstanceCatalog marks the instance catalog stale so it refreshes on the next frame.
+func (a *app) reloadInstanceCatalog() { a.dev.dbCatalogFor = "" }
 
 func formatBackupSize(n int64) string {
 	switch {

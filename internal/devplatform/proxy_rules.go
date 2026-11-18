@@ -25,6 +25,7 @@ type ProxyRule struct {
 	// Empty means this Mac's loopback, 127.0.0.1.
 	UpstreamHost string `json:"upstreamHost,omitempty"`
 	Tunnel       bool   `json:"tunnel,omitempty"`
+	TunnelAuth   bool   `json:"tunnelAuth,omitempty"`
 	TunnelWorker string `json:"tunnelWorker,omitempty"`
 	TunnelDomain string `json:"tunnelDomain,omitempty"`
 	TunnelURL    string `json:"tunnelUrl,omitempty"`

@@ -127,3 +127,32 @@ func TestUIJavaDistributions(t *testing.T) {
 		}
 	}
 }
+
+func TestUIJavaUpdateAvailableBadge(t *testing.T) {
+	a := designFixture(t)
+	a.dev.software = "java"
+	a.dev.javaLoaded = true
+	a.dev.runtimeVersions = map[string][]string{"java": {"temurin-21.0.13", "temurin-21.0.14"}}
+	p := devplatform.Package{Name: "java", Version: "temurin-21.0.13", JavaInstallName: "temurin-21.0.13", Arch: "arm64"}
+	a.dev.state.Packages[p.ID()] = p
+	a.dev.javaInstallations = []devplatform.JavaInstallation{{
+		ID:        "java-temurin-21",
+		PackageID: p.ID(),
+		Managed:   true,
+		CanUse:    true,
+		Name:      "Temurin",
+		Vendor:    "Eclipse Adoptium",
+		Version:   "21.0.13",
+		Arch:      "aarch64",
+		Path:      "/Users/developer/Library/Java/JavaVirtualMachines/temurin-21.0.13",
+		Home:      "/Users/developer/Library/Java/JavaVirtualMachines/temurin-21.0.13/Contents/Home",
+	}}
+	tt := ui.NewTester(a.view, 1120, 720)
+	tt.Frame()
+	if !tt.HasText("temurin-21.0.14 available") {
+		t.Fatalf("missing Java update badge: %v", tt.Texts())
+	}
+	if _, ok := tt.Find("Review temurin-21.0.14"); !ok {
+		t.Fatalf("missing Review temurin-21.0.14 button: %v", tt.Texts())
+	}
+}

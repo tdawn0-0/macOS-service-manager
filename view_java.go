@@ -27,6 +27,7 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 		}
 		for _, row := range d.javaInstallations {
 			row := row
+			newer := devplatform.NewerJavaCatalogVersion(row, d.state.Packages, d.runtimeVersions["java"])
 			devInset(c, func() {
 				ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
 					ui.Row(c).Gap(8).AlignItems(ui.Center).Grow(1).MinWidth(160).Children(func() {
@@ -37,8 +38,16 @@ func (a *app) devJavaInstallations(c *ui.Context) {
 						if row.Managed {
 							devTag(c, "Devbase", display.TagColor(""))
 						}
+						if newer != "" {
+							devTag(c, newer+" available", display.TagColor(""))
+						}
 					})
 					ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+						if newer != "" {
+							if btn(c.Key(row.ID+"-review"), "Review "+newer, icoFileCheck, btnText).Disabled(d.busy || a.packageTasksRunning()).Clicked() {
+								a.reviewPackageVersion("java", newer)
+							}
+						}
 						isDefault := d.state.RuntimeDefaults["java"] == row.ID || row.PackageID != "" && d.state.RuntimeDefaults["java"] == row.PackageID
 						if !isDefault && btn(c.Key(row.ID+"-default"), "Set default", nil, btnDefault).Disabled(d.busy || a.packageTasksRunning() || !row.CanUse).Clicked() {
 							a.devTask(func(m *devplatform.Manager) (string, error) {

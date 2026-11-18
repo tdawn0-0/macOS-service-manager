@@ -117,6 +117,43 @@ async function verifyHandshake(request, secret) {
   return { ok: true, clientId };
 }
 
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest("SHA-256", textEncoder.encode(value));
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function verifyVisitorAccess(request, accessToken) {
+  if (!accessToken || typeof accessToken !== "string" || accessToken.length === 0) {
+    return { ok: true };
+  }
+  let candidate = (request.headers.get("X-Devbase-Token") || "").trim();
+  if (!candidate) {
+    const auth = (request.headers.get("Authorization") || "").trim();
+    const lower = auth.toLowerCase();
+    if (lower.startsWith("bearer ")) {
+      candidate = auth.slice(7).trim();
+    } else if (lower.startsWith("basic ")) {
+      try {
+        const decoded = atob(auth.slice(6).trim());
+        const idx = decoded.indexOf(":");
+        if (idx >= 0) {
+          candidate = decoded.slice(idx + 1);
+        }
+      } catch {}
+    }
+  }
+  if (!candidate) {
+    return { ok: false };
+  }
+  const [expectedHash, actualHash] = await Promise.all([
+    sha256Hex(accessToken),
+    sha256Hex(candidate),
+  ]);
+  return { ok: constantTimeEqualHex(expectedHash, actualHash) };
+}
+
 function truncateUTF8(str, maxBytes) {
   if (!str) return "";
   if (textEncoder.encode(str).byteLength <= maxBytes) return str;
@@ -163,6 +200,16 @@ export default {
     }
     if (url.pathname.startsWith("/__devbase/")) {
       return new Response("Not Found", { status: 404 });
+    }
+    const access = await verifyVisitorAccess(request, env.ACCESS_TOKEN);
+    if (!access.ok) {
+      return new Response("Unauthorized", {
+        status: 401,
+        headers: {
+          "WWW-Authenticate": 'Basic realm="Devbase Tunnel", charset="UTF-8"',
+          "Cache-Control": "no-store",
+        },
+      });
     }
     const stub = env.TUNNEL_GATEWAY.get(env.TUNNEL_GATEWAY.idFromName("gateway"));
     return stub.fetch(request);

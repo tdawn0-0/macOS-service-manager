@@ -131,6 +131,7 @@ type TunnelWorkerState struct {
 	LocalDomain  string `json:"localDomain"`
 	LocalPort    int    `json:"localPort"`
 	ScriptDigest string `json:"scriptDigest,omitempty"`
+	AuthDigest   string `json:"authDigest,omitempty"`
 }
 
 type State struct {
@@ -163,6 +164,7 @@ type Manager struct {
 	brewCellar     string            // Test fixture override; production uses Apple Silicon Homebrew's Cellar.
 	// FetchNodeReleases overrides where the release index is read; tests set it.
 	FetchNodeReleases  func(context.Context) ([]NodeRelease, error)
+	InspectCatalog     func(context.Context, Instance) (InstanceCatalog, error)
 	tunnelTLSConfig    *tls.Config                                   // Test override for mock TLS tunnel gateway servers.
 	tunnelReadTimeout  time.Duration                                 // Test override for tunnel keepalive timeout.
 	tunnelPingInterval time.Duration                                 // Test override for tunnel keepalive ping interval.

@@ -9,12 +9,63 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 type ConnectionInfo struct {
 	URI            string
 	Username       string
 	CredentialFile string
+}
+
+// WithDatabase returns a copy of ConnectionInfo targeting db if db is valid for kind.
+func (c ConnectionInfo) WithDatabase(kind, db string) ConnectionInfo {
+	db = strings.TrimSpace(db)
+	if db == "" {
+		return c
+	}
+	if kind == "redis" {
+		if _, err := redisDB(db); err != nil {
+			return c
+		}
+	} else if validID(db) != nil {
+		return c
+	}
+	u, err := url.Parse(c.URI)
+	if err != nil {
+		return c
+	}
+	u.Path = "/" + db
+	c.URI = u.String()
+	return c
+}
+
+// EnvAssignment formats the password-free connection URI as a .env variable assignment.
+func (c ConnectionInfo) EnvAssignment() string {
+	return "DATABASE_URL=" + c.URI
+}
+
+// JDBCURL formats the password-free connection URI as a JDBC URL for PostgreSQL or MySQL.
+func (c ConnectionInfo) JDBCURL(kind string) (string, error) {
+	if kind != "postgresql" && kind != "mysql" {
+		return "", errors.New("JDBC URLs are supported only for PostgreSQL and MySQL")
+	}
+	u, err := url.Parse(c.URI)
+	if err != nil || u.Host == "" {
+		return "", errors.New("invalid database connection URI")
+	}
+	db := strings.TrimPrefix(u.Path, "/")
+	out := fmt.Sprintf("jdbc:%s://%s/%s", kind, u.Host, db)
+	user := ""
+	if u.User != nil {
+		user = u.User.Username()
+	}
+	if user != "" {
+		q := url.Values{}
+		q.Set("user", user)
+		out += "?" + q.Encode()
+	}
+	return out, nil
 }
 
 func (m *Manager) ConnectionInfo(id string) (ConnectionInfo, error) {

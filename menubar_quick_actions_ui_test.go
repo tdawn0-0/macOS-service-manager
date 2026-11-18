@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,6 +82,93 @@ func TestUIMenuBarQuickActions(t *testing.T) {
 		panel.Frame()
 		if shown := strings.Join(panel.Texts(), " "); strings.Contains(shown, "secret-app.devbase.localhost") {
 			t.Fatal(shown)
+		}
+	})
+	t.Run("hover-single-and-multi-rule-actions", func(t *testing.T) {
+		a, _, ran := setup(t)
+		var copied []string
+		a.copy = func(v string) { copied = append(copied, v) }
+		a.dev.state.ProxyListenerPort = 443
+		a.dev.state.ProxyRules = []devplatform.ProxyRule{
+			{Domain: "one.devbase.localhost", LocalPort: 3000, Tunnel: true, TunnelURL: "https://devbase-one.demo.workers.dev"},
+		}
+		a.dev.statuses = map[string]string{"proxy": "Running", "tunnel": "Running", "tunnel:token": "Configured"}
+		panel := ui.NewTester(func(c *ui.Context) { a.menubarView(c, func() {}) }, 340, a.panelHeight())
+		panel.Frame()
+
+		// Hover Proxy row (1 rule): shows Copy HTTPS URL & Open HTTPS URL.
+		proxyRect, ok := panel.Find("Proxy · Running")
+		if !ok {
+			t.Fatal("missing Proxy · Running row")
+		}
+		panel.Move(proxyRect.X+proxyRect.W/2, proxyRect.Y+proxyRect.H/2)
+		panel.Frame()
+		if err := panel.Click("Copy HTTPS URL"); err != nil {
+			t.Fatal(err)
+		}
+		panel.Frame()
+		if len(copied) == 0 || copied[len(copied)-1] != "https://one.devbase.localhost" {
+			t.Fatalf("expected single HTTPS URL copied, got %v", copied)
+		}
+
+		// Hover Tunnel row (1 rule): shows Copy tunnel URL & Open tunnel URL.
+		tunnelRect, ok := panel.Find("Tunnel · Running")
+		if !ok {
+			t.Fatal("missing Tunnel · Running row")
+		}
+		panel.Move(tunnelRect.X+tunnelRect.W/2, tunnelRect.Y+tunnelRect.H/2)
+		panel.Frame()
+		if err := panel.Click("Copy tunnel URL"); err != nil {
+			t.Fatal(err)
+		}
+		panel.Frame()
+		if copied[len(copied)-1] != "https://devbase-one.demo.workers.dev" {
+			t.Fatalf("expected single tunnel URL copied, got %v", copied)
+		}
+
+		// Multi-rule mode: domains stay out of panel text until menu opens.
+		a.dev.state.ProxyRules = append(a.dev.state.ProxyRules, devplatform.ProxyRule{
+			Domain:    "two.devbase.localhost",
+			LocalPort: 4000,
+			Tunnel:    true,
+			TunnelURL: "https://devbase-two.demo.workers.dev",
+		})
+		panel.Frame()
+		if shown := strings.Join(panel.Texts(), " "); strings.Contains(shown, "two.devbase.localhost") {
+			t.Fatalf("domain leaked into menubar panel text: %s", shown)
+		}
+		panel.Move(proxyRect.X+proxyRect.W/2, proxyRect.Y+proxyRect.H/2)
+		panel.Frame()
+		if err := panel.Click("Open HTTPS URL"); err != nil {
+			t.Fatal(err)
+		}
+		panel.Frame()
+		menuText := fmt.Sprint(panel.Menu())
+		for _, want := range []string{"Open https://one.devbase.localhost", "Copy https://two.devbase.localhost"} {
+			if !strings.Contains(menuText, want) {
+				t.Fatalf("multi-rule proxy menu lacks %q: %s", want, menuText)
+			}
+		}
+		if err := panel.ChooseMenuItem("Copy https://two.devbase.localhost"); err != nil {
+			t.Fatal(err)
+		}
+		panel.Frame()
+		if copied[len(copied)-1] != "https://two.devbase.localhost" {
+			t.Fatalf("expected second rule copied from menu, got %v", copied)
+		}
+
+		panel.Move(tunnelRect.X+tunnelRect.W/2, tunnelRect.Y+tunnelRect.H/2)
+		panel.Frame()
+		if err := panel.Click("Open tunnel URL"); err != nil {
+			t.Fatal(err)
+		}
+		panel.Frame()
+		if err := panel.ChooseMenuItem("Open https://devbase-two.demo.workers.dev"); err != nil {
+			t.Fatal(err)
+		}
+		panel.Frame()
+		if len(*ran) == 0 || (*ran)[len(*ran)-1] != "/usr/bin/open https://devbase-two.demo.workers.dev" {
+			t.Fatalf("expected tunnel URL opened from multi-rule menu, got %v", *ran)
 		}
 	})
 }

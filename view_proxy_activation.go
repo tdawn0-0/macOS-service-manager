@@ -57,6 +57,35 @@ func (a *app) devProxyActivation(c *ui.Context, domain string) {
 			httpText, httpStatus = fmt.Sprintf("HTTP %d · %s ago", r.StatusCode, time.Since(r.CheckedAt).Round(time.Second)), "OK"
 		}
 	}
+	var savedRule *devplatform.ProxyRule
+	for i := range d.state.ProxyRules {
+		if d.state.ProxyRules[i].Domain == domain {
+			savedRule = &d.state.ProxyRules[i]
+			break
+		}
+	}
+	hasTunnelURL := false
+	if savedRule != nil && savedRule.Tunnel {
+		if w, ok := d.state.TunnelWorkers[savedRule.ResolvedTunnelWorker()]; ok && w.PublicURL != "" {
+			hasTunnelURL = true
+		} else if savedRule.PreviewTunnelURL(d.state.CloudflareSubdomain) != "" {
+			hasTunnelURL = true
+		}
+	}
+	tunnelText, tunnelStatus := "", ""
+	if d.tunnelChecking[domain] {
+		tunnelText, tunnelStatus = "Checking tunnel…", "Checking"
+	} else if r, ok := d.tunnelChecks[domain]; ok && r.Revision == d.state.ProxyRulesRevision {
+		switch {
+		case !r.Current(time.Now(), d.state.ProxyRulesRevision, r.Fingerprint):
+			tunnelText, tunnelStatus = "Tunnel result expired", "Warning"
+		case r.Failure != "":
+			tunnelText, tunnelStatus = "Tunnel failed", "Failed"
+			problems = append(problems, devplatform.DiagnosticCheck{Layer: "Tunnel", Status: "Failed", Summary: r.Failure})
+		default:
+			tunnelText, tunnelStatus = fmt.Sprintf("Tunnel HTTP %d · %s ago", r.StatusCode, time.Since(r.CheckedAt).Round(time.Second)), "OK"
+		}
+	}
 	ui.Row(c).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
 		for _, check := range observed {
 			checkTag(c, check.Layer, check.Status)
@@ -64,7 +93,32 @@ func (a *app) devProxyActivation(c *ui.Context, domain string) {
 		if httpText != "" {
 			checkTag(c, httpText, httpStatus)
 		}
+		if tunnelText != "" {
+			checkTag(c, tunnelText, tunnelStatus)
+		}
 		ui.Spacer(c)
+		if hasTunnelURL && btn(c.Key("check-tunnel-"+domain), "Check tunnel response", icoGlobe, btnText).Disabled(d.busy || d.proxyDraftDirty() || d.tunnelChecking[domain]).Clicked() {
+			m := a.devManager()
+			fp, revision, err := m.TunnelRuleFingerprint(domain)
+			if err != nil {
+				d.output = "The saved tunnel rule changed. Reload before checking."
+				return
+			}
+			d.tunnelChecking = map[string]bool{domain: true}
+			if d.tunnelChecks == nil {
+				d.tunnelChecks = map[string]devplatform.ProxyHTTPResult{}
+			}
+			d.tunnelCheckGeneration++
+			generation := d.tunnelCheckGeneration
+			delete(d.tunnelChecks, domain)
+			a.spawn(func() {
+				result, checkErr := m.CheckTunnelRuleHTTP(context.Background(), domain, revision, fp)
+				a.post(func() {
+					latestFP, latestRevision, latestErr := a.devManager().TunnelRuleFingerprint(domain)
+					a.dev.acceptTunnelHTTPResult(domain, generation, revision, fp, result, checkErr, latestFP, latestRevision, latestErr)
+				})
+			})
+		}
 		if btn(c.Key("check-https-"+domain), "Check HTTPS response", icoStetho, btnText).Disabled(d.busy || d.proxyDraftDirty() || d.proxyChecking[domain]).Clicked() {
 			m := a.devManager()
 			fp, revision, err := m.ProxyRuleFingerprint(domain)
@@ -107,4 +161,19 @@ func (d *developmentState) acceptProxyHTTPResult(domain string, generation, revi
 		return
 	}
 	d.proxyChecks[domain] = result
+}
+
+func (d *developmentState) acceptTunnelHTTPResult(domain string, generation, revision uint64, fingerprint string, result devplatform.ProxyHTTPResult, checkErr error, latestFingerprint string, latestRevision uint64, latestErr error) {
+	if generation != d.tunnelCheckGeneration {
+		return
+	}
+	delete(d.tunnelChecking, domain)
+	if checkErr != nil {
+		d.output = "Tunnel rule changed; check again."
+		return
+	}
+	if latestErr != nil || latestRevision != revision || latestFingerprint != fingerprint {
+		return
+	}
+	d.tunnelChecks[domain] = result
 }

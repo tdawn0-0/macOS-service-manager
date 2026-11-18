@@ -138,3 +138,52 @@ func TestProxyPublicationIgnoresTunnelSettings(t *testing.T) {
 		t.Fatal("a different port must stay pending, got", state, err)
 	}
 }
+
+func TestCheckTunnelRuleHTTP(t *testing.T) {
+	m := testManager(t)
+	var seenAuth atomic.Value
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth.Store(r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	m.tunnelTLSConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig
+
+	if err := m.ReplaceProxyRules(context.Background(), 0, 443, []ProxyRule{
+		{Domain: "edge.devbase.localhost", LocalPort: 3000, Tunnel: true, TunnelAuth: true, TunnelURL: srv.URL},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	token, err := m.EnsureTunnelAccessToken("edge.devbase.localhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fp, rev, err := m.TunnelRuleFingerprint("edge.devbase.localhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := m.CheckTunnelRuleHTTP(context.Background(), "edge.devbase.localhost", rev, fp)
+	if err != nil || res.Failure != "" || res.StatusCode != 200 {
+		t.Fatalf("unexpected tunnel HTTP check result: %+v err=%v", res, err)
+	}
+	if gotAuth, _ := seenAuth.Load().(string); gotAuth != "Bearer "+token {
+		t.Fatalf("expected Bearer token header, got %q", gotAuth)
+	}
+	if _, err := m.CheckTunnelRuleHTTP(context.Background(), "edge.devbase.localhost", rev+1, fp); err == nil {
+		t.Fatal("expected stale revision error")
+	}
+
+	if err := m.ReplaceProxyRules(context.Background(), rev, 443, []ProxyRule{
+		{Domain: "pending.devbase.localhost", LocalPort: 3000, Tunnel: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fp2, rev2, err := m.TunnelRuleFingerprint("pending.devbase.localhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res2, err := m.CheckTunnelRuleHTTP(context.Background(), "pending.devbase.localhost", rev2, fp2)
+	if err != nil || res2.Failure != "Not deployed" {
+		t.Fatalf("expected Not deployed failure, got %+v err=%v", res2, err)
+	}
+}

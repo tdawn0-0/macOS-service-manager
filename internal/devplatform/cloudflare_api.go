@@ -274,25 +274,33 @@ func (c *cloudflareClient) getScriptMigrationTag(ctx context.Context, accountID,
 	return strings.TrimSpace(res.DefaultEnvironment.Script.MigrationTag), nil
 }
 
-func (c *cloudflareClient) putWorkerScript(ctx context.Context, accountID, scriptName, tunnelSecret, existingMigrationTag string) error {
+func (c *cloudflareClient) putWorkerScript(ctx context.Context, accountID, scriptName, tunnelSecret, accessToken, existingMigrationTag string) error {
 	if !strings.HasPrefix(scriptName, "devbase-") {
 		return fmt.Errorf("refusing to deploy non-devbase worker %q", scriptName)
+	}
+	bindings := []map[string]any{
+		{
+			"name":       "TUNNEL_GATEWAY",
+			"type":       "durable_object_namespace",
+			"class_name": "TunnelGateway",
+		},
+		{
+			"name": "TUNNEL_SECRET",
+			"type": "secret_text",
+			"text": tunnelSecret,
+		},
+	}
+	if accessToken != "" {
+		bindings = append(bindings, map[string]any{
+			"name": "ACCESS_TOKEN",
+			"type": "secret_text",
+			"text": accessToken,
+		})
 	}
 	meta := map[string]any{
 		"main_module":        "index.mjs",
 		"compatibility_date": cloudflareWorkerCompatDate,
-		"bindings": []map[string]any{
-			{
-				"name":       "TUNNEL_GATEWAY",
-				"type":       "durable_object_namespace",
-				"class_name": "TunnelGateway",
-			},
-			{
-				"name": "TUNNEL_SECRET",
-				"type": "secret_text",
-				"text": tunnelSecret,
-			},
-		},
+		"bindings":           bindings,
 	}
 	if existingMigrationTag != "v1" {
 		mig := map[string]any{
@@ -600,11 +608,18 @@ func (m *Manager) SyncTunnels(ctx context.Context) error {
 
 	for _, rule := range desired {
 		workerName := rule.ResolvedTunnelWorker()
+		accessToken := ""
+		if rule.TunnelAuth {
+			accessToken, err = m.EnsureTunnelAccessToken(rule.Domain)
+			if err != nil {
+				return err
+			}
+		}
 		existingTag, err := cf.getScriptMigrationTag(ctx, accountID, workerName)
 		if err != nil {
 			return err
 		}
-		if err := cf.putWorkerScript(ctx, accountID, workerName, tunnelSecret, existingTag); err != nil {
+		if err := cf.putWorkerScript(ctx, accountID, workerName, tunnelSecret, accessToken, existingTag); err != nil {
 			return err
 		}
 
@@ -642,6 +657,7 @@ func (m *Manager) SyncTunnels(ctx context.Context) error {
 			LocalDomain:  rule.Domain,
 			LocalPort:    rule.LocalPort,
 			ScriptDigest: currentTunnelWorkerDigest(),
+			AuthDigest:   tunnelAuthDigest(accessToken),
 		}
 		urlsByLocalDomain[rule.Domain] = publicURL
 	}

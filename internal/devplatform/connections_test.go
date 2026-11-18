@@ -49,6 +49,22 @@ func TestConnectionURIsExcludePasswordsAndSelectWorkingDefaults(t *testing.T) {
 			if e != nil || password != "private-test-password" {
 				t.Fatal("explicit password retrieval failed", e)
 			}
+			overridden := info.WithDatabase(kind, "custom_db")
+			if kind == "redis" {
+				overridden = info.WithDatabase(kind, "5")
+			}
+			envLine := overridden.EnvAssignment()
+			if !strings.HasPrefix(envLine, "DATABASE_URL=") || strings.Contains(envLine, "private-test-password") {
+				t.Fatalf("unexpected .env assignment: %q", envLine)
+			}
+			if kind == "postgresql" || kind == "mysql" {
+				jdbc, err := overridden.JDBCURL(kind)
+				if err != nil || !strings.HasPrefix(jdbc, "jdbc:"+kind+"://127.0.0.1:54321/custom_db?user=") || strings.Contains(jdbc, "private-test-password") {
+					t.Fatalf("unexpected JDBC URL: %q err=%v", jdbc, err)
+				}
+			} else if _, err := overridden.JDBCURL(kind); err == nil {
+				t.Fatalf("expected JDBC URL error for %s", kind)
+			}
 		})
 	}
 }

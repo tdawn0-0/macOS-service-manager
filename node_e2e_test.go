@@ -143,3 +143,20 @@ func TestUINodeVersionsListDefaultAliasesAndTerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestUINodeUpdateAvailableAndReview(t *testing.T) {
+	h := newDevUIHarnessSize(t, 1120, 780, false)
+	stubNodeReleases(h)
+	seedNodeWorkspace(t, h, "22.13.0")
+	h.click("Refresh")
+	h.a.dev.nodeReleasesTried, h.a.dev.nodeReleasesRefresh = false, false
+	h.click("Software")
+	h.drain(func() bool { return len(h.a.dev.nodeReleases) == 4 })
+
+	if !h.ui.HasText("22.14.0 available") {
+		t.Fatalf("missing Node.js update badge: %v", h.ui.Texts())
+	}
+	if _, ok := h.ui.Find("Review 22.14.0"); !ok {
+		t.Fatalf("missing Review 22.14.0 button: %v", h.ui.Texts())
+	}
+}

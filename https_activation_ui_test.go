@@ -4,6 +4,8 @@ import (
 	"devbase/internal/devplatform"
 	"fmt"
 	"github.com/egoist/mygo/ui"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +85,42 @@ func TestUIHTTPSActivation(t *testing.T) {
 				t.Fatal("check action absent")
 			}
 			saveShot(t, fmt.Sprintf("%s-%dx%d", map[bool]string{false: "light", true: "dark"}[tc.dark], tc.w, tc.h), tt.Image())
+		}
+	})
+	t.Run("tunnel-check-and-out-of-order", func(t *testing.T) {
+		d := developmentState{tunnelCheckGeneration: 2, tunnelChecking: map[string]bool{"new.devbase.localhost": true}, tunnelChecks: map[string]devplatform.ProxyHTTPResult{}}
+		old := devplatform.ProxyHTTPResult{Domain: "old.devbase.localhost", Revision: 1, Fingerprint: "old", StatusCode: 200, CheckedAt: time.Now()}
+		d.acceptTunnelHTTPResult("old.devbase.localhost", 1, 1, "old", old, nil, "old", 1, nil)
+		if len(d.tunnelChecks) != 0 || !d.tunnelChecking["new.devbase.localhost"] {
+			t.Fatal("old tunnel callback overwrote new check")
+		}
+		fresh := devplatform.ProxyHTTPResult{Domain: "new.devbase.localhost", Revision: 2, Fingerprint: "new", StatusCode: 204, CheckedAt: time.Now()}
+		d.acceptTunnelHTTPResult("new.devbase.localhost", 2, 2, "new", fresh, nil, "new", 2, nil)
+		if d.tunnelChecks["new.devbase.localhost"].StatusCode != 204 || d.tunnelChecking["new.devbase.localhost"] {
+			t.Fatal("new tunnel check was lost")
+		}
+
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+		h := newDevUIHarnessSize(t, 1120, 720, false)
+		h.a.dev.tab = devTabHTTPS
+		h.a.dev.state.ProxyRules = []devplatform.ProxyRule{{
+			Domain:    "edge.devbase.localhost",
+			LocalPort: 3000,
+			Tunnel:    true,
+			TunnelURL: srv.URL,
+		}}
+		h.a.dev.state.ProxyListenerPort = 443
+		h.a.dev.state.ProxyRulesRevision = 1
+		h.a.dev.loadProxyDraft(h.a.dev.state)
+		h.a.dev.tunnelChecks = map[string]devplatform.ProxyHTTPResult{
+			"edge.devbase.localhost": {Domain: "edge.devbase.localhost", Revision: 1, Fingerprint: "fp", StatusCode: 200, CheckedAt: time.Now()},
+		}
+		h.ui.Frame()
+		if _, ok := h.ui.Find("Check tunnel response"); !ok {
+			t.Fatalf("Check tunnel response button missing: %v", h.ui.Texts())
 		}
 	})
 }

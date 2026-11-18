@@ -305,3 +305,253 @@ func TestUIInstanceInventoryBackupSelectorAndConnectionFormats(t *testing.T) {
 		t.Fatalf("expected dbName=orders after choosing Target database, got %q", h.a.dev.dbName)
 	}
 }
+
+func TestUISmartEnvOpenCLIAndDropGuards(t *testing.T) {
+	t.Run("smart-env-and-open-cli", func(t *testing.T) {
+		for _, tc := range []struct {
+			kind    string
+			tool    string
+			wantEnv string
+			hasCLI  bool
+		}{
+			{kind: "postgresql", tool: "psql", wantEnv: "DATABASE_URL=postgresql://", hasCLI: true},
+			{kind: "mysql", tool: "mysql", wantEnv: "DATABASE_URL=mysql://", hasCLI: true},
+			{kind: "redis", tool: "redis-cli", wantEnv: "REDIS_URL=redis://", hasCLI: true},
+			{kind: "mongodb", wantEnv: "MONGODB_URI=mongodb://", hasCLI: false},
+		} {
+			t.Run(tc.kind, func(t *testing.T) {
+				h := newDevUIHarnessSize(t, 1120, 780, false)
+				pkg := devplatform.Package{Name: "cli-fixture-" + tc.kind, Version: "1.0", Arch: "universal"}
+				if tc.tool != "" {
+					pkg.Binaries = map[string]string{tc.tool: tc.tool}
+					pkgDir := filepath.Join(h.root, "packages", pkg.ID())
+					if err := os.MkdirAll(pkgDir, 0o700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(pkgDir, tc.tool), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				inst := devplatform.Instance{ID: "inst-" + tc.kind, Kind: tc.kind, Package: pkg.ID(), Port: 54321, Persistent: true}
+				instDir := filepath.Join(h.root, "instances", inst.ID)
+				if err := os.MkdirAll(instDir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				const pw = "ui-secret-password"
+				if err := os.WriteFile(filepath.Join(instDir, "password"), []byte(pw), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if tc.kind == "mysql" {
+					if err := os.WriteFile(filepath.Join(instDir, "client.cnf"), []byte("[client]\nuser=root\npassword=\"ui-secret-password\"\n"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				state := devplatform.State{
+					SchemaVersion:      devplatform.Schema,
+					Packages:           map[string]devplatform.Package{pkg.ID(): pkg},
+					Instances:          map[string]devplatform.Instance{inst.ID: inst},
+					ConnectionProfiles: map[string]devplatform.ConnectionProfile{},
+					ProxyRules:         []devplatform.ProxyRule{},
+					ProxyListenerPort:  443,
+				}
+				raw, err := json.Marshal(state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(h.root, "state.json"), raw, 0o600); err != nil {
+					t.Fatal(err)
+				}
+
+				var openCalls [][]string
+				baseFactory := h.a.dev.managerFactory
+				h.a.dev.managerFactory = func() *devplatform.Manager {
+					m := baseFactory()
+					m.Run = func(_ context.Context, name string, args ...string) (string, error) {
+						if name == "/usr/bin/open" {
+							openCalls = append(openCalls, append([]string{name}, args...))
+							return "", nil
+						}
+						return "", nil
+					}
+					return m
+				}
+
+				h.a.dev.state = state
+				h.a.openInstance(inst.ID)
+				h.ui.Frame()
+
+				h.click("Copy .env")
+				if len(h.copied) == 0 || !strings.HasPrefix(h.copied[len(h.copied)-1], tc.wantEnv) {
+					t.Fatalf("%s copied .env = %v, want prefix %q", tc.kind, h.copied, tc.wantEnv)
+				}
+				if !tc.hasCLI {
+					if h.ui.HasText("Open CLI in Terminal") {
+						t.Fatal("mongodb should not show Open CLI in Terminal")
+					}
+					return
+				}
+				if !h.ui.HasText("Open CLI in Terminal") {
+					t.Fatalf("%s missing Open CLI in Terminal", tc.kind)
+				}
+				h.click("Open CLI in Terminal")
+				if len(openCalls) != 1 || len(openCalls[0]) != 4 || openCalls[0][1] != "-a" || openCalls[0][2] != "Terminal" {
+					t.Fatalf("unexpected open calls: %v", openCalls)
+				}
+				scriptBytes, err := os.ReadFile(openCalls[0][3])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(scriptBytes), pw) || strings.Contains(h.a.dev.output, pw) {
+					t.Fatal("password leaked in CLI script or output")
+				}
+			})
+		}
+	})
+
+	t.Run("drop-database-and-drop-user-dialogs-and-guards", func(t *testing.T) {
+		h := newDevUIHarnessSize(t, 1120, 900, false)
+		pkg := devplatform.Package{Name: "drop-fixture", Version: "1.0", Arch: "universal", Binaries: map[string]string{"psql": "psql"}}
+		pkgDir := filepath.Join(h.root, "packages", pkg.ID())
+		if err := os.MkdirAll(pkgDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(pkgDir, "psql"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		inst := devplatform.Instance{ID: "app-pg", Kind: "postgresql", Package: pkg.ID(), Port: 55432, Persistent: true}
+		instDir := filepath.Join(h.root, "instances", inst.ID)
+		if err := os.MkdirAll(instDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(instDir, "password"), []byte("pg-admin-secret"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		state := devplatform.State{
+			SchemaVersion:      devplatform.Schema,
+			Packages:           map[string]devplatform.Package{pkg.ID(): pkg},
+			Instances:          map[string]devplatform.Instance{inst.ID: inst},
+			ConnectionProfiles: map[string]devplatform.ConnectionProfile{},
+			ProxyRules:         []devplatform.ProxyRule{},
+			ProxyListenerPort:  443,
+		}
+		raw, _ := json.Marshal(state)
+		if err := os.WriteFile(filepath.Join(h.root, "state.json"), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		catalogLoads := 0
+		baseFactory := h.a.dev.managerFactory
+		h.a.dev.managerFactory = func() *devplatform.Manager {
+			m := baseFactory()
+			m.Run = func(_ context.Context, name string, args ...string) (string, error) {
+				if name == "launchctl" && len(args) > 0 && args[0] == "print" {
+					return "state = running\n", nil
+				}
+				return "", nil
+			}
+			m.InspectCatalog = func(context.Context, devplatform.Instance) (devplatform.InstanceCatalog, error) {
+				catalogLoads++
+				return devplatform.InstanceCatalog{
+					Databases: []string{"orders", "postgres"},
+					Users:     []string{"alice", "devmanager"},
+				}, nil
+			}
+			return m
+		}
+
+		h.a.dev.state = state
+		h.a.dev.statuses = map[string]string{"instance:app-pg": "Running"}
+		h.a.openInstance(inst.ID)
+		h.ui.Frame()
+		h.drain(func() bool { return h.a.dev.dbCatalogFor == inst.ID })
+		h.waitIdle()
+		initialLoads := catalogLoads
+
+		// System DB and admin user keep drop buttons disabled.
+		h.a.dev.dbName = "postgres"
+		h.a.dev.dbUser = "devmanager"
+		h.ui.Frame()
+		_ = h.ui.Click("Drop database")
+		h.ui.Frame()
+		if h.a.ask.open {
+			t.Fatal("Drop database opened dialog for system DB postgres")
+		}
+		_ = h.ui.Click("Drop user")
+		h.ui.Frame()
+		if h.a.ask.open {
+			t.Fatal("Drop user opened dialog for admin user devmanager")
+		}
+
+		// Selecting non-system DB & user enables confirmation dialog and reloads catalog after confirm.
+		h.click("orders")
+		h.click("Drop database")
+		if !h.a.ask.open || h.a.ask.button != "Drop Database" {
+			t.Fatalf("Drop database did not ask confirmation: %+v", h.a.ask)
+		}
+		h.click("Cancel")
+		if h.a.ask.open || catalogLoads != initialLoads {
+			t.Fatal("Cancel did not dismiss dialog cleanly")
+		}
+		h.click("Drop database")
+		h.click("Drop Database")
+		h.drain(func() bool { return catalogLoads > initialLoads && h.a.dev.dbCatalogFor == inst.ID })
+		h.waitIdle()
+		if !strings.Contains(h.a.dev.output, "Dropped database orders") {
+			t.Fatalf("unexpected drop db output: %q", h.a.dev.output)
+		}
+
+		loadsBeforeUserDrop := catalogLoads
+		h.click("alice")
+		if h.a.dev.dbUser != "alice" {
+			t.Fatalf("clicking user pill set dbUser = %q", h.a.dev.dbUser)
+		}
+		h.click("Drop user")
+		if !h.a.ask.open || h.a.ask.button != "Drop User" {
+			t.Fatalf("Drop user did not ask confirmation: %+v", h.a.ask)
+		}
+		h.click("Drop User")
+		h.drain(func() bool { return catalogLoads > loadsBeforeUserDrop && h.a.dev.dbCatalogFor == inst.ID })
+		h.waitIdle()
+		if !strings.Contains(h.a.dev.output, "Dropped user alice") {
+			t.Fatalf("unexpected drop user output: %q", h.a.dev.output)
+		}
+	})
+
+	t.Run("viewport-reachability", func(t *testing.T) {
+		for _, tc := range []struct {
+			dark   bool
+			w, h   int
+		}{
+			{false, 900, 520},
+			{true, 900, 520},
+			{false, 1120, 720},
+			{true, 1120, 720},
+		} {
+			h := newDevUIHarnessSize(t, tc.w, tc.h, tc.dark)
+			inst := devplatform.Instance{ID: "app-pg", Kind: "postgresql", Package: "postgresql@17.11_1-arm64", Port: 55432, Persistent: true}
+			h.a.dev.state.Instances = map[string]devplatform.Instance{inst.ID: inst}
+			h.a.openInstance(inst.ID)
+			h.ui.Frame()
+			for _, label := range []string{"Open CLI in Terminal", "Drop database", "Drop user", "Restore target database", "Restore into new database"} {
+				reachable := false
+				for n := 0; n < 18; n++ {
+					r, ok := h.ui.Find(label)
+					if ok && r.W > 0 && r.H > 0 && r.Y >= barHeight && r.Y+r.H < float32(tc.h-36) {
+						reachable = true
+						break
+					}
+					h.ui.Scroll(float32(tc.w-20), float32(tc.h/2), 0, 180)
+					h.ui.Frame()
+				}
+				if !reachable {
+					t.Fatalf("%dx%d dark=%t: control %q unreachable", tc.w, tc.h, tc.dark, label)
+				}
+				// Scroll back to top before searching for the next control.
+				for n := 0; n < 18; n++ {
+					h.ui.Scroll(float32(tc.w-20), float32(tc.h/2), 0, -180)
+					h.ui.Frame()
+				}
+			}
+		}
+	})
+}

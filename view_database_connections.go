@@ -12,6 +12,9 @@ import (
 
 func (a *app) loadConnectionProfileDraft(instanceID, profileID string) {
 	d := &a.dev
+	if d.profileDraftInstance != "" && d.profileDraftInstance != instanceID {
+		d.restoreDB = ""
+	}
 	d.profileDraftInstance = instanceID
 	d.profileSelected = profileID
 	d.profilePendingSelect = ""
@@ -105,6 +108,7 @@ func (a *app) devDatabaseConnections(c *ui.Context, instance devplatform.Instanc
 						d.dbPort = "55432"
 						d.dbPackage = ""
 						d.dbDataDirectory = ""
+						d.restoreDB = ""
 					} else {
 						a.loadConnectionProfileDraft(instance.ID, selected)
 					}
@@ -195,7 +199,7 @@ func (a *app) devDatabaseConnections(c *ui.Context, instance devplatform.Instanc
 						}
 						a.post(func() {
 							if a.copy != nil {
-								a.copy(info.EnvAssignment())
+								a.copy(info.EnvAssignmentForKind(kind))
 							}
 						})
 					}
@@ -246,6 +250,12 @@ func (a *app) devDatabaseConnections(c *ui.Context, instance devplatform.Instanc
 					}
 					_, err = m.Run(m.Context, "/usr/bin/open", info.URI)
 					return "Opening the default client", err
+				})
+			}
+			if instance.Kind != "mongodb" && btn(c, "Open CLI in Terminal", icoTerminal, btnDefault).Disabled(d.busy || d.profileSelected == "new").Clicked() {
+				id, profileID, dbOverride := instance.ID, selected, d.dbName
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					return "Opening CLI in Terminal", m.OpenDatabaseCLI(m.Context, id, profileID, dbOverride)
 				})
 			}
 			if btn(c, "Details", icoEye, btnText).Disabled(d.busy || d.profileSelected != "").Clicked() {

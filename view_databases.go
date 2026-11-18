@@ -12,7 +12,6 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/choice"
-	"github.com/lobehub/lobe-mygo/pkg/display"
 	"github.com/lobehub/lobe-mygo/pkg/feedback"
 )
 
@@ -35,6 +34,7 @@ func (a *app) newDatabaseDraft() {
 	d.dbPort = "55432"
 	d.dbPackage = ""
 	d.dbDataDirectory = ""
+	d.restoreDB = ""
 	d.persistent = true
 }
 
@@ -174,17 +174,55 @@ func (a *app) devDatabases(c *ui.Context) {
 		devFieldGrid(c, func() {
 			devField(c, "Database name", &d.dbName, "app")
 		})
-		if btn(c, "Create database", icoPlus, btnDefault).AlignSelf(ui.Start).Disabled(busy).Clicked() {
-			id, name := d.dbID, d.dbName
-			a.startDatabaseOperationWithOffer(d.state.Instances[id], "create database", func(m *devplatform.Manager) (string, error) {
-				return "Created database " + name, m.CreateDatabase(m.Context, id, name)
-			}, &connectionOperationOffer{InstanceID: id, Kind: d.dbKind, Database: name})
-		}
+		devButtonRow(c, func() {
+			if btn(c, "Create database", icoPlus, btnDefault).Disabled(busy).Clicked() {
+				id, name := d.dbID, d.dbName
+				a.startDatabaseOperationWithOffer(d.state.Instances[id], "create database", func(m *devplatform.Manager) (string, error) {
+					return "Created database " + name, m.CreateDatabase(m.Context, id, name)
+				}, &connectionOperationOffer{InstanceID: id, Kind: d.dbKind, Database: name})
+			}
+			if btn(c, "Drop database", icoTrash, btnDanger).Disabled(busy || devplatform.IsProtectedDatabase(d.dbName)).Clicked() {
+				id, name := d.dbID, strings.TrimSpace(d.dbName)
+				a.ask = askState{
+					open:    true,
+					title:   "Drop database " + name + "?",
+					message: "Permanently drops database " + name + " and its data in " + id + ". This cannot be undone.",
+					button:  "Drop Database",
+					run: func() {
+						a.devTaskThen(func(m *devplatform.Manager) (string, error) {
+							return "Dropped database " + name, m.DropDatabase(m.Context, id, name)
+						}, func(err error) {
+							if err == nil && strings.TrimSpace(a.dev.dbName) == name {
+								a.dev.dbName = ""
+							}
+							a.reloadInstanceCatalog()
+						})
+					},
+				}
+			}
+		})
 		devDivider(c, "User")
 		if catalogReady && len(d.dbCatalog.Users) > 0 {
 			ui.Row(c).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
 				for _, user := range d.dbCatalog.Users {
-					devTag(c, user, display.TagColor(""))
+					selectedUser := user
+					if u, _, ok := strings.Cut(user, "@"); ok {
+						selectedUser = u
+					}
+					kind := btnDefault
+					if d.dbUser == selectedUser {
+						kind = btnFilled
+					}
+					if btn(c.Key("user-item-"+user), user, icoUserRound, kind).Clicked() {
+						if u, db, ok := strings.Cut(user, "@"); ok {
+							d.dbUser = u
+							if db != "" {
+								d.dbName = db
+							}
+						} else {
+							d.dbUser = user
+						}
+					}
 				}
 			})
 		}
@@ -192,13 +230,34 @@ func (a *app) devDatabases(c *ui.Context) {
 			devField(c, "Database user", &d.dbUser, "app_user")
 			ui.Field(c, "New user password", func() { ui.TextInput(c, &d.dbPassword).Password() })
 		})
-		if btn(c, "Create database user", icoUser, btnDefault).AlignSelf(ui.Start).Disabled(busy).Clicked() {
-			id, name, password, db := d.dbID, d.dbUser, d.dbPassword, d.dbName
-			d.dbPassword = ""
-			a.startDatabaseOperation(d.state.Instances[id], "create user", func(m *devplatform.Manager) (string, error) {
-				return "Created user " + name, m.CreateUser(m.Context, id, name, password, db)
-			})
-		}
+		devButtonRow(c, func() {
+			if btn(c, "Create database user", icoUser, btnDefault).Disabled(busy).Clicked() {
+				id, name, password, db := d.dbID, d.dbUser, d.dbPassword, d.dbName
+				d.dbPassword = ""
+				a.startDatabaseOperation(d.state.Instances[id], "create user", func(m *devplatform.Manager) (string, error) {
+					return "Created user " + name, m.CreateUser(m.Context, id, name, password, db)
+				})
+			}
+			if btn(c, "Drop user", icoTrash, btnDanger).Disabled(busy || devplatform.IsProtectedDatabaseUser(d.dbUser)).Clicked() {
+				id, name, db := d.dbID, strings.TrimSpace(d.dbUser), strings.TrimSpace(d.dbName)
+				a.ask = askState{
+					open:    true,
+					title:   "Drop user " + name + "?",
+					message: "Removes database user " + name + " from " + id + ". This cannot be undone.",
+					button:  "Drop User",
+					run: func() {
+						a.devTaskThen(func(m *devplatform.Manager) (string, error) {
+							return "Dropped user " + name, m.DropUser(m.Context, id, name, db)
+						}, func(err error) {
+							if err == nil && strings.TrimSpace(a.dev.dbUser) == name {
+								a.dev.dbUser = ""
+							}
+							a.reloadInstanceCatalog()
+						})
+					},
+				}
+			}
+		})
 	})
 	devCardWith(c, icoArchive, "Backups", "", nil, func() {
 		a.loadBackups(instance.ID)
@@ -215,6 +274,11 @@ func (a *app) devDatabases(c *ui.Context) {
 		a.backupRows(c, instance.ID, busy)
 		devDivider(c, "Restore")
 		devField(c, "Backup file", &d.backupPath, "Select a backup file")
+		restoreLabel, restorePlaceholder := "Restore target database", "app_restored"
+		if instance.Kind == "redis" {
+			restoreLabel, restorePlaceholder = "Restore Redis database (0–15)", "1"
+		}
+		devField(c, restoreLabel, &d.restoreDB, restorePlaceholder)
 		devButtonRow(c, func() {
 			if btn(c, "Choose backup file…", icoFolder, btnDefault).Clicked() {
 				paths, e := a.pickPaths(mygo.OpenDialogOptions{Title: "Restore database backup"})
@@ -225,7 +289,11 @@ func (a *app) devDatabases(c *ui.Context) {
 				}
 			}
 			if btn(c, "Restore into new database", icoRestore, btnDefault).Disabled(busy).Clicked() {
-				id, name, path := d.dbID, d.dbName, d.backupPath
+				target := strings.TrimSpace(d.restoreDB)
+				if target == "" {
+					target = d.dbName
+				}
+				id, name, path := d.dbID, target, d.backupPath
 				a.startDatabaseOperation(d.state.Instances[id], "restore", func(m *devplatform.Manager) (string, error) {
 					return "Restored into " + name, m.Restore(m.Context, id, name, path)
 				})
@@ -436,6 +504,15 @@ func (a *app) backupRows(c *ui.Context, id string, busy bool) {
 			devSubtle(kc, row.Database+" · "+when+" · "+formatBackupSize(row.Size)).Grow(1).MinWidth(0)
 			if btn(kc, "Use for restore", icoRestore, btnDefault).Clicked() {
 				d.backupPath = row.Path
+				if d.state.Instances[id].Kind == "redis" {
+					if row.Database == "0" {
+						d.restoreDB = "1"
+					} else {
+						d.restoreDB = "0"
+					}
+				} else {
+					d.restoreDB = row.Database + "_restored"
+				}
 			}
 			if btn(kc, "Show in Finder", icoFolder, btnText).Disabled(a.reveal == nil).Clicked() {
 				a.reveal(row.Path)

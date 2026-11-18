@@ -238,3 +238,67 @@ func TestUIInstancePatchUpgrade(t *testing.T) {
 		}
 	})
 }
+
+func TestUIInstancePatchUpgradePostgreSQLAndRedis(t *testing.T) {
+	cases := []struct {
+		name      string
+		kind      string
+		formula   string
+		oldVer    string
+		newVer    string
+		crossVer  string
+		crossForm string
+	}{
+		{name: "postgresql", kind: "postgresql", formula: "postgresql@17", oldVer: "17.11", newVer: "17.11_1", crossVer: "18.0", crossForm: "postgresql@18"},
+		{name: "redis", kind: "redis", formula: "redis@8.2", oldVer: "8.2.11", newVer: "8.2.11_1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := designFixture(t)
+			a.spawn = func(f func()) { f() }
+			a.post = func(f func()) { f() }
+			a.dev.managerFactory = func() *devplatform.Manager {
+				m := devplatform.New(t.TempDir())
+				m.Run = func(context.Context, string, ...string) (string, error) {
+					return "", errors.New("Could not find service")
+				}
+				return m
+			}
+			oldPkg := devplatform.Package{Name: tc.kind, Version: tc.oldVer, Arch: "arm64", Format: "homebrew", Formula: tc.formula, License: "See included license"}
+			newPkg := devplatform.Package{Name: tc.kind, Version: tc.newVer, Arch: "arm64", Format: "homebrew", Formula: tc.formula, License: "See included license"}
+			a.dev.state.Packages[oldPkg.ID()] = oldPkg
+			a.dev.state.Packages[newPkg.ID()] = newPkg
+			if tc.crossVer != "" {
+				crossPkg := devplatform.Package{Name: tc.kind, Version: tc.crossVer, Arch: "arm64", Format: "homebrew", Formula: tc.crossForm, License: "See included license"}
+				a.dev.state.Packages[crossPkg.ID()] = crossPkg
+			}
+			instID := "ui-" + tc.kind
+			a.dev.state.Instances[instID] = devplatform.Instance{ID: instID, Kind: tc.kind, Package: oldPkg.ID(), Port: 54321, Persistent: true}
+			a.dev.statuses["instance:"+instID] = "Stopped"
+			a.openInstance(instID)
+
+			tt := ui.NewTester(a.view, 1120, 1600)
+			tt.Frame()
+			label := "Upgrade to " + tc.newVer + "…"
+			if !tt.HasText(label) {
+				t.Fatalf("missing %q in %v", label, tt.Texts())
+			}
+			if tc.crossVer != "" && tt.HasText("Upgrade to "+tc.crossVer+"…") {
+				t.Fatalf("offered cross-major upgrade to %s", tc.crossVer)
+			}
+			if err := tt.Click(label); err != nil {
+				t.Fatal(err)
+			}
+			tt.Frame()
+			if !a.ask.open || a.ask.button != "Upgrade Instance" || a.ask.run == nil {
+				t.Fatalf("did not ask confirmation: %+v", a.ask)
+			}
+			a.ask.open = false
+			a.dev.output = ""
+			a.ask.run()
+			if !strings.Contains(a.dev.output, "instance not found") {
+				t.Fatalf("expected core upgrade invocation, got output %q", a.dev.output)
+			}
+		})
+	}
+}

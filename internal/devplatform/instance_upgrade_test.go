@@ -162,8 +162,11 @@ func TestUpgradeTargets(t *testing.T) {
 	for _, p := range []Package{
 		pkg("mysql", "8.4.4", "arm64"), pkg("mysql", "8.4.9", "arm64"), pkg("mysql", "8.4.13", "arm64"),
 		pkg("mysql", "8.4.2", "arm64"), pkg("mysql", "8.0.40", "arm64"), pkg("mysql", "8.4.20", "universal"),
-		pkg("mongodb", "8.4.30", "arm64"), pkg("redis", "7.2.1", "arm64"), pkg("redis", "7.2.9", "arm64"),
-		pkg("postgresql", "17.1", "arm64"),
+		pkg("mongodb", "8.4.30", "arm64"),
+		pkg("redis", "7.2.1", "arm64"), pkg("redis", "7.2.9", "arm64"),
+		pkg("redis", "8.2.11", "arm64"), pkg("redis", "8.2.11_1", "arm64"), pkg("redis", "8.2.12", "arm64"), pkg("redis", "8.4.0", "arm64"),
+		pkg("postgresql", "17.1", "arm64"), pkg("postgresql", "17.1_1", "arm64"), pkg("postgresql", "17.11", "arm64"), pkg("postgresql", "17.11_1", "arm64"),
+		pkg("postgresql", "18.0", "arm64"),
 	} {
 		packages[p.ID()] = p
 	}
@@ -175,9 +178,24 @@ func TestUpgradeTargets(t *testing.T) {
 	if got := UpgradeTargets(s, Instance{Kind: "mysql", Package: "mysql@8.4.13-arm64"}); len(got) != 0 {
 		t.Errorf("newest has targets: %v", got)
 	}
+	if got := UpgradeTargets(s, Instance{Kind: "postgresql", Package: "postgresql@17.1-arm64"}); !reflect.DeepEqual(got, []string{"postgresql@17.11_1-arm64", "postgresql@17.11-arm64", "postgresql@17.1_1-arm64"}) {
+		t.Errorf("postgresql 17.1 got %v", got)
+	}
+	if got := UpgradeTargets(s, Instance{Kind: "postgresql", Package: "postgresql@17.11-arm64"}); !reflect.DeepEqual(got, []string{"postgresql@17.11_1-arm64"}) {
+		t.Errorf("postgresql 17.11 got %v", got)
+	}
+	if got := UpgradeTargets(s, Instance{Kind: "redis", Package: "redis@8.2.11-arm64"}); !reflect.DeepEqual(got, []string{"redis@8.2.12-arm64", "redis@8.2.11_1-arm64"}) {
+		t.Errorf("redis 8.2.11 got %v", got)
+	}
+	if got := UpgradeTargets(s, Instance{Kind: "redis", Package: "redis@8.2.11_1-arm64"}); !reflect.DeepEqual(got, []string{"redis@8.2.12-arm64"}) {
+		t.Errorf("redis 8.2.11_1 got %v", got)
+	}
+	if got := UpgradeTargets(s, Instance{Kind: "redis", Package: "redis@7.2.1-arm64"}); !reflect.DeepEqual(got, []string{"redis@7.2.9-arm64"}) {
+		t.Errorf("redis 7.2.1 got %v", got)
+	}
 	for _, i := range []Instance{
-		{Kind: "redis", Package: "redis@8.2.11-arm64"},
-		{Kind: "postgresql", Package: "postgresql@17.1-arm64"},
+		{Kind: "redis", Package: "redis@8.2.12-arm64"},
+		{Kind: "postgresql", Package: "postgresql@17.11_1-arm64"},
 		{Kind: "mysql", Package: "mysql@8.4.1-arm64"},
 	} {
 		if got := UpgradeTargets(s, i); len(got) != 0 {
@@ -280,7 +298,7 @@ func TestUpgradeInstancePackageRefuses(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{name: "redis", kind: "redis"},
+		{name: "unsupported engine", kind: "sqlite"},
 		{name: "log not clean", setup: func(t *testing.T, m *Manager, i *Instance) {
 			upgradeWriteLog(t, m, i.ID, "[System] Shutdown complete\n[System] ready for connections\n")
 		}},
@@ -310,8 +328,8 @@ func TestUpgradeInstancePackageRefuses(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			m, i, _ := upgradeFixture(t, "mysql")
-			if c.kind == "redis" {
-				i.Kind = "redis"
+			if c.kind != "" {
+				i.Kind = c.kind
 			}
 			saved := upgradeSaved(t, m, i.ID)
 			job := upgradeWriteJob(t, m, i.ID, "mysql@8.4.4-arm64")
@@ -366,6 +384,124 @@ func TestUpgradeThenUninstallOldPackage(t *testing.T) {
 	// the launchd job reference must be gone.
 	if err := m.Uninstall(context.Background(), "mysql@8.4.4-arm64"); err != nil && strings.Contains(err.Error(), "referenced by a launchd job") {
 		t.Errorf("old package still blocked by a job file: %v", err)
+	}
+}
+
+func upgradeBrewPackage(t *testing.T, m *Manager, s *State, kind, formula, version, tap string) Package {
+	t.Helper()
+	p := Package{
+		Name:     kind,
+		Version:  version,
+		Arch:     "arm64",
+		Format:   "homebrew",
+		Formula:  formula,
+		URL:      "https://formulae.brew.sh/formula/" + formula,
+		SHA256:   strings.Repeat("a", 64),
+		License:  "PostgreSQL",
+		Binaries: homebrewBinaries(kind),
+	}
+	if tap != "" {
+		writeBrewKeg(t, m, p, tap)
+	}
+	s.Packages[p.ID()] = p
+	return p
+}
+
+func TestUpgradeInstancePackagePostgreSQLAndRedis(t *testing.T) {
+	cases := []struct {
+		kind    string
+		formula string
+		oldVer  string
+		newVer  string
+		other   string
+		otherF  string
+		server  string
+	}{
+		{kind: "postgresql", formula: "postgresql@17", oldVer: "17.11", newVer: "17.11_1", other: "18.0", otherF: "postgresql@18", server: "postgres"},
+		{kind: "redis", formula: "redis@8.2", oldVer: "8.2.11", newVer: "8.2.11_1", other: "8.4.0", otherF: "redis@8.2", server: "redis-server"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.kind, func(t *testing.T) {
+			m := testManager(t)
+			m.brewCellar = t.TempDir()
+			m.Run = func(context.Context, string, ...string) (string, error) {
+				return "", errors.New("Could not find service")
+			}
+			var oldPkg, newPkg, crossPkg Package
+			inst := Instance{ID: "db-" + tc.kind, Kind: tc.kind, Port: 54321, Persistent: true}
+			if err := m.withState(context.Background(), func(s *State) error {
+				oldPkg = upgradeBrewPackage(t, m, s, tc.kind, tc.formula, tc.oldVer, "homebrew/core")
+				newPkg = upgradeBrewPackage(t, m, s, tc.kind, tc.formula, tc.newVer, "homebrew/core")
+				crossPkg = upgradeBrewPackage(t, m, s, tc.kind, tc.otherF, tc.other, "homebrew/core")
+				inst.Package = oldPkg.ID()
+				s.Instances[inst.ID] = inst
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(m.Root, "instances", inst.ID)
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "sentinel"), []byte("keep"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			job := upgradeWriteJob(t, m, inst.ID, oldPkg.ID())
+
+			// Cross-major / cross-series upgrade must be refused.
+			if err := m.UpgradeInstancePackage(context.Background(), inst, crossPkg.ID()); err == nil {
+				t.Fatalf("cross-series upgrade %s -> %s succeeded", oldPkg.Version, crossPkg.Version)
+			}
+
+			// Same-series patch/revision upgrade succeeds and drops stale job plist.
+			if err := m.UpgradeInstancePackage(context.Background(), inst, newPkg.ID()); err != nil {
+				t.Fatalf("same-series upgrade failed: %v", err)
+			}
+			if _, err := os.Stat(job); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("stale job plist remained: %v", err)
+			}
+			got := upgradeSaved(t, m, inst.ID)
+			if got.Package != newPkg.ID() {
+				t.Fatalf("package = %s, want %s", got.Package, newPkg.ID())
+			}
+			if b, err := os.ReadFile(filepath.Join(dir, "sentinel")); err != nil || string(b) != "keep" {
+				t.Fatalf("instance data changed: %q %v", b, err)
+			}
+
+			// Downgrade must be refused.
+			if err := m.UpgradeInstancePackage(context.Background(), got, oldPkg.ID()); err == nil {
+				t.Fatal("downgrade succeeded")
+			}
+		})
+
+		t.Run(tc.kind+"-receipt-and-binary-guards", func(t *testing.T) {
+			m := testManager(t)
+			m.brewCellar = t.TempDir()
+			m.Run = func(context.Context, string, ...string) (string, error) {
+				return "", errors.New("Could not find service")
+			}
+			var oldPkg, badTap, missingBin Package
+			inst := Instance{ID: "guard-" + tc.kind, Kind: tc.kind, Port: 54322, Persistent: true}
+			if err := m.withState(context.Background(), func(s *State) error {
+				oldPkg = upgradeBrewPackage(t, m, s, tc.kind, tc.formula, tc.oldVer, "homebrew/core")
+				badTap = upgradeBrewPackage(t, m, s, tc.kind, tc.formula, tc.newVer, "other/tap")
+				missingBin = upgradeBrewPackage(t, m, s, tc.kind, tc.formula, tc.oldVer+"_2", "homebrew/core")
+				inst.Package = oldPkg.ID()
+				s.Instances[inst.ID] = inst
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.UpgradeInstancePackage(context.Background(), inst, badTap.ID()); err == nil || !strings.Contains(err.Error(), "different tap") {
+				t.Fatalf("accepted foreign Homebrew tap: %v", err)
+			}
+			if err := os.Remove(filepath.Join(m.packageDir(missingBin), "bin", tc.server)); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.UpgradeInstancePackage(context.Background(), inst, missingBin.ID()); err == nil {
+				t.Fatalf("accepted missing %s binary", tc.server)
+			}
+		})
 	}
 }
 

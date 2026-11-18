@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -213,6 +215,7 @@ func TestUINativeDirectoryAndExecutablePickers(t *testing.T) {
 	}
 
 	h.click("Software")
+	h.a.dev.runtimeVersions = map[string][]string{"python": {}}
 	h.click("Software python")
 	h.click("Choose uv executable…")
 	if len(gotOpts) != 2 || gotOpts[1].Directory {
@@ -221,4 +224,146 @@ func TestUINativeDirectoryAndExecutablePickers(t *testing.T) {
 	if h.a.dev.uvPath != chosenUV {
 		t.Fatalf("unexpected uvPath: %q", h.a.dev.uvPath)
 	}
+}
+
+func TestUIPythonAutoLoadCatalog(t *testing.T) {
+	h := newDevUIHarnessSize(t, 1120, 720, false)
+	uvBin := filepath.Join(t.TempDir(), "uv")
+	if err := os.WriteFile(uvBin, []byte("#!/bin/sh\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	state := devplatform.State{
+		SchemaVersion:     devplatform.Schema,
+		UVExecutable:      uvBin,
+		Packages:          map[string]devplatform.Package{},
+		Instances:         map[string]devplatform.Instance{},
+		ProxyRules:        []devplatform.ProxyRule{},
+		ProxyListenerPort: 443,
+	}
+	rawState, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.root, "state.json"), rawState, 0600); err != nil {
+		t.Fatal(err)
+	}
+	base := h.a.dev.managerFactory
+	h.a.dev.managerFactory = func() *devplatform.Manager {
+		m := base()
+		m.Run = func(ctx context.Context, name string, args ...string) (string, error) {
+			joined := strings.Join(args, " ")
+			switch {
+			case strings.HasSuffix(joined, "--version"):
+				return "uv 0.9.10", nil
+			case strings.Contains(joined, "--only-installed"):
+				rows := []devplatform.UVPython{{Key: "cpython-3.12.12-macos-aarch64-none", Version: "3.12.12", Path: "/fixture/python3.12", OS: "macos", Arch: "aarch64"}}
+				b, _ := json.Marshal(rows)
+				return string(b), nil
+			case strings.HasSuffix(joined, "python pin --global --no-project"):
+				return "cpython-3.12.12-macos-aarch64-none\n", nil
+			case strings.Contains(joined, "--only-downloads"):
+				rows := []devplatform.UVPython{
+					{Key: "cpython-3.13.9-macos-aarch64-none", Version: "3.13.9", OS: "macos", Arch: "aarch64"},
+					{Key: "cpython-3.12.12-macos-aarch64-none", Version: "3.12.12", OS: "macos", Arch: "aarch64"},
+					{Key: "cpython-3.13.9-linux-x86_64-gnu", Version: "3.13.9", OS: "linux", Arch: "x86_64"},
+				}
+				b, _ := json.Marshal(rows)
+				return string(b), nil
+			}
+			return "", nil
+		}
+		return m
+	}
+
+	h.click("Refresh")
+	h.click("Software")
+	h.click("Software python")
+	if h.a.dev.busy {
+		t.Fatal("auto-loading Python catalog set d.busy")
+	}
+	if h.a.dev.runtimeVersions["python"] == nil {
+		t.Fatal("expected tried sentinel on runtimeVersions[\"python\"]")
+	}
+	h.drain(func() bool { return len(h.a.dev.uvAvailable) == 3 && len(h.a.dev.uvInstalled) == 1 })
+	if h.a.dev.uvDescription != "uv 0.9.10 · "+uvBin {
+		t.Fatalf("unexpected uvDescription: %q", h.a.dev.uvDescription)
+	}
+	if h.a.dev.uvPin != "cpython-3.12.12-macos-aarch64-none" {
+		t.Fatalf("unexpected uvPin: %q", h.a.dev.uvPin)
+	}
+	if h.a.dev.uvVersion != "cpython-3.13.9-macos-aarch64-none" {
+		t.Fatalf("unexpected uvVersion: %q", h.a.dev.uvVersion)
+	}
+	for _, label := range []string{"Refresh Python versions", "Install Python with uv", "Set uv default 3.12.12"} {
+		if !h.ui.HasText(label) {
+			t.Fatalf("missing %q after Python auto-load: %v", label, h.ui.Texts())
+		}
+	}
+}
+
+type previewTestRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f previewTestRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestUISoftwareVersionSelectAutoPreview(t *testing.T) {
+	t.Run("mysql", func(t *testing.T) {
+		oldClient := http.DefaultClient
+		defer func() { http.DefaultClient = oldClient }()
+		http.DefaultClient = &http.Client{Transport: previewTestRoundTripper(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, ContentLength: 2048, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
+		})}
+
+		h := newDevUIHarnessSize(t, 1120, 720, false)
+		base := h.a.dev.managerFactory
+		h.a.dev.managerFactory = func() *devplatform.Manager {
+			m := base()
+			m.Run = func(ctx context.Context, name string, args ...string) (string, error) {
+				if name == "/usr/bin/sw_vers" {
+					return "26.0", nil
+				}
+				return "", nil
+			}
+			return m
+		}
+		h.click("Software")
+		h.click("Software mysql")
+		h.choose("Version", "8.0.45")
+		if h.a.dev.busy {
+			t.Fatal("auto-preview set d.busy")
+		}
+		h.drain(func() bool {
+			return h.a.dev.previewMatches() && h.a.dev.packagePreview.Package.Version == "8.0.45"
+		})
+		if !strings.Contains(h.a.dev.packageDetailsText, "mysql-8.0.45-macos15-arm64.tar.gz") {
+			t.Fatalf("unexpected MySQL preview text: %q", h.a.dev.packageDetailsText)
+		}
+		for _, label := range []string{"Review package", "Download and install"} {
+			if !h.ui.HasText(label) {
+				t.Fatalf("missing %q: %v", label, h.ui.Texts())
+			}
+		}
+	})
+
+	t.Run("node", func(t *testing.T) {
+		h := newDevUIHarnessSize(t, 1120, 720, false)
+		stubNodeReleases(h)
+		seedNodeWorkspace(t, h, "22.14.0", "20.19.0")
+		h.click("Refresh")
+		h.a.dev.nodeReleasesTried, h.a.dev.nodeReleasesRefresh = false, false
+		h.click("Software")
+		h.drain(func() bool { return len(h.a.dev.nodeReleases) == 4 })
+
+		h.choose("Version", "20.19.0 · LTS Iron")
+		if h.a.dev.busy {
+			t.Fatal("Node auto-preview set d.busy")
+		}
+		h.drain(func() bool {
+			return h.a.dev.previewMatches() && h.a.dev.packagePreview.Package.Version == "20.19.0"
+		})
+		for _, label := range []string{"Review package", "Already installed"} {
+			if !h.ui.HasText(label) {
+				t.Fatalf("missing %q: %v", label, h.ui.Texts())
+			}
+		}
+	})
 }

@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"devbase/internal/devplatform"
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/choice"
 	"github.com/lobehub/lobe-mygo/pkg/feedback"
-	"devbase/internal/devplatform"
 )
 
 // newDatabaseDraft opens the form of a new instance, unless a connection

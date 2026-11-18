@@ -163,23 +163,23 @@ type Manager struct {
 	brewCellar     string            // Test fixture override; production uses Apple Silicon Homebrew's Cellar.
 	// FetchNodeReleases overrides where the release index is read; tests set it.
 	FetchNodeReleases  func(context.Context) ([]NodeRelease, error)
-	tunnelTLSConfig    *tls.Config   // Test override for mock TLS tunnel gateway servers.
-	tunnelReadTimeout  time.Duration // Test override for tunnel keepalive timeout.
-	tunnelPingInterval time.Duration // Test override for tunnel keepalive ping interval.
-	CloudflareAPIBase  string                                       // Override for Cloudflare v4 API base URL (tests).
-	listenLoopback     func(int) (io.Closer, error)                 // Test override of IPv4 loopback bind probe.
+	tunnelTLSConfig    *tls.Config                                   // Test override for mock TLS tunnel gateway servers.
+	tunnelReadTimeout  time.Duration                                 // Test override for tunnel keepalive timeout.
+	tunnelPingInterval time.Duration                                 // Test override for tunnel keepalive ping interval.
+	CloudflareAPIBase  string                                        // Override for Cloudflare v4 API base URL (tests).
+	listenLoopback     func(int) (io.Closer, error)                  // Test override of IPv4 loopback bind probe.
 	dialLoopback       func(context.Context, int) (io.Closer, error) // Test override of IPv4 loopback connect probe.
-	initialization *initializationContext
-	databaseWork   *databaseWorkContext
-	operation      *operationWriter
-	Program        string
-	LoginDir       string
-	SocketJobDir   string // Test fixture override for /Library/LaunchDaemons.
-	Home           string // Test fixture override of the user's home folder.
-	Context        context.Context
-	Root           string
-	Run            func(context.Context, string, ...string) (string, error)
-	Event          func(string)
+	initialization     *initializationContext
+	databaseWork       *databaseWorkContext
+	operation          *operationWriter
+	Program            string
+	LoginDir           string
+	SocketJobDir       string // Test fixture override for /Library/LaunchDaemons.
+	Home               string // Test fixture override of the user's home folder.
+	Context            context.Context
+	Root               string
+	Run                func(context.Context, string, ...string) (string, error)
+	Event              func(string)
 }
 
 func DefaultRoot() string {

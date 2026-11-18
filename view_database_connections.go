@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strconv"
 
+	"devbase/internal/devplatform"
 	"github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/feedback"
-	"devbase/internal/devplatform"
 )
 
 func (a *app) loadConnectionProfileDraft(instanceID, profileID string) {

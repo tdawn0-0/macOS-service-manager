@@ -285,7 +285,7 @@ func (a *app) restrictionNote(c *ui.Context) {
 		})
 		ui.Row(c).Wrap().Gap(6).Children(func() {
 			if st.limit.Settings {
-				labeledButton(c, iconOpen, "Allow Full Disk Access…", false).OnClick(func() { a.openGuide(src, false) })
+				labeledButton(c, iconOpen, "Allow Full Disk Access…", false).OnClick(func() { a.openGuide(src) })
 			}
 			labeledButton(c, iconLock, "Read Once with Password", false).Disabled(st.reading).OnClick(func() { a.readRestricted(src) })
 		})

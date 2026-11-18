@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/egoist/mygo/ui"
 	"devbase/internal/devplatform"
+	"github.com/egoist/mygo/ui"
 )
 
 func TestUIExistingJavaManagement(t *testing.T) {
@@ -109,7 +109,7 @@ func TestUIJavaDistributions(t *testing.T) {
 						t.Fatal("JDK identity clipped", r, row.Label())
 					}
 				}
-				resource018Screenshot(t, tt, fmt.Sprintf("java-distributions-%dx%d-dark-%t", size[0], size[1], dark))
+				saveShot(t, fmt.Sprintf("java-distributions-%dx%d-dark-%t", size[0], size[1], dark), tt.Image())
 				for n := 0; n < 18; n++ {
 					r, ok := tt.Find("Move JDK to Trash")
 					if ok && r.H >= 14 && r.Y >= 50 && r.Y+r.H < float32(size[1]-45) {
@@ -122,7 +122,7 @@ func TestUIJavaDistributions(t *testing.T) {
 				if !ok || r.H < 14 || r.Y < 50 || r.Y+r.H > float32(size[1]-45) {
 					t.Fatal("confirmation not reachable", r)
 				}
-				resource018Screenshot(t, tt, fmt.Sprintf("java-removal-%dx%d-dark-%t", size[0], size[1], dark))
+				saveShot(t, fmt.Sprintf("java-removal-%dx%d-dark-%t", size[0], size[1], dark), tt.Image())
 			})
 		}
 	}

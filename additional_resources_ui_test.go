@@ -4,34 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/egoist/mygo/ui"
 	"devbase/internal/devplatform"
+	"github.com/egoist/mygo/ui"
 )
 
-func resource018Screenshot(t *testing.T, tt *ui.Tester, name string) {
-	t.Helper()
-	dir := os.Getenv("MSM_ADDITIONAL_SHOTS")
-	if dir == "" {
-		return
-	}
-	if e := os.MkdirAll(dir, 0755); e != nil {
-		t.Fatal(e)
-	}
-	f, e := os.Create(filepath.Join(dir, name+".png"))
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer f.Close()
-	if e = png.Encode(f, tt.Image()); e != nil {
-		t.Fatal(e)
-	}
-}
 func TestUIAdditionalRuntimes(t *testing.T) {
 	for _, name := range []string{"java", "python"} {
 		for _, size := range [][2]int{{900, 520}, {1120, 720}} {
@@ -92,7 +73,7 @@ func TestUIAdditionalRuntimes(t *testing.T) {
 							t.Fatal("installed version clipped", r)
 						}
 					}
-					resource018Screenshot(t, tt, testName)
+					saveShot(t, testName, tt.Image())
 					// Every final action remains reachable in the narrow native window.
 					last := "Enable in terminal"
 					if name == "python" {
@@ -184,7 +165,7 @@ func TestUIDatabaseLocations(t *testing.T) {
 						t.Fatal(label, shown)
 					}
 				}
-				resource018Screenshot(t, tt, testName)
+				saveShot(t, testName, tt.Image())
 				for n := 0; n < 12; n++ {
 					r, ok := tt.Find("Create instance")
 					if ok && r.Y >= 50 && r.Y+r.H < float32(size[1]-45) {

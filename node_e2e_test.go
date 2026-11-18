@@ -11,6 +11,7 @@ import (
 
 	"devbase/internal/devplatform"
 )
+
 // nodeFixtureReleases returns the fixed Node.js release list used by tests.
 func nodeFixtureReleases() []devplatform.NodeRelease {
 	return []devplatform.NodeRelease{
@@ -57,6 +58,7 @@ func seedNodeWorkspace(t *testing.T, h *devUIHarness, versions ...string) {
 	write("state.json", state)
 	write("cache/node-index.json", map[string]any{"fetchedAt": time.Now().UTC(), "releases": nodeFixtureReleases()})
 }
+
 // drain runs what background work posted, until cond holds.
 func (h *devUIHarness) drain(cond func() bool) {
 	h.t.Helper()

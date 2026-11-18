@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/egoist/mygo/ui"
 	"devbase/internal/devplatform"
+	"github.com/egoist/mygo/ui"
 )
 
 func TestUIResourceOnlyNavigation(t *testing.T) {

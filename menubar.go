@@ -582,6 +582,7 @@ func (m *menubar) showWindow() {
 	m.a.showDockIcon(true)
 	m.win.Show()
 	m.win.Focus()
+	m.a.post(m.a.windowShown)
 }
 
 // panelHeight estimates the panel's height from its rows: the size it opens

@@ -1,11 +1,11 @@
 package main
 
 import (
+	"devbase/internal/devplatform"
 	"github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/display"
 	"github.com/lobehub/lobe-mygo/pkg/feedback"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
-	"devbase/internal/devplatform"
 )
 
 func (a *app) devJavaInstallations(c *ui.Context) {

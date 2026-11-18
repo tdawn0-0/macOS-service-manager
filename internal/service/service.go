@@ -45,6 +45,7 @@ const (
 	StateRunning                // a process runs
 	StateScheduled              // set to run at times
 	StateFailed                 // ran and failed
+	StateInvalid                // its file cannot be read, so launchd cannot load it
 )
 
 func (s State) String() string {
@@ -59,6 +60,8 @@ func (s State) String() string {
 		return "Scheduled"
 	case StateFailed:
 		return "Error"
+	case StateInvalid:
+		return "Invalid"
 	}
 	return ""
 }
@@ -89,9 +92,12 @@ type Item struct {
 	// Kind says what the item is, as "Background helper", if the source
 	// holds more than one kind.
 	Kind string
-	// Admin says that changing the item takes an administrator: macOS asks
-	// the user to authenticate.
+	// Admin says that changing the item takes root, which runs through the
+	// privileged helper.
 	Admin bool
+	// KeepAlive says that launchd starts the item again whenever its process
+	// ends, so stopping it means unloading it.
+	KeepAlive bool
 }
 
 // Active reports whether the item runs, is scheduled to, or failed while
@@ -237,8 +243,9 @@ type Restricted interface {
 	ReadOnce() error
 }
 
-// Batcher is a provider that runs an action on several items at once, so
-// that macOS asks the user to authenticate only once.
+// Batcher is a provider that runs an action on several items at once: one
+// request to the privileged helper, one prompt to install it if it is missing,
+// and one retry of them all once it is.
 type Batcher interface {
 	DoAll([]Item, Action) error
 }

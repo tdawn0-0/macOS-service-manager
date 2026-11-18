@@ -366,8 +366,8 @@ func writeChecked(dir string, data []byte) (string, error) {
 }
 
 // SaveAsRoot writes a job into the provider's directory, which only root can
-// write to, owned as launchd demands, and loads it if asked, under one
-// authentication. To edit the file at existing, pass its path, and a loaded job
+// write to, owned as launchd demands, and loads it if asked, in one request to
+// the privileged helper. To edit the file at existing, pass its path, and a loaded job
 // loads again; to make a new one, "", which fails if the label is taken. An error
 // with a path says the job was saved but did not load.
 func (p *Provider) checkManagedPath(path string) (string, error) {

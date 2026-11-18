@@ -1,12 +1,9 @@
 package main
 
 import (
+	"devbase/internal/devplatform"
 	"fmt"
 	"github.com/egoist/mygo/ui"
-	"image/png"
-	"devbase/internal/devplatform"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -85,26 +82,7 @@ func TestUIHTTPSActivation(t *testing.T) {
 			if _, ok := tt.Find("Check HTTPS response"); !ok {
 				t.Fatal("check action absent")
 			}
-			if dir := os.Getenv("MSM_RESOURCE_SHOTS"); dir != "" {
-				if err := os.MkdirAll(dir, 0755); err != nil {
-					t.Fatal(err)
-				}
-				theme := "light"
-				if tc.dark {
-					theme = "dark"
-				}
-				f, err := os.Create(filepath.Join(dir, fmt.Sprintf("%s-%dx%d.png", theme, tc.w, tc.h)))
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := png.Encode(f, tt.Image()); err != nil {
-					f.Close()
-					t.Fatal(err)
-				}
-				if err := f.Close(); err != nil {
-					t.Fatal(err)
-				}
-			}
+			saveShot(t, fmt.Sprintf("%s-%dx%d", map[bool]string{false: "light", true: "dark"}[tc.dark], tc.w, tc.h), tt.Image())
 		}
 	})
 }

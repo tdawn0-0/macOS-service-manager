@@ -2,11 +2,10 @@ package main
 
 import (
 	"context"
+	"devbase/internal/devplatform"
 	"encoding/json"
 	"errors"
 	"github.com/egoist/mygo/ui"
-	"image/png"
-	"devbase/internal/devplatform"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,20 +112,12 @@ func TestDevelopmentPanes(t *testing.T) {
 			if tt.Image().Bounds().Dx() == 0 {
 				t.Fatal("empty development pane")
 			}
-			if dir := os.Getenv("MSM_DEV_SHOTS"); dir != "" {
-				os.MkdirAll(dir, 0755)
+			if shotsWanted() {
 				name := []string{"software", "databases", "https"}[tab]
 				if dark {
 					name += "-dark"
 				}
-				f, e := os.Create(filepath.Join(dir, name+".png"))
-				if e != nil {
-					t.Fatal(e)
-				}
-				if e = png.Encode(f, tt.Image()); e != nil {
-					t.Fatal(e)
-				}
-				f.Close()
+				saveShot(t, name, tt.Image())
 			}
 		}
 	}

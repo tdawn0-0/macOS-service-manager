@@ -166,7 +166,7 @@ func (a *app) itemMenu(m *ui.Menu, it service.Item, inRow bool) {
 			}
 		}
 	}
-	if slices.Contains(jobKinds, it.Source) && m.Item("Edit…").Chosen() {
+	if slices.Contains(jobKinds, it.Source) && it.State != service.StateInvalid && m.Item("Edit…").Chosen() {
 		a.editJob(it)
 	}
 	if filepath.IsAbs(it.Path) {
@@ -235,7 +235,7 @@ func (a *app) autostartCard(c *ui.Context, it service.Item, actions []service.Ac
 			words.Children(func() {
 				ui.Text(c, label)
 				if it.Admin {
-					ui.Icon(c, iconLock).FontSize(11).TextColor(t.TextMuted).Shrink(0).Tooltip("Changing it asks for your password")
+					ui.Icon(c, iconLock).FontSize(11).TextColor(t.TextMuted).Shrink(0).Tooltip("Changing it runs as root through the privileged helper")
 				}
 			})
 			if choice.Switch(c.Key("autostart"), &on, choice.SwitchProps{Size: theme.Small}).Disabled(busy).Changed() {
@@ -248,7 +248,7 @@ func (a *app) autostartCard(c *ui.Context, it service.Item, actions []service.Ac
 // actionTip explains an action, where its name does not.
 func actionTip(it service.Item, a service.Action) string {
 	if it.Admin {
-		return a.Label() + " (asks for your password)"
+		return a.Label() + " (runs as root through the privileged helper)"
 	}
 	if it.Source == service.Brew {
 		switch a {

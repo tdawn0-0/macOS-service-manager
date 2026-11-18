@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"devbase/internal/devplatform"
+	"devbase/internal/privhelper"
 	"github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/action"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
-	"devbase/internal/devplatform"
-	"devbase/internal/privhelper"
 )
 
 const (
@@ -579,7 +579,6 @@ func (a *app) devMaster(c *ui.Context) {
 	}
 }
 
-
 func (d *developmentState) loadProxyDraft(s devplatform.State) {
 	d.proxyDraft = make([]proxyRuleDraft, len(s.ProxyRules))
 	for i, rule := range s.ProxyRules {
@@ -647,7 +646,6 @@ func (a *app) devManager() *devplatform.Manager {
 	}
 	return devplatform.New(devplatform.DefaultRoot())
 }
-
 
 // resultLine is the line of an operation result that the status bar shows:
 // the error when there is one, else the first line. The rest is under Details.

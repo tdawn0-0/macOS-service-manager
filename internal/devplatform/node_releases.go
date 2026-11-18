@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,26 +13,8 @@ import (
 	"time"
 )
 
-// nodeDistOverride points tests at a local server.
-var nodeDistOverride string
-
-// nodeDist is where Node.js publishes releases: nodejs.org, or an HTTPS
-// mirror named by MSM_NODE_DIST_MIRROR, as FNM_NODE_DIST_MIRROR and
-// NVM_NODEJS_ORG_MIRROR do. Checksums come from the same place as the
-// archives, so use a mirror you trust.
-func nodeDist() (string, error) {
-	if nodeDistOverride != "" {
-		return nodeDistOverride, nil
-	}
-	if v := strings.TrimSpace(os.Getenv("MSM_NODE_DIST_MIRROR")); v != "" {
-		u, e := url.Parse(v)
-		if e != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
-			return "", errors.New("MSM_NODE_DIST_MIRROR must be an HTTPS address")
-		}
-		return strings.TrimRight(v, "/") + "/", nil
-	}
-	return "https://nodejs.org/dist/", nil
-}
+// nodeDist is where Node.js publishes releases. Tests point it at a local server.
+var nodeDist = "https://nodejs.org/dist/"
 
 const nodeIndexTTL = time.Hour
 
@@ -66,11 +47,7 @@ func fetchNodeReleases(ctx context.Context) ([]NodeRelease, error) {
 		LTS      json.RawMessage `json:"lts"`
 		Security bool            `json:"security"`
 	}
-	dist, e := nodeDist()
-	if e != nil {
-		return nil, e
-	}
-	if e := fetch(ctx, dist+"index.json", &rows); e != nil {
+	if e := fetch(ctx, nodeDist+"index.json", &rows); e != nil {
 		return nil, fmt.Errorf("nodejs.org release index: %w", e)
 	}
 	var out []NodeRelease

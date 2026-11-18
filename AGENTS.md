@@ -34,7 +34,7 @@
   - `internal/loginitem/`: macOS Login Items inspection and user preference queries.
   - `internal/logs/`: Bounded tail reads of log files (`Stat`, `Tail`), used by the log viewer.
   - `internal/system/`: OS utilities, command execution, and privileged `osascript` authorization (`system.RunAdmin`, replaceable in tests).
-  - `internal/privhelper/`: Optional privileged helper (installed from Settings) that serves only the Devbase build it was installed from, running as the installing user.
+  - `internal/privhelper/`: Privileged helper that every root operation goes through (privileged proxy listeners, system daemons, root Homebrew services); there is no fallback to a per-action password prompt. The app offers to install it when first needed, or from Settings. It serves only the Devbase build it was installed from, running as the installing user.
 
 ## 3. Verification Gates (Run Before Finishing Code Changes)
 
@@ -66,9 +66,9 @@ go test ./internal/system ./internal/logs
   - **NEVER** modify the user login keychain or install real local CA trust anchors during tests.
   - **NEVER** write into `~/Library/Java/JavaVirtualMachines` or real user `~/Library/LaunchAgents`.
   - Always isolate tests using `t.TempDir()`, configure `MSM_DEV_HOME`, and mock `system.RunAdmin` or `Manager.Run`.
-- **Documentation Screenshot Environment Variables**:
-  - **NEVER** set `MSM_DEV_SHOTS` or `MSM_ADDITIONAL_SHOTS` during standard test runs.
-  - Use these variables only when deliberately regenerating screenshots, and write into the ignored `build/` directory; commit an image only when a document links to it.
+- **Documentation Screenshot Environment Variable**:
+  - **NEVER** set `MSM_SHOTS` during standard test runs.
+  - Set it only when deliberately regenerating screenshots, to a directory under the ignored `build/` directory; each test writes to `$MSM_SHOTS/<test name>/` via `saveShot` (`shots_test.go`). Commit an image only when a document links to it.
 
 ## 5. Non-Negotiable Architecture & Safety Invariants
 

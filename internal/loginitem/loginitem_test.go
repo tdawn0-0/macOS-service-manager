@@ -314,7 +314,7 @@ func fallbackProvider(t *testing.T, dumpErr error) (*Provider, *int) {
 			dumps++
 			return strings.ReplaceAll(dump, "UID 501", "UID "+itoa(os.Getuid())), dumpErr
 		case "osascript":
-			return "/Applications/CleanShot X.app, /Applications/New.app\n", nil
+			return "/Applications/CleanShot X.app\n/Applications/New.app\n", nil
 		}
 		return "", nil
 	}
@@ -576,5 +576,29 @@ func TestDetailUsesTheLastList(t *testing.T) {
 	}
 	if _, err := p.Detail(service.Item{ID: "login-item:gone", Name: "gone"}); err == nil {
 		t.Error("an item the list does not hold should fail")
+	}
+}
+
+// A path may hold ", ", which is how AppleScript separates the items of a
+// list it prints: the paths come one to a line instead.
+func TestOpenAtLoginReadsPathsWithCommas(t *testing.T) {
+	old := system.Run
+	t.Cleanup(func() { system.Run = old })
+	system.Run = func(name string, args ...string) (string, error) {
+		if name != "osascript" || !strings.Contains(strings.Join(args, " "), "linefeed") {
+			t.Fatalf("unexpected command %s %q", name, args)
+		}
+		return "/Applications/Notes, Tasks.app\n/Applications/Mail.app\n", nil
+	}
+	records, err := openAtLogin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, r := range records {
+		paths = append(paths, r.URL)
+	}
+	if !slices.Equal(paths, []string{"/Applications/Notes, Tasks.app", "/Applications/Mail.app"}) || records[0].Name != "Notes, Tasks" {
+		t.Errorf("records = %+v", records)
 	}
 }

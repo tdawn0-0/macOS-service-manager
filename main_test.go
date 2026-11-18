@@ -656,146 +656,6 @@ func TestSwitchAction(t *testing.T) {
 	}
 }
 
-func TestShots(t *testing.T) {
-	dir := os.Getenv("MSM_SHOTS")
-	if dir == "" {
-		t.Skip("set MSM_SHOTS to a directory to write screenshots")
-	}
-	for _, look := range []struct {
-		name   string
-		dark   bool
-		width  int
-		height int
-	}{
-		{"light", false, 1120, 720},
-		{"dark", true, 1120, 720},
-		{"min", false, 900, 520},
-	} {
-		t.Run(look.name, func(t *testing.T) { shots(t, dir, look.name, look.dark, look.width, look.height) })
-	}
-}
-
-func shots(t *testing.T, dir, name string, dark bool, width, height int) {
-	h := newHarness(t)
-	h.a.toasts = nil
-	h.brew.items = []service.Item{
-		{ID: "brew:caddy", Source: service.Brew, Name: "caddy", State: service.StateStopped, Autostart: service.AutostartOff},
-		{ID: "brew:nginx", Source: service.Brew, Name: "nginx", State: service.StateFailed, Autostart: service.AutostartOff},
-		{ID: "brew:php", Source: service.Brew, Name: "php", State: service.StateRunning, PID: 407, Autostart: service.AutostartOn, Admin: true, Owner: "root", Path: "/Library/LaunchDaemons/homebrew.mxcl.php.plist"},
-		{ID: "brew:postgresql@17", Source: service.Brew, Name: "postgresql@17", State: service.StateRunning, PID: 4242, Autostart: service.AutostartOn, Owner: "jyeu", Path: "/Users/jyeu/Library/LaunchAgents/sh.brew.postgresql@17.plist"},
-		{ID: "brew:redis", Source: service.Brew, Name: "redis", State: service.StateStopped, Autostart: service.AutostartOff},
-		{ID: "brew:xray", Source: service.Brew, Name: "xray", State: service.StateScheduled, Autostart: service.AutostartOn},
-	}
-	h.agents.items = []service.Item{
-		{ID: "user-agent:a", Source: service.UserAgent, Name: "io.mutagen.mutagen", State: service.StateRunning, PID: 47313, Autostart: service.AutostartOn, Path: "/Users/jyeu/Library/LaunchAgents/io.mutagen.mutagen.plist"},
-		{ID: "user-agent:b", Source: service.UserAgent, Name: "com.google.GoogleUpdater.wake", State: service.StateStopped, Autostart: service.AutostartOff},
-		{ID: "user-agent:c", Source: service.UserAgent, Name: "com.a.very.long.bundle.identifier.that.keeps.going.UninstallPKGDeleteHelper.agent", State: service.StateLoaded, Autostart: service.AutostartOn},
-	}
-	h.login.items = []service.Item{
-		{ID: "login-item:1", Source: service.LoginItem, Name: "CleanShot X", Owner: "MacKed", Kind: "App", State: service.StateRunning, PID: 1368, Path: "/Applications/CleanShot X.app", Autostart: service.AutostartOn},
-		{ID: "login-item:2", Source: service.LoginItem, Name: "Mac Mouse Fix Helper", Owner: "Mac Mouse Fix", Kind: "Background helper", State: service.StateRunning, PID: 2173, Path: "/Applications/Mac Mouse Fix.app/Contents/Library/LoginItems/Mac Mouse Fix Helper.app", Autostart: service.AutostartOn},
-		{ID: "login-item:3", Source: service.LoginItem, Name: "GOG Galaxy Auto Launch Helper", Owner: "GOG Galaxy", Kind: "Background helper", Path: "/Applications/GOG Galaxy.app/Contents/Library/LoginItems/GOG Galaxy Auto Launch Helper.app", Autostart: service.AutostartOff},
-	}
-	logPath := filepath.Join(t.TempDir(), "postgresql@17.log")
-	h.brew.detail = service.Detail{
-		Rows: []service.Row{
-			{Group: "Status", Key: "Process ID", Value: "4242"},
-			{Group: "Status", Key: "Runs as", Value: "jyeu"},
-			{Group: "Status", Key: "Service name", Value: "sh.brew.postgresql@17"},
-			{Group: "Program", Key: "Command", Value: "/opt/homebrew/opt/postgresql@17/bin/postgres -D /opt/homebrew/var/postgresql@17"},
-			{Group: "Program", Key: "Working directory", Value: "/opt/homebrew"},
-			{Group: "Files", Key: "Property list", Value: "/Users/jyeu/Library/LaunchAgents/sh.brew.postgresql@17.plist"},
-			{Group: "Files", Key: "Output log", Value: logPath},
-		},
-		Logs: []service.LogFile{{Label: "Output", Path: logPath}, {Label: "Errors", Path: logPath}},
-	}
-	_ = os.WriteFile(logPath, []byte(
-		"2026-11-03 16:01:12.101 CST [4242] LOG:  database system is ready to accept connections\n"+
-			"2026-11-03 16:03:44.230 CST [4300] LOG:  checkpoint starting: time\n"+
-			"2026-11-03 16:03:44.790 CST [4300] LOG:  checkpoint complete: wrote 3 buffers (0.0%)\n"), 0o644)
-	h.a.refreshAll()
-	h.tt.SetDark(dark)
-	h.tt.SetSize(width, height)
-	shot := func(tt *ui.Tester, page string) {
-		tt.Frame()
-		f, err := os.Create(filepath.Join(dir, name+"-"+page+".png"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer f.Close()
-		if err := png.Encode(f, tt.Image()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	shot(h.tt, "1-all")
-	h.click("Homebrew")
-	h.click("postgresql@17")
-	shot(h.tt, "2-detail")
-	h.click("Logs")
-	h.a.log.last = h.a.log.last.Add(-10 * 1e9)
-	h.tt.Frame()
-	h.tt.Frame()
-	shot(h.tt, "3-logs")
-	h.click("Info")
-	h.click("User Agents")
-	h.click("io.mutagen.mutagen")
-	shot(h.tt, "4-agent")
-	if err := h.tt.ClickWith(ui.Cmd, "com.google.GoogleUpdater.wake"); err != nil {
-		t.Fatal(err)
-	}
-	shot(h.tt, "5-bulk")
-	h.click("New Job…")
-	shot(h.tt, "6-editor")
-	h.a.editor.kind, h.a.editor.when = 2, whenCalendar
-	h.a.editor.minute, h.a.editor.hour, h.a.editor.weekday = "0,30", "9-17", "1-5"
-	shot(h.tt, "6-editor-daemon-calendar")
-	h.a.editor.kind, h.a.editor.when = 0, whenService
-	h.a.editor.minute, h.a.editor.hour, h.a.editor.weekday = "", "", ""
-	h.click("Cancel")
-	h.click("Login Items")
-	h.click("Mac Mouse Fix Helper")
-	shot(h.tt, "7-login")
-	h.a.providers[service.LoginItem] = &restrictedLogin{loginFake: h.login, limit: &service.Restriction{
-		Text:     "Helpers that apps registered are not listed: macOS lets only apps with Full Disk Access read them.",
-		Settings: true,
-	}}
-	h.a.refresh(service.LoginItem)
-	shot(h.tt, "7-login-restricted")
-	h.a.appPath = "/Applications/Devbase.app"
-	guide := ui.NewTester(h.a.guideView, guideWidth, guideHeight)
-	guide.SetDark(dark)
-	for _, welcome := range []bool{true, false} {
-		h.a.guide = guideState{open: true, src: service.LoginItem, welcome: welcome, checked: time.Now()}
-		shot(guide, map[bool]string{true: "10-welcome", false: "11-guide"}[welcome])
-	}
-	h.a.guide = guideState{open: true, src: service.LoginItem, welcome: true, joined: true, settingsOpen: true, checked: time.Now()}
-	guide.SetSize(sidecarWidth, sidecarHeight)
-	shot(guide, "12-sidecar")
-	h.a.guide.allowedAt = time.Now()
-	shot(guide, "13-done")
-	overlay := ui.NewTester(h.a.overlayView, 1400, 900)
-	overlay.SetDark(dark)
-	h.a.guide = guideState{open: true, src: service.LoginItem, joined: true, settingsOpen: true, settings: system.Rect{X: 200, Y: 120, Width: 740, Height: 625},
-		windowAt: image.Pt(954, 120), icon: image.Pt(144, 106), flightStart: time.Now().Add(-flightTime / 2)}
-	overlay.Frame()
-	shot(overlay, "14-overlay-flight")
-	h.a.guide.dragging, h.a.guide.dragged = true, true
-	overlay.Frame()
-	overlay.Advance(time.Second)
-	shot(overlay, "15-overlay-drag")
-	h.a.guide = guideState{}
-	h.a.providers[service.LoginItem] = h.login
-	h.a.refresh(service.LoginItem)
-	h.a.query = "zzz"
-	h.a.chosen.Clear()
-	shot(h.tt, "8-empty")
-	h.a.query = ""
-
-	panel := ui.NewTester(func(c *ui.Context) { h.a.menubarView(c, func() {}) }, 320, h.a.panelHeight())
-	panel.SetDark(dark)
-	shot(panel, "9-panel")
-}
-
 // macOS tints a template image by its alpha, at the height of the menu bar.
 func TestMenubarIconIsATemplate(t *testing.T) {
 	img, err := png.Decode(bytes.NewReader(menubarIcon))
@@ -876,7 +736,6 @@ func (h *harness) restrict() (login *restrictedLogin, shown, hidden, joined *int
 	h.a.showGuide = func() { *shown++ }
 	h.a.hideGuide = func() { *hidden++ }
 	h.a.joinGuide = func() { *joined++ }
-	h.a.welcomedPath = filepath.Join(h.t.TempDir(), "state", "welcomed")
 	return login, shown, hidden, joined
 }
 
@@ -894,7 +753,7 @@ func TestARestrictedSourceOffersWaysToListTheRest(t *testing.T) {
 	}
 
 	h.click("Allow Full Disk Access…")
-	if *shown != 1 || !h.a.guide.open || h.a.guide.welcome {
+	if *shown != 1 || !h.a.guide.open {
 		t.Errorf("the guide: shown %d, %+v", *shown, h.a.guide)
 	}
 	h.a.closeGuide()
@@ -915,61 +774,26 @@ func TestARestrictionWithoutASettingOffersOnlyThePassword(t *testing.T) {
 	h.wantNoText("Allow Full Disk Access…")
 }
 
-func TestTheWelcomeOpensOnceAndCanBeSkipped(t *testing.T) {
+func TestTheGuideLeadsToSettingsAndClosesOnceAllowed(t *testing.T) {
 	h := newHarness(t)
-	login, shown, hidden, _ := h.restrict()
-	h.a.welcome()
-	if *shown != 1 || !h.a.guide.open || !h.a.guide.welcome || h.a.guide.src != service.LoginItem {
+	login, shown, hidden, joined := h.restrict()
+	h.a.appPath = "/Applications/Devbase.app"
+	h.a.openGuide(service.LoginItem)
+	if *shown != 1 || !h.a.guide.open || h.a.guide.src != service.LoginItem {
 		t.Fatalf("shown %d, %+v", *shown, h.a.guide)
 	}
-
-	// What may ask for a permission waits for the user's answer to this page.
+	// What may ask for a permission waits for the user's answer to the guide.
 	h.a.refreshAll()
 	if login.lists != 0 {
-		t.Errorf("listed %d times with the welcome open", login.lists)
+		t.Errorf("listed %d times with the guide open", login.lists)
 	}
-
 	page := ui.NewTester(h.a.guideView, guideWidth, guideHeight)
 	page.Frame()
-	for _, want := range []string{"Allow Full Disk Access", "Allow…", "Skip for Now"} {
+	for _, want := range []string{"Allow Full Disk Access", "Allow…", "Close"} {
 		if !page.HasText(want) {
 			t.Errorf("missing %q in %q", want, page.Texts())
 		}
 	}
-	if err := page.Click("Skip for Now"); err != nil {
-		t.Fatal(err)
-	}
-	if h.a.guide.open || *hidden != 1 {
-		t.Errorf("skipping: open %v, hidden %d", h.a.guide.open, *hidden)
-	}
-	if login.lists != 1 {
-		t.Errorf("skipping reads the source: %d", login.lists)
-	}
-
-	// It does not come back at the next launch, which still may read.
-	h.a.welcome()
-	if *shown != 1 {
-		t.Errorf("shown %d times", *shown)
-	}
-}
-
-func TestNoWelcomeWithAccess(t *testing.T) {
-	h := newHarness(t)
-	login, shown, _, _ := h.restrict()
-	login.needs = false
-	h.a.welcome()
-	if *shown != 0 || h.a.guide.open {
-		t.Errorf("shown %d, %+v", *shown, h.a.guide)
-	}
-}
-
-func TestTheGuideLeadsToSettingsAndClosesOnceAllowed(t *testing.T) {
-	h := newHarness(t)
-	login, _, hidden, joined := h.restrict()
-	h.a.appPath = "/Applications/Devbase.app"
-	h.a.welcome()
-	page := ui.NewTester(h.a.guideView, guideWidth, guideHeight)
-	page.Frame()
 
 	if err := page.Click("Allow…"); err != nil {
 		t.Fatal(err)
@@ -982,7 +806,7 @@ func TestTheGuideLeadsToSettingsAndClosesOnceAllowed(t *testing.T) {
 	if !h.a.guide.open {
 		t.Error("the guide stays open for the drag")
 	}
-	for _, want := range []string{"Drag into the list", "Open Settings", "Skip for Now"} {
+	for _, want := range []string{"Drag into the list", "Open Settings", "Close"} {
 		if !page.HasText(want) {
 			t.Errorf("missing %q in %q", want, page.Texts())
 		}
@@ -1008,11 +832,9 @@ func TestTheGuideLeadsToSettingsAndClosesOnceAllowed(t *testing.T) {
 	}
 	h.a.guide.allowedAt = time.Now().Add(-2 * guideDoneAfter)
 	page.Frame()
+	// Closing reads the source it held back.
 	if h.a.guide.open || *hidden != 1 || login.lists != 1 {
 		t.Errorf("closing: open %v, hidden %d, lists %d", h.a.guide.open, *hidden, login.lists)
-	}
-	if _, err := os.Stat(h.a.welcomedPath); err != nil {
-		t.Error("the welcome is done:", err)
 	}
 }
 
@@ -1035,7 +857,7 @@ func TestTheIconDragsAsTheAppsBundle(t *testing.T) {
 
 	// A build outside a bundle has nothing to drag.
 	h.restrict()
-	h.a.welcome()
+	h.a.openGuide(service.LoginItem)
 	h.a.guide.joined = true
 	h.a.appPath = ""
 	page := ui.NewTester(h.a.guideView, sidecarWidth, sidecarHeight)
@@ -1114,8 +936,8 @@ func TestSidecarOrigin(t *testing.T) {
 func TestBundleOf(t *testing.T) {
 	for exe, want := range map[string]string{
 		"/Applications/Devbase.app/Contents/MacOS/Devbase": "/Applications/Devbase.app",
-		"/Users/me/go/bin/msm": "",
-		"/tmp/x.app/msm":       "",
+		"/Users/me/go/bin/msm":                             "",
+		"/tmp/x.app/msm":                                   "",
 	} {
 		if got := bundleOf(exe); got != want {
 			t.Errorf("bundleOf(%q) = %q, want %q", exe, got, want)
@@ -1636,4 +1458,56 @@ func TestSettingsPageConsolidatesPrivilegedHelperAndWorkspaceSettings(t *testing
 		t.Fatalf("expected helperReady(), status=%+v", h.a.helperStatus)
 	}
 	h.wantText("Installed", "Remove helper")
+}
+
+// Coming back to the window reads the lists again, so what it shows and the
+// actions it offers follow what changed meanwhile.
+func TestTheWindowReadsAgainWhenItComesBack(t *testing.T) {
+	h := newHarness(t)
+	state := func() service.State {
+		for _, it := range h.a.sources[service.Brew].items {
+			if it.Name == "redis" {
+				return it.State
+			}
+		}
+		t.Fatal("redis is not listed")
+		return 0
+	}
+	h.brew.items[1].State = service.StateRunning // started elsewhere
+	h.a.windowShown()
+	if state() != service.StateRunning {
+		t.Fatal("the window showed what it read before it went away")
+	}
+	// Activations close together read once.
+	h.brew.items[1].State = service.StateStopped
+	h.a.windowShown()
+	if state() != service.StateRunning {
+		t.Fatal("a second activation at once read again")
+	}
+	h.a.shownAt = h.a.shownAt.Add(-3 * time.Second)
+	h.a.windowShown()
+	if state() != service.StateStopped {
+		t.Fatal("a later activation did not read again")
+	}
+	// The development workspace reads its own state.
+	h.a.nav = navDevelopment
+	h.a.shownAt = time.Time{}
+	h.brew.items[1].State = service.StateRunning
+	h.a.windowShown()
+	if state() != service.StateStopped {
+		t.Fatal("the development workspace read the inspector's lists")
+	}
+}
+
+// A property list launchd cannot load is listed as itself, even where a
+// Homebrew service of the same name hides its valid job, and it is not running.
+func TestABrokenJobFileIsListedAsInvalid(t *testing.T) {
+	h := newHarness(t)
+	h.agents.items = append(h.agents.items, item(service.UserAgent, "sh.brew.postgresql", service.StateInvalid))
+	h.a.refreshAll()
+	h.tt.Frame()
+	h.wantText("sh.brew.postgresql", "Invalid")
+	if _, running := h.a.counts(string(service.UserAgent)); running != 0 {
+		t.Errorf("an invalid file counts as running: %d", running)
+	}
 }

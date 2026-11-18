@@ -120,7 +120,7 @@ func stateColor(t *ui.Theme, s service.State) ui.Color {
 		return t.Success
 	case service.StateScheduled:
 		return t.Accent
-	case service.StateFailed:
+	case service.StateFailed, service.StateInvalid:
 		return t.Danger
 	}
 	return t.TextMuted

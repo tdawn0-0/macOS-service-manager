@@ -39,10 +39,8 @@ type sourceState struct {
 
 // guideState is the page that leads the user to allow what macOS restricts.
 type guideState struct {
-	open bool
-	src  service.Source
-	// welcome says it opened by itself at launch, not at the user's asking.
-	welcome bool
+	open    bool
+	src     service.Source
 	checked time.Time // when it last checked whether access was allowed
 	// allowedAt is when access was allowed, which the page says for a moment.
 	allowedAt time.Time
@@ -221,22 +219,23 @@ type app struct {
 	// showGuide, hideGuide and joinGuide show the guide's window, close it, and
 	// make it follow System Settings. redrawGuide redraws its windows.
 	showGuide, hideGuide, joinGuide, redrawGuide func()
-	// appPath is the app's bundle, which the guide offers to drag, and
-	// welcomedPath the file that says it opened at launch already.
-	appPath, welcomedPath string
+	// appPath is the app's bundle, which the guide offers to drag.
+	appPath string
 	// settle is how long after a command the lists are read once more:
 	// stopping a process takes a moment.
 	settle time.Duration
+	// shownAt is when the window last came to the front and read its lists.
+	shownAt time.Time
 
 	guide   guideState
 	sources map[service.Source]*sourceState
 	// brewNames holds the names of the Homebrew services: launchd lists their
 	// jobs too, which are the same services.
-	brewNames map[string]bool
-	busy      map[string]bool // ids of the items a command runs on
-	gone      map[string]bool // ids of items removed that a read may still return
-	toasts    []string        // messages the next frame shows
-	panelOpen bool            // the menu bar's panel shows, and the toasts with it
+	brewNames   map[string]bool
+	busy        map[string]bool // ids of the items a command runs on
+	gone        map[string]bool // ids of items removed that a read may still return
+	toasts      []string        // messages the next frame shows
+	panelOpen   bool            // the menu bar's panel shows, and the toasts with it
 	panelFolded map[string]bool // the sections of the panel folded, by key
 
 	nav     string
@@ -287,10 +286,10 @@ func newAppWith(providers map[service.Source]service.Provider, adder interface{ 
 		dockOn:    func(bool) {},
 		dockShown: true,
 		settle:    1200 * time.Millisecond,
-		sources:     map[service.Source]*sourceState{},
-		busy:        map[string]bool{},
-		gone:        map[string]bool{},
-		nav:         navAll,
+		sources:   map[service.Source]*sourceState{},
+		busy:      map[string]bool{},
+		gone:      map[string]bool{},
+		nav:       navAll,
 	}
 	for src := range providers {
 		a.sources[src] = &sourceState{}
@@ -386,6 +385,18 @@ func (a *app) refresh(src service.Source) {
 	})
 }
 
+// windowShown reads the inspector's lists again when the window comes to the
+// front: services may have started, stopped or changed while it was away, and
+// the actions it offers follow their state. Activations close together read
+// once. The development workspace and Settings read their own state.
+func (a *app) windowShown() {
+	if a.nav == navDevelopment || a.nav == navSettings || time.Since(a.shownAt) < 2*time.Second {
+		return
+	}
+	a.shownAt = time.Now()
+	a.refreshNavigation()
+}
+
 func (a *app) refreshAll() {
 	for _, src := range service.Sources {
 		a.refresh(src)
@@ -440,7 +451,8 @@ func (a *app) shown(it service.Item) bool {
 	if a.gone[it.ID] {
 		return false
 	}
-	if it.Source == service.Brew || it.Source == service.LoginItem {
+	// A file launchd cannot load shows as itself: no service shows it broken.
+	if it.Source == service.Brew || it.Source == service.LoginItem || it.State == service.StateInvalid {
 		return true
 	}
 	for _, prefix := range []string{"sh.brew.", "homebrew.mxcl."} {
@@ -686,8 +698,9 @@ func (a *app) bulkAction(it service.Item, start bool) service.Action {
 	return ""
 }
 
-// bulk starts or stops the items chosen that can be. Those that take an
-// administrator go together, so that macOS asks once rather than for each.
+// bulk starts or stops the items chosen that can be. Those that need root go
+// together through the privileged helper: one request, one prompt to install
+// the helper if it is missing, and one retry of them all.
 func (a *app) bulk(start bool) {
 	type group struct {
 		src service.Source
@@ -803,42 +816,21 @@ func (a *app) openRestrictionSettings(src service.Source) {
 	})
 }
 
-// welcome opens the guide at launch, once, if macOS restricts a source.
-func (a *app) welcome() {
-	if a.welcomedPath == "" {
-		return
-	}
-	if _, err := os.Stat(a.welcomedPath); err == nil {
-		return
-	}
-	for _, src := range service.Sources {
-		if r, ok := a.providers[src].(service.Restricted); ok && r.NeedsAccess() {
-			a.openGuide(src, true)
-			return
-		}
-	}
-}
-
-func (a *app) openGuide(src service.Source, welcome bool) {
+func (a *app) openGuide(src service.Source) {
 	if !a.guide.open {
-		a.guide = guideState{open: true, src: src, welcome: welcome}
+		a.guide = guideState{open: true, src: src}
 	}
 	a.showGuide()
 }
 
-// closeGuide ends the guide, for good as far as launches go, and reads the
-// source it held back. Closing its window comes here too.
+// closeGuide ends the guide and reads the source it held back. Closing its
+// window comes here too.
 func (a *app) closeGuide() {
 	if !a.guide.open {
 		return
 	}
 	src := a.guide.src
 	a.guide.open = false
-	if a.welcomedPath != "" {
-		if os.MkdirAll(filepath.Dir(a.welcomedPath), 0o755) == nil {
-			_ = os.WriteFile(a.welcomedPath, nil, 0o644)
-		}
-	}
 	a.hideGuide()
 	a.refresh(src)
 }
@@ -1192,7 +1184,7 @@ func (a *app) promptInstallHelper(retry func()) {
 	a.ask = askState{
 		open:    true,
 		title:   "Privileged helper required",
-		message: "Install the Devbase privileged helper once to run root operations such as local HTTPS port 443 and system launchd jobs without repeated macOS password prompts.",
+		message: "Root operations, such as local HTTPS on port 443 and system launchd jobs, run through the Devbase privileged helper. Installing it asks for your administrator password once.",
 		button:  "Install Helper",
 		run:     func() { a.installHelperThen(retry) },
 	}

@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	"devbase/internal/devplatform"
 	"github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/display"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
-	"devbase/internal/devplatform"
 )
 
 func authorityFingerprint(value string) string {

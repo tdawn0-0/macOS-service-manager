@@ -81,8 +81,9 @@ func nodeIndexServer(t *testing.T, calls *int) {
 		json.NewEncoder(w).Encode(rows)
 	}))
 	t.Cleanup(server.Close)
-	nodeDistOverride = server.URL + "/"
-	t.Cleanup(func() { nodeDistOverride = "" })
+	previous := nodeDist
+	nodeDist = server.URL + "/"
+	t.Cleanup(func() { nodeDist = previous })
 }
 
 func TestNodeReleasesComeFromNodejsOrgKeepAppleSiliconAndCache(t *testing.T) {
@@ -103,7 +104,7 @@ func TestNodeReleasesComeFromNodejsOrgKeepAppleSiliconAndCache(t *testing.T) {
 		t.Fatalf("refresh did not fetch: %d calls, %v", calls, err)
 	}
 	// Offline, the last list is still there, and says so.
-	nodeDistOverride = "http://127.0.0.1:1/"
+	nodeDist = "http://127.0.0.1:1/"
 	releases, stale, err = m.NodeReleases(context.Background(), true)
 	if err != nil || !stale || len(releases) != 3 {
 		t.Fatalf("offline: %v %v %d", err, stale, len(releases))
@@ -334,26 +335,6 @@ func TestNodeShellBlockIsAddedOnceAndRemovedCleanly(t *testing.T) {
 	}
 	if _, err = m.DisableNodeShell(context.Background()); err != nil || m.NodeShellEnabled() {
 		t.Fatal(err)
-	}
-}
-
-func TestNodeMirrorMustBeHTTPS(t *testing.T) {
-	for _, bad := range []string{"http://mirror.example/node", "ftp://x", "https://user:pw@mirror.example/"} {
-		t.Setenv("MSM_NODE_DIST_MIRROR", bad)
-		if _, err := nodeDist(); err == nil {
-			t.Errorf("%q was accepted", bad)
-		}
-		if _, err := fetchNodeReleases(context.Background()); err == nil {
-			t.Errorf("%q was fetched", bad)
-		}
-	}
-	t.Setenv("MSM_NODE_DIST_MIRROR", "https://mirror.example/node")
-	if dist, err := nodeDist(); err != nil || dist != "https://mirror.example/node/" {
-		t.Fatalf("%q %v", dist, err)
-	}
-	t.Setenv("MSM_NODE_DIST_MIRROR", "")
-	if dist, _ := nodeDist(); dist != "https://nodejs.org/dist/" {
-		t.Fatalf("default %q", dist)
 	}
 }
 

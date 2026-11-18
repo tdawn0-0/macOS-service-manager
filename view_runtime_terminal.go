@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/egoist/mygo/ui"
 	"devbase/internal/devplatform"
+	"github.com/egoist/mygo/ui"
 )
 
 // devNodeTerminal offers the shell setup that makes this app replace fnm and

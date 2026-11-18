@@ -2,15 +2,12 @@ package main
 
 import (
 	"context"
+	"devbase/internal/devplatform"
 	"encoding/json"
 	"fmt"
 	"github.com/egoist/mygo/ui"
-	"image/png"
-	"devbase/internal/devplatform"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -231,26 +228,7 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 					t.Fatalf("%dx%d %s missing", tc.width, tc.height, label)
 				}
 			}
-			if dir := os.Getenv("MSM_RESOURCE_SHOTS"); dir != "" {
-				if err := os.MkdirAll(dir, 0755); err != nil {
-					t.Fatal(err)
-				}
-				theme := "light"
-				if tc.dark {
-					theme = "dark"
-				}
-				f, err := os.Create(filepath.Join(dir, fmt.Sprintf("%s-%dx%d.png", theme, tc.width, tc.height)))
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := png.Encode(f, tester.Image()); err != nil {
-					f.Close()
-					t.Fatal(err)
-				}
-				if err := f.Close(); err != nil {
-					t.Fatal(err)
-				}
-			}
+			saveShot(t, fmt.Sprintf("%s-%dx%d", map[bool]string{false: "light", true: "dark"}[tc.dark], tc.width, tc.height), tester.Image())
 		}
 	})
 }

@@ -109,11 +109,7 @@ func Resolve(ctx context.Context, name, version string) (Package, error) {
 			return p, errors.New("choose an exact Node.js version, for example 22.14.0; resolve 22, lts or latest first")
 		}
 		filename := fmt.Sprintf("node-v%s-darwin-%s.tar.gz", p.Version, arch)
-		dist, e := nodeDist()
-		if e != nil {
-			return p, e
-		}
-		base := dist + "v" + p.Version + "/"
+		base := nodeDist + "v" + p.Version + "/"
 		req, e := http.NewRequestWithContext(ctx, "GET", base+"SHASUMS256.txt", nil)
 		if e != nil {
 			return p, e

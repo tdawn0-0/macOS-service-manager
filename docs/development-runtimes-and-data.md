@@ -75,7 +75,7 @@ Run the focused gate with:
 ```sh
 go test ./... -list '^(TestRuntimeCatalogs|TestUVPythonManagement|TestAdditionalRuntimeSelection|TestUIAdditionalRuntimes|TestDatabaseCustomDataDirectory|TestDatabaseVersionIsolation|TestUIDatabaseLocations)$'
 go test -race ./... -run '^(TestRuntimeCatalogs|TestUVPythonManagement|TestAdditionalRuntimeSelection|TestUIAdditionalRuntimes|TestDatabaseCustomDataDirectory|TestDatabaseVersionIsolation|TestUIDatabaseLocations)$' -count=1 -json
-MSM_ADDITIONAL_SHOTS=build/resource-shots/additional go test . -run '^(TestUIAdditionalRuntimes|TestUIDatabaseLocations)$' -count=1
+MSM_SHOTS=build/shots go test . -run '^(TestUIAdditionalRuntimes|TestUIDatabaseLocations)$' -count=1
 ```
 
 Screenshots contain synthetic examples. The database-location screenshot illustrates a path input; it does not claim that a volume was mounted or mutated.

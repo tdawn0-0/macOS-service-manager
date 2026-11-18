@@ -5,15 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/egoist/mygo/ui"
 	"devbase/internal/devplatform"
+	"github.com/egoist/mygo/ui"
 )
 
 func profileUIFixture(t *testing.T) *app {
@@ -201,27 +200,7 @@ func TestUIConnectionProfiles(t *testing.T) {
 			if _, ok := tt.Find("Save connection profile"); !ok {
 				t.Fatal("save action inaccessible")
 			}
-			if dir := os.Getenv("MSM_RESOURCE_SHOTS"); dir != "" {
-				if err := os.MkdirAll(dir, 0755); err != nil {
-					t.Fatal(err)
-				}
-				theme := "light"
-				if tc.dark {
-					theme = "dark"
-				}
-				name := fmt.Sprintf("%s-%dx%d.png", theme, tc.width, tc.height)
-				f, err := os.Create(filepath.Join(dir, name))
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err = png.Encode(f, tt.Image()); err != nil {
-					f.Close()
-					t.Fatal(err)
-				}
-				if err = f.Close(); err != nil {
-					t.Fatal(err)
-				}
-			}
+			saveShot(t, fmt.Sprintf("%s-%dx%d", map[bool]string{false: "light", true: "dark"}[tc.dark], tc.width, tc.height), tt.Image())
 			if strings.Contains(strings.Join(tt.Texts(), "\n"), "business-password-sentinel") {
 				t.Fatal("secret shown")
 			}

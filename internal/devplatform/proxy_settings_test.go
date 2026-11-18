@@ -128,4 +128,3 @@ func TestProxyHeaderTimeoutAndLocalPortRules(t *testing.T) {
 		t.Fatal("accepted arbitrary HTTPS upstream")
 	}
 }
-

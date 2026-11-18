@@ -4,11 +4,10 @@ package main
 
 import (
 	"context"
-	"log"
 	"devbase/internal/devcli"
+	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"github.com/egoist/mygo"
@@ -94,14 +93,14 @@ func main() {
 				a.showDockIcon(true)
 				win.Show()
 			}
+			if a.post != nil {
+				a.post(a.windowShown)
+			}
 		})
 
 		guide := &guideWindow{a: a}
 		a.showGuide, a.hideGuide, a.joinGuide, a.redrawGuide = guide.show, guide.close, guide.join, guide.update
 		a.appPath = bundlePath()
-		if dir, err := mygo.App.Path(mygo.PathUserData); err == nil {
-			a.welcomedPath = filepath.Join(dir, "welcomed")
-		}
 
 		bar := &menubar{a: a, win: win}
 		if err := bar.install(); err != nil {
@@ -125,9 +124,6 @@ func main() {
 			e.PreventDefault()
 			a.post(a.requestQuit)
 		})
-		if a.nav != "development" {
-			a.welcome()
-		}
 		a.refreshHelperStatus()
 		a.refreshNavigation()
 	})

@@ -2,14 +2,11 @@ package main
 
 import (
 	"fmt"
-	"image/png"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/egoist/mygo/ui"
 	"devbase/internal/devplatform"
+	"github.com/egoist/mygo/ui"
 )
 
 func TestUIIndependentResourceLifecycle(t *testing.T) {
@@ -81,30 +78,12 @@ func TestUIIndependentResourceLifecycle(t *testing.T) {
 			if _, ok := panel.Find("HTTPS settings"); !ok {
 				t.Fatal("HTTPS settings inaccessible")
 			}
-			if dir := os.Getenv("MSM_RESOURCE_SHOTS"); dir != "" {
-				if err := os.MkdirAll(dir, 0755); err != nil {
-					t.Fatal(err)
-				}
-				theme := "light"
-				if tc.dark {
-					theme = "dark"
-				}
-				name := fmt.Sprintf("%s-%dx%d.png", theme, tc.width, tc.height)
-				file, err := os.Create(filepath.Join(dir, name))
-				if err != nil {
-					t.Fatal(err)
-				}
+			if shotsWanted() {
 				// Capture the menu content at the required layout viewport.
 				full := ui.NewTester(func(c *ui.Context) { a.menubarView(c, func() {}) }, tc.width, tc.height)
 				full.SetDark(tc.dark)
 				full.Frame()
-				if err := png.Encode(file, full.Image()); err != nil {
-					file.Close()
-					t.Fatal(err)
-				}
-				if err := file.Close(); err != nil {
-					t.Fatal(err)
-				}
+				saveShot(t, fmt.Sprintf("%s-%dx%d", map[bool]string{false: "light", true: "dark"}[tc.dark], tc.width, tc.height), full.Image())
 			}
 		}
 	})

@@ -27,11 +27,13 @@ These representative images come from the synthetic layout test `TestDevelopment
 - [Software at 900×520](images/development/software-resource-900x520.png)
 - [HTTPS rules at 900×520](images/development/https-rules-900x520.png)
 
-To refresh them, render into the ignored `build/` directory and copy the light 900×520 `Software` and `HTTPS` images over these two files:
+To refresh them, render into the ignored `build/` directory, then copy `build/shots/TestDevelopmentDesignLayouts/Software-900x520-dark-false/Software-900x520-dark-false.png` and the matching `HTTPS-900x520-dark-false` image over these two files:
 
 ```sh
-MSM_DEV_SHOTS=build/resource-shots/dev go test . -run '^TestDevelopmentDesignLayouts$' -count=1
+MSM_SHOTS=build/shots go test . -run '^TestDevelopmentDesignLayouts$' -count=1
 ```
+
+Every screenshot test writes to `$MSM_SHOTS/<test name>/` through `saveShot` in `shots_test.go`.
 
 ## Java, Python and external database locations
 

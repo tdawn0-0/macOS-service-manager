@@ -110,6 +110,19 @@ type file struct {
 // scheduled reports whether the job runs at times of its own.
 func (f *file) scheduled() bool { return f.StartInterval != nil || f.StartCalendarInterval != nil }
 
+// keepAlive reports whether launchd may start the job again when its process
+// ends. Conditions count too: whether a signal meets them depends on the
+// condition, so only unloading the job is sure to stop it.
+func (f *file) keepAlive() bool {
+	switch k := f.KeepAlive.(type) {
+	case nil:
+		return false
+	case bool:
+		return k
+	}
+	return true
+}
+
 // disabledIn reports whether launchd keeps the job from loading: as the
 // domain's overrides say, or else as its file does.
 func (f *file) disabledIn(st State) bool {
@@ -181,8 +194,8 @@ type Config struct {
 	Dir string
 	// Domain is the launchd domain the jobs load into: gui/<uid> or system.
 	Domain string
-	// Elevated says that changing jobs takes root, which the user is asked
-	// to authenticate for.
+	// Elevated says that changing jobs takes root, which runs through the
+	// privileged helper.
 	Elevated bool
 }
 
@@ -231,11 +244,42 @@ func (p *Provider) item(path string, f *file, st State) service.Item {
 	if it.State == service.StateLoaded && f.scheduled() {
 		it.State = service.StateScheduled
 	}
+	it.KeepAlive = f.keepAlive()
 	it.Autostart = service.AutostartOn
 	if f.disabledIn(st) {
 		it.Autostart = service.AutostartOff
 	}
 	return it
+}
+
+// invalid is the item of a property list launchd cannot load.
+func (p *Provider) invalid(path string) service.Item {
+	return service.Item{
+		ID:        string(p.Config.Source) + ":" + path,
+		Source:    p.Config.Source,
+		Name:      strings.TrimSuffix(filepath.Base(path), ".plist"),
+		State:     service.StateInvalid,
+		Path:      path,
+		Owner:     p.Domain,
+		Admin:     p.Elevated,
+		Kind:      invalidKind,
+		Autostart: service.AutostartUnknown,
+	}
+}
+
+// invalidKind is what an invalid property list is.
+const invalidKind = "Invalid property list"
+
+// problem says why launchd cannot load the file at path, or "" if it can.
+func problem(path string) string {
+	f, err := readFile(path)
+	switch {
+	case err != nil:
+		return err.Error()
+	case f.Label == "":
+		return "it has no Label, so launchd cannot load it"
+	}
+	return ""
 }
 
 func (p *Provider) List() ([]service.Item, error) {
@@ -246,8 +290,9 @@ func (p *Provider) List() ([]service.Item, error) {
 	return p.scan(st), nil
 }
 
-// scan lists the jobs of the directory, sorted by label. Files that are not
-// property lists with a label are left out.
+// scan lists the jobs of the directory, sorted by label. A .plist file that
+// is not a property list with a label is listed as invalid, by its file name:
+// launchd cannot load it, which is what someone looking here wants to know.
 func (p *Provider) scan(st State) []service.Item {
 	items := []service.Item{}
 	entries, err := os.ReadDir(p.Dir)
@@ -261,6 +306,8 @@ func (p *Provider) scan(st State) []service.Item {
 		path := filepath.Join(p.Dir, e.Name())
 		if f, err := readFile(path); err == nil && f.Label != "" {
 			items = append(items, p.item(path, f, st))
+		} else {
+			items = append(items, p.invalid(path))
 		}
 	}
 	slices.SortFunc(items, func(a, b service.Item) int { return strings.Compare(a.Name, b.Name) })
@@ -268,6 +315,15 @@ func (p *Provider) scan(st State) []service.Item {
 }
 
 func (p *Provider) Detail(it service.Item) (service.Detail, error) {
+	if it.State == service.StateInvalid {
+		if _, err := os.Stat(it.Path); err != nil {
+			return service.Detail{}, fmt.Errorf("plist file not found: %s", it.Path)
+		}
+		return service.Detail{Rows: []service.Row{
+			{Group: "Status", Key: "Problem", Value: problem(it.Path)},
+			{Group: "Files", Key: "Property list", Value: it.Path},
+		}}, nil
+	}
 	f, err := readFile(it.Path)
 	if err != nil {
 		return service.Detail{}, err
@@ -331,11 +387,22 @@ func detailOf(it service.Item, f *file, st State) service.Detail {
 }
 
 func (p *Provider) Actions(it service.Item) []service.Action {
+	if it.State == service.StateInvalid {
+		// Its label is unknown, so nothing can address a job of it. Only a
+		// file of the user's own can go, without asking launchd anything.
+		if p.Config.Source == service.UserAgent {
+			return []service.Action{service.Remove}
+		}
+		return nil
+	}
 	var actions []service.Action
-	switch it.State {
-	case service.StateRunning:
+	switch {
+	case it.State == service.StateRunning && it.KeepAlive:
+		// Stopping it unloads it: Unload would do the same.
+		actions = []service.Action{service.Stop, service.Restart}
+	case it.State == service.StateRunning:
 		actions = []service.Action{service.Stop, service.Restart, service.Unload}
-	case service.StateLoaded, service.StateScheduled, service.StateFailed:
+	case it.State == service.StateLoaded, it.State == service.StateScheduled, it.State == service.StateFailed:
 		actions = []service.Action{service.Start, service.Unload}
 	default:
 		actions = []service.Action{service.Load}
@@ -350,6 +417,8 @@ func (p *Provider) Actions(it service.Item) []service.Action {
 
 func (p *Provider) Confirm(it service.Item, a service.Action) string {
 	switch {
+	case a == service.Remove && it.State == service.StateInvalid:
+		return fmt.Sprintf("Move %s to the Trash? launchd cannot load it as it is.", filepath.Base(it.Path))
 	case a == service.Remove && p.Config.Source == service.UserAgent:
 		return fmt.Sprintf("Unload %s and move %s to the Trash?", it.Name, filepath.Base(it.Path))
 	case a == service.Remove:
@@ -363,8 +432,8 @@ func (p *Provider) Confirm(it service.Item, a service.Action) string {
 func (p *Provider) launchctl(args ...string) error { return p.launchctls(args) }
 
 // launchctls runs launchctl once for each list of arguments, stopping at
-// the first that fails. A provider that needs root runs them all under one
-// authentication.
+// the first that fails. A provider that needs root sends them all to the
+// privileged helper in one request.
 func (p *Provider) launchctls(commands ...[]string) error {
 	if !p.Elevated {
 		for _, args := range commands {
@@ -383,6 +452,9 @@ func (p *Provider) launchctls(commands ...[]string) error {
 
 // commands returns what launchctl runs for an action on an item.
 func (p *Provider) commands(it service.Item, a service.Action) ([][]string, error) {
+	if it.State == service.StateInvalid {
+		return nil, fmt.Errorf("%s is not a job launchd can load", filepath.Base(it.Path))
+	}
 	target := p.Domain + "/" + it.Name
 	switch a {
 	case service.Load:
@@ -398,6 +470,10 @@ func (p *Provider) commands(it service.Item, a service.Action) ([][]string, erro
 	case service.Restart:
 		return [][]string{{"kickstart", "-k", target}}, nil
 	case service.Stop:
+		if it.KeepAlive {
+			// launchd would start it again at once.
+			return [][]string{{"bootout", target}}, nil
+		}
 		return [][]string{{"kill", "SIGTERM", target}}, nil
 	case service.Enable:
 		return [][]string{{"enable", target}}, nil
@@ -408,11 +484,14 @@ func (p *Provider) commands(it service.Item, a service.Action) ([][]string, erro
 }
 
 func (p *Provider) Do(it service.Item, a service.Action) error {
+	if it.State == service.StateInvalid && !service.Has(p.Actions(it), a) {
+		return fmt.Errorf("%s is not a job launchd can load, so %s does not apply", filepath.Base(it.Path), a.Label())
+	}
 	if a == service.Remove {
 		if p.Config.Source != service.UserAgent {
 			return p.removeAsRoot(it)
 		}
-		if it.State != service.StateStopped {
+		if it.State != service.StateStopped && it.State != service.StateInvalid {
 			// Not loaded is fine too.
 			_ = p.launchctl("bootout", p.Domain+"/"+it.Name)
 		}
@@ -425,7 +504,8 @@ func (p *Provider) Do(it service.Item, a service.Action) error {
 	return p.launchctls(commands...)
 }
 
-// DoAll runs an action on several items, under one authentication.
+// DoAll runs an action on several items, in one request to the privileged
+// helper where they need root.
 func (p *Provider) DoAll(items []service.Item, a service.Action) error {
 	var all [][]string
 	for _, it := range items {

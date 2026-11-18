@@ -13,9 +13,9 @@ import (
 
 // BackupFile is one finished backup in the app's backups folder.
 type BackupFile struct {
-	Name     string    // file name inside the backups folder
-	Path     string    // absolute path
-	Database string    // database the backup was taken from
+	Name     string // file name inside the backups folder
+	Path     string // absolute path
+	Database string // database the backup was taken from
 	Size     int64
 	Modified time.Time
 }

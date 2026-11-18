@@ -338,15 +338,18 @@ func automationError(err error) error {
 }
 
 // openAtLogin reads the apps that open at login from System Events, which
-// takes no administrator; macOS asks once whether the app may control it.
+// takes no administrator; macOS asks once whether the app may control it. The
+// paths come one to a line: a list as AppleScript prints it separates them
+// with ", ", which a path may hold too.
 func openAtLogin() ([]Record, error) {
-	out, err := system.Run("osascript", "-e",
-		`tell application "System Events" to get the path of every login item`)
+	out, err := system.Run("osascript", "-e", `tell application "System Events" to set paths to the path of every login item
+set AppleScript's text item delimiters to linefeed
+return paths as text`)
 	if err != nil {
 		return nil, automationError(err)
 	}
 	var records []Record
-	for _, path := range strings.Split(strings.TrimSpace(out), ", ") {
+	for _, path := range strings.Split(strings.TrimSpace(out), "\n") {
 		if path == "" {
 			continue
 		}

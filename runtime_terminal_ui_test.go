@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,27 +79,7 @@ func TestUIRuntimeTerminal(t *testing.T) {
 			if rect, ok := tt.Find("Enable in terminal"); !ok || rect.Y < 50 || rect.Y+rect.H > float32(tc.height-45) {
 				t.Fatal("terminal action not reachable after scrolling")
 			}
-			if dir := os.Getenv("MSM_RESOURCE_SHOTS"); dir != "" {
-				if err := os.MkdirAll(dir, 0755); err != nil {
-					t.Fatal(err)
-				}
-				theme := "light"
-				if tc.dark {
-					theme = "dark"
-				}
-				name := fmt.Sprintf("%s-%dx%d.png", theme, tc.width, tc.height)
-				file, err := os.Create(filepath.Join(dir, name))
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := png.Encode(file, tt.Image()); err != nil {
-					file.Close()
-					t.Fatal(err)
-				}
-				if err := file.Close(); err != nil {
-					t.Fatal(err)
-				}
-			}
+			saveShot(t, fmt.Sprintf("%s-%dx%d", map[bool]string{false: "light", true: "dark"}[tc.dark], tc.width, tc.height), tt.Image())
 		}
 	})
 }

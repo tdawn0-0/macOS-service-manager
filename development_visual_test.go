@@ -1,12 +1,9 @@
 package main
 
 import (
+	"devbase/internal/devplatform"
 	"fmt"
 	"github.com/egoist/mygo/ui"
-	"image/png"
-	"devbase/internal/devplatform"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -59,17 +56,7 @@ func TestDevelopmentDesignLayouts(t *testing.T) {
 					if tt.Image().Bounds().Dx() == 0 {
 						t.Fatal("empty development pane")
 					}
-					if dir := os.Getenv("MSM_DEV_SHOTS"); dir != "" {
-						os.MkdirAll(dir, 0755)
-						f, e := os.Create(filepath.Join(dir, fmt.Sprintf("%s-%dx%d-dark-%t.png", name, size[0], size[1], dark)))
-						if e != nil {
-							t.Fatal(e)
-						}
-						if e = png.Encode(f, tt.Image()); e != nil {
-							t.Fatal(e)
-						}
-						f.Close()
-					}
+					saveShot(t, fmt.Sprintf("%s-%dx%d-dark-%t", name, size[0], size[1], dark), tt.Image())
 				})
 			}
 		}

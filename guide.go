@@ -357,16 +357,12 @@ func (a *app) guideView(c *ui.Context) {
 
 // guideWelcome offers the one permission the app may need.
 func (a *app) guideWelcome(c *ui.Context) {
-	skip := "Close"
-	if a.guide.welcome {
-		skip = "Skip for Now"
-	}
 	ui.Column(c).Grow(1).MinHeight(0).Padding(0, 28, 24).AlignItems(ui.Center).Children(func() {
 		ui.Image(c, guideIcon()).Size(84, 84).Shrink(0)
 		ui.Text(c, "Allow Full Disk Access").FontSize(20).FontWeight(600).Margin(10, 0, 4).TextAlign(ui.Center)
 		ui.Column(c).Grow(1)
 		action.Button(c, "Allow…", action.ButtonProps{Variant: action.Primary, Size: theme.Middle}).Margin(0, 0, 10).OnClick(func() { a.openRestrictionSettings(a.guide.src) })
-		action.Button(c, skip, action.ButtonProps{Variant: action.Default, Size: theme.Middle}).OnClick(a.closeGuide)
+		action.Button(c, "Close", action.ButtonProps{Variant: action.Default, Size: theme.Middle}).OnClick(a.closeGuide)
 	})
 }
 
@@ -390,11 +386,7 @@ func (a *app) guideSidecar(c *ui.Context) {
 		} else {
 			action.Button(c, "Open Settings", action.ButtonProps{Variant: action.Default, Size: theme.Middle}).Margin(0, 0, 10).OnClick(func() { a.openRestrictionSettings(a.guide.src) })
 		}
-		skip := "Close"
-		if a.guide.welcome {
-			skip = "Skip for Now"
-		}
-		action.Button(c, skip, action.ButtonProps{Variant: action.Default, Size: theme.Middle}).OnClick(a.closeGuide)
+		action.Button(c, "Close", action.ButtonProps{Variant: action.Default, Size: theme.Middle}).OnClick(a.closeGuide)
 	})
 }
 

@@ -2,12 +2,9 @@ package main
 
 import (
 	"context"
+	"devbase/internal/devplatform"
 	"errors"
 	"fmt"
-	"image/png"
-	"devbase/internal/devplatform"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -55,20 +52,7 @@ func TestUIHomebrewReviewAndFailedInstall(t *testing.T) {
 				if !strings.Contains(h.a.dev.packageDetailsText, "Formula SHA-256:") || strings.Contains(h.a.dev.packageDetailsText, "Postgres.app") {
 					t.Fatal("review misrepresented the source or checksum", h.a.dev.packageDetailsText)
 				}
-				if dir := os.Getenv("MSM_HOMEBREW_SHOTS"); dir != "" {
-					if err := os.MkdirAll(dir, 0755); err != nil {
-						t.Fatal(err)
-					}
-					f, err := os.Create(filepath.Join(dir, fmt.Sprintf("%s-dark-%t.png", name, dark)))
-					if err != nil {
-						t.Fatal(err)
-					}
-					err = png.Encode(f, h.ui.Image())
-					closeErr := f.Close()
-					if err != nil || closeErr != nil {
-						t.Fatal(err, closeErr)
-					}
-				}
+				saveShot(t, fmt.Sprintf("%s-dark-%t", name, dark), h.ui.Image())
 				failInstallation = true
 				h.click("Install with Homebrew")
 				if !attempted || len(h.a.dev.state.Packages) != 0 || !strings.Contains(h.a.dev.output, "fixture Homebrew metadata unavailable") {

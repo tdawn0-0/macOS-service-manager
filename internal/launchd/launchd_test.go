@@ -142,15 +142,52 @@ func TestList(t *testing.T) {
 	if !slices.EqualFunc(*calls, [][]string{{"launchctl", "print", "gui/501"}}, slices.Equal) {
 		t.Errorf("calls = %v", *calls)
 	}
-	if len(items) != 2 {
-		t.Fatalf("want 2 items (files without a label are left out), got %+v", items)
+	if len(items) != 4 {
+		t.Fatalf("want 4 items (a .plist launchd cannot load is listed too, other files are not), got %+v", items)
 	}
-	off, running := items[0], items[1]
-	if off.Name != "com.example.off" || off.State != service.StateStopped || off.Autostart != service.AutostartOff {
+	off, running := byName(t, items, "com.example.off"), byName(t, items, "com.example.running")
+	if off.State != service.StateStopped || off.Autostart != service.AutostartOff || off.KeepAlive {
 		t.Errorf("off = %+v", off)
 	}
-	if running.State != service.StateRunning || running.PID != 409 || running.Autostart != service.AutostartOn {
+	// KeepAlive conditions count as kept alive.
+	if running.State != service.StateRunning || running.PID != 409 || running.Autostart != service.AutostartOn || !running.KeepAlive {
 		t.Errorf("running = %+v", running)
+	}
+	for _, name := range []string{"broken", "nolabel"} {
+		it := byName(t, items, name)
+		if it.State != service.StateInvalid || it.Kind != invalidKind || it.Path != filepath.Join(p.Dir, name+".plist") {
+			t.Errorf("%s = %+v", name, it)
+		}
+	}
+}
+
+func byName(t *testing.T, items []service.Item, name string) service.Item {
+	t.Helper()
+	for _, it := range items {
+		if it.Name == name {
+			return it
+		}
+	}
+	t.Fatalf("no item %q in %+v", name, items)
+	return service.Item{}
+}
+
+func TestInvalidDetailSaysWhy(t *testing.T) {
+	p := testProvider(t)
+	stubRun(t, printOut)
+	items, _ := p.List()
+	for name, want := range map[string]string{"broken": "failed to parse plist", "nolabel": "no Label"} {
+		d, err := p.Detail(byName(t, items, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows := map[string]string{}
+		for _, r := range d.Rows {
+			rows[r.Key] = r.Value
+		}
+		if !strings.Contains(rows["Problem"], want) || rows["Property list"] != filepath.Join(p.Dir, name+".plist") {
+			t.Errorf("%s: %v", name, rows)
+		}
 	}
 }
 
@@ -158,7 +195,7 @@ func TestDetail(t *testing.T) {
 	p := testProvider(t)
 	stubRun(t, printOut)
 	items, _ := p.List()
-	d, err := p.Detail(items[1])
+	d, err := p.Detail(byName(t, items, "com.example.running"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,6 +235,14 @@ func TestActions(t *testing.T) {
 			[]service.Action{service.Start, service.Unload, service.Disable, service.Remove}},
 		{sys, service.Item{State: service.StateStopped, Autostart: service.AutostartOff},
 			[]service.Action{service.Load, service.Enable, service.Remove}},
+		// Stopping a job launchd keeps alive unloads it, which Unload would repeat.
+		{user, service.Item{State: service.StateRunning, Autostart: service.AutostartOn, KeepAlive: true},
+			[]service.Action{service.Stop, service.Restart, service.Disable, service.Remove}},
+		{user, service.Item{State: service.StateLoaded, Autostart: service.AutostartOn, KeepAlive: true},
+			[]service.Action{service.Start, service.Unload, service.Disable, service.Remove}},
+		// An invalid file has no job to act on: only the user's own can go.
+		{user, service.Item{State: service.StateInvalid}, []service.Action{service.Remove}},
+		{sys, service.Item{State: service.StateInvalid}, nil},
 	} {
 		if got := c.p.Actions(c.it); !slices.Equal(got, c.want) {
 			t.Errorf("Actions(%v) = %v, want %v", c.it.State, got, c.want)
@@ -213,6 +258,7 @@ func TestDo(t *testing.T) {
 	daemon := &Provider{Config{service.Daemon, daemonDir, "system", true}}
 	it := service.Item{Name: "lbl", Path: "/x/lbl.plist"}
 	off := service.Item{Name: "lbl", Path: "/x/lbl.plist", Autostart: service.AutostartOff}
+	kept := service.Item{Name: "lbl", Path: "/x/lbl.plist", State: service.StateRunning, KeepAlive: true}
 
 	// Without the privileged helper, elevated actions return ErrNotInstalled.
 	if err := daemon.Do(it, service.Unload); !errors.Is(err, privhelper.ErrNotInstalled) {
@@ -240,9 +286,11 @@ func TestDo(t *testing.T) {
 		{user, it, service.Start, [][]string{{"launchctl", "kickstart", "gui/501/lbl"}}, nil},
 		{user, it, service.Restart, [][]string{{"launchctl", "kickstart", "-k", "gui/501/lbl"}}, nil},
 		{user, it, service.Stop, [][]string{{"launchctl", "kill", "SIGTERM", "gui/501/lbl"}}, nil},
+		{user, kept, service.Stop, [][]string{{"launchctl", "bootout", "gui/501/lbl"}}, nil},
 		{user, it, service.Disable, [][]string{{"launchctl", "disable", "gui/501/lbl"}}, nil},
 		{daemon, it, service.Unload, nil, [][]string{{"/bin/launchctl", "bootout", "system/lbl"}}},
 		{daemon, it, service.Stop, nil, [][]string{{"/bin/launchctl", "kill", "SIGTERM", "system/lbl"}}},
+		{daemon, kept, service.Stop, nil, [][]string{{"/bin/launchctl", "bootout", "system/lbl"}}},
 		{daemon, off, service.Load, nil, [][]string{
 			{"/bin/launchctl", "enable", "system/lbl"},
 			{"/bin/launchctl", "bootstrap", "system", filepath.Join(daemonDir, "lbl.plist")},
@@ -309,6 +357,41 @@ func TestRemoveMovesFileToTrash(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".Trash", "running.plist")); err != nil {
 		t.Errorf("not in the Trash: %v", err)
+	}
+}
+
+// An invalid file names no job: nothing is sent to launchd for it, and only a
+// user agent's file can be moved to the Trash.
+func TestInvalidFileIsOnlyTrashed(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".Trash"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	calls := stubRun(t, "")
+	p := testProvider(t)
+	path := filepath.Join(p.Dir, "broken.plist")
+	it := p.invalid(path)
+	for _, a := range []service.Action{service.Start, service.Stop, service.Load, service.Unload, service.Disable} {
+		if err := p.Do(it, a); err == nil {
+			t.Errorf("%s ran on an invalid file", a)
+		}
+	}
+	if err := p.DoAll([]service.Item{it}, service.Start); err == nil {
+		t.Error("a bulk start ran on an invalid file")
+	}
+	if err := p.Do(it, service.Remove); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("launchctl ran for an invalid file: %q", *calls)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".Trash", "broken.plist")); err != nil {
+		t.Errorf("not in the Trash: %v", err)
+	}
+	daemon := &Provider{Config{service.Daemon, p.Dir, "system", true}}
+	if err := daemon.Do(daemon.invalid(filepath.Join(p.Dir, "nolabel.plist")), service.Remove); err == nil {
+		t.Error("an invalid daemon file was removed as root")
 	}
 }
 

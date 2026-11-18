@@ -23,10 +23,10 @@ func TestShutdownScopeIndependentResourcesAndDataRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded := map[string]bool{
-		m.label("db-db"):          true,
-		m.label("proxy"):          true,
-		m.label("tunnel"):         true,
-		m.label("maintenance"):    true,
+		m.label("db-db"):            true,
+		m.label("proxy"):            true,
+		m.label("tunnel"):           true,
+		m.label("maintenance"):      true,
 		"external.unmanaged.server": true,
 	}
 	m.Run = func(ctx context.Context, name string, args ...string) (string, error) {

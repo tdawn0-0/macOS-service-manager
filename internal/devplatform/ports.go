@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -54,7 +55,38 @@ func visiblePortText(value string) string {
 	}
 	return strings.TrimSpace(b.String())
 }
+func isLsofFieldTag(b byte) bool {
+	switch b {
+	case 'p', 'c', 'u', 'f', 'n':
+		return true
+	}
+	return false
+}
+
+func extractLsofPIDField(field string) (string, bool) {
+	for _, line := range strings.Split(field, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if len(line) > 1 && line[0] == 'p' {
+			digits := true
+			for i := 1; i < len(line); i++ {
+				if line[i] < '0' || line[i] > '9' {
+					digits = false
+					break
+				}
+			}
+			if digits {
+				return line, true
+			}
+		}
+	}
+	return "", false
+}
+
 func parsePortListeners(output string) []PortListener {
+	return parsePortListenersLimit(output, 65)
+}
+
+func parsePortListenersLimit(output string, limit int) []PortListener {
 	current := PortListener{UID: -1}
 	seen := map[string]bool{}
 	var results []PortListener
@@ -63,6 +95,13 @@ listenerFields:
 		field := strings.TrimLeft(raw, "\r\n")
 		if field == "" {
 			continue
+		}
+		if !isLsofFieldTag(field[0]) {
+			extracted, ok := extractLsofPIDField(field)
+			if !ok {
+				continue
+			}
+			field = extracted
 		}
 		value := field[1:]
 		switch field[0] {
@@ -84,7 +123,7 @@ listenerFields:
 			if !seen[key] {
 				results = append(results, current)
 				seen[key] = true
-				if len(results) >= 65 {
+				if limit > 0 && len(results) >= limit {
 					break listenerFields
 				}
 			}
@@ -280,6 +319,67 @@ func (m *Manager) InspectPort(ctx context.Context, port int) (PortInspection, er
 		r.Detail = "Listeners reported for this TCP port. Names and PIDs do not prove app ownership. Stop an external service in its own app, or choose another port."
 	}
 	return r, nil
+}
+
+type ListeningPort struct {
+	Port    int
+	Process string
+}
+
+// ListeningUserPorts lists current-UID TCP LISTEN ports >= 1024, deduplicated
+// by port and sorted ascending, excluding the configured HTTPS proxy listener
+// port and managed database instance ports.
+func (m *Manager) ListeningUserPorts(ctx context.Context) ([]ListeningPort, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s, err := m.Read()
+	if err != nil {
+		return nil, err
+	}
+	uid := os.Getuid()
+	query, done := context.WithTimeout(ctx, 2*time.Second)
+	defer done()
+	output, lookupErr := m.Run(query, "/usr/sbin/lsof", "-w", "-nP", "-a", "-u", strconv.Itoa(uid), "-iTCP", "-sTCP:LISTEN", "+c0", "-F0pcun")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if lookupErr != nil {
+		var exitErr *exec.ExitError
+		if (errors.As(lookupErr, &exitErr) && exitErr.ExitCode() == 1 && strings.TrimSpace(output) == "" && strings.HasSuffix(lookupErr.Error(), ": ")) || lookupErr.Error() == "exit status 1" {
+			return []ListeningPort{}, nil
+		}
+		return nil, lookupErr
+	}
+	excluded := map[int]bool{
+		s.ProxyListenerPort: true,
+	}
+	for _, inst := range s.Instances {
+		excluded[inst.Port] = true
+	}
+	byPort := map[int]string{}
+	for _, listener := range parsePortListenersLimit(output, 0) {
+		if listener.UID != uid {
+			continue
+		}
+		_, portStr, err := net.SplitHostPort(listener.Address)
+		if err != nil {
+			continue
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil || port < 1024 || port > 65535 || excluded[port] {
+			continue
+		}
+		if prev, ok := byPort[port]; !ok || (prev == "" && listener.Name != "") {
+			byPort[port] = listener.Name
+		}
+	}
+	out := make([]ListeningPort, 0, len(byPort))
+	for port, proc := range byPort {
+		out = append(out, ListeningPort{Port: port, Process: proc})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Port < out[j].Port })
+	return out, nil
 }
 
 func (m *Manager) AvailableLocalPort(ctx context.Context) (int, error) {

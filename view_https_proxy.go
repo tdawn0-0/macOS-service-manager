@@ -1,17 +1,142 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"devbase/internal/devplatform"
 	"github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/action"
 	"github.com/lobehub/lobe-mygo/pkg/choice"
 	"github.com/lobehub/lobe-mygo/pkg/display"
+	"github.com/lobehub/lobe-mygo/pkg/feedback"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 )
+
+type httpsAuthorityCheckState struct {
+	loading   bool
+	attempted bool
+	seq       uint64
+}
+
+type httpsListeningPortsState struct {
+	ports       []devplatform.ListeningPort
+	loaded      bool
+	loading     bool
+	err         string
+	updatedAt   time.Time
+	hoverPrimed bool
+}
+
+var (
+	httpsAuthorityChecks = map[*app]*httpsAuthorityCheckState{}
+	httpsListeningPorts  = map[*app]*httpsListeningPortsState{}
+)
+
+func (a *app) ensureHTTPSAuthorityStatus() {
+	d := &a.dev
+	if a.post == nil || d.authorityStatus != nil {
+		return
+	}
+	st := httpsAuthorityChecks[a]
+	if st == nil {
+		st = &httpsAuthorityCheckState{}
+		httpsAuthorityChecks[a] = st
+	}
+	if st.loading || (st.attempted && st.seq == d.taskSequence) {
+		return
+	}
+	st.loading = true
+	st.attempted = true
+	st.seq = d.taskSequence
+	m := a.devManager()
+	a.spawn(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		status, err := m.AuthorityStatus(ctx)
+		a.post(func() {
+			if cur := httpsAuthorityChecks[a]; cur != nil {
+				cur.loading = false
+			}
+			if err == nil {
+				a.dev.authorityStatus = &status
+				delete(httpsAuthorityChecks, a)
+			}
+		})
+	})
+}
+
+func (a *app) refreshAuthorityStatusInTask(m *devplatform.Manager) {
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	if status, err := m.AuthorityStatus(ctx); err == nil {
+		a.post(func() {
+			a.dev.authorityStatus = &status
+			delete(httpsAuthorityChecks, a)
+		})
+	}
+}
+
+func localCATrustLabel(status *devplatform.AuthorityStatus) string {
+	if status == nil {
+		return ""
+	}
+	if status.Active.Status == "Not created" {
+		return "Not created"
+	}
+	if status.Active.Trust == "Trusted" {
+		return "Trusted"
+	}
+	return "Not trusted"
+}
+
+func (a *app) listeningPortsCache() *httpsListeningPortsState {
+	if a.post == nil {
+		return &httpsListeningPortsState{}
+	}
+	st := httpsListeningPorts[a]
+	if st == nil {
+		st = &httpsListeningPortsState{}
+		httpsListeningPorts[a] = st
+	}
+	return st
+}
+
+func (a *app) refreshListeningPorts(force bool) {
+	if a.post == nil {
+		return
+	}
+	st := a.listeningPortsCache()
+	if st.loading {
+		return
+	}
+	if !force && st.loaded && time.Since(st.updatedAt) < 2*time.Second {
+		return
+	}
+	st.loading = true
+	m := a.devManager()
+	a.spawn(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		ports, err := m.ListeningUserPorts(ctx)
+		a.post(func() {
+			cur := a.listeningPortsCache()
+			cur.loading = false
+			cur.loaded = true
+			cur.updatedAt = time.Now()
+			if err != nil {
+				cur.err = err.Error()
+				return
+			}
+			cur.err = ""
+			cur.ports = ports
+		})
+	})
+}
 
 func cloudflareHostSuggestions(s devplatform.State, localDomain string) []string {
 	seen := map[string]bool{}
@@ -87,6 +212,12 @@ func (a *app) devHTTPS(c *ui.Context) {
 	if !d.tunnelDraftLoaded {
 		d.loadTunnelDraft(d.state)
 	}
+	a.ensureHTTPSAuthorityStatus()
+	portsCache := a.listeningPortsCache()
+	if a.post != nil && !portsCache.loaded {
+		a.refreshListeningPorts(false)
+	}
+	anyPickerHovered := false
 	tk := theme.TokensOf(c)
 	dirty := d.proxyDraftDirty()
 	tunnelDirty := d.tunnelDraftDirty()
@@ -122,11 +253,46 @@ func (a *app) devHTTPS(c *ui.Context) {
 					})
 					// The route: the domain goes to a port of this Mac.
 					// The upstream is empty for this Mac (127.0.0.1) or any IP address or host name.
-					ui.Row(c).Width(320).Shrink(0).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.Row(c).Width(348).Shrink(0).Gap(6).AlignItems(ui.Center).Children(func() {
 						ui.Icon(c, icoArrow).FontSize(14).TextColor(tk.TextQuaternary).Shrink(0)
 						mono(ui.TextInput(c, &row.UpstreamHost).Placeholder("127.0.0.1").Label("Upstream host").Grow(1).MinWidth(0))
 						mono(ui.Text(c, ":").FontSize(textSmall).TextColor(tk.TextTertiary).SingleLine().Shrink(0))
-						mono(ui.TextInput(c, &row.LocalPort).Placeholder("3000").Label("Local port").Width(76).Shrink(0))
+						mono(ui.TextInput(c, &row.LocalPort).Placeholder("3000").Label("Local port").Width(72).Shrink(0))
+						pickBtn := action.ActionIcon(c, icoPlug, action.ActionIconProps{
+							Variant: action.ActionIconBorderless,
+							Size:    theme.Small,
+						}).Label(fmt.Sprintf("Pick active port %d", i+1)).Tooltip("Choose a listening local port").Disabled(d.busy)
+						if pickBtn.Hovered() {
+							anyPickerHovered = true
+						}
+						pickBtn.Menu(func(m *ui.Menu) {
+							if a.post != nil && !portsCache.loading && time.Since(portsCache.updatedAt) >= 2*time.Second {
+								a.refreshListeningPorts(false)
+							}
+							if portsCache.loading && len(portsCache.ports) == 0 {
+								m.Item("Scanning listening ports…").Disabled(true)
+							} else if portsCache.err != "" && len(portsCache.ports) == 0 {
+								m.Item("Could not scan listening ports").Disabled(true)
+							} else if len(portsCache.ports) == 0 {
+								m.Item("No listening local ports").Disabled(true)
+							} else {
+								for _, lp := range portsCache.ports {
+									label := strconv.Itoa(lp.Port)
+									if lp.Process != "" {
+										label = fmt.Sprintf("%d · %s", lp.Port, lp.Process)
+									}
+									if m.Item(label).ID(strconv.Itoa(lp.Port)).Chosen() {
+										row.LocalPort = strconv.Itoa(lp.Port)
+									}
+								}
+							}
+							if a.post != nil {
+								m.Separator()
+								if m.Item("Refresh listening ports").Chosen() {
+									a.refreshListeningPorts(true)
+								}
+							}
+						})
 					})
 					ui.Row(c).Shrink(0).Gap(6).AlignItems(ui.Center).Children(func() {
 						choice.Switch(c, &row.Tunnel, choice.SwitchProps{Size: theme.Small}).Label(fmt.Sprintf("Tunnel rule %d", i+1)).Tooltip("Expose this rule through the Cloudflare tunnel")
@@ -244,6 +410,16 @@ func (a *app) devHTTPS(c *ui.Context) {
 				}
 			})
 		}
+		if a.post != nil {
+			if anyPickerHovered {
+				if !portsCache.hoverPrimed {
+					portsCache.hoverPrimed = true
+					a.refreshListeningPorts(true)
+				}
+			} else {
+				portsCache.hoverPrimed = false
+			}
+		}
 		if removeRule >= 0 {
 			d.proxyDraft = append(d.proxyDraft[:removeRule], d.proxyDraft[removeRule+1:]...)
 		}
@@ -278,6 +454,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 				if btn(c, "Apply proxy", icoPlay, kind).Disabled(d.busy || len(d.state.ProxyRules) == 0).Clicked() {
 					a.devTask(func(m *devplatform.Manager) (string, error) {
 						err := m.ApplyProxy(m.Context)
+						a.refreshAuthorityStatusInTask(m)
 						return "Proxy configuration published. Check DNS, TLS and upstream separately.", err
 					})
 				}
@@ -334,6 +511,7 @@ func (a *app) devHTTPS(c *ui.Context) {
 						if err := m.ApplyProxy(m.Context); err != nil {
 							return "", err
 						}
+						a.refreshAuthorityStatusInTask(m)
 						if tunnelRunning {
 							hasTunnel := false
 							for _, r := range rules {
@@ -370,12 +548,15 @@ func (a *app) devHTTPS(c *ui.Context) {
 			switch act {
 			case "Restart HTTPS proxy":
 				e = m.RestartProxy(m.Context)
+				a.refreshAuthorityStatusInTask(m)
 			case "Stop HTTPS proxy":
 				e = m.StopProxy(m.Context)
 			case "Trust local CA":
 				e = m.ConfigureTrust(m.Context, false)
+				a.refreshAuthorityStatusInTask(m)
 			case "Remove CA trust":
 				e = m.ConfigureTrust(m.Context, true)
+				a.refreshAuthorityStatusInTask(m)
 			case "Diagnose HTTPS":
 				report, err := m.Diagnose(m.Context)
 				if err == nil {
@@ -404,7 +585,9 @@ func (a *app) devHTTPS(c *ui.Context) {
 					if err := m.EnsureLogMaintenance(m.Context); err != nil {
 						return "HTTPS proxy start", err
 					}
-					return "Proxy configuration published. Check DNS, TLS and upstream separately.", m.ApplyProxy(m.Context)
+					err := m.ApplyProxy(m.Context)
+					a.refreshAuthorityStatusInTask(m)
+					return "Proxy configuration published. Check DNS, TLS and upstream separately.", err
 				}
 				return "Stopped HTTPS proxy", m.StopProxy(m.Context)
 			})
@@ -453,7 +636,9 @@ func (a *app) devHTTPS(c *ui.Context) {
 			if d.statuses["tunnel:token"] == "Configured" {
 				tokenPlaceholder = "Saved (paste to replace)"
 			}
-			devField(c, "Cloudflare API token", &d.cloudflareTokenDraft, tokenPlaceholder)
+			ui.Field(c, "Cloudflare API token", func() {
+				ui.TextInput(c, &d.cloudflareTokenDraft).Placeholder(tokenPlaceholder).Password().Tooltip("Required token permissions: Account Workers Scripts Edit, Zone Workers Routes Edit, Zone Read, DNS Read")
+			})
 			devField(c, "Account ID", &d.cloudflareAccountID, "Auto-detected")
 			devField(c, "Client ID", &d.tunnelClientID, "mac-auto")
 		})
@@ -486,7 +671,22 @@ func (a *app) devHTTPS(c *ui.Context) {
 			if btn(c, "Save Cloudflare settings", icoSave, btnPrimary).Disabled(d.busy || !tunnelDirty).Clicked() {
 				token, accountID, clientID := d.cloudflareTokenDraft, d.cloudflareAccountID, d.tunnelClientID
 				a.devTaskThen(func(m *devplatform.Manager) (string, error) {
-					return "Saved Cloudflare settings.", m.SaveCloudflareSettings(m.Context, token, accountID, clientID)
+					if err := m.SaveCloudflareSettings(m.Context, token, accountID, clientID); err != nil {
+						return "", err
+					}
+					shouldDiscover := strings.TrimSpace(token) != ""
+					if !shouldDiscover && m.HasCloudflareToken() {
+						if s, err := m.Read(); err == nil && s.CloudflareAccountID == "" {
+							shouldDiscover = true
+						}
+					}
+					if shouldDiscover {
+						if err := m.RefreshCloudflareMetadata(m.Context); err != nil {
+							return "Saved Cloudflare settings (metadata check failed: " + err.Error() + ").", nil
+						}
+						return "Saved Cloudflare settings and refreshed zones.", nil
+					}
+					return "Saved Cloudflare settings.", nil
 				}, func(err error) {
 					if err == nil {
 						a.dev.loadTunnelDraft(a.dev.state)
@@ -519,6 +719,23 @@ func (a *app) devHTTPS(c *ui.Context) {
 					return "Restarted Cloudflare tunnel.", m.RestartTunnel(m.Context)
 				})
 			}
+			if btn(c, "Remove Cloudflare token", icoTrash, btnDanger).Disabled(d.busy || d.statuses["tunnel:token"] != "Configured").Clicked() {
+				a.ask = askState{
+					open:    true,
+					title:   "Remove Cloudflare API token?",
+					message: "Stops the tunnel if running and clears saved Cloudflare account metadata from this Mac.",
+					button:  "Remove Token",
+					run: func() {
+						a.devTaskThen(func(m *devplatform.Manager) (string, error) {
+							return "Removed Cloudflare token and account metadata.", m.RemoveCloudflareSettings(m.Context, false)
+						}, func(err error) {
+							if err == nil {
+								a.dev.loadTunnelDraft(a.dev.state)
+							}
+						})
+					},
+				}
+			}
 			if btn(c, "Read tunnel logs", icoScroll, btnText).Disabled(d.busy).Clicked() {
 				d.showResult = true
 				a.devTask(func(m *devplatform.Manager) (string, error) { return m.Logs("tunnel") })
@@ -530,11 +747,17 @@ func (a *app) devHTTPS(c *ui.Context) {
 	})
 
 	devCardWith(c, icoKey, "Local certificate trust", "", func() {
+		if label := localCATrustLabel(d.authorityStatus); label != "" {
+			statusTag(c, label)
+		}
 		if btn(c, "Local certificates", icoArrow, btnText).Disabled(d.busy).Clicked() {
 			d.authorityOpen = true
 			a.authorityTask(nil)
 		}
 	}, func() {
+		if proxyOn && d.authorityStatus != nil && d.authorityStatus.Active.Trust != "Trusted" {
+			devHint(c, feedback.Warning, "Proxy is running, but the local CA is not trusted yet.", "")
+		}
 		devButtonRow(c, func() {
 			for _, act := range []struct {
 				label string

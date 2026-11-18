@@ -143,8 +143,15 @@ func (m *Manager) Snapshot(ctx context.Context, s State) RuntimeSnapshot {
 		st := observed["tunnel"].status
 		out.States["tunnel"] = st
 		if st == "Running" {
-			if detail := m.formatTunnelDetail(); detail != "" {
-				out.States["tunnel:detail"] = detail
+			if ts, ok := m.readTunnelStatus(); ok {
+				if detail := formatTunnelDetailFrom(ts); detail != "" {
+					out.States["tunnel:detail"] = detail
+				}
+				for name, ws := range ts.WorkerStates {
+					if name != "" && ws != "" {
+						out.States["tunnel:worker:"+name] = ws
+					}
+				}
 			}
 		}
 	}
@@ -156,6 +163,10 @@ func (m *Manager) formatTunnelDetail() string {
 	if !ok {
 		return ""
 	}
+	return formatTunnelDetailFrom(st)
+}
+
+func formatTunnelDetailFrom(st TunnelStatusSnapshot) string {
 	switch st.Phase {
 	case "Connected":
 		if len(st.Conflicts) > 0 {

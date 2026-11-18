@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,6 +33,7 @@ func TestUIExistingJavaManagement(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(home, "release"), release, 0600); err != nil {
 		t.Fatal(err)
 	}
+	h.a.dev.runtimeVersions = map[string][]string{"java": {}}
 	h.a.dev.software = "java"
 	h.ui.Frame()
 	h.waitIdle()
@@ -155,4 +159,89 @@ func TestUIJavaUpdateAvailableBadge(t *testing.T) {
 	if _, ok := tt.Find("Review temurin-21.0.14"); !ok {
 		t.Fatalf("missing Review temurin-21.0.14 button: %v", tt.Texts())
 	}
+}
+
+type javaTestRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f javaTestRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestUIJavaAutoLoadCatalogAndAutoPreview(t *testing.T) {
+	t.Run("auto-loads-and-previews-on-select", func(t *testing.T) {
+		oldClient := http.DefaultClient
+		defer func() { http.DefaultClient = oldClient }()
+		sha21 := strings.Repeat("a", 64)
+		sha25 := strings.Repeat("b", 64)
+		http.DefaultClient = &http.Client{Transport: javaTestRoundTripper(func(r *http.Request) (*http.Response, error) {
+			if r.URL.String() == devplatform.JavaCatalogURL {
+				body := `{"jdks":[` +
+					`{"vendor":"Eclipse","product":"Temurin","jdk_version":"21.0.13","packages":[{"os":"macOS","arch":"aarch64","url":"https://example.test/temurin-21.tar.gz","sha256":"` + sha21 + `","package_type":"targz","package_root_prefix":"jdk-21.0.13+9","package_to_java_home_prefix":"Contents/Home","install_folder_name":"temurin-21.0.13"}]},` +
+					`{"vendor":"Eclipse","product":"Temurin","jdk_version":"25.0.1","packages":[{"os":"macOS","arch":"aarch64","url":"https://example.test/temurin-25.tar.gz","sha256":"` + sha25 + `","package_type":"targz","package_root_prefix":"jdk-25.0.1+8","package_to_java_home_prefix":"Contents/Home","install_folder_name":"temurin-25.0.1"}]}` +
+					`]}`
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
+			}
+			return &http.Response{StatusCode: 200, ContentLength: 4096, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
+		})}
+
+		h := newDevUIHarnessSize(t, 1120, 720, false)
+		h.a.dev.javaLoaded = true
+		h.a.dev.software = "java"
+		h.ui.Frame()
+		if h.a.dev.busy {
+			t.Fatal("auto-loading Java catalog set d.busy")
+		}
+		if h.a.dev.runtimeVersions["java"] == nil {
+			t.Fatal("expected tried sentinel on runtimeVersions[\"java\"]")
+		}
+		h.drain(func() bool { return len(h.a.dev.runtimeVersions["java"]) == 2 })
+		if h.a.dev.version != "temurin-21.0.13" {
+			t.Fatalf("expected default Java version temurin-21.0.13, got %q", h.a.dev.version)
+		}
+		if h.a.dev.busy {
+			t.Fatal("Java catalog load left d.busy true")
+		}
+
+		h.choose("Version", "temurin-25.0.1")
+		if h.a.dev.busy {
+			t.Fatal("auto-preview on Java select set d.busy")
+		}
+		h.drain(func() bool {
+			return h.a.dev.previewMatches() && h.a.dev.packagePreview.Package.Version == "temurin-25.0.1"
+		})
+		if !strings.Contains(h.a.dev.packageDetailsText, "Eclipse Temurin") || !strings.Contains(h.a.dev.packageDetailsText, sha25) {
+			t.Fatalf("unexpected Java preview details: %q", h.a.dev.packageDetailsText)
+		}
+		for _, want := range []string{"Review package", "Download and install", "Refresh available versions"} {
+			if !h.ui.HasText(want) {
+				t.Fatalf("missing %q after Java auto-preview: %v", want, h.ui.Texts())
+			}
+		}
+	})
+
+	t.Run("drops-stale-preview-and-respects-nil-post", func(t *testing.T) {
+		a := designFixture(t)
+		a.dev.software = "java"
+		tt := ui.NewTester(a.view, 900, 520)
+		tt.Frame()
+		if a.dev.runtimeVersions["java"] != nil {
+			t.Fatalf("designFixture with nil post mutated runtimeVersions: %v", a.dev.runtimeVersions)
+		}
+
+		var posted []func()
+		a.post = func(f func()) { posted = append(posted, f) }
+		a.dev.software = "mysql"
+		a.dev.version = "8.0.45"
+		m := devplatform.New(t.TempDir())
+		m.Run = func(context.Context, string, ...string) (string, error) { return "26.0", nil }
+		if err := a.fetchPackagePreview(context.Background(), m, "mysql", "8.0.45"); err != nil {
+			t.Fatal(err)
+		}
+		// User changed version before posted callback executes.
+		a.dev.version = "8.4.13"
+		for _, f := range posted {
+			f()
+		}
+		if a.dev.packagePreview != nil {
+			t.Fatalf("stale preview overwrote newer version selection: %+v", a.dev.packagePreview)
+		}
+	})
 }

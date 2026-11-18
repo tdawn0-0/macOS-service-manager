@@ -19,11 +19,15 @@ type archiveRelease struct{ version, url, sha256 string }
 var mysqlReleases = []archiveRelease{
 	{"8.4.13", "https://dev.mysql.com/get/Downloads/MySQL-8.4/mysql-8.4.13-macos15-arm64.tar.gz", "f324f8950e24d4147470bbc6a6ef0b90ef93b91d3fc74154b3d2ba085b44912a"},
 	{"8.4.4", "https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.4-macos15-arm64.tar.gz", "a23a5beada1404a609ee8f2a7b14f2869444fe05b5731f94a3d2215d4f6c41b5"},
+	{"8.0.45", "https://cdn.mysql.com/archives/mysql-8.0/mysql-8.0.45-macos15-arm64.tar.gz", "3b8bd89b839e663479775a99deb03ff6cde11c86a1c37c0aed7116a778e4a8bc"},
+	{"8.0.41", "https://cdn.mysql.com/archives/mysql-8.0/mysql-8.0.41-macos15-arm64.tar.gz", "37ed31ff5013b6cc964b2ad071da941d5f9cb423c11c615996e216f6224c889f"},
 }
 
 var mongodbReleases = []archiveRelease{
 	{"8.0.38", "https://fastdl.mongodb.org/osx/mongodb-macos-arm64-8.0.38.tgz", "5c372533187a7789b6b2f4d7856f0651557dfbed572dbe5f4c23f43578fc74df"},
 	{"8.0.5", "https://fastdl.mongodb.org/osx/mongodb-macos-arm64-8.0.5.tgz", "71e2510f0455ff24e1961aa0507eb0660b300c84f6da9899052be409090fb990"},
+	{"7.0.30", "https://fastdl.mongodb.org/osx/mongodb-macos-arm64-7.0.30.tgz", "6c6c6fcfc38e025d48e99c6f5892a9e6aa8012ccb08ce247787936423d634dd1"},
+	{"7.0.16", "https://fastdl.mongodb.org/osx/mongodb-macos-arm64-7.0.16.tgz", "e01c5ce1ef8efbef4196797130564b8f121f6e29f20ccf70e025feba07e15739"},
 }
 
 func findRelease(releases []archiveRelease, version string) (archiveRelease, bool) {

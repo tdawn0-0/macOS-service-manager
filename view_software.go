@@ -106,10 +106,11 @@ func (a *app) devSoftware(c *ui.Context) {
 		})
 	}
 	devCardWith(c, icoDownload, "Install a version", "", nil, func() {
+		versionChanged := false
 		if d.software == "node" {
 			a.loadNodeReleases()
 			devFieldGrid(c, func() {
-				devNodeChoice(c, &d.version, d.nodeReleases)
+				versionChanged = devNodeChoice(c, &d.version, d.nodeReleases)
 				devField(c, "Exact version", &d.version, "22.14.0, 22, lts or latest")
 			})
 			if d.nodeReleasesError != "" {
@@ -119,9 +120,12 @@ func (a *app) devSoftware(c *ui.Context) {
 			}
 		} else {
 			devFieldGrid(c, func() {
-				devChoice(c, "Version", &d.version, devplatform.AvailableVersions(d.software))
+				versionChanged = devChoice(c, "Version", &d.version, devplatform.AvailableVersions(d.software))
 				devField(c, "Exact version", &d.version, "For example 22.14.0")
 			})
+		}
+		if versionChanged {
+			a.previewPackageAsync(d.software, d.version)
 		}
 		a.devPackageReview(c)
 	})
@@ -287,10 +291,9 @@ func (a *app) loadNodeReleases() {
 // devNodeChoice picks among the newest release of each major version, with
 // the long-term support lines named. Any other version goes in the field
 // below it.
-func devNodeChoice(c *ui.Context, version *string, releases []devplatform.NodeRelease) {
+func devNodeChoice(c *ui.Context, version *string, releases []devplatform.NodeRelease) bool {
 	if len(releases) == 0 {
-		devChoice(c, "Version", version, devplatform.AvailableVersions("node"))
-		return
+		return devChoice(c, "Version", version, devplatform.AvailableVersions("node"))
 	}
 	var options []string
 	lookup := map[string]string{}
@@ -313,8 +316,12 @@ func devNodeChoice(c *ui.Context, version *string, releases []devplatform.NodeRe
 		}
 	}
 	if devChoice(c, "Version", &display, options) {
-		*version = lookup[display]
+		if v, ok := lookup[display]; ok {
+			*version = v
+			return true
+		}
 	}
+	return false
 }
 
 func (d *developmentState) previewMatches() bool {
@@ -336,6 +343,41 @@ func packageDetailsText(info devplatform.PackageDetails) string {
 	return text
 }
 
+func (a *app) fetchPackagePreview(ctx context.Context, m *devplatform.Manager, name, version string) error {
+	pkg, e := m.ResolveInstalledOrCatalog(ctx, name, version)
+	if e != nil {
+		return e
+	}
+	info, e := m.PackageDetails(ctx, pkg)
+	if e != nil {
+		return e
+	}
+	a.post(func() {
+		if a.dev.software != name || strings.TrimSpace(a.dev.version) != version {
+			return
+		}
+		a.dev.packagePreview = &info
+		a.dev.packageDetailsText = packageDetailsText(info)
+		if pkg.Formula != "" || name == "node" {
+			a.dev.version = pkg.Version
+		}
+	})
+	return nil
+}
+
+func (a *app) previewPackageAsync(name, version string) {
+	version = strings.TrimSpace(version)
+	if a.post == nil || name == "" || version == "" {
+		return
+	}
+	m := a.devManager()
+	a.spawn(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = a.fetchPackagePreview(ctx, m, name, version)
+	})
+}
+
 func (a *app) reviewPackageVersion(name, version string) {
 	version = strings.TrimSpace(version)
 	if name == "" || version == "" {
@@ -344,21 +386,7 @@ func (a *app) reviewPackageVersion(name, version string) {
 	a.dev.software = name
 	a.dev.version = version
 	a.devTask(func(m *devplatform.Manager) (string, error) {
-		pkg, e := m.ResolveInstalledOrCatalog(m.Context, name, version)
-		if e != nil {
-			return "", e
-		}
-		info, e := m.PackageDetails(m.Context, pkg)
-		if e == nil {
-			a.post(func() {
-				a.dev.packagePreview = &info
-				a.dev.packageDetailsText = packageDetailsText(info)
-				if (pkg.Formula != "" || name == "node") && a.dev.software == name && strings.TrimSpace(a.dev.version) == version {
-					a.dev.version = pkg.Version
-				}
-			})
-		}
-		return "Package details ready.", e
+		return "Package details ready.", a.fetchPackagePreview(m.Context, m, name, version)
 	})
 }
 

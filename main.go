@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"strings"
 	"syscall"
 
 	"github.com/egoist/mygo"
@@ -22,6 +23,41 @@ const minWidth, minHeight = 900, 520
 
 func startHiddenInBackground(args []string) bool {
 	return slices.Contains(args, "--background")
+}
+
+func shouldRunPublicCLI(args []string) ([]string, bool) {
+	filtered := make([]string, 0, len(args))
+	for _, a := range args {
+		if strings.HasPrefix(a, "-psn_") {
+			continue
+		}
+		filtered = append(filtered, a)
+	}
+	if len(filtered) == 0 {
+		return nil, false
+	}
+	if filtered[0] == "gui" || filtered[0] == "open" {
+		return nil, false
+	}
+	onlyGUILaunchArgs := true
+	for i := 0; i < len(filtered); i++ {
+		a := filtered[i]
+		if a == "--background" {
+			continue
+		}
+		if strings.HasPrefix(a, "-NS") || strings.HasPrefix(a, "-Apple") {
+			if !strings.Contains(a, "=") && i+1 < len(filtered) && !strings.HasPrefix(filtered[i+1], "-") {
+				i++
+			}
+			continue
+		}
+		onlyGUILaunchArgs = false
+		break
+	}
+	if onlyGUILaunchArgs {
+		return nil, false
+	}
+	return filtered, true
 }
 
 func configureBackgroundLaunch(a *app, background bool) {
@@ -39,6 +75,12 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	}
+
+	if cliArgs, ok := shouldRunPublicCLI(os.Args[1:]); ok {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		os.Exit(devcli.RunCLI(ctx, cliArgs, os.Stdin, os.Stdout, os.Stderr))
 	}
 
 	background := startHiddenInBackground(os.Args[1:])

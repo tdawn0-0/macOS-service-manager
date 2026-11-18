@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"devbase/internal/devplatform"
 	"devbase/internal/privhelper"
@@ -122,6 +123,36 @@ func (a *app) settingsView(c *ui.Context) {
 							a.nav = navDevelopment
 							d.operationsOpen = false
 							a.runDevDiagnostics()
+						}
+					})
+				})
+
+				cliBadge := "Not installed"
+				if a.cliStatus.Installed {
+					cliBadge = "Installed"
+				}
+				devCardWith(c, icoTerminal, "Command-line interface", "", func() {
+					statusTag(c, cliBadge)
+				}, func() {
+					if a.cliStatus.WrapperPath != "" {
+						devKV(c, "Command", a.cliStatus.WrapperPath)
+					}
+					if a.cliStatus.Installed && !a.cliStatus.InPATH && a.cliStatus.WrapperPath != "" {
+						devSubtle(c, fmt.Sprintf("Add %s to PATH to run devbase from any shell.", filepath.Dir(a.cliStatus.WrapperPath)))
+					}
+					devButtonRow(c, func() {
+						if !a.cliStatus.Installed {
+							if btn(c, "Install devbase CLI", icoTerminal, btnPrimary).Disabled(a.cliBusy || d.busy).Clicked() {
+								a.installCLI()
+							}
+						} else if a.cliStatus.ManagedByDevbase {
+							if btn(c, "Remove devbase CLI", icoTrash, btnText).Disabled(a.cliBusy || d.busy).Clicked() {
+								a.uninstallCLI()
+							}
+						}
+						if btn(c, "Copy AI schema command", icoCopy, btnDefault).Disabled(a.copy == nil).Clicked() {
+							a.copy("devbase schema")
+							a.toast("Copied devbase schema")
 						}
 					})
 				})

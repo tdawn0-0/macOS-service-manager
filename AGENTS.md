@@ -11,9 +11,9 @@
 ## 2. Package & File Map
 
 - **Root Desktop App**:
-  - `main.go`, `app.go`: Application lifecycle, window creation, menu bar initialization, and main loop.
+  - `main.go`, `app.go`: Application lifecycle, window creation, menu bar initialization, public CLI headless dispatch (`shouldRunPublicCLI` -> `devcli.RunCLI`), and main loop.
   - `editor.go`: The launchd job form's state, validation and saving (drawn by `view_editor.go`).
-  - `settings.go`: Privileged helper install, reinstall and removal, and the Settings page's actions (drawn by `view_settings.go`).
+  - `settings.go`: Privileged helper install, reinstall and removal, public `devbase` CLI wrapper installer, and the Settings page's actions (drawn by `view_settings.go`).
   - `menubar.go`: Native menu bar panel: database instance rows, the HTTPS proxy switch, the Cloudflare tunnel switch (shown once a tunnel is configured), and status readouts.
   - `ui_kit.go`: Immediate-mode UI layout components, typography helpers, and color primitives.
   - `view_*.go`: Immediate-mode views. Development workspace: `view_development.go` (shell), `view_software.go`, `view_java.go`, `view_additional_runtimes.go`, `view_runtime_terminal.go`, `view_package_*.go`, `view_databases.go`, `view_database_*.go`, `view_instance_deletion.go`, `view_https_proxy.go` (rules, proxy and Cloudflare tunnel cards), `view_proxy_activation.go`, `view_authority.go` (local CA), `view_diagnostics.go`, `view_ports.go`, `view_operations.go`, `view_quit.go`, `view_settings.go`. System-service inspector: `view.go`, `view_detail.go`, `view_editor.go`, `view_status.go`.
@@ -27,8 +27,8 @@
   - Shell startup integration scripts (zsh, Bash, fish) and PATH management.
   - Diagnostics, status gathering, and file-locked transactional state persistence (`Manager.withState`/`withStateTransaction` over `state.json` + `state.lock`). The UI's own `developmentState` lives in the root package.
 - **`internal/devcli/` & `cmd/devmgr/`**:
-  - `internal/devcli/`: Internal `--dev` subcommands. launchd jobs run `serve` (proxy), `tunnel`, `maintain` (log rotation), and `database-worker`; `node` is the shell shim; `helper` is the privileged helper. The rest (`status`, `install`, `log-rotation`) exist only for `scripts/verify-native-release.py` and are reachable only through `cmd/devmgr`. Add a command only together with a real caller; test `Manager` methods directly in `devplatform`, never through a command that only its own test calls. The shipped `.app` has no public user-facing CLI.
-  - `cmd/devmgr/`: Unshipped developer test harness for headless verification, fixtures, and diagnostics.
+  - `internal/devcli/`: Public AI-friendly `devbase` CLI (`RunCLI`, `RunCLIWithEnv`, `schema.go`, `install_path.go`, `cmd_workspace.go`, `cmd_software.go`, `cmd_databases.go`, `cmd_https.go`, `cmd_services.go`, `cmd_settings.go`) plus internal `--dev` subcommands via `RunInternal` (`serve`, `tunnel`, `maintain`, `database-worker`, `node`, `helper` — `--dev` refuses any non-internal command). All public CLI operations support `--json` and `devbase schema`, forbid plaintext secrets in `argv`, and require explicit `--yes` or `--confirm`/`--fingerprint` flags for destructive actions. See [docs/cli.md](docs/cli.md).
+  - `cmd/devmgr/`: Unshipped developer test harness for headless verification (`scripts/verify-native-release.py`), fixtures, and diagnostics via `devcli.Run`.
 - **Inspector & System Packages**:
   - `internal/launchd/`: Native macOS launchd job discovery, property list parsing, and lifecycle control.
   - `internal/service/`: High-level service abstractions across background daemons.

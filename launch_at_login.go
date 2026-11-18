@@ -1,28 +1,18 @@
 package main
 
 import (
-	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
-
-	"howett.net/plist"
-
 	"devbase/internal/launchd"
 	"devbase/internal/system"
 )
 
-const loginAgentLabel = "xyz.jyeu.devbase.login"
+const loginAgentLabel = launchd.LoginAgentLabel
 
 func loginAgentPlistPath(dir string) string {
-	if dir == "" {
-		return ""
-	}
-	return filepath.Join(dir, loginAgentLabel+".plist")
+	return launchd.LoginAgentPlistPath(dir)
 }
 
 func loginAgentTarget() string {
-	return fmt.Sprintf("gui/%d/%s", os.Getuid(), loginAgentLabel)
+	return launchd.LoginAgentTarget()
 }
 
 func runLaunchctl(args ...string) error {
@@ -32,110 +22,19 @@ func runLaunchctl(args ...string) error {
 
 // resolveLoginExecutable returns the binary path recorded in the login LaunchAgent.
 func resolveLoginExecutable(appPath, override string) (string, error) {
-	if override != "" {
-		if !filepath.IsAbs(override) {
-			return "", errors.New("executable path must be absolute")
-		}
-		return override, nil
-	}
-	if appPath != "" {
-		if data, err := os.ReadFile(filepath.Join(appPath, "Contents", "Info.plist")); err == nil {
-			var info struct {
-				Executable string `plist:"CFBundleExecutable"`
-			}
-			if _, err := plist.Unmarshal(data, &info); err == nil && info.Executable != "" {
-				candidate := filepath.Join(appPath, "Contents", "MacOS", info.Executable)
-				if st, err := os.Stat(candidate); err == nil && st.Mode().IsRegular() {
-					return candidate, nil
-				}
-			}
-		}
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil && resolved != "" {
-		exe = resolved
-	}
-	if !filepath.IsAbs(exe) {
-		return "", errors.New("executable path must be absolute")
-	}
-	return exe, nil
+	return launchd.ResolveLoginExecutable(appPath, override)
 }
 
 func launchAtLoginEnabled(dir string) bool {
-	path := loginAgentPlistPath(dir)
-	if path == "" {
-		return false
-	}
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular()
+	return launchd.LaunchAtLoginEnabled(dir)
 }
 
 func enableLaunchAtLogin(dir, exe string, runner func(...string) error) error {
-	path := loginAgentPlistPath(dir)
-	if path == "" {
-		return errors.New("login agent directory is not configured")
-	}
-	if exe == "" || !filepath.IsAbs(exe) {
-		return errors.New("executable path must be absolute")
-	}
-	spec := launchd.Spec{
-		Label:     loginAgentLabel,
-		Args:      []string{exe, "--background"},
-		RunAtLoad: true,
-	}
-	data, err := spec.Marshal(nil)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".devbase-login-*.plist")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpPath, 0o644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return err
-	}
-	cleanup = false
-	if runner != nil {
-		_ = runner("enable", loginAgentTarget())
-	}
-	return nil
+	return launchd.EnableLaunchAtLogin(dir, exe, runner)
 }
 
 func disableLaunchAtLogin(dir string, runner func(...string) error) error {
-	path := loginAgentPlistPath(dir)
-	if path == "" {
-		return errors.New("login agent directory is not configured")
-	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if runner != nil {
-		_ = runner("bootout", loginAgentTarget())
-	}
-	return nil
+	return launchd.DisableLaunchAtLogin(dir, runner)
 }
 
 func (a *app) setLaunchAtLogin(enabled bool) {

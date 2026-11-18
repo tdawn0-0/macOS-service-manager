@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"devbase/internal/brew"
+	"devbase/internal/devcli"
 	"devbase/internal/devplatform"
 	"devbase/internal/launchd"
 	"devbase/internal/loginitem"
@@ -193,6 +194,9 @@ type app struct {
 	loginBusy      bool
 	loginProgram   string
 	loginRunner    func(...string) error
+	cliBinDir      string
+	cliStatus      devcli.CLIInstallStatus
+	cliBusy        bool
 }
 
 func (a *app) pickPaths(opts mygo.OpenDialogOptions) ([]string, error) {
@@ -213,6 +217,7 @@ func newApp() *app {
 	}, login, launchd.UserAgents().Dir)
 	a.nav = "development"
 	a.loginRunner = runLaunchctl
+	a.cliBinDir = devcli.DefaultCLIBinDir()
 	return a
 }
 
@@ -222,6 +227,7 @@ func newAppWith(providers map[service.Source]service.Provider, adder interface{ 
 		adder:         adder,
 		agentDir:      agentDir,
 		loginAgentDir: agentDir,
+		cliBinDir:     filepath.Join(agentDir, "bin"),
 		spawn:         func(f func()) { go f() },
 		showGuide:     func() {},
 		hideGuide:     func() {},

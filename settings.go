@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"devbase/internal/devcli"
 	"devbase/internal/devplatform"
 	"devbase/internal/privhelper"
 	"devbase/internal/service"
@@ -38,6 +39,7 @@ func (a *app) refreshSettings() {
 	mgr := a.devManager()
 	root := mgr.Root
 	loginDir := a.loginAgentDir
+	cliDir, appPath, cliProg := a.cliBinDir, a.appPath, a.loginProgram
 	a.spawn(func() {
 		st := privhelper.Default().Status()
 		needsAccess := false
@@ -49,6 +51,7 @@ func (a *app) refreshSettings() {
 		}
 		cacheInfo, _ := mgr.DownloadCacheInfo()
 		loginEnabled := launchAtLoginEnabled(loginDir)
+		cliStatus := devcli.CLIStatus(cliDir, appPath, cliProg)
 		a.post(func() {
 			a.settingsBusy = false
 			a.settingsLoaded = true
@@ -57,6 +60,7 @@ func (a *app) refreshSettings() {
 			a.workspaceRoot = root
 			a.cacheInfo = cacheInfo
 			a.loginAtLogin = loginEnabled
+			a.cliStatus = cliStatus
 		})
 	})
 }
@@ -205,6 +209,50 @@ func (a *app) runUninstallHelper() {
 				return
 			}
 			a.toast("Privileged helper removed")
+		})
+	})
+}
+
+func (a *app) installCLI() {
+	if a.cliBusy {
+		return
+	}
+	dir, appPath, prog := a.cliBinDir, a.appPath, a.loginProgram
+	a.cliBusy = true
+	a.spawn(func() {
+		st, err := devcli.InstallCLIWrapper(dir, appPath, prog)
+		if err != nil {
+			st = devcli.CLIStatus(dir, appPath, prog)
+		}
+		a.post(func() {
+			a.cliBusy = false
+			a.cliStatus = st
+			if err != nil {
+				a.toast("Could not install devbase CLI: %s", err)
+				return
+			}
+			a.toast("Installed devbase CLI at %s", st.WrapperPath)
+		})
+	})
+}
+
+func (a *app) uninstallCLI() {
+	if a.cliBusy {
+		return
+	}
+	dir, appPath, prog := a.cliBinDir, a.appPath, a.loginProgram
+	a.cliBusy = true
+	a.spawn(func() {
+		err := devcli.UninstallCLIWrapper(dir)
+		st := devcli.CLIStatus(dir, appPath, prog)
+		a.post(func() {
+			a.cliBusy = false
+			a.cliStatus = st
+			if err != nil {
+				a.toast("Could not remove devbase CLI: %s", err)
+				return
+			}
+			a.toast("Removed devbase CLI")
 		})
 	})
 }

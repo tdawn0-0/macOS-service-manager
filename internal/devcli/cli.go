@@ -36,7 +36,8 @@ func RunInternal(ctx context.Context, args []string, out io.Writer) error {
 }
 
 // Run is every command, for tests and the verification scripts through
-// cmd/devmgr. It is not shipped in the app and not a maintained interface.
+// cmd/devmgr. It preserves exact output contracts expected by
+// scripts/verify-native-release.py and internal helpers.
 func Run(ctx context.Context, args []string, out io.Writer) error {
 	m := devplatform.New(devplatform.DefaultRoot())
 	m.Event = func(s string) { fmt.Fprintln(out, s) }
@@ -125,8 +126,103 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		return m.Install(ctx, p)
 	case "helper":
 		return runHelper(ctx, args[1:])
+	default:
+		env := DefaultEnv(os.Stdin, out, out)
+		return RunCLIWithEnv(ctx, args, env)
 	}
-	return fmt.Errorf("unknown command %q", args[0])
+}
+
+func wantsJSONFlag(args []string) bool {
+	jsonOut := false
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		if a == "--json" || a == "--json=true" {
+			jsonOut = true
+		} else if a == "--json=false" {
+			jsonOut = false
+		}
+	}
+	return jsonOut
+}
+
+// RunCLI runs the public Devbase CLI and returns process exit code 0, 1, or 2.
+func RunCLI(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
+	env := DefaultEnv(in, out, errOut)
+	env.JSON = wantsJSONFlag(args)
+	if err := RunCLIWithEnv(ctx, args, env); err != nil {
+		writeActionError(env, err)
+		var ec interface{ ExitCode() int }
+		if errors.As(err, &ec) {
+			return ec.ExitCode()
+		}
+		return 1
+	}
+	return 0
+}
+
+// RunCLIWithEnv executes the public Devbase CLI against an injectable Env.
+func RunCLIWithEnv(ctx context.Context, args []string, env *Env) error {
+	if env == nil {
+		env = DefaultEnv(nil, nil, nil)
+	}
+	if wantsJSONFlag(args) {
+		env.JSON = true
+	}
+	cleaned, jsonFlag, err := stripGlobalFlags(args)
+	if jsonFlag {
+		env.JSON = true
+	}
+	if err != nil {
+		return err
+	}
+	if len(cleaned) == 0 {
+		cleaned = []string{"help"}
+	}
+	cmd, rest := cleaned[0], cleaned[1:]
+	switch cmd {
+	case "help", "--help", "-h":
+		return runHelpCommand(env, rest)
+	case "version", "--version", "-v":
+		return runVersionCommand(env, rest)
+	case "schema":
+		return runSchemaCommand(env, rest)
+	case "status":
+		return runStatusCommand(ctx, env, rest)
+	case "diagnostics":
+		return runDiagnosticsCommand(ctx, env, rest)
+	case "tasks":
+		return runTasksCommand(ctx, env, rest)
+	case "logs":
+		return runLogsCommand(ctx, env, rest)
+	case "ports":
+		return runPortsCommand(ctx, env, rest)
+	case "shutdown":
+		return runShutdownCommand(ctx, env, rest)
+	case "software":
+		return runSoftwareCommand(ctx, env, rest)
+	case "install":
+		return runSoftwareInstall(ctx, env, rest)
+	case "db", "database":
+		return runDatabaseCommand(ctx, env, rest)
+	case "https", "proxy":
+		return runHTTPSCommand(ctx, env, rest)
+	case "tunnel":
+		return runTunnelCommand(ctx, env, rest)
+	case "ca":
+		return runCACommand(ctx, env, rest)
+	case "services", "service":
+		return runServicesCommand(ctx, env, rest)
+	case "settings":
+		return runSettingsCommand(ctx, env, rest)
+	case "log-rotation":
+		return runSettingsLogRotation(ctx, env, rest)
+	case "cli":
+		return runCLICommand(ctx, env, rest)
+	default:
+		return usageErrorf("unknown command %q (run \"devbase help\" or \"devbase schema --json\")", cmd)
+	}
 }
 
 func runHelper(ctx context.Context, args []string) error {

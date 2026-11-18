@@ -591,3 +591,43 @@ func TestABrokenJobFileIsListedAsInvalid(t *testing.T) {
 		t.Errorf("an invalid file counts as running: %d", running)
 	}
 }
+
+func TestSidebarInspectorSectionAndKeyboardShortcuts(t *testing.T) {
+	h := newHarness(t)
+	h.a.dev.loaded = true
+	h.wantText("Inspector", "All Items", "Workspace", "Software", "Databases", "HTTPS")
+
+	// Selecting an item opens the inspector; Cmd+1/2/3 clears it and switches workspace tabs.
+	h.click("postgresql")
+	if h.a.chosen.Len() != 1 {
+		t.Fatalf("expected item selected, got %d", h.a.chosen.Len())
+	}
+
+	h.a.dev.diagnosticsOpen = true
+	h.a.dev.operationsOpen = true
+	h.tt.Key(ui.Cmd, ui.Key2)
+	h.tt.Frame()
+	if h.a.nav != navDevelopment || h.a.dev.tab != devTabDatabases || h.a.chosen.Len() != 0 || h.a.dev.diagnosticsOpen || h.a.dev.operationsOpen {
+		t.Fatalf("Cmd+2 state mismatch: nav=%q tab=%d chosen=%d diag=%v ops=%v", h.a.nav, h.a.dev.tab, h.a.chosen.Len(), h.a.dev.diagnosticsOpen, h.a.dev.operationsOpen)
+	}
+
+	h.tt.Key(ui.Cmd, ui.Key3)
+	h.tt.Frame()
+	if h.a.nav != navDevelopment || h.a.dev.tab != devTabHTTPS {
+		t.Fatalf("Cmd+3 state mismatch: nav=%q tab=%d", h.a.nav, h.a.dev.tab)
+	}
+
+	h.tt.Key(ui.Cmd, ui.Key1)
+	h.tt.Frame()
+	if h.a.nav != navDevelopment || h.a.dev.tab != devTabSoftware {
+		t.Fatalf("Cmd+1 state mismatch: nav=%q tab=%d", h.a.nav, h.a.dev.tab)
+	}
+
+	// Cmd+, opens Settings and refreshes settings state.
+	h.a.settingsLoaded = false
+	h.tt.Key(ui.Cmd, ui.KeyComma)
+	h.tt.Frame()
+	if h.a.nav != navSettings || !h.a.settingsLoaded {
+		t.Fatalf("Cmd+, state mismatch: nav=%q settingsLoaded=%v", h.a.nav, h.a.settingsLoaded)
+	}
+}

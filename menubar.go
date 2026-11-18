@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -84,6 +86,23 @@ func (a *app) panelRunning() int {
 	return running
 }
 
+// panelFailed counts workspace resources currently in a Failed state.
+func (a *app) panelFailed() int {
+	failed := 0
+	for id := range a.dev.state.Instances {
+		if a.dev.statuses["instance:"+id] == "Failed" {
+			failed++
+		}
+	}
+	if a.dev.statuses["proxy"] == "Failed" {
+		failed++
+	}
+	if a.dev.statuses["tunnel"] == "Failed" {
+		failed++
+	}
+	return failed
+}
+
 // menubarView builds the panel. It takes the height of what it shows, up to
 // panelMaxHeight, beyond which its middle scrolls.
 func (a *app) menubarView(c *ui.Context, openWindow func()) {
@@ -128,12 +147,18 @@ func (a *app) panelHeader(c *ui.Context) {
 			ui.Text(c, "Devbase").FontSize(14).FontWeight(500).SingleLine()
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 				running := a.panelRunning()
+				failed := a.panelFailed()
 				status := "Stopped"
+				summary := fmt.Sprintf("%d running", running)
 				if running > 0 {
 					status = "Running"
 				}
+				if failed > 0 {
+					status = "Failed"
+					summary = fmt.Sprintf("%d running · %d failed", running, failed)
+				}
 				devStatusDot(c, status)
-				ui.Text(c, fmt.Sprintf("%d running", running)).TextColor(tk.TextDescription).FontSize(textCaption).SingleLine()
+				ui.Text(c, summary).TextColor(tk.TextDescription).FontSize(textCaption).SingleLine()
 			})
 		})
 		if a.loading() || a.dev.busy {
@@ -231,17 +256,41 @@ func panelRow(c *ui.Context, key string, lead func(), title, sub, openLabel stri
 // hover.
 func (a *app) panelDatabases(c *ui.Context, openWindow func()) {
 	d := &a.dev
-	running := 0
-	for id := range d.state.Instances {
+	var runningIDs []string
+	for _, id := range sortedKeys(d.state.Instances) {
 		if s := d.statuses["instance:"+id]; s == "Running" || s == "Healthy" {
-			running++
+			runningIDs = append(runningIDs, id)
 		}
 	}
+	running := len(runningIDs)
 	count := ""
 	if n := len(d.state.Instances); n > 0 {
 		count = fmt.Sprintf("%d/%d", running, n)
 	}
-	if !a.panelSection(c, "databases", "Databases", count, false, nil) {
+	var extra func()
+	if running > 0 {
+		extra = func() {
+			if btn(c, "Stop all", nil, btnText).Disabled(d.busy || a.databaseTasksRunning() || a.quit.open).Clicked() {
+				ids := slices.Clone(runningIDs)
+				a.devTask(func(m *devplatform.Manager) (string, error) {
+					var errs []string
+					stopped := 0
+					for _, id := range ids {
+						if err := m.InstanceAction(m.Context, id, "stop"); err != nil {
+							errs = append(errs, id+": "+err.Error())
+						} else {
+							stopped++
+						}
+					}
+					if len(errs) > 0 {
+						return fmt.Sprintf("Stopped %d of %d database instances.", stopped, len(ids)), fmt.Errorf("%s", strings.Join(errs, "; "))
+					}
+					return fmt.Sprintf("Stopped %s.", plural(stopped, "database instance")), nil
+				})
+			}
+		}
+	}
+	if !a.panelSection(c, "databases", "Databases", count, false, extra) {
 		return
 	}
 	if len(d.state.Instances) == 0 {
@@ -330,10 +379,10 @@ func (a *app) openInstanceLogs(id string, openWindow func()) {
 }
 
 // openJobLogs opens a background job's log file in Console, or falls back to
-// displaying its bounded log tail in the workspace status drawer.
+// displaying its bounded log tail in the workspace live log drawer and status drawer.
 func (a *app) openJobLogs(jobID, displayLabel string, onFallback func()) {
 	a.devTask(func(m *devplatform.Manager) (string, error) {
-		for _, name := range []string{jobID + ".err.log", jobID + ".log"} {
+		for idx, name := range []string{jobID + ".err.log", jobID + ".log"} {
 			path := filepath.Join(m.Root, "logs", name)
 			info, err := os.Stat(path)
 			if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
@@ -342,14 +391,26 @@ func (a *app) openJobLogs(jobID, displayLabel string, onFallback func()) {
 			if _, err := m.Run(m.Context, "/usr/bin/open", "-a", "Console", path); err != nil {
 				break
 			}
-			a.post(func() { a.toasts = append(a.toasts, "Opened logs for "+displayLabel+" in Console") })
+			a.post(func() {
+				a.setDevLogTarget(jobID, displayLabel, idx)
+				a.toasts = append(a.toasts, "Opened logs for "+displayLabel+" in Console")
+			})
 			return "Opened logs in Console", nil
+		}
+		stream := 0
+		if errInfo, err := os.Stat(filepath.Join(m.Root, "logs", jobID+".err.log")); err != nil || !errInfo.Mode().IsRegular() || errInfo.Size() == 0 {
+			if outInfo, outErr := os.Stat(filepath.Join(m.Root, "logs", jobID+".log")); outErr == nil && outInfo.Mode().IsRegular() && outInfo.Size() > 0 {
+				stream = 1
+			}
 		}
 		a.post(func() {
 			if onFallback != nil {
 				onFallback()
 			}
 			a.dev.showResult = true
+			a.setDevLogTarget(jobID, displayLabel, stream)
+			a.devLog.open = true
+			a.devLog.last = time.Time{}
 		})
 		return m.Logs(jobID)
 	})
@@ -649,12 +710,17 @@ func (m *menubar) update() {
 		return
 	}
 	running := m.a.panelRunning()
+	failed := m.a.panelFailed()
 	title := ""
 	if running > 0 {
 		title = fmt.Sprint(running)
 	}
 	m.tray.SetTitle(title)
-	m.tray.SetToolTip(fmt.Sprintf("Devbase: %d running", running))
+	tip := fmt.Sprintf("Devbase: %d running", running)
+	if failed > 0 {
+		tip = fmt.Sprintf("Devbase: %d running · %d failed", running, failed)
+	}
+	m.tray.SetToolTip(tip)
 }
 
 func (m *menubar) showWindow() {

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -72,6 +74,99 @@ func TestUIMenuBarQuickActions(t *testing.T) {
 		a.openInstanceLogs("one", func() { opened++ })
 		if len(*ran) != 0 || opened != 1 || a.nav != navDevelopment || a.dev.tab != devTabDatabases || !strings.Contains(a.dev.output, "No logs yet") {
 			t.Fatal(*ran, opened, a.nav, a.dev.tab, a.dev.output)
+		}
+		if !a.devLog.open || a.devLog.jobID != "db-one" {
+			t.Fatalf("expected fallback to open live log drawer for db-one, got %+v", a.devLog)
+		}
+	})
+	t.Run("stop-all-databases", func(t *testing.T) {
+		a, root, _ := setup(t)
+		a.dev.state = devplatform.State{
+			SchemaVersion:     devplatform.Schema,
+			Packages:          map[string]devplatform.Package{},
+			ProxyRules:        []devplatform.ProxyRule{},
+			ProxyListenerPort: 443,
+			Instances: map[string]devplatform.Instance{
+				"pg-one":   {ID: "pg-one", Kind: "postgresql", Package: "postgresql@17.11_1-arm64", Port: 5432},
+				"pg-two":   {ID: "pg-two", Kind: "postgresql", Package: "postgresql@17.11_1-arm64", Port: 5433},
+				"pg-three": {ID: "pg-three", Kind: "postgresql", Package: "postgresql@17.11_1-arm64", Port: 5434},
+			},
+		}
+		raw, err := json.MarshalIndent(a.dev.state, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "state.json"), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		a.dev.statuses = map[string]string{
+			"instance:pg-one":   "Running",
+			"instance:pg-two":   "Healthy",
+			"instance:pg-three": "Stopped",
+		}
+		stopped := map[string]bool{}
+		var bootedOut []string
+		a.dev.managerFactory = func() *devplatform.Manager {
+			m := devplatform.New(root)
+			m.Run = func(_ context.Context, name string, args ...string) (string, error) {
+				if name == "launchctl" && len(args) >= 2 {
+					target := args[1]
+					switch args[0] {
+					case "bootout":
+						stopped[target] = true
+						bootedOut = append(bootedOut, target)
+						return "", nil
+					case "print":
+						if stopped[target] || strings.Contains(target, "pg-three") {
+							return "", errors.New("Could not find service")
+						}
+						return "state = running\npid = 0\n", nil
+					}
+				}
+				return "", errors.New("Could not find service")
+			}
+			return m
+		}
+
+		panel := ui.NewTester(func(c *ui.Context) { a.menubarView(c, func() {}) }, 340, a.panelHeight())
+		panel.Frame()
+		if !panel.HasText("Stop all") {
+			t.Fatalf("expected Stop all button when databases are running: %v", panel.Texts())
+		}
+		if err := panel.Click("Stop all"); err != nil {
+			t.Fatal(err)
+		}
+		panel.Frame()
+		if len(bootedOut) != 2 {
+			t.Fatalf("expected 2 bootout calls for running instances, got %v (out=%q)", bootedOut, a.dev.output)
+		}
+		if panel.HasText("Stop all") {
+			t.Fatalf("expected Stop all hidden once 0 instances running: %v", panel.Texts())
+		}
+	})
+	t.Run("failure-badge-and-no-domains", func(t *testing.T) {
+		a := designFixture(t)
+		a.dev.state.Instances = map[string]devplatform.Instance{
+			"db1": {ID: "db1", Kind: "postgresql", Port: 5432},
+			"db2": {ID: "db2", Kind: "redis", Port: 6379},
+		}
+		a.dev.state.ProxyRules = []devplatform.ProxyRule{{Domain: "hidden-domain.devbase.localhost", LocalPort: 3000}}
+		a.dev.statuses = map[string]string{
+			"instance:db1": "Failed",
+			"instance:db2": "Running",
+			"proxy":        "Failed",
+			"tunnel":       "Running",
+		}
+		if got := a.panelFailed(); got != 2 {
+			t.Fatalf("expected 2 failed resources, got %d", got)
+		}
+		panel := ui.NewTester(func(c *ui.Context) { a.menubarView(c, func() {}) }, 340, a.panelHeight())
+		panel.Frame()
+		if !panel.HasText("2 running · 2 failed") {
+			t.Fatalf("expected header failure badge, got %v", panel.Texts())
+		}
+		if shown := strings.Join(panel.Texts(), " "); strings.Contains(shown, "hidden-domain.devbase.localhost") {
+			t.Fatalf("rule domain leaked into menubar panel text: %s", shown)
 		}
 	})
 	t.Run("panel-text", func(t *testing.T) {

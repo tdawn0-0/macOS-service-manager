@@ -81,6 +81,25 @@ type logState struct {
 	list      ui.ListState
 }
 
+// devLogState holds the workspace live log drawer's target, stream, filter and lines.
+type devLogState struct {
+	open      bool
+	jobID     string
+	title     string
+	stream    int // 0 = .err.log, 1 = .log
+	query     string
+	lines     []string
+	truncated bool
+	missing   bool
+	size      int64
+	mod       time.Time
+	path      string
+	err       string
+	last      time.Time
+	reading   bool
+	list      ui.ListState
+}
+
 // askState is a question before an action with consequences.
 type askState struct {
 	open    bool
@@ -158,6 +177,7 @@ type app struct {
 
 	detail         detailState
 	log            logState
+	devLog         devLogState
 	ask            askState
 	editor         editorState
 	helperStatus   privhelper.HelperStatus
@@ -168,6 +188,11 @@ type app struct {
 	fdaNeedsAccess bool
 	workspaceRoot  string
 	cacheInfo      devplatform.DownloadCacheInfo
+	loginAgentDir  string
+	loginAtLogin   bool
+	loginBusy      bool
+	loginProgram   string
+	loginRunner    func(...string) error
 }
 
 func (a *app) pickPaths(opts mygo.OpenDialogOptions) ([]string, error) {
@@ -187,19 +212,21 @@ func newApp() *app {
 		service.LoginItem:   login,
 	}, login, launchd.UserAgents().Dir)
 	a.nav = "development"
+	a.loginRunner = runLaunchctl
 	return a
 }
 
 func newAppWith(providers map[service.Source]service.Provider, adder interface{ Add(string) error }, agentDir string) *app {
 	a := &app{
-		providers:   providers,
-		adder:       adder,
-		agentDir:    agentDir,
-		spawn:       func(f func()) { go f() },
-		showGuide:   func() {},
-		hideGuide:   func() {},
-		joinGuide:   func() {},
-		redrawGuide: func() {},
+		providers:     providers,
+		adder:         adder,
+		agentDir:      agentDir,
+		loginAgentDir: agentDir,
+		spawn:         func(f func()) { go f() },
+		showGuide:     func() {},
+		hideGuide:     func() {},
+		joinGuide:     func() {},
+		redrawGuide:   func() {},
 		// The window opens with the app, so the Dock icon starts out shown.
 		dockOn:    func(bool) {},
 		dockShown: true,
@@ -230,6 +257,7 @@ func newAppWith(providers map[service.Source]service.Provider, adder interface{ 
 	// as those above what shows arrive.
 	a.list.KeepOffset = true
 	a.log.list.FollowEnd = true
+	a.devLog.list.FollowEnd = true
 	return a
 }
 

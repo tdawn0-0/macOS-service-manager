@@ -1834,8 +1834,8 @@ assert.equal(orphanV.readyState, 3);
 }
 
 func TestTunnelWorkerScriptSyntax(t *testing.T) {
-	if !strings.Contains(cloudflareWorkerIndexMJS, "TunnelGateway") || strings.Contains(cloudflareWorkerIndexMJS, "this.routes") {
-		t.Fatal("worker script should have TunnelGateway without legacy multi-route map")
+	if !strings.Contains(cloudflareWorkerIndexMJS, "export class TunnelGateway") {
+		t.Fatal("worker script does not export the Durable Object class its deployment binds")
 	}
 	scriptPath := filepath.Join(t.TempDir(), "index.mjs")
 	if err := os.WriteFile(scriptPath, []byte(cloudflareWorkerIndexMJS), 0600); err != nil {

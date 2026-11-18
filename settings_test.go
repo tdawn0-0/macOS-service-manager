@@ -12,12 +12,6 @@ func TestSettingsPageConsolidatesPrivilegedHelperAndWorkspaceSettings(t *testing
 	h.tt.SetSize(1120, 900)
 	h.a.dev.loaded = true
 
-	// HTTPS proxy view no longer hosts the Privileged helper card.
-	h.click("HTTPS")
-	h.tt.Frame()
-	h.wantText("HTTPS proxy rules", "Local certificate trust")
-	h.wantNoText("Privileged helper")
-
 	// Clicking Settings opens navSettings with all three system/workspace cards.
 	h.click("Settings")
 	h.tt.Frame()

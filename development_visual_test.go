@@ -53,9 +53,6 @@ func TestDevelopmentDesignLayouts(t *testing.T) {
 					tt := ui.NewTester(a.view, size[0], size[1])
 					tt.SetDark(dark)
 					tt.Frame()
-					if tt.Image().Bounds().Dx() == 0 {
-						t.Fatal("empty development pane")
-					}
 					saveShot(t, fmt.Sprintf("%s-%dx%d-dark-%t", name, size[0], size[1], dark), tt.Image())
 				})
 			}

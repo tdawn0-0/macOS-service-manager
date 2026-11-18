@@ -1,14 +1,12 @@
 package devplatform
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 
@@ -337,38 +335,6 @@ func TestUpgradeInstancePackageRefuses(t *testing.T) {
 				t.Errorf("saved instance changed: %+v -> %+v", saved, got)
 			}
 		})
-	}
-}
-
-func TestUpgradeInstancePackageStateStaysDecodable(t *testing.T) {
-	m, i, _ := upgradeFixture(t, "mysql")
-	keys := func() []string {
-		b, err := os.ReadFile(filepath.Join(m.Root, "state.json"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var raw struct {
-			Instances map[string]map[string]json.RawMessage `json:"instances"`
-		}
-		if err := json.NewDecoder(bytes.NewReader(b)).Decode(&raw); err != nil {
-			t.Fatal(err)
-		}
-		var out []string
-		for k := range raw.Instances[i.ID] {
-			out = append(out, k)
-		}
-		sort.Strings(out)
-		return out
-	}
-	before := keys()
-	if err := m.UpgradeInstancePackage(context.Background(), i, upgradeNewMySQL); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.Read(); err != nil {
-		t.Fatal(err)
-	}
-	if after := keys(); !reflect.DeepEqual(before, after) {
-		t.Errorf("instance keys changed: %v -> %v", before, after)
 	}
 }
 

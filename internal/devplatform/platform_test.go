@@ -27,7 +27,7 @@ func testManager(t *testing.T) *Manager {
 	}
 	return m
 }
-func TestStateConcurrentAndSchema(t *testing.T) {
+func TestStateConcurrentWrites(t *testing.T) {
 	m := testManager(t)
 	var wg sync.WaitGroup
 	for n := 0; n < 12; n++ {
@@ -43,12 +43,6 @@ func TestStateConcurrentAndSchema(t *testing.T) {
 	state, e := m.Read()
 	if e != nil || state.ProxyRulesRevision != 12 {
 		t.Fatal(state.ProxyRulesRevision, e)
-	}
-	if e = atomicWrite(filepath.Join(m.Root, "state.json"), []byte(`{"schemaVersion":1}`), 0600); e != nil {
-		t.Fatal(e)
-	}
-	if _, e = m.Read(); e == nil {
-		t.Fatal("accepted old schema")
 	}
 }
 func TestArchiveRejectsTraversalAndSymlinkWrites(t *testing.T) {

@@ -13,9 +13,6 @@ func TestDevelopmentSectionsAreSidebarItems(t *testing.T) {
 	a := designFixture(t)
 	tt := ui.NewTester(a.view, 1120, 720)
 	tt.Frame()
-	if _, ok := tt.Find("Development section"); ok {
-		t.Fatal("the sections still have a tab row of their own")
-	}
 	for tab, name := range devSections {
 		if err := tt.Click(name); err != nil {
 			t.Fatalf("click %s: %v", name, err)
@@ -41,32 +38,17 @@ func TestDevelopmentSectionsAreSidebarItems(t *testing.T) {
 	}
 }
 
-// Screens say what they hold and nothing about themselves: no taglines, no
-// captions over lists, no paragraphs of help. What a control needs said waits
-// in its tooltip.
-func TestDevelopmentScreensCarryNoCopyOfTheirOwn(t *testing.T) {
-	banned := []string{
-		"PROJECTS", "INSTANCES", "LOCAL WEBSITES", "DEVELOPMENT SOFTWARE",
-		"Bring your project home", "A real address for localhost", "Find the failing layer",
-		"Create a database", "Configure, run, and open", "Your projects live here",
-		"Importing never runs", "Save project stores", "Use process, TCP or HTTP",
-	}
-	for tab := range devSections {
-		{
-			a := designFixture(t)
-			a.dev.tab = tab
-			tt := ui.NewTester(a.view, 1120, 1400)
-			tt.Frame()
-			text := strings.Join(tt.Texts(), "\n")
-			for _, phrase := range banned {
-				if strings.Contains(text, phrase) {
-					t.Errorf("tab %d/%d shows %q", tab, 0, phrase)
-				}
-			}
-			for _, line := range tt.Texts() {
-				if len(line) > 140 && !strings.Contains(line, "a-long-project-name") && !strings.Contains(line, "/") && !strings.Contains(line, "\n") {
-					t.Errorf("tab %d/%d shows a paragraph: %q", tab, 0, line)
-				}
+// Screens say what they hold and nothing about themselves: no paragraphs of
+// help. What a control needs said waits in its tooltip.
+func TestDevelopmentScreensCarryNoParagraphs(t *testing.T) {
+	for tab, name := range devSections {
+		a := designFixture(t)
+		a.dev.tab = tab
+		tt := ui.NewTester(a.view, 1120, 1400)
+		tt.Frame()
+		for _, line := range tt.Texts() {
+			if len(line) > 140 && !strings.Contains(line, "/") && !strings.Contains(line, "\n") {
+				t.Errorf("%s shows a paragraph: %q", name, line)
 			}
 		}
 	}

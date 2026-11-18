@@ -48,7 +48,6 @@ func TestProxyRulesAtomicSave(t *testing.T) {
 }
 
 func TestProxyRules(t *testing.T) {
-	t.Run("validation-and-atomicity", TestProxyRulesAtomicSave)
 	t.Run("publication", func(t *testing.T) {
 		m := New(t.TempDir())
 		if err := m.ReplaceProxyRules(context.Background(), 0, 8443, []ProxyRule{{Domain: "b.devbase.localhost", LocalPort: 3001}, {Domain: "a.devbase.localhost", LocalPort: 3000}}); err != nil {

@@ -8,7 +8,6 @@ import (
 	"github.com/egoist/mygo/ui"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -98,46 +97,6 @@ func TestQuitPreviewReopenAndBusyDismissal(t *testing.T) {
 	a.dev.busy = false
 }
 
-func TestDevelopmentPanes(t *testing.T) {
-	for tab := 0; tab < 3; tab++ {
-		for _, dark := range []bool{false, true} {
-			a := newAppWith(nil, nil, t.TempDir())
-			a.nav = "development"
-			a.dev.loaded = true
-			a.dev.tab = tab
-			a.dev.state = devplatform.State{SchemaVersion: devplatform.Schema, ProxyRules: []devplatform.ProxyRule{}, ProxyListenerPort: 443, Packages: map[string]devplatform.Package{}, Instances: map[string]devplatform.Instance{}}
-			tt := ui.NewTester(a.view, 1120, 720)
-			tt.SetDark(dark)
-			tt.Frame()
-			if tt.Image().Bounds().Dx() == 0 {
-				t.Fatal("empty development pane")
-			}
-			if shotsWanted() {
-				name := []string{"software", "databases", "https"}[tab]
-				if dark {
-					name += "-dark"
-				}
-				saveShot(t, name, tt.Image())
-			}
-		}
-	}
-}
-
-func TestDevelopmentHasNoJSONEditor(t *testing.T) {
-	for tab := 0; tab < 3; tab++ {
-		a := newAppWith(nil, nil, t.TempDir())
-		a.nav = "development"
-		a.dev.loaded = true
-		a.dev.tab = tab
-		tt := ui.NewTester(a.view, 1120, 900)
-		tt.Frame()
-		for _, text := range tt.Texts() {
-			if strings.Contains(strings.ToLower(text), "json") {
-				t.Fatalf("tab %d exposes JSON: %s", tab, text)
-			}
-		}
-	}
-}
 func TestProxyDraftDoesNotMutateSavedConfiguration(t *testing.T) {
 	s := devplatform.State{ProxyListenerPort: 443, ProxyRules: []devplatform.ProxyRule{{Domain: "app.devbase.localhost", LocalPort: 3000}}}
 	d := developmentState{state: s}

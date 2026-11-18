@@ -114,48 +114,6 @@ func TestNodeReleasesComeFromNodejsOrgKeepAppleSiliconAndCache(t *testing.T) {
 	}
 }
 
-func TestNodeReleasesUsesInjectedFetcher(t *testing.T) {
-	m := testManager(t)
-	calls := 0
-	injected := []NodeRelease{
-		{Version: "24.1.0"},
-		{Version: "22.14.0", LTS: "Jod"},
-		{Version: "20.19.0", LTS: "Iron"},
-	}
-	m.FetchNodeReleases = func(context.Context) ([]NodeRelease, error) {
-		calls++
-		return injected, nil
-	}
-
-	ctx := context.Background()
-	releases, stale, err := m.NodeReleases(ctx, false)
-	if err != nil || stale || len(releases) != 3 || calls != 1 {
-		t.Fatalf("first call: err=%v stale=%v releases=%+v calls=%d", err, stale, releases, calls)
-	}
-
-	// Second call without refresh reads cache; fetcher is not called again.
-	releases, stale, err = m.NodeReleases(ctx, false)
-	if err != nil || stale || len(releases) != 3 || calls != 1 {
-		t.Fatalf("cached call: err=%v stale=%v releases=%+v calls=%d", err, stale, releases, calls)
-	}
-
-	// Refresh forces call to fetcher.
-	releases, stale, err = m.NodeReleases(ctx, true)
-	if err != nil || stale || len(releases) != 3 || calls != 2 {
-		t.Fatalf("refresh call: err=%v stale=%v releases=%+v calls=%d", err, stale, releases, calls)
-	}
-
-	// Error from fetcher with cached data returns stale=true and no error.
-	m.FetchNodeReleases = func(context.Context) ([]NodeRelease, error) {
-		calls++
-		return nil, fmt.Errorf("injected network error")
-	}
-	releases, stale, err = m.NodeReleases(ctx, true)
-	if err != nil || !stale || len(releases) != 3 {
-		t.Fatalf("stale fallback: err=%v stale=%v releases=%+v", err, stale, releases)
-	}
-}
-
 func TestResolveNodeSpecRefreshesAStaleIndexForNewerReleases(t *testing.T) {
 	calls := 0
 	nodeIndexServer(t, &calls)

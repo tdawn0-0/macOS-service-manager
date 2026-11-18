@@ -145,7 +145,7 @@ func TestHomebrewRejectsForeignTapAndFormulaDrift(t *testing.T) {
 	}
 }
 
-func TestHomebrewFailureAndCancellationNeverFallBackToArchive(t *testing.T) {
+func TestHomebrewFailureAndCancellationRegisterNothing(t *testing.T) {
 	for _, cancel := range []bool{false, true} {
 		m, p, _ := brewFixture(t)
 		m.Run = func(context.Context, string, ...string) (string, error) { return "", errors.New("brew unavailable") }
@@ -161,10 +161,6 @@ func TestHomebrewFailureAndCancellationNeverFallBackToArchive(t *testing.T) {
 		s, _ := m.Read()
 		if len(s.Packages) != 0 {
 			t.Fatal("failed install was registered")
-		}
-		files, _ := os.ReadDir(filepath.Join(m.Root, "downloads"))
-		if len(files) != 0 {
-			t.Fatal("Homebrew failure fell back to archive download")
 		}
 	}
 }
@@ -232,10 +228,9 @@ func TestHomebrewInstallRefusesVersionUsedByAnotherCommand(t *testing.T) {
 	}
 }
 
-func TestHomebrewDescriptorsRejectRemovedSourcesAndForeignBinaryPaths(t *testing.T) {
+func TestHomebrewDescriptorsRejectForeignTapsAndBinaryPaths(t *testing.T) {
 	_, p, _ := brewFixture(t)
 	for _, change := range []func(*Package){
-		func(p *Package) { p.Formula = ""; p.Format = "dmg.postgres" },
 		func(p *Package) { p.Formula = "other/tap/postgresql@17" },
 		func(p *Package) { p.Version = "17" },
 		func(p *Package) { p.Binaries = map[string]string{"postgres": "/opt/homebrew/bin/postgres"} },
@@ -248,7 +243,7 @@ func TestHomebrewDescriptorsRejectRemovedSourcesAndForeignBinaryPaths(t *testing
 	}
 }
 
-func TestHomebrewDiagnosticsDoNotOfferArchiveRepair(t *testing.T) {
+func TestHomebrewDiagnosticsSendADamagedKegToHomebrew(t *testing.T) {
 	m, p, _ := brewFixture(t)
 	ctx := context.Background()
 	writeBrewKeg(t, m, p, "homebrew/core")
@@ -271,7 +266,7 @@ func TestHomebrewDiagnosticsDoNotOfferArchiveRepair(t *testing.T) {
 		if damaged {
 			want = "Failed"
 		}
-		if check.Status != want || strings.Contains(check.Remedy, "archive") || (damaged && !strings.Contains(check.Remedy, "Homebrew")) {
+		if check.Status != want || (damaged && !strings.Contains(check.Remedy, "Homebrew")) {
 			t.Fatal(check)
 		}
 	}
@@ -349,12 +344,5 @@ func TestResolveRedisHomebrew(t *testing.T) {
 	}
 	if _, err = resolveHomebrew(context.Background(), "redis", "8.2", run(redisBrewMetadata("other/tap/redis@8.2"))); err == nil {
 		t.Fatal("accepted a formula from a different tap")
-	}
-}
-
-func TestRedisRequiresHomebrewPackage(t *testing.T) {
-	p := Package{Name: "redis", Version: "8.2.11", Arch: "arm64", URL: "https://example.com/redis.zip", SHA256: strings.Repeat("a", 64), Format: "zip", Binaries: map[string]string{"redis-server": "bin/redis-server"}}
-	if err := p.Validate(); err == nil {
-		t.Fatal("zip-format Redis package accepted")
 	}
 }

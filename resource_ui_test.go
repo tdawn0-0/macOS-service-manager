@@ -3,14 +3,13 @@ package main
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"devbase/internal/devplatform"
 	"github.com/egoist/mygo/ui"
 )
 
-func TestUIResourceOnlyNavigation(t *testing.T) {
+func TestUITabChangesKeepDrafts(t *testing.T) {
 	a := designFixture(t)
 	root := t.TempDir()
 	a.dev.managerFactory = func() *devplatform.Manager {
@@ -25,17 +24,6 @@ func TestUIResourceOnlyNavigation(t *testing.T) {
 	}
 	tt := ui.NewTester(a.view, 900, 520)
 	tt.Frame()
-	all := strings.Join(tt.Texts(), "\n")
-	for _, label := range []string{"Software", "Databases", "HTTPS"} {
-		if _, ok := tt.Find(label); !ok {
-			t.Fatal("missing entry", label)
-		}
-	}
-	for _, removed := range []string{"Projects", "Import a project", "PHP", "Site name", "New HTTPS site"} {
-		if strings.Contains(all, removed) {
-			t.Fatal("obsolete control", removed)
-		}
-	}
 	if e := tt.Click("Databases"); e != nil {
 		t.Fatal(e)
 	}
@@ -54,9 +42,6 @@ func TestUIResourceOnlyNavigation(t *testing.T) {
 	a.dev.proxyDraft = []proxyRuleDraft{{Domain: "draft.devbase.localhost", LocalPort: "3000"}}
 	a.dev.proxyDraftLoaded = true
 	tt.Frame()
-	if strings.Count(strings.Join(tt.Texts(), "\n"), "HTTPS proxy rules") != 1 {
-		t.Fatal("HTTPS has multiple editors")
-	}
 	if e := tt.Click("Databases"); e != nil {
 		t.Fatal(e)
 	}

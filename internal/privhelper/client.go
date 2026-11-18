@@ -65,10 +65,13 @@ func appBundleForExecutable(exe string) string {
 
 // ClientConfig configures a privileged helper RPC client.
 type ClientConfig struct {
-	SocketPath         string
-	PlistPath          string
-	HelperDir          string
-	Expected           BinaryInfo
+	SocketPath string
+	PlistPath  string
+	HelperDir  string
+	Expected   BinaryInfo
+	// RunAdmin runs a command as root after macOS asks for the
+	// administrator's password; it installs and removes the helper. Tests
+	// set it; it defaults to osascript.
 	RunAdmin           func(name string, args ...string) (string, error)
 	HealthTimeout      time.Duration
 	HealthPollInterval time.Duration
@@ -136,7 +139,7 @@ func NewClient(cfg ClientConfig) *Client {
 		cfg.HelperDir = HelperDir
 	}
 	if cfg.RunAdmin == nil {
-		cfg.RunAdmin = system.RunAdmin
+		cfg.RunAdmin = runAdmin
 	}
 	if cfg.HealthTimeout <= 0 {
 		cfg.HealthTimeout = 8 * time.Second
@@ -214,7 +217,7 @@ func (c *Client) Status() HelperStatus {
 		if errors.Is(err, os.ErrNotExist) {
 			return HelperStatus{
 				State:   StateNotInstalled,
-				Message: "Not installed. Install once to avoid repeated administrator password prompts.",
+				Message: "Not installed. Root operations need it; installing asks for your administrator password once.",
 			}
 		}
 		return HelperStatus{
@@ -263,7 +266,7 @@ func (c *Client) Status() HelperStatus {
 
 	return HelperStatus{
 		State:   StateInstalled,
-		Message: "Installed. Root operations run without password prompts.",
+		Message: "Installed. Root operations run through it without password prompts.",
 	}
 }
 

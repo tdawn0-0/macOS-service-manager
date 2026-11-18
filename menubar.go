@@ -28,7 +28,7 @@ var menubarIcon []byte
 // without opening the window. The workspace's own resources come first:
 // database instances and the HTTPS proxy. Below them are the services the
 // user runs by hand, in sections that fold. System agents and daemons are
-// left out: their changes affect the machine, and daemons ask for a password.
+// left out: their changes affect the whole machine, and daemons run as root.
 type menubar struct {
 	a     *app
 	win   *mygo.Window // the main window

@@ -12,11 +12,13 @@
 
 - **Root Desktop App**:
   - `main.go`, `app.go`: Application lifecycle, window creation, menu bar initialization, and main loop.
+  - `editor.go`: The launchd job form's state, validation and saving (drawn by `view_editor.go`).
+  - `settings.go`: Privileged helper install, reinstall and removal, and the Settings page's actions (drawn by `view_settings.go`).
   - `menubar.go`: Native menu bar panel: database instance rows, the HTTPS proxy switch, the Cloudflare tunnel switch (shown once a tunnel is configured), and status readouts.
   - `ui_kit.go`: Immediate-mode UI layout components, typography helpers, and color primitives.
   - `view_*.go`: Immediate-mode views. Development workspace: `view_development.go` (shell), `view_software.go`, `view_java.go`, `view_additional_runtimes.go`, `view_runtime_terminal.go`, `view_package_*.go`, `view_databases.go`, `view_database_*.go`, `view_instance_deletion.go`, `view_https_proxy.go` (rules, proxy and Cloudflare tunnel cards), `view_proxy_activation.go`, `view_authority.go` (local CA), `view_diagnostics.go`, `view_ports.go`, `view_operations.go`, `view_quit.go`, `view_settings.go`. System-service inspector: `view.go`, `view_detail.go`, `view_editor.go`, `view_status.go`.
   - `guide.go`, `theme.go`, `icons.go`: First-run guide, theme tokens, and embedded Lucide icons.
-  - `*_test.go`: End-to-end desktop and UI lifecycle test suites.
+  - `*_test.go`: End-to-end desktop and UI lifecycle test suites, one file per feature. `main_test.go` holds the inspector harness (`newHarness`, `fake`) and the list and detail tests; `editor_test.go`, `guide_test.go`, `menubar_test.go` and `settings_test.go` cover those features.
 - **`internal/devplatform/`**:
   - Software catalog, installation, health checks, and repairs for supported runtimes: Node.js, JetBrains JDKs, `uv` Python, MySQL, Homebrew PostgreSQL (16/17/18), Redis, and MongoDB.
   - Database instance orchestration, port allocation, isolated runtimes, connection profiles, backups, and restores.
@@ -33,8 +35,8 @@
   - `internal/brew/`: Homebrew formula/keg detection and inventory helpers.
   - `internal/loginitem/`: macOS Login Items inspection and user preference queries.
   - `internal/logs/`: Bounded tail reads of log files (`Stat`, `Tail`), used by the log viewer.
-  - `internal/system/`: OS utilities, command execution, and privileged `osascript` authorization (`system.RunAdmin`, replaceable in tests).
-  - `internal/privhelper/`: Privileged helper that every root operation goes through (privileged proxy listeners, system daemons, root Homebrew services); there is no fallback to a per-action password prompt. The app offers to install it when first needed, or from Settings. It serves only the Devbase build it was installed from, running as the installing user.
+  - `internal/system/`: OS utilities and command execution (`system.Run`, replaceable in tests).
+  - `internal/privhelper/`: Privileged helper that every root operation goes through (privileged proxy listeners, system daemons, root Homebrew services); there is no fallback to a per-action password prompt. Only installing or removing the helper asks for the administrator password, through its unexported `runAdmin` (tests set `ClientConfig.RunAdmin`), so no other package can reach a password prompt. The app offers to install it when first needed, or from Settings. It serves only the Devbase build it was installed from, running as the installing user.
 
 ## 3. Verification Gates (Run Before Finishing Code Changes)
 
@@ -65,7 +67,7 @@ go test ./internal/system ./internal/logs
   - **NEVER** mutate host `/etc/hosts` directly in tests.
   - **NEVER** modify the user login keychain or install real local CA trust anchors during tests.
   - **NEVER** write into `~/Library/Java/JavaVirtualMachines` or real user `~/Library/LaunchAgents`.
-  - Always isolate tests using `t.TempDir()`, configure `MSM_DEV_HOME`, and mock `system.RunAdmin` or `Manager.Run`.
+  - Always isolate tests using `t.TempDir()`, configure `MSM_DEV_HOME`, and mock `system.Run` or `Manager.Run`.
 - **Documentation Screenshot Environment Variable**:
   - **NEVER** set `MSM_SHOTS` during standard test runs.
   - Set it only when deliberately regenerating screenshots, to a directory under the ignored `build/` directory; each test writes to `$MSM_SHOTS/<test name>/` via `saveShot` (`shots_test.go`). Commit an image only when a document links to it.

@@ -12,8 +12,6 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-
-	"devbase/internal/system"
 )
 
 func TestInspectPortShowsRealListenerWithReadOnlyArguments(t *testing.T) {
@@ -88,12 +86,6 @@ func TestSocketProxyConflictFailsBeforeStoppingOrAuthorizing(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer l.Close()
-	oldAdmin := system.RunAdmin
-	t.Cleanup(func() { system.RunAdmin = oldAdmin })
-	system.RunAdmin = func(string, ...string) (string, error) {
-		t.Fatal("conflict requested administrator authorization")
-		return "", nil
-	}
 	m.Run = func(_ context.Context, name string, args ...string) (string, error) {
 		if filepath.Base(name) == "launchctl" && len(args) > 0 && args[0] == "print" {
 			return "", errors.New("Could not find service")
@@ -224,12 +216,6 @@ func TestPrivilegedSocketProxyPreflightDetectsOccupiedPortBeforeAuthorizing(t *t
 	m := testManager(t)
 	m.listenLoopback = func(int) (io.Closer, error) {
 		return nil, syscall.EACCES
-	}
-	oldAdmin := system.RunAdmin
-	t.Cleanup(func() { system.RunAdmin = oldAdmin })
-	system.RunAdmin = func(string, ...string) (string, error) {
-		t.Fatal("conflict requested administrator authorization")
-		return "", nil
 	}
 	m.Run = func(_ context.Context, name string, args ...string) (string, error) {
 		if filepath.Base(name) == "launchctl" && len(args) > 0 && args[0] == "print" {

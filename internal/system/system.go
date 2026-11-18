@@ -24,14 +24,9 @@ func init() {
 	_ = os.Setenv("PATH", strings.TrimPrefix(path, ":"))
 }
 
-const (
-	// commandTimeout bounds a command, so that one that hangs fails rather
-	// than leaving the interface loading for ever.
-	commandTimeout = 2 * time.Minute
-	// adminTimeout bounds a command as root, which waits for the user to
-	// authenticate.
-	adminTimeout = 5 * time.Minute
-)
+// commandTimeout bounds a command, so that one that hangs fails rather than
+// leaving the interface loading for ever.
+const commandTimeout = 2 * time.Minute
 
 // Run runs a command and returns its standard output. It is a variable so
 // that tests can replace it. A command that fails returns an error holding
@@ -39,10 +34,11 @@ const (
 var Run = run
 
 func run(name string, args ...string) (string, error) {
-	return runFor(commandTimeout, name, args...)
+	return RunFor(commandTimeout, name, args...)
 }
 
-func runFor(timeout time.Duration, name string, args ...string) (string, error) {
+// RunFor runs a command like Run, bounded by timeout instead.
+func RunFor(timeout time.Duration, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	var stdout, stderr bytes.Buffer
@@ -63,33 +59,6 @@ func runFor(timeout time.Duration, name string, args ...string) (string, error) 
 		return "", fmt.Errorf("%s: %w", name, err)
 	}
 	return stdout.String(), nil
-}
-
-// RunAdmin runs a command as root, after macOS asks the user to
-// authenticate. It is a variable so that tests can replace it.
-var RunAdmin = runAdmin
-
-// runOsascript runs osascript for runAdmin. It is a variable so that tests
-// can replace it.
-var runOsascript = func(script string) (string, error) {
-	return runFor(adminTimeout, "osascript", "-e", script)
-}
-
-func runAdmin(name string, args ...string) (string, error) {
-	out, err := runOsascript(AdminScript(name, args...))
-	if err != nil && strings.Contains(err.Error(), "User canceled") {
-		return "", fmt.Errorf("authorization canceled")
-	}
-	return out, err
-}
-
-// AdminScript is the AppleScript that runs a command as root.
-func AdminScript(name string, args ...string) string {
-	parts := make([]string, 0, len(args)+1)
-	for _, p := range append([]string{name}, args...) {
-		parts = append(parts, ShellQuote(p))
-	}
-	return "do shell script " + AppleScriptString(strings.Join(parts, " ")) + " with administrator privileges"
 }
 
 // ShellQuote quotes s as one word of a shell command.

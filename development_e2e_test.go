@@ -6,8 +6,6 @@ import (
 	"crypto/x509"
 	"devbase/internal/devplatform"
 	"devbase/internal/service"
-	"devbase/internal/system"
-	"errors"
 	"fmt"
 	"github.com/egoist/mygo/ui"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -56,11 +54,6 @@ func newDevUIHarness(t *testing.T) *devUIHarness {
 }
 func newDevUIHarnessSize(t *testing.T, width, height int, dark bool) *devUIHarness {
 	t.Helper()
-	oldAdmin := system.RunAdmin
-	system.RunAdmin = func(string, ...string) (string, error) {
-		return "", errors.New("privileged operations are disabled in unattended UI tests")
-	}
-	t.Cleanup(func() { system.RunAdmin = oldAdmin })
 	root := t.TempDir()
 	binary, buildErr := sharedDevmgrBinary()
 	if buildErr != nil {

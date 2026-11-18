@@ -26,10 +26,80 @@ func PatchSeries(version string) (series string, patch int, ok bool) {
 	return parts[0] + "." + parts[1], n, true
 }
 
-func upgradableKind(kind string) bool { return kind == "mysql" || kind == "mongodb" }
+func upgradableKind(kind string) bool {
+	switch kind {
+	case "mysql", "mongodb", "postgresql", "redis":
+		return true
+	}
+	return false
+}
+
+func parseBrewRevision(v string) (base string, rev int, ok bool) {
+	b, r, hasRev := strings.Cut(v, "_")
+	if !hasRev {
+		return v, 0, true
+	}
+	if b == "" || r == "" {
+		return "", 0, false
+	}
+	for i := 0; i < len(r); i++ {
+		if r[i] < '0' || r[i] > '9' {
+			return "", 0, false
+		}
+	}
+	n, err := strconv.Atoi(r)
+	if err != nil {
+		return "", 0, false
+	}
+	return b, n, true
+}
+
+func parseUpgradeVersion(kind, version string) (series string, patch, rev int, ok bool) {
+	switch kind {
+	case "mysql", "mongodb":
+		series, patch, ok = PatchSeries(version)
+		return series, patch, 0, ok
+	case "postgresql":
+		base, r, ok := parseBrewRevision(version)
+		if !ok {
+			return "", 0, 0, false
+		}
+		parts := strings.Split(base, ".")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return "", 0, 0, false
+		}
+		for _, p := range parts {
+			for i := 0; i < len(p); i++ {
+				if p[i] < '0' || p[i] > '9' {
+					return "", 0, 0, false
+				}
+			}
+		}
+		if _, err := strconv.Atoi(parts[0]); err != nil {
+			return "", 0, 0, false
+		}
+		minor, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return "", 0, 0, false
+		}
+		return parts[0], minor, r, true
+	case "redis":
+		base, r, ok := parseBrewRevision(version)
+		if !ok {
+			return "", 0, 0, false
+		}
+		series, patch, ok = PatchSeries(base)
+		if !ok {
+			return "", 0, 0, false
+		}
+		return series, patch, r, true
+	default:
+		return "", 0, 0, false
+	}
+}
 
 // UpgradeTargets lists the installed packages an instance could move to:
-// same engine, same architecture, same series, higher patch. Newest first.
+// same engine, same architecture, same series, higher patch or revision. Newest first.
 // It is pure: it reads only s.
 func UpgradeTargets(s State, i Instance) []string {
 	if !upgradableKind(i.Kind) {
@@ -39,26 +109,38 @@ func UpgradeTargets(s State, i Instance) []string {
 	if !ok {
 		return nil
 	}
-	series, patch, ok := PatchSeries(current.Version)
+	series, patch, rev, ok := parseUpgradeVersion(i.Kind, current.Version)
 	if !ok {
 		return nil
 	}
 	type candidate struct {
 		id    string
 		patch int
+		rev   int
 	}
 	var found []candidate
 	for id, p := range s.Packages {
 		if p.Name != i.Kind || p.Arch != current.Arch {
 			continue
 		}
-		candidateSeries, candidatePatch, ok := PatchSeries(p.Version)
-		if !ok || candidateSeries != series || candidatePatch <= patch {
+		candidateSeries, candidatePatch, candidateRev, ok := parseUpgradeVersion(i.Kind, p.Version)
+		if !ok || candidateSeries != series {
 			continue
 		}
-		found = append(found, candidate{id, candidatePatch})
+		if candidatePatch < patch || (candidatePatch == patch && candidateRev <= rev) {
+			continue
+		}
+		found = append(found, candidate{id, candidatePatch, candidateRev})
 	}
-	sort.Slice(found, func(a, b int) bool { return found[a].patch > found[b].patch })
+	sort.Slice(found, func(a, b int) bool {
+		if found[a].patch != found[b].patch {
+			return found[a].patch > found[b].patch
+		}
+		if found[a].rev != found[b].rev {
+			return found[a].rev > found[b].rev
+		}
+		return found[a].id < found[b].id
+	})
 	out := make([]string, 0, len(found))
 	for _, c := range found {
 		out = append(out, c.id)
@@ -267,7 +349,7 @@ func (m *Manager) UpgradeInstancePackage(ctx context.Context, expected Instance,
 		return err
 	}
 	if !upgradableKind(expected.Kind) {
-		return errors.New("patch upgrades are available for MySQL and MongoDB instances only")
+		return errors.New("patch upgrades are available for MySQL, PostgreSQL, Redis, and MongoDB instances only")
 	}
 	unlock, err := m.resourceLeases(ctx, resourceKey{"database instance", expected.ID})
 	if err != nil {
@@ -304,9 +386,16 @@ func (m *Manager) UpgradeInstancePackage(ctx context.Context, expected Instance,
 		if !allowed {
 			return nil, nil, errors.New("choose a newer installed patch release of the same series")
 		}
-		server := "mysqld"
-		if i.Kind == "mongodb" {
+		server := ""
+		switch i.Kind {
+		case "mysql":
+			server = "mysqld"
+		case "mongodb":
 			server = "mongod"
+		case "postgresql":
+			server = "postgres"
+		case "redis":
+			server = "redis-server"
 		}
 		if _, e := m.Binary(s, target, server); e != nil {
 			return nil, nil, e

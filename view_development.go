@@ -96,7 +96,7 @@ type developmentState struct {
 	cancel                                                                                              context.CancelFunc
 	software, version                                                                                   string
 	dbDataDirectory                                                                                     string
-	dbKind, dbID, dbPackage, dbPort, dbName, dbUser, dbPassword, backupPath                             string
+	dbKind, dbID, dbPackage, dbPort, dbName, dbUser, dbPassword, backupPath, restoreDB                  string
 	profileDraft                                                                                        devplatform.ConnectionProfile
 	profileSelected, profileDraftInstance, profilePendingInstance, profilePendingSelect, profileRedisDB string
 	profileOffer                                                                                        *connectionOperationOffer

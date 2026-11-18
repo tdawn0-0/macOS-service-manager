@@ -509,12 +509,13 @@ type TunnelConflict struct {
 // TunnelStatusSnapshot is written atomically by the background tunnel process
 // so the UI and diagnostics can observe live connection state without IPC.
 type TunnelStatusSnapshot struct {
-	PID       int              `json:"pid"`
-	Phase     string           `json:"phase"`
-	Connected int              `json:"connected"`
-	Total     int              `json:"total"`
-	Conflicts []TunnelConflict `json:"conflicts,omitempty"`
-	UpdatedAt time.Time        `json:"updatedAt"`
+	PID          int               `json:"pid"`
+	Phase        string            `json:"phase"`
+	Connected    int               `json:"connected"`
+	Total        int               `json:"total"`
+	Conflicts    []TunnelConflict  `json:"conflicts,omitempty"`
+	WorkerStates map[string]string `json:"workerStates,omitempty"`
+	UpdatedAt    time.Time         `json:"updatedAt"`
 }
 
 func (m *Manager) writeTunnelStatus(status TunnelStatusSnapshot) {

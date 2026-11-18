@@ -11,9 +11,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestUIHTTPSProxyRules(t *testing.T) {
@@ -150,6 +152,10 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 		}
 
 		h.click("HTTPS")
+		tokInfo, tokFound := h.ui.AccessByRole(ui.RoleTextField, "Cloudflare API token")
+		if !tokFound || !tokInfo.Password || !strings.Contains(tokInfo.Description, "Account Workers Scripts Edit") {
+			t.Fatalf("expected password input with permission tooltip, got %+v found=%v", tokInfo, tokFound)
+		}
 		h.fill("Cloudflare API token", "cf-token-ui-0123456789")
 		h.fill("Client ID", "mac-ui")
 		h.click("Save Cloudflare settings")
@@ -157,8 +163,8 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 			t.Fatalf("token status not updated: %v output=%q", h.a.dev.statuses, h.a.dev.output)
 		}
 		state, err := devplatform.New(h.root).Read()
-		if err != nil || state.TunnelClientID != "mac-ui" {
-			t.Fatalf("Cloudflare settings not saved: %+v err=%v output=%q", state, err, h.a.dev.output)
+		if err != nil || state.TunnelClientID != "mac-ui" || state.CloudflareAccountID != "acc-ui-123" || state.CloudflareSubdomain != "ui-test" || len(state.CloudflareZones) != 1 {
+			t.Fatalf("Cloudflare settings/metadata not auto-saved: %+v err=%v output=%q", state, err, h.a.dev.output)
 		}
 
 		h.click("Refresh zones")
@@ -226,7 +232,7 @@ func TestUIHTTPSProxyRules(t *testing.T) {
 			tester := ui.NewTester(a.view, tc.width, tc.height)
 			tester.SetDark(tc.dark)
 			tester.Frame()
-			for _, label := range []string{"HTTPS proxy rules", "Domain", "Local port", "Save HTTPS rules", "Discard changes", "HTTPS proxy service", "Cloudflare tunnel service", "Cloudflare API token", "Save Cloudflare settings", "Deploy Workers", "Refresh zones"} {
+			for _, label := range []string{"HTTPS proxy rules", "Domain", "Local port", "Pick active port 1", "Save HTTPS rules", "Discard changes", "HTTPS proxy service", "Cloudflare tunnel service", "Cloudflare API token", "Save Cloudflare settings", "Deploy Workers", "Refresh zones", "Remove Cloudflare token"} {
 				if _, ok := tester.Find(label); !ok {
 					t.Fatalf("%dx%d %s missing", tc.width, tc.height, label)
 				}
@@ -337,5 +343,146 @@ func TestUIHTTPSSaveAndApplyCopyProtectAndLogs(t *testing.T) {
 	h.click("Open tunnel logs in Console")
 	if len(consoleCalls) != 2 || consoleCalls[0] != "/usr/bin/open -a Console "+proxyLog || consoleCalls[1] != "/usr/bin/open -a Console "+tunnelLog {
 		t.Fatalf("unexpected Console open targets: %v", consoleCalls)
+	}
+}
+
+func waitPostedUntil(t *testing.T, h *devUIHarness, cond func() bool) {
+	t.Helper()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	for !cond() {
+		select {
+		case f := <-h.posted:
+			f()
+			h.ui.Frame()
+		case <-deadline.C:
+			t.Fatalf("timed out waiting for async UI update; output=%q", h.a.dev.output)
+		}
+	}
+}
+
+func TestUIHTTPSCloudflareOfflineSaveAndRemoveToken(t *testing.T) {
+	h := newDevUIHarness(t)
+	origFactory := h.a.dev.managerFactory
+	h.a.dev.managerFactory = func() *devplatform.Manager {
+		m := origFactory()
+		m.CloudflareAPIBase = "http://127.0.0.1:1"
+		return m
+	}
+
+	h.click("HTTPS")
+	if rmInfo, ok := h.ui.Access("Remove Cloudflare token"); !ok || !rmInfo.Disabled {
+		t.Fatalf("expected Remove Cloudflare token disabled initially, got %+v ok=%v", rmInfo, ok)
+	}
+
+	h.fill("Cloudflare API token", "cf-offline-token-0123456789")
+	h.fill("Client ID", "mac-offline")
+	h.click("Save Cloudflare settings")
+
+	if strings.Contains(h.a.dev.output, "Error:") || !strings.Contains(h.a.dev.output, "Saved Cloudflare settings") {
+		t.Fatalf("expected concise non-error output on offline metadata failure, got %q", h.a.dev.output)
+	}
+	if h.a.dev.statuses["tunnel:token"] != "Configured" || !devplatform.New(h.root).HasCloudflareToken() {
+		t.Fatalf("expected saved token kept on offline metadata failure, statuses=%v", h.a.dev.statuses)
+	}
+	if rmInfo, ok := h.ui.Access("Remove Cloudflare token"); !ok || rmInfo.Disabled {
+		t.Fatalf("expected Remove Cloudflare token enabled after save, got %+v ok=%v", rmInfo, ok)
+	}
+
+	// Cancel confirmation preserves token.
+	h.click("Remove Cloudflare token")
+	if !h.a.ask.open {
+		t.Fatal("expected confirmation dialog")
+	}
+	h.click("Cancel")
+	if !devplatform.New(h.root).HasCloudflareToken() {
+		t.Fatal("expected token preserved after cancelling removal")
+	}
+
+	// Confirm removal deletes token and clears state.
+	h.click("Remove Cloudflare token")
+	h.click("Remove Token")
+	if devplatform.New(h.root).HasCloudflareToken() || h.a.dev.statuses["tunnel:token"] == "Configured" {
+		t.Fatalf("expected token removed, statuses=%v output=%q", h.a.dev.statuses, h.a.dev.output)
+	}
+	if rmInfo, ok := h.ui.Access("Remove Cloudflare token"); !ok || !rmInfo.Disabled {
+		t.Fatalf("expected Remove Cloudflare token disabled after removal, got %+v ok=%v", rmInfo, ok)
+	}
+}
+
+func TestUIHTTPSInlineLocalCATrustAndPortPicker(t *testing.T) {
+	h := newDevUIHarnessSize(t, 900, 520, false)
+	fakeUIAuthorityTrust(h)
+	defer devplatform.New(h.root).StopProxy(context.Background())
+
+	// Start a real active local listener for the port picker test.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	listenPort := srv.Listener.Addr().(*net.TCPAddr).Port
+
+	h.click("HTTPS")
+	waitPostedUntil(t, h, func() bool {
+		st := httpsListeningPorts[h.a]
+		return h.a.dev.authorityStatus != nil && st != nil && st.loaded && !st.loading
+	})
+	if !h.ui.HasText("Not created") {
+		t.Fatalf("expected inline 'Not created' CA status tag, got %v", h.ui.Texts())
+	}
+
+	h.click("Add rule")
+	h.fill("Domain", "inline-ca.devbase.localhost")
+
+	pickInfo, pickFound := h.ui.Access("Pick active port 1")
+	if !pickFound || !strings.Contains(pickInfo.Description, "Choose a listening local port") {
+		t.Fatalf("expected Pick active port tooltip, got %+v found=%v", pickInfo, pickFound)
+	}
+
+	// Hover picker to trigger fresh async scan if needed, drain, then open menu and select port.
+	if r, ok := h.ui.Find("Pick active port 1"); ok {
+		h.ui.Move(r.X+r.W/2, r.Y+r.H/2)
+		h.ui.Frame()
+		waitPostedUntil(t, h, func() bool {
+			st := httpsListeningPorts[h.a]
+			return st != nil && st.loaded && !st.loading
+		})
+	}
+	h.click("Pick active port 1")
+	menuItems := h.ui.Menu()
+	var wantItem string
+	prefix := strconv.Itoa(listenPort) + " · "
+	for _, item := range menuItems {
+		if strings.HasPrefix(item, prefix) {
+			wantItem = item
+			break
+		}
+	}
+	if wantItem == "" {
+		t.Fatalf("expected listening port %d in picker menu, got %v", listenPort, menuItems)
+	}
+	if err := h.ui.ChooseMenuItem(wantItem); err != nil {
+		t.Fatal(err)
+	}
+	h.ui.Frame()
+	if h.a.dev.proxyDraft[0].LocalPort != strconv.Itoa(listenPort) {
+		t.Fatalf("expected LocalPort=%d from picker, got %q", listenPort, h.a.dev.proxyDraft[0].LocalPort)
+	}
+
+	proxyPort := freeUIPort(t)
+	h.fill("HTTPS listener port", fmt.Sprint(proxyPort))
+	h.click("Save & apply")
+	if !h.ui.HasText("Not trusted") || !h.ui.HasText("Proxy is running, but the local CA is not trusted yet.") {
+		t.Fatalf("expected inline 'Not trusted' badge and warning hint when proxy runs, texts=%v", h.ui.Texts())
+	}
+
+	h.click("Trust local CA")
+	if !h.ui.HasText("Trusted") || h.ui.HasText("Proxy is running, but the local CA is not trusted yet.") {
+		t.Fatalf("expected inline 'Trusted' badge and hidden warning after Trust local CA, texts=%v", h.ui.Texts())
+	}
+
+	h.click("Remove CA trust")
+	if !h.ui.HasText("Not trusted") || !h.ui.HasText("Proxy is running, but the local CA is not trusted yet.") {
+		t.Fatalf("expected inline 'Not trusted' badge and warning after Remove CA trust, texts=%v", h.ui.Texts())
 	}
 }

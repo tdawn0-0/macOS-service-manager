@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -459,6 +460,70 @@ func (m *Manager) SaveCloudflareSettings(ctx context.Context, apiToken, accountI
 			if err := m.writeCloudflareToken(cleanedToken); err != nil {
 				return err
 			}
+		}
+		return nil
+	})
+}
+
+// RemoveCloudflareSettings stops the background tunnel job if running, optionally
+// deletes deployed devbase-* Workers from Cloudflare, removes proxy/cloudflare.key,
+// and clears saved Cloudflare account metadata in state.json.
+func (m *Manager) RemoveCloudflareSettings(ctx context.Context, deleteWorkers bool) error {
+	if err := m.init(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s, err := m.Read()
+	if err != nil {
+		return err
+	}
+	if err := m.stopJob(ctx, "tunnel"); err != nil {
+		return err
+	}
+	m.writeTunnelStatus(TunnelStatusSnapshot{Phase: "Stopped"})
+
+	if deleteWorkers && len(s.TunnelWorkers) > 0 {
+		token, err := m.ReadCloudflareToken()
+		if err != nil {
+			return fmt.Errorf("read Cloudflare API token to delete Workers: %w", err)
+		}
+		cf := newCloudflareClient(m.CloudflareAPIBase, token)
+		accountID := s.CloudflareAccountID
+		if accountID == "" {
+			accountID, err = cf.discoverAccountID(ctx)
+			if err != nil {
+				return err
+			}
+		}
+		workerNames := make([]string, 0, len(s.TunnelWorkers))
+		for name := range s.TunnelWorkers {
+			workerNames = append(workerNames, name)
+		}
+		sort.Strings(workerNames)
+		for _, name := range workerNames {
+			if err := cf.deleteWorkerScript(ctx, accountID, name); err != nil {
+				return err
+			}
+		}
+	}
+
+	return m.withState(ctx, func(cur *State) error {
+		if err := os.Remove(m.cloudflareTokenPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		cur.CloudflareAccountID = ""
+		cur.CloudflareSubdomain = ""
+		cur.CloudflareZones = nil
+		cur.CloudflareDNS = nil
+		if deleteWorkers {
+			for i := range cur.ProxyRules {
+				if _, ok := cur.TunnelWorkers[cur.ProxyRules[i].ResolvedTunnelWorker()]; ok {
+					cur.ProxyRules[i].TunnelURL = ""
+				}
+			}
+			cur.TunnelWorkers = nil
 		}
 		return nil
 	})

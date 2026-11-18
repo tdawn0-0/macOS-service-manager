@@ -297,3 +297,90 @@ func TestInspectPortRecognizesOwnProxyListener(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePortListenersIgnoresLeadingLsofWarnings(t *testing.T) {
+	raw := "lsof: WARNING: can't stat() smbfs file system /Volumes/.timemachine/host/share\n      Output information may be incomplete.\n      assuming \"dev=36000006\" from mount table\np866\x00cDevbase\x00u501\x00\nf8\x00n127.0.0.1:443\x00\n"
+	got := parsePortListeners(raw)
+	want := []PortListener{{PID: 866, UID: 501, Name: "Devbase", Address: "127.0.0.1:443"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	if empty := parsePortListeners("lsof: WARNING: only warning\n"); len(empty) != 0 {
+		t.Fatalf("expected no listeners from warning-only output, got %+v", empty)
+	}
+}
+
+func TestListeningUserPortsFiltersDeduplicatesAndExcludes(t *testing.T) {
+	uid := os.Getuid()
+	uidStr := strconv.Itoa(uid)
+
+	t.Run("mock-filter-dedup-sort", func(t *testing.T) {
+		m := testManager(t)
+		if err := m.withState(context.Background(), func(s *State) error {
+			s.ProxyListenerPort = 8443
+			s.Instances["pg"] = Instance{ID: "pg", Kind: "postgresql", Package: "postgresql@17", Port: 5432}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		m.Run = func(_ context.Context, name string, args ...string) (string, error) {
+			wantArgs := []string{"-w", "-nP", "-a", "-u", uidStr, "-iTCP", "-sTCP:LISTEN", "+c0", "-F0pcun"}
+			if name != "/usr/sbin/lsof" || !reflect.DeepEqual(args, wantArgs) {
+				t.Fatalf("unexpected lsof call: %s %v", name, args)
+			}
+			return strings.Join([]string{
+				"p101\x00crootd\x00u0\x00\nf4\x00n127.0.0.1:9000\x00",
+				"p202\x00cpriv\x00u" + uidStr + "\x00\nf5\x00n127.0.0.1:443\x00",
+				"p203\x00cproxy\x00u" + uidStr + "\x00\nf6\x00n127.0.0.1:8443\x00",
+				"p204\x00cpostgres\x00u" + uidStr + "\x00\nf7\x00n127.0.0.1:5432\x00",
+				"p301\x00cvite\x00u" + uidStr + "\x00\nf8\x00n127.0.0.1:5173\x00\nf9\x00n[::1]:5173\x00",
+				"p302\x00cnode\x00u" + uidStr + "\x00\nf10\x00n*:3000\x00",
+			}, "\n") + "\n", nil
+		}
+		got, err := m.ListeningUserPorts(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []ListeningPort{
+			{Port: 3000, Process: "node"},
+			{Port: 5173, Process: "vite"},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("empty-exit-1", func(t *testing.T) {
+		m := testManager(t)
+		m.Run = func(context.Context, string, ...string) (string, error) {
+			return "", errors.New("exit status 1")
+		}
+		got, err := m.ListeningUserPorts(context.Background())
+		if err != nil || len(got) != 0 {
+			t.Fatalf("expected empty slice and nil err on exit status 1, got %+v err=%v", got, err)
+		}
+	})
+
+	t.Run("real-listener", func(t *testing.T) {
+		m := testManager(t)
+		l, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer l.Close()
+		port := l.Addr().(*net.TCPAddr).Port
+		got, err := m.ListeningUserPorts(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, p := range got {
+			if p.Port == port && p.Process != "" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("real listener on port %d missing from %+v", port, got)
+		}
+	})
+}

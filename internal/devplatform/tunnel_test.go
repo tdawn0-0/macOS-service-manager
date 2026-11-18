@@ -2097,3 +2097,234 @@ const (
 	tunnelControlPing = "__devbase_ping__"
 	tunnelControlPong = "__devbase_pong__"
 )
+
+func TestRemoveCloudflareSettings(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("keep-workers-stops-tunnel-and-clears-metadata", func(t *testing.T) {
+		m := testManager(t)
+		bootedOut := false
+		printedCount := 0
+		m.Run = func(_ context.Context, name string, args ...string) (string, error) {
+			if name == "launchctl" && len(args) >= 2 {
+				switch args[0] {
+				case "print":
+					printedCount++
+					if printedCount == 1 {
+						return "{\n\tstate = running\n\tpid = 0\n}", nil
+					}
+					return "", errors.New("Could not find service")
+				case "bootout":
+					bootedOut = true
+					return "", nil
+				}
+			}
+			return "", nil
+		}
+		if err := m.SaveCloudflareSettings(ctx, "cf-token-keep-0123456789", "acc-keep-1", "mac-keep"); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.withState(ctx, func(s *State) error {
+			s.CloudflareSubdomain = "keep-dev"
+			s.CloudflareZones = []CloudflareZone{{ID: "z1", Name: "example.com"}}
+			s.CloudflareDNS = []CloudflareDNSRecord{{ID: "r1", ZoneID: "z1", Name: "app.example.com", Type: "CNAME"}}
+			s.ProxyRules = []ProxyRule{{Domain: "app.devbase.localhost", LocalPort: 3000, Tunnel: true, TunnelURL: "https://devbase-app.keep-dev.workers.dev"}}
+			s.TunnelWorkers = map[string]TunnelWorkerState{
+				"devbase-app": {ScriptName: "devbase-app", PublicURL: "https://devbase-app.keep-dev.workers.dev", LocalDomain: "app.devbase.localhost", LocalPort: 3000},
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		m.writeTunnelStatus(TunnelStatusSnapshot{PID: 123, Phase: "Connected", Connected: 1, Total: 1, WorkerStates: map[string]string{"devbase-app": "Connected"}})
+
+		if err := m.RemoveCloudflareSettings(ctx, false); err != nil {
+			t.Fatal(err)
+		}
+		if !bootedOut {
+			t.Fatal("expected running tunnel job to be stopped")
+		}
+		if m.HasCloudflareToken() {
+			t.Fatal("expected cloudflare.key to be removed")
+		}
+		st, ok := m.readTunnelStatus()
+		if !ok || st.Phase != "Stopped" {
+			t.Fatalf("expected Stopped tunnel status, got %+v ok=%v", st, ok)
+		}
+		s, err := m.Read()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.CloudflareAccountID != "" || s.CloudflareSubdomain != "" || len(s.CloudflareZones) != 0 || len(s.CloudflareDNS) != 0 {
+			t.Fatalf("expected Cloudflare metadata cleared, got %+v", s)
+		}
+		if len(s.TunnelWorkers) != 1 || s.ProxyRules[0].TunnelURL == "" {
+			t.Fatalf("expected TunnelWorkers preserved when deleteWorkers=false, got %+v", s)
+		}
+		// Idempotent when cloudflare.key is already missing.
+		if err := m.RemoveCloudflareSettings(ctx, false); err != nil {
+			t.Fatalf("expected idempotent removal, got %v", err)
+		}
+	})
+
+	t.Run("delete-workers-clears-workers-and-handles-api-error", func(t *testing.T) {
+		var mu sync.Mutex
+		var deleted []string
+		failDelete := true
+		cfSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/domains/records"):
+				mu.Lock()
+				shouldFail := failDelete
+				mu.Unlock()
+				if shouldFail {
+					w.WriteHeader(http.StatusInternalServerError)
+					_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "errors": []map[string]any{{"code": 500, "message": "boom"}}})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": []any{}})
+			case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/accounts/acc-del-1/workers/scripts/"):
+				name := strings.TrimPrefix(r.URL.Path, "/accounts/acc-del-1/workers/scripts/")
+				mu.Lock()
+				deleted = append(deleted, name)
+				mu.Unlock()
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": map[string]any{}})
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer cfSrv.Close()
+
+		m := testManager(t)
+		m.CloudflareAPIBase = cfSrv.URL
+		if err := m.SaveCloudflareSettings(ctx, "cf-token-del-0123456789", "acc-del-1", "mac-del"); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.withState(ctx, func(s *State) error {
+			s.CloudflareSubdomain = "del-dev"
+			s.ProxyRules = []ProxyRule{{Domain: "api.devbase.localhost", LocalPort: 3000, Tunnel: true, TunnelURL: "https://devbase-api.del-dev.workers.dev"}}
+			s.TunnelWorkers = map[string]TunnelWorkerState{
+				"devbase-api": {ScriptName: "devbase-api", PublicURL: "https://devbase-api.del-dev.workers.dev", LocalDomain: "api.devbase.localhost", LocalPort: 3000},
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := m.RemoveCloudflareSettings(ctx, true); err == nil {
+			t.Fatal("expected error when worker deletion fails")
+		}
+		if !m.HasCloudflareToken() {
+			t.Fatal("token must be kept when worker deletion fails")
+		}
+
+		mu.Lock()
+		failDelete = false
+		mu.Unlock()
+		if err := m.RemoveCloudflareSettings(ctx, true); err != nil {
+			t.Fatal(err)
+		}
+		mu.Lock()
+		gotDeleted := append([]string(nil), deleted...)
+		mu.Unlock()
+		if len(gotDeleted) != 1 || gotDeleted[0] != "devbase-api" {
+			t.Fatalf("unexpected deleted scripts: %v", gotDeleted)
+		}
+		if m.HasCloudflareToken() {
+			t.Fatal("expected token removed after successful deleteWorkers")
+		}
+		s, err := m.Read()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(s.TunnelWorkers) != 0 || s.ProxyRules[0].TunnelURL != "" || s.CloudflareAccountID != "" {
+			t.Fatalf("expected TunnelWorkers and TunnelURL cleared, got %+v", s)
+		}
+	})
+}
+
+func TestTunnelWorkerStatesAndSnapshot(t *testing.T) {
+	m := testManager(t)
+	ctx := context.Background()
+	secret, err := m.ensureTunnelSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gwOK := newMockGatewayServer(t, secret)
+	gwConflict := newMockGatewayServer(t, secret)
+	gwConflict.claimedOwner = "other-mac"
+
+	pool := x509.NewCertPool()
+	pool.AddCert(gwOK.server.Certificate())
+	pool.AddCert(gwConflict.server.Certificate())
+	m.tunnelTLSConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	m.tunnelPingInterval = 250 * time.Millisecond
+	m.tunnelReadTimeout = 2 * time.Second
+
+	if err := m.SaveCloudflareSettings(ctx, "", "", "mac-ws"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ReplaceProxyRules(ctx, 0, 8443, []ProxyRule{
+		{Domain: "ok.devbase.localhost", LocalPort: 3000, Tunnel: true, TunnelURL: "https://devbase-ok.demo.workers.dev"},
+		{Domain: "dup.devbase.localhost", LocalPort: 3001, Tunnel: true, TunnelURL: "https://devbase-dup.demo.workers.dev"},
+		{Domain: "down.devbase.localhost", LocalPort: 3002, Tunnel: true, TunnelURL: "https://devbase-down.demo.workers.dev"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(m.tunnelConfigPath(), tunnelPublishedConfig{
+		SchemaVersion: 1,
+		ClientID:      "mac-ws",
+		Routes: []TunnelRoute{
+			{WorkerName: "devbase-ok", PublicURL: "https://devbase-ok.demo.workers.dev", ConnectURL: gwOK.server.URL, LocalDomain: "ok.devbase.localhost", LocalPort: 3000},
+			{WorkerName: "devbase-dup", PublicURL: "https://devbase-dup.demo.workers.dev", ConnectURL: gwConflict.server.URL, LocalDomain: "dup.devbase.localhost", LocalPort: 3001},
+			{WorkerName: "devbase-down", PublicURL: "https://devbase-down.demo.workers.dev", ConnectURL: "https://127.0.0.1:1", LocalDomain: "down.devbase.localhost", LocalPort: 3002},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tunnelCtx, tunnelCancel := context.WithCancel(context.Background())
+	tunnelDone := make(chan error, 1)
+	go func() { tunnelDone <- m.ServeTunnel(tunnelCtx) }()
+	defer func() {
+		tunnelCancel()
+		<-tunnelDone
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	var st TunnelStatusSnapshot
+	for time.Now().Before(deadline) {
+		if cur, ok := m.readTunnelStatus(); ok &&
+			cur.WorkerStates["devbase-ok"] == "Connected" &&
+			cur.WorkerStates["devbase-dup"] == "Conflict" &&
+			cur.WorkerStates["devbase-down"] == "Reconnecting" {
+			st = cur
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if st.WorkerStates["devbase-ok"] != "Connected" || st.WorkerStates["devbase-dup"] != "Conflict" || st.WorkerStates["devbase-down"] != "Reconnecting" {
+		cur, _ := m.readTunnelStatus()
+		t.Fatalf("expected WorkerStates Connected/Conflict/Reconnecting, got %+v", cur)
+	}
+
+	m.Run = func(_ context.Context, name string, args ...string) (string, error) {
+		if name == "launchctl" && len(args) >= 2 && args[0] == "print" && strings.HasSuffix(args[1], ".tunnel") {
+			return "{\n\tstate = running\n\tpid = 4242\n}", nil
+		}
+		return "", errors.New("Could not find service")
+	}
+	s, err := m.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := m.Snapshot(ctx, s)
+	if snap.States["tunnel"] != "Running" ||
+		snap.States["tunnel:worker:devbase-ok"] != "Connected" ||
+		snap.States["tunnel:worker:devbase-dup"] != "Conflict" ||
+		snap.States["tunnel:worker:devbase-down"] != "Reconnecting" {
+		t.Fatalf("unexpected Snapshot worker states: %+v", snap.States)
+	}
+}

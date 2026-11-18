@@ -72,6 +72,17 @@ func (a *app) devProxyActivation(c *ui.Context, domain string) {
 			hasTunnelURL = true
 		}
 	}
+	liveTunnelText, liveTunnelStatus := "", ""
+	if savedRule != nil && savedRule.Tunnel && d.statuses["tunnel"] == "Running" {
+		switch d.statuses["tunnel:worker:"+savedRule.ResolvedTunnelWorker()] {
+		case "Connected":
+			liveTunnelText, liveTunnelStatus = "Tunnel connected", "OK"
+		case "Conflict":
+			liveTunnelText, liveTunnelStatus = "Tunnel conflict", "Failed"
+		default:
+			liveTunnelText, liveTunnelStatus = "Tunnel connecting", "Warning"
+		}
+	}
 	tunnelText, tunnelStatus := "", ""
 	if d.tunnelChecking[domain] {
 		tunnelText, tunnelStatus = "Checking tunnel…", "Checking"
@@ -92,6 +103,9 @@ func (a *app) devProxyActivation(c *ui.Context, domain string) {
 		}
 		if httpText != "" {
 			checkTag(c, httpText, httpStatus)
+		}
+		if liveTunnelText != "" {
+			checkTag(c, liveTunnelText, liveTunnelStatus)
 		}
 		if tunnelText != "" {
 			checkTag(c, tunnelText, tunnelStatus)

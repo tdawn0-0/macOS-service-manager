@@ -123,4 +123,39 @@ func TestUIHTTPSActivation(t *testing.T) {
 			t.Fatalf("Check tunnel response button missing: %v", h.ui.Texts())
 		}
 	})
+	t.Run("live-tunnel-status-tags", func(t *testing.T) {
+		a := designFixture(t)
+		a.dev.tab = devTabHTTPS
+		a.dev.state.ProxyRules = []devplatform.ProxyRule{
+			{Domain: "ok.devbase.localhost", LocalPort: 3000, Tunnel: true},
+			{Domain: "dup.devbase.localhost", LocalPort: 3001, Tunnel: true},
+			{Domain: "wait.devbase.localhost", LocalPort: 3002, Tunnel: true},
+			{Domain: "local.devbase.localhost", LocalPort: 3003, Tunnel: false},
+		}
+		a.dev.state.ProxyRulesRevision = 1
+		a.dev.loadProxyDraft(a.dev.state)
+		a.dev.statuses = map[string]string{
+			"tunnel":                     "Running",
+			"tunnel:worker:devbase-ok":   "Connected",
+			"tunnel:worker:devbase-dup":  "Conflict",
+			"tunnel:worker:devbase-wait": "Reconnecting",
+		}
+		tt := ui.NewTester(a.view, 1120, 900)
+		tt.Frame()
+		texts := strings.Join(tt.Texts(), "\n")
+		for _, want := range []string{"Tunnel connected", "Tunnel conflict", "Tunnel connecting"} {
+			if !strings.Contains(texts, want) {
+				t.Fatalf("missing %q in %s", want, texts)
+			}
+		}
+
+		a.dev.statuses["tunnel"] = "Stopped"
+		tt.Frame()
+		texts = strings.Join(tt.Texts(), "\n")
+		for _, unwanted := range []string{"Tunnel connected", "Tunnel conflict", "Tunnel connecting"} {
+			if strings.Contains(texts, unwanted) {
+				t.Fatalf("unexpected %q when tunnel is stopped in %s", unwanted, texts)
+			}
+		}
+	})
 }

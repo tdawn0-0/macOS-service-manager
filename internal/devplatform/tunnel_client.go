@@ -361,19 +361,26 @@ func (s *tunnelSupervisor) buildStatusLocked() TunnelStatusSnapshot {
 	}
 	var connected, connecting, authFailed int
 	var conflicts []TunnelConflict
+	workerStates := make(map[string]string, total)
 	for name := range s.runners {
 		st := s.statuses[name]
 		switch st.phase {
 		case "Connected":
 			if len(st.conflicts) > 0 {
 				conflicts = append(conflicts, st.conflicts...)
+				workerStates[name] = "Conflict"
 			} else {
 				connected++
+				workerStates[name] = "Connected"
 			}
 		case "AuthFailed":
 			authFailed++
+			workerStates[name] = "Reconnecting"
 		case "Connecting":
 			connecting++
+			workerStates[name] = "Reconnecting"
+		default:
+			workerStates[name] = "Reconnecting"
 		}
 	}
 	phase := "Reconnecting"
@@ -386,11 +393,12 @@ func (s *tunnelSupervisor) buildStatusLocked() TunnelStatusSnapshot {
 		phase = "Connecting"
 	}
 	return TunnelStatusSnapshot{
-		PID:       os.Getpid(),
-		Phase:     phase,
-		Connected: connected,
-		Total:     total,
-		Conflicts: conflicts,
+		PID:          os.Getpid(),
+		Phase:        phase,
+		Connected:    connected,
+		Total:        total,
+		Conflicts:    conflicts,
+		WorkerStates: workerStates,
 	}
 }
 

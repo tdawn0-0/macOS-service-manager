@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 
 	"github.com/egoist/mygo"
@@ -18,6 +19,16 @@ import (
 
 // The smallest window the layout fits.
 const minWidth, minHeight = 900, 520
+
+func startHiddenInBackground(args []string) bool {
+	return slices.Contains(args, "--background")
+}
+
+func configureBackgroundLaunch(a *app, background bool) {
+	if background {
+		a.showDockIcon(false)
+	}
+}
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--dev" {
@@ -30,6 +41,7 @@ func main() {
 		return
 	}
 
+	background := startHiddenInBackground(os.Args[1:])
 	a := newApp()
 	// The Dock icon follows the windows: the menu bar carries the app when
 	// they are closed.
@@ -40,6 +52,7 @@ func main() {
 		}
 		mygo.App.Dock.Hide()
 	}
+	configureBackgroundLaunch(a, background)
 	a.copy = mygo.Clipboard.WriteText
 	a.reveal = mygo.Shell.ShowItemInFolder
 	system.Trash = mygo.Shell.TrashItem
@@ -63,6 +76,7 @@ func main() {
 			Height:    720,
 			MinWidth:  minWidth,
 			MinHeight: minHeight,
+			Hidden:    background,
 			// The whole window is frosted glass over the desktop; the
 			// sidebar goes up under the window controls, and the title bar
 			// is the top of each pane.
@@ -73,6 +87,10 @@ func main() {
 			StateKey: "main",
 			Content:  ui.View(a.view),
 		})
+		if background {
+			win.Hide()
+			a.showDockIcon(false)
+		}
 		// The size kept from an older version is restored as it is, even
 		// below the minimum, where the layout does not fit.
 		if width, height := win.Size(); width < minWidth || height < minHeight {

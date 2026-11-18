@@ -37,6 +37,7 @@ func (a *app) refreshSettings() {
 	}
 	mgr := a.devManager()
 	root := mgr.Root
+	loginDir := a.loginAgentDir
 	a.spawn(func() {
 		st := privhelper.Default().Status()
 		needsAccess := false
@@ -47,6 +48,7 @@ func (a *app) refreshSettings() {
 			}
 		}
 		cacheInfo, _ := mgr.DownloadCacheInfo()
+		loginEnabled := launchAtLoginEnabled(loginDir)
 		a.post(func() {
 			a.settingsBusy = false
 			a.settingsLoaded = true
@@ -54,6 +56,7 @@ func (a *app) refreshSettings() {
 			a.fdaNeedsAccess = needsAccess
 			a.workspaceRoot = root
 			a.cacheInfo = cacheInfo
+			a.loginAtLogin = loginEnabled
 		})
 	})
 }

@@ -325,6 +325,7 @@ func (a *app) developmentView(c *ui.Context) {
 				})
 			})
 		}
+		a.devLogDrawer(c)
 		a.devStatusBar(c)
 	})
 }
@@ -395,6 +396,9 @@ func (a *app) devTopBar(c *ui.Context) {
 		if action.ActionIcon(c, icoHistory, action.ActionIconProps{Variant: action.ActionIconBorderless, Size: theme.Small, Title: "Tasks", Active: d.operationsOpen}).Disabled(d.busy).Clicked() {
 			a.openOperations()
 		}
+		if action.ActionIcon(c, icoScroll, action.ActionIconProps{Variant: action.ActionIconBorderless, Size: theme.Small, Title: "Logs", Active: a.devLog.open}).Clicked() {
+			a.toggleDevLogs()
+		}
 		if action.ActionIcon(c, icoStetho, action.ActionIconProps{Variant: action.ActionIconBorderless, Size: theme.Small, Title: "Diagnostics", Active: d.diagnosticsOpen}).Disabled(d.busy).Clicked() {
 			d.operationsOpen = false
 			a.runDevDiagnostics()
@@ -425,6 +429,9 @@ func (a *app) devStatusBar(c *ui.Context) {
 			ui.Text(c, status).FontSize(textSmall).FontWeight(500).TextColor(tk.TextHeading).SingleLine().Shrink(0)
 		}
 		ui.Text(c, resultLine(d.output)).FontSize(textSmall).TextColor(tk.TextDescription).SingleLine().Grow(1).MinWidth(0)
+		if action.Button(c, "Live logs", action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
+			a.toggleDevLogs()
+		}
 		if action.Button(c, "Details", action.ButtonProps{Variant: action.Text, Size: theme.Small}).Clicked() {
 			d.showResult = !d.showResult
 		}

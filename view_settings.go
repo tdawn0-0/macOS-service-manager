@@ -92,6 +92,13 @@ func (a *app) settingsView(c *ui.Context) {
 						}
 						ui.Text(c, "Automatic log rotation").FontSize(textSmall).Grow(1).MinWidth(0)
 					})
+					loginValue := a.loginAtLogin
+					ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+						if choice.Switch(c, &loginValue, choice.SwitchProps{Size: theme.Small}).Label("Start at login in menu bar").Tooltip("Launches Devbase quietly in the menu bar when you sign in").Disabled(a.loginBusy).Changed() {
+							a.setLaunchAtLogin(loginValue)
+						}
+						ui.Text(c, "Start at login in menu bar").FontSize(textSmall).Grow(1).MinWidth(0)
+					})
 					if a.workspaceRoot != "" {
 						devKV(c, "Workspace", a.workspaceRoot)
 					}

@@ -27,11 +27,25 @@ func (a *app) view(c *ui.Context) {
 	if c.Shortcut(ui.Cmd, ui.KeyR) {
 		a.refreshNavigation()
 	}
+	if !a.ask.open && !a.editor.open && !a.quit.open {
+		for tab, key := range []ui.Key{ui.Key1, ui.Key2, ui.Key3} {
+			if c.Shortcut(ui.Cmd, key) {
+				a.openDevTab(tab)
+			}
+		}
+		if c.Shortcut(ui.Cmd, ui.KeyComma) {
+			a.openSettings()
+		}
+	}
 	a.build()
 	a.pruneChosen()
 	a.syncDetail()
 	if a.detail.tab == 1 && len(a.detail.logs) > 0 {
 		a.pollLog()
+		c.After(logEvery)
+	}
+	if a.nav == navDevelopment && a.devLog.open {
+		a.pollDevLog()
 		c.After(logEvery)
 	}
 
@@ -162,7 +176,9 @@ func (a *app) sidebar(c *ui.Context) {
 					})
 				}
 			})
-			navItem(navAll, iconAll, "All Items")
+			ui.SidebarSection(c, "Inspector", nil, func() {
+				navItem(navAll, iconAll, "All Items")
+			})
 			ui.SidebarSection(c, "Apps & Services", nil, func() {
 				for _, src := range []service.Source{service.Brew, service.LoginItem} {
 					navItem(string(src), sourceIcon(src), src.Title())
@@ -184,13 +200,7 @@ func (a *app) sidebar(c *ui.Context) {
 			a.chosen.Clear()
 			a.list.ScrollTo(0, ui.Start)
 			if tab, ok := devNavTab(sel); ok {
-				a.nav = navDevelopment
-				if a.dev.tab != tab {
-					a.dev.tab = tab
-					a.dev.detailScroll[tab].Y = 0
-				}
-				a.dev.diagnosticsOpen = false
-				a.dev.operationsOpen = false
+				a.openDevTab(tab)
 			} else {
 				a.nav = sel
 			}
@@ -210,6 +220,23 @@ func (a *app) sidebar(c *ui.Context) {
 		}
 	})
 	ui.Column(c).Width(1).Background(hairline(t))
+}
+
+func (a *app) openDevTab(tab int) {
+	a.chosen.Clear()
+	a.nav = navDevelopment
+	if a.dev.tab != tab {
+		a.dev.tab = tab
+		a.dev.detailScroll[tab].Y = 0
+	}
+	a.dev.diagnosticsOpen = false
+	a.dev.operationsOpen = false
+}
+
+func (a *app) openSettings() {
+	a.chosen.Clear()
+	a.nav = navSettings
+	a.refreshSettings()
 }
 
 // navTitle is the title of the list for the sidebar's choice.
@@ -308,11 +335,7 @@ func (a *app) helperNote(c *ui.Context) {
 		})
 		ui.Row(c).Wrap().Gap(6).Children(func() {
 			labeledButton(c, iconLock, "Install Privileged Helper…", false).Disabled(a.helperBusy).OnClick(a.installHelper)
-			labeledButton(c, icoSettings, "Open Settings", false).OnClick(func() {
-				a.chosen.Clear()
-				a.nav = navSettings
-				a.refreshSettings()
-			})
+			labeledButton(c, icoSettings, "Open Settings", false).OnClick(a.openSettings)
 		})
 	})
 }

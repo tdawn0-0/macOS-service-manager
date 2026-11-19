@@ -289,7 +289,8 @@ func (a *app) developmentView(c *ui.Context) {
 		d.tab = devTabSoftware
 	}
 	g := glassOf(c.Theme())
-	// The bars and the list lie on the window's frost, the page on a sheet.
+	// The bars and master list sit on the opaque workspace pane; detail views
+	// sit on the stepped sheet surface.
 	ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 		a.devTopBar(c)
 		ui.Column(c).Height(1).Shrink(0).Background(hairline(c.Theme()))

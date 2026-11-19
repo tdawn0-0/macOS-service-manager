@@ -49,16 +49,20 @@ func (a *app) view(c *ui.Context) {
 		c.After(logEvery)
 	}
 
-	// The whole window is frosted glass where the desktop shows through
-	// it; without, the theme's background stands in for the frost.
+	// The left navigation sidebar is transparent over Liquid Glass when active,
+	// while the right-hand workspace paints an opaque plane; otherwise the
+	// sidebar takes its solid fallback fill.
 	t := c.Theme()
 	g := glassOf(t)
-	if c.Vibrancy() {
+	glass := a.sidebarGlass(c)
+	if glass {
 		c.Root().Background(ui.Transparent)
+	} else {
+		c.Root().Background(g.pane)
 	}
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
-		a.sidebar(c)
-		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+		a.sidebar(c, glass)
+		ui.Column(c).Grow(1).MinWidth(0).Background(g.pane).Children(func() {
 			switch a.nav {
 			case navDevelopment:
 				a.developmentView(c)
@@ -122,9 +126,11 @@ func sourceIcon(src service.Source) *ui.SVG {
 	return iconAll
 }
 
-// sidebar has no background over the window's material, where there is one.
-func (a *app) sidebar(c *ui.Context) {
+// sidebar has no background over the window's Liquid Glass when glass is true,
+// and falls back to an opaque fill (plus divider) otherwise.
+func (a *app) sidebar(c *ui.Context, glass bool) {
 	t := c.Theme()
+	g := glassOf(t)
 	navItem := func(id string, icon *ui.SVG, label string) {
 		total, running := a.counts(id)
 		ui.SidebarItem(c, id, icon, label).Children(func() {
@@ -161,8 +167,8 @@ func (a *app) sidebar(c *ui.Context) {
 		devCounts[devTabHTTPS] = fmt.Sprint(n)
 	}
 	column := ui.Column(c).Width(204).Shrink(0)
-	if !c.Vibrancy() {
-		column.Background(t.Surface)
+	if !glass {
+		column.Background(g.sidebarSolid)
 	}
 	column.Children(func() {
 		ui.Row(c).Height(barHeight).Shrink(0).DragWindow()
@@ -219,7 +225,9 @@ func (a *app) sidebar(c *ui.Context) {
 			}
 		}
 	})
-	ui.Column(c).Width(1).Background(hairline(t))
+	if !glass {
+		ui.Column(c).Width(1).Background(hairline(t))
+	}
 }
 
 func (a *app) openDevTab(tab int) {

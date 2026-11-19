@@ -21,42 +21,57 @@ func style(c *ui.Context) {
 // hairline is the color of the thin lines between parts of a window.
 func hairline(t *ui.Theme) ui.Color { return t.Text.Alpha(0.08) }
 
-// glassTone is the window's frosted glass. The desktop shows through the
-// whole window, frosted by the system; the sidebar, the lists and the bars
-// sit right on that frost, the page lies on a translucent sheet over it,
-// and each group of controls on a frosted panel on the sheet. Glass is
-// never laid twice where text has to read.
+// glassTone defines the window's Liquid Glass sidebar + opaque workspace
+// surfaces. The desktop shows through the transparent left navigation sidebar via
+// macOS Liquid Glass (when not in full screen or Reduce Transparency), while
+// the right-hand workspace paints an opaque plane (`pane` / `sheet`) with
+// stepped card surfaces (`panel`) on top.
 type glassTone struct {
-	// sheet is the page's layer over the window's frost.
+	// sidebarSolid fills the sidebar when glass is off (full screen,
+	// Reduce Transparency, or a non-vibrant surface).
+	sidebarSolid ui.Color
+	// pane is the opaque base surface of the workspace beside the sidebar
+	// (title bars, secondary lists, status bar).
+	pane ui.Color
+	// sheet is the opaque surface of scrolling detail pages and inspectors.
 	sheet ui.Color
 	// panel fills a card on the sheet, edge outlines it and lift is its
 	// shadow, none in the dark where depth comes from the steps.
 	panel, edge, lift ui.Color
+	// control fills default outlined buttons on both opaque cards and the
+	// translucent menu bar popover.
+	control ui.Color
 	// inset is a well inside a panel, for one item of a list in it.
 	inset ui.Color
-	// hover and selected are the rows of a list over the frost.
+	// hover and selected are the rows of a list and button hover states.
 	hover, selected ui.Color
 }
 
 func glassOf(t *ui.Theme) glassTone {
 	if t.Dark {
 		return glassTone{
-			sheet:    ui.RGB(16, 16, 18).Alpha(0.42),
-			panel:    ui.RGB(255, 255, 255).Alpha(0.045),
-			edge:     ui.RGB(255, 255, 255).Alpha(0.08),
-			inset:    ui.RGB(255, 255, 255).Alpha(0.04),
-			hover:    ui.RGB(255, 255, 255).Alpha(0.05),
-			selected: ui.RGB(255, 255, 255).Alpha(0.1),
+			sidebarSolid: ui.RGB(26, 26, 29),
+			pane:         ui.RGB(18, 18, 20),
+			sheet:        ui.RGB(14, 14, 16),
+			panel:        ui.RGB(24, 24, 27),
+			control:      ui.RGB(255, 255, 255).Alpha(0.07),
+			edge:         ui.RGB(255, 255, 255).Alpha(0.09),
+			inset:        ui.RGB(255, 255, 255).Alpha(0.045),
+			hover:        ui.RGB(255, 255, 255).Alpha(0.06),
+			selected:     ui.RGB(255, 255, 255).Alpha(0.11),
 		}
 	}
 	return glassTone{
-		sheet:    ui.RGB(255, 255, 255).Alpha(0.38),
-		panel:    ui.RGB(255, 255, 255).Alpha(0.68),
-		edge:     ui.RGB(0, 0, 0).Alpha(0.07),
-		lift:     ui.RGB(0, 0, 0).Alpha(0.04),
-		inset:    ui.RGB(0, 0, 0).Alpha(0.035),
-		hover:    ui.RGB(0, 0, 0).Alpha(0.04),
-		selected: ui.RGB(0, 0, 0).Alpha(0.07),
+		sidebarSolid: ui.RGB(239, 240, 241),
+		pane:         ui.RGB(255, 255, 255),
+		sheet:        ui.RGB(250, 250, 250),
+		panel:        ui.RGB(255, 255, 255),
+		control:      ui.RGB(255, 255, 255).Alpha(0.92),
+		edge:         ui.RGB(0, 0, 0).Alpha(0.08),
+		lift:         ui.RGB(0, 0, 0).Alpha(0.04),
+		inset:        ui.RGB(0, 0, 0).Alpha(0.035),
+		hover:        ui.RGB(0, 0, 0).Alpha(0.045),
+		selected:     ui.RGB(0, 0, 0).Alpha(0.075),
 	}
 }
 
@@ -173,7 +188,7 @@ func labeledButton(c *ui.Context, icon *ui.SVG, label string, primary bool) ui.E
 	})
 	if !primary {
 		g := glassOf(c.Theme())
-		b.Background(g.panel).Border(1, g.edge)
+		b.Background(g.control).Border(1, g.edge)
 		if b.Hovered() && !b.IsDisabled() {
 			b.Background(g.selected)
 		}

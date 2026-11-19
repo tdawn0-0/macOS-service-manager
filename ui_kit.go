@@ -103,10 +103,11 @@ func btn(c *ui.Context, text string, icon *ui.SVG, kind btnKind) ui.Element {
 	}
 	b := ui.ButtonBase(c)
 	action.StyleButton(c, b, "", action.ButtonProps{Variant: variant, Size: theme.Small})
-	// Lobe's outlined buttons are opaque: on glass they take its fill.
+	// Lobe's outlined buttons take the control fill over both opaque cards and
+	// the translucent menu bar popover.
 	if kind == btnDefault || kind == btnDanger {
 		g := glassOf(c.Theme())
-		b.Background(g.panel).Border(1, g.edge)
+		b.Background(g.control).Border(1, g.edge)
 		if b.Hovered() && !b.IsDisabled() {
 			b.Background(g.selected)
 		}

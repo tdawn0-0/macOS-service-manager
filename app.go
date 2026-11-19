@@ -167,6 +167,7 @@ type app struct {
 	toasts      []string        // messages the next frame shows
 	panelOpen   bool            // the menu bar's panel shows, and the toasts with it
 	panelFolded map[string]bool // the sections of the panel folded, by key
+	fullScreen  bool            // the main window is in full screen
 
 	nav     string
 	query   string
@@ -197,6 +198,12 @@ type app struct {
 	cliBinDir      string
 	cliStatus      devcli.CLIInstallStatus
 	cliBusy        bool
+}
+
+// sidebarGlass reports whether the left navigation sidebar renders directly
+// over the window's Liquid Glass material.
+func (a *app) sidebarGlass(c *ui.Context) bool {
+	return c.Vibrancy() && !a.fullScreen && !c.Preferences().ReduceTransparency
 }
 
 func (a *app) pickPaths(opts mygo.OpenDialogOptions) ([]string, error) {

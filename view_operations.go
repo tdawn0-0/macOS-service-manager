@@ -106,7 +106,7 @@ func (a *app) devOperations(c *ui.Context) {
 			})
 		})
 		ui.Column(c).Width(1).Background(hairline(c.Theme()))
-		ui.Scroll(c.Key("operation-detail")).TrackScroll(&d.operationScroll).Grow(1).MinWidth(0).MinHeight(0).Padding(22, 28, 28).Children(func() {
+		ui.Scroll(c.Key("operation-detail")).TrackScroll(&d.operationScroll).Grow(1).MinWidth(0).MinHeight(0).Padding(22, 28, 28).Background(glassOf(c.Theme()).sheet).Children(func() {
 			ui.Column(c).Gap(14).MaxWidth(880).Children(func() {
 				if btn(c, "Back to workspace", icoUndo, btnText).AlignSelf(ui.Start).Clicked() {
 					d.operationsOpen = false

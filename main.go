@@ -60,6 +60,13 @@ func shouldRunPublicCLI(args []string) ([]string, bool) {
 	return filtered, true
 }
 
+func mainWindowVibrancy(fullScreen bool) mygo.Vibrancy {
+	if fullScreen {
+		return mygo.VibrancyNone
+	}
+	return mygo.VibrancyGlass
+}
+
 func configureBackgroundLaunch(a *app, background bool) {
 	if background {
 		a.showDockIcon(false)
@@ -119,12 +126,13 @@ func main() {
 			MinWidth:  minWidth,
 			MinHeight: minHeight,
 			Hidden:    background,
-			// The whole window is frosted glass over the desktop; the
-			// sidebar goes up under the window controls, and the title bar
-			// is the top of each pane.
+			// The window uses macOS Liquid Glass behind the transparent
+			// sidebar while the right-hand workspace renders as an opaque
+			// plane; the sidebar goes up under the window controls, and the
+			// title bar is the top of each pane.
 			TitleBarStyle:  mygo.TitleBarHiddenInset,
 			TitleBarHeight: barHeight,
-			Vibrancy:       mygo.VibrancyUnderWindow,
+			Vibrancy:       mygo.VibrancyGlass,
 			// Opens where the user left it last time.
 			StateKey: "main",
 			Content:  ui.View(a.view),
@@ -138,6 +146,18 @@ func main() {
 		if width, height := win.Size(); width < minWidth || height < minHeight {
 			win.SetSize(max(width, minWidth), max(height, minHeight))
 		}
+		syncFullScreen := func(on bool) {
+			if a.fullScreen == on {
+				return
+			}
+			a.fullScreen = on
+			win.SetVibrancy(mainWindowVibrancy(on))
+		}
+		if win.IsFullScreen() {
+			syncFullScreen(true)
+		}
+		win.OnEnterFullScreen(func() { syncFullScreen(true) })
+		win.OnLeaveFullScreen(func() { syncFullScreen(false) })
 
 		// The app stays in the menu bar when its window is closed, and only
 		// there: no window, no Dock icon.

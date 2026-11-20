@@ -1,0 +1,448 @@
+//! Settings, headless: the helper's passive status and message, its install
+//! busy line and verbatim failure, the CLI wrapper's status, and the
+//! same-binary dispatch. The Settings provider is a fake: no test prompts for
+//! an administrator password, runs `osascript`, installs a launchd job or
+//! writes a wrapper script.
+
+use std::{
+    process::ExitCode,
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::Duration,
+};
+
+use nsh_app_devbase::{
+    launch::{self, Seams},
+    testing::{
+        SystemCacheClear, SystemCacheInfo, SystemCliChange, SystemCliStatus, SystemHelperChange,
+        SystemHelperStatus, SystemLoginChange, SystemSettingsProvider, SystemSettingsSnapshot,
+        install_system_settings_provider, use_fake_system,
+    },
+};
+use nsh_core::prelude::*;
+use nsh_engine::{EngineConfig, Root};
+use nsh_testing::Headless;
+
+/// The settings tests share the fake-provider registry, so they take turns.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HelperBehaviour {
+    Normal,
+    Slow,
+    Error,
+}
+
+struct FakeSettings {
+    snapshot: Mutex<SystemSettingsSnapshot>,
+    calls: Mutex<Vec<String>>,
+    helper: HelperBehaviour,
+    cli_install_ok: AtomicBool,
+}
+
+impl FakeSettings {
+    fn new(helper: HelperBehaviour) -> Arc<Self> {
+        Arc::new(FakeSettings {
+            snapshot: Mutex::new(SystemSettingsSnapshot {
+                helper: SystemHelperStatus {
+                    installed: false,
+                    message: "Not installed. Root operations need it; installing asks for your administrator password once."
+                        .to_string(),
+                },
+                cli: SystemCliStatus {
+                    installed: false,
+                    wrapper_path: "/tmp/devbase-tests/bin/devbase".to_string(),
+                    target_executable: "/tmp/devbase-tests/Devbase".to_string(),
+                    in_path: false,
+                    managed_by_devbase: false,
+                },
+                cache: SystemCacheInfo {
+                    directory: "/tmp/devbase-tests/downloads".to_string(),
+                    files: 0,
+                    bytes: 0,
+                },
+                log_rotation_enabled: true,
+                login_at_login: false,
+                workspace_root: "/tmp/devbase-tests/root".to_string(),
+            }),
+            calls: Mutex::new(Vec::new()),
+            helper,
+            cli_install_ok: AtomicBool::new(false),
+        })
+    }
+
+    fn calls(&self) -> Vec<String> {
+        self.calls
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn record(&self, call: impl Into<String>) {
+        self.calls
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(call.into());
+    }
+
+    fn snapshot(&self) -> SystemSettingsSnapshot {
+        self.snapshot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
+impl SystemSettingsProvider for FakeSettings {
+    fn snapshot(&self) -> Result<SystemSettingsSnapshot, String> {
+        Ok(self.snapshot())
+    }
+
+    fn install_helper(&self) -> SystemHelperChange {
+        self.record("install helper");
+        match self.helper {
+            HelperBehaviour::Slow => thread::sleep(Duration::from_millis(600)),
+            HelperBehaviour::Error => {
+                return SystemHelperChange {
+                    status: self.snapshot().helper,
+                    error: Some("administrator password was rejected".to_string()),
+                };
+            }
+            HelperBehaviour::Normal => {}
+        }
+        let status = SystemHelperStatus {
+            installed: true,
+            message:
+                "Installed. Root operations run through it without password prompts."
+                    .to_string(),
+        };
+        self.snapshot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .helper = status.clone();
+        SystemHelperChange {
+            status,
+            error: None,
+        }
+    }
+
+    fn uninstall_helper(&self) -> SystemHelperChange {
+        self.record("uninstall helper");
+        let status = SystemHelperStatus {
+            installed: false,
+            message: "Not installed. Root operations need it; installing asks for your administrator password once."
+                .to_string(),
+        };
+        self.snapshot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .helper = status.clone();
+        SystemHelperChange {
+            status,
+            error: None,
+        }
+    }
+
+    fn install_cli(&self) -> SystemCliChange {
+        self.record("install cli");
+        let status = SystemCliStatus {
+            installed: true,
+            wrapper_path: "/tmp/devbase-tests/bin/devbase".to_string(),
+            target_executable: "/tmp/devbase-tests/Devbase".to_string(),
+            in_path: true,
+            managed_by_devbase: true,
+        };
+        self.snapshot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .cli = status.clone();
+        self.cli_install_ok.store(true, Ordering::Relaxed);
+        SystemCliChange {
+            status,
+            error: None,
+        }
+    }
+
+    fn uninstall_cli(&self) -> SystemCliChange {
+        self.record("uninstall cli");
+        let status = SystemCliStatus {
+            wrapper_path: "/tmp/devbase-tests/bin/devbase".to_string(),
+            ..SystemCliStatus::default()
+        };
+        self.snapshot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .cli = status.clone();
+        SystemCliChange {
+            status,
+            error: None,
+        }
+    }
+
+    fn clear_cache(&self) -> Result<SystemCacheClear, String> {
+        self.record("clear cache");
+        Ok(SystemCacheClear {
+            removed: SystemCacheInfo {
+                directory: "/tmp/devbase-tests/downloads".to_string(),
+                files: 2,
+                bytes: 2048,
+            },
+            current: SystemCacheInfo {
+                directory: "/tmp/devbase-tests/downloads".to_string(),
+                files: 0,
+                bytes: 0,
+            },
+        })
+    }
+
+    fn set_log_rotation(&self, enabled: bool) -> Result<(), String> {
+        self.record(format!("log rotation {enabled}"));
+        self.snapshot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .log_rotation_enabled = enabled;
+        Ok(())
+    }
+
+    fn set_login_item(&self, enabled: bool) -> SystemLoginChange {
+        self.record(format!("login item {enabled}"));
+        self.snapshot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .login_at_login = enabled;
+        SystemLoginChange {
+            enabled,
+            error: None,
+        }
+    }
+
+    fn open_full_disk_access(&self) -> Result<(), String> {
+        self.record("open full disk access");
+        Ok(())
+    }
+
+    fn open_login_items(&self) -> Result<(), String> {
+        self.record("open login items");
+        Ok(())
+    }
+
+    fn reveal(&self, path: &str) -> Result<(), String> {
+        self.record(format!("reveal {path}"));
+        Ok(())
+    }
+
+    fn preview_shutdown(&self) -> Result<devcore::shutdown::ShutdownPlan, String> {
+        Ok(devcore::shutdown::ShutdownPlan::default())
+    }
+
+    fn shutdown(&self, _plan: &devcore::shutdown::ShutdownPlan) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+fn start(fake: Arc<FakeSettings>) -> (MutexGuard<'static, ()>, Headless) {
+    let turn = serial();
+    use_fake_system();
+    install_system_settings_provider(fake);
+    let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
+    app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    app.wait_for("Services").unwrap();
+    app.press("role:button[Settings]").unwrap();
+    app.wait_for("id:settings-page").unwrap();
+    (turn, app)
+}
+
+#[test]
+fn the_helper_and_cli_status_render() {
+    let fake = FakeSettings::new(HelperBehaviour::Normal);
+    {
+        let mut snapshot = fake
+            .snapshot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        snapshot.helper = SystemHelperStatus {
+            installed: true,
+            message: "Installed. Root operations run through it without password prompts."
+                .to_string(),
+        };
+        snapshot.cli = SystemCliStatus {
+            installed: true,
+            wrapper_path: "/tmp/devbase-tests/bin/devbase".to_string(),
+            target_executable: "/tmp/devbase-tests/Devbase".to_string(),
+            in_path: false,
+            managed_by_devbase: true,
+        };
+        snapshot.cache = SystemCacheInfo {
+            directory: "/tmp/devbase-tests/downloads".to_string(),
+            files: 2,
+            bytes: 2048,
+        };
+    }
+    let (_turn, mut app) = start(fake);
+
+    app.wait_for("Privileged helper").unwrap();
+    app.wait_for("Installed. Root operations run through it without password prompts.")
+        .unwrap();
+    app.wait_for(devcore::helper::PLIST_PATH).unwrap();
+    app.wait_for("id:settings-remove-helper").unwrap();
+    app.wait_for("Command-line interface").unwrap();
+    app.wait_for("/tmp/devbase-tests/bin/devbase").unwrap();
+    app.wait_for("id:settings-remove-cli").unwrap();
+    app.wait_for("Add /tmp/devbase-tests/bin to PATH to run devbase from any shell.")
+        .unwrap();
+    app.wait_for("2.0 KiB · 2 archives").unwrap();
+    app.wait_for("Automatic log rotation").unwrap();
+}
+
+#[test]
+fn installing_the_helper_shows_the_busy_line_then_the_installed_status() {
+    let fake = FakeSettings::new(HelperBehaviour::Slow);
+    let (_turn, mut app) = start(fake.clone());
+
+    app.wait_for("id:settings-install-helper").unwrap();
+    app.wait_for("text:/Not installed\\. Root operations need it/").unwrap();
+    app.press("id:settings-install-helper").unwrap();
+    app.wait_for("Installing helper…").unwrap();
+    app.wait_for_within(
+        "Installed. Root operations run through it without password prompts.",
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    app.wait_for("Privileged helper installed").unwrap();
+    assert!(fake.calls().iter().any(|call| call == "install helper"));
+}
+
+#[test]
+fn a_helper_install_error_is_surfaced_verbatim() {
+    let fake = FakeSettings::new(HelperBehaviour::Error);
+    let (_turn, mut app) = start(fake.clone());
+
+    app.wait_for("id:settings-install-helper").unwrap();
+    app.wait_for("text:/Not installed\\. Root operations need it/").unwrap();
+    app.press("id:settings-install-helper").unwrap();
+    app.wait_for("Could not install privileged helper: administrator password was rejected")
+        .unwrap();
+    // The passive status stays honest: still not installed.
+    app.wait_for("text:/Not installed\\. Root operations need it/")
+        .unwrap();
+    assert!(fake.calls().iter().any(|call| call == "install helper"));
+}
+
+#[test]
+fn installing_the_cli_wrapper_updates_its_status() {
+    let fake = FakeSettings::new(HelperBehaviour::Normal);
+    let (_turn, mut app) = start(fake.clone());
+
+    app.wait_for("id:settings-install-cli").unwrap();
+    app.wait_for("The public devbase command is not installed.").unwrap();
+    app.press("id:settings-install-cli").unwrap();
+    app.wait_for("Installed devbase CLI at /tmp/devbase-tests/bin/devbase")
+        .unwrap();
+    app.wait_for("id:settings-remove-cli").unwrap();
+    assert!(fake.calls().iter().any(|call| call == "install cli"));
+}
+
+struct RecordingSeams {
+    calls: Mutex<Vec<String>>,
+    code: u8,
+}
+
+impl RecordingSeams {
+    fn new() -> Self {
+        RecordingSeams {
+            calls: Mutex::new(Vec::new()),
+            code: 7,
+        }
+    }
+
+    fn record(&self, call: String) {
+        self.calls
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(call);
+    }
+
+    fn calls(&self) -> Vec<String> {
+        self.calls
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
+impl Seams for RecordingSeams {
+    fn internal(&self, args: &[String]) -> ExitCode {
+        self.record(format!("internal {}", args.join(" ")));
+        ExitCode::from(self.code)
+    }
+
+    fn public_cli(&self, args: &[String]) -> ExitCode {
+        self.record(format!("cli {}", args.join(" ")));
+        ExitCode::from(self.code)
+    }
+
+    fn gui(&self, background: bool) -> ExitCode {
+        self.record(format!("gui {background}"));
+        ExitCode::from(self.code)
+    }
+}
+
+#[test]
+fn the_binary_dispatches_like_go_main() {
+    let seams = RecordingSeams::new();
+    assert_eq!(
+        launch::run(&["--dev".to_string(), "serve".to_string()], &seams),
+        ExitCode::from(7)
+    );
+    assert_eq!(
+        launch::run(&["status".to_string(), "--json".to_string()], &seams),
+        ExitCode::from(7)
+    );
+    assert_eq!(launch::run(&[], &seams), ExitCode::from(7));
+    assert_eq!(
+        launch::run(&["gui".to_string(), "status".to_string()], &seams),
+        ExitCode::from(7)
+    );
+    assert_eq!(
+        launch::run(&["--background".to_string()], &seams),
+        ExitCode::from(7)
+    );
+    assert_eq!(
+        launch::run(
+            &["-psn_0_42".to_string(), "version".to_string()],
+            &seams
+        ),
+        ExitCode::from(7)
+    );
+    assert_eq!(
+        seams.calls(),
+        [
+            "internal serve",
+            "cli status --json",
+            "gui false",
+            "gui false",
+            "gui true",
+            "cli version",
+        ]
+    );
+}
+
+#[test]
+fn a_dev_home_style_argv_is_not_mistaken_for_the_cli() {
+    let seams = RecordingSeams::new();
+    let _ = launch::run(
+        &["-NSFoo".to_string(), "YES".to_string(), "--background".to_string()],
+        &seams,
+    );
+    let _ = launch::run(&["open".to_string()], &seams);
+    assert_eq!(seams.calls(), ["gui true", "gui false"]);
+}

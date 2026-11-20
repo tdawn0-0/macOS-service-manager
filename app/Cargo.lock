@@ -1044,6 +1044,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e9de72ce2ad1f90dc62fa25f0f430ef85eb4b0d8fa0be4f30373bc40a21d28e"
 
 [[package]]
+name = "devcli"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "devcore",
+ "devproxy",
+ "libc",
+ "plist",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "devcore"
 version = "0.1.0"
 dependencies = [
@@ -3151,6 +3166,7 @@ name = "nsh-app-devbase"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "devcli",
  "devcore",
  "devproxy",
  "env_logger",

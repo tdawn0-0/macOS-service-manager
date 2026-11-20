@@ -30,7 +30,7 @@ fn workspace() -> impl IntoElement {
         ))
         .child(when(
             move || store::active_section() == Section::Development,
-            pages::software,
+            pages::development,
         ))
         .child(when(
             move || store::active_section() == Section::Databases,

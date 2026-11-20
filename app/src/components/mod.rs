@@ -2,11 +2,9 @@
 
 mod controls;
 pub(crate) mod icons;
-mod placeholder;
 mod sidebar;
 mod status_dot;
 
 pub(crate) use controls::{icon_button, labeled_button, note};
-pub(crate) use placeholder::placeholder;
 pub(crate) use sidebar::sidebar;
 pub(crate) use status_dot::{state_color, status_dot};

@@ -162,6 +162,10 @@ impl Workers {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 /// One read of the development home for these screens.
@@ -1079,6 +1083,23 @@ pub(crate) fn token_configured() -> bool {
 
 pub(crate) fn has_tunnel_rules() -> bool {
     workspace().with(|state| state.snapshot.rules.iter().any(|rule| rule.tunnel))
+}
+
+/// How many Workers the saved Cloudflare configuration deployed.
+pub(crate) fn worker_count() -> usize {
+    workspace().with(|state| state.snapshot.workers.len())
+}
+
+/// The tunnel's per-observation detail (`tunnel:detail`), when it has one.
+pub(crate) fn tunnel_detail() -> String {
+    workspace().with(|state| {
+        state
+            .snapshot
+            .statuses
+            .get("tunnel:detail")
+            .cloned()
+            .unwrap_or_default()
+    })
 }
 
 // --- Draft accessors ---------------------------------------------------------

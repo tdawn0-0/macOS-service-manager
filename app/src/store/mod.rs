@@ -4,6 +4,8 @@
 
 use nsh_core::prelude::*;
 
+pub(crate) mod databases;
+pub(crate) mod proxy;
 pub(crate) mod services;
 pub(crate) mod software;
 

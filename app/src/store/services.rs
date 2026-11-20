@@ -288,11 +288,11 @@ pub(crate) fn refresh(source: Source) {
         load.error = None;
     });
     task(async move {
-        let answer = match blocking(move || provider.list().map_err(|error| error.to_string())).await
-        {
-            Ok(answer) => answer,
-            Err(error) => Err(format!("the source did not answer: {error}")),
-        };
+        let answer =
+            match blocking(move || provider.list().map_err(|error| error.to_string())).await {
+                Ok(answer) => answer,
+                Err(error) => Err(format!("the source did not answer: {error}")),
+            };
         services().update(|state| {
             let load = state.loads.entry(source).or_default();
             if load.sequence != sequence {
@@ -472,12 +472,12 @@ fn load_detail(item: Item) {
         detail.error = None;
     });
     task(async move {
-        let answer = match blocking(move || provider.detail(&item).map_err(|error| error.to_string()))
-            .await
-        {
-            Ok(answer) => answer,
-            Err(error) => Err(format!("the detail read failed: {error}")),
-        };
+        let answer =
+            match blocking(move || provider.detail(&item).map_err(|error| error.to_string())).await
+            {
+                Ok(answer) => answer,
+                Err(error) => Err(format!("the detail read failed: {error}")),
+            };
         services().update(|state| {
             let Some(detail) = state.detail.as_mut() else {
                 return;
@@ -535,12 +535,7 @@ pub(crate) fn detail_tab() -> DetailTab {
 }
 
 pub(crate) fn detail_log_file() -> usize {
-    services().with(|state| {
-        state
-            .detail
-            .as_ref()
-            .map_or(0, |detail| detail.log_file)
-    })
+    services().with(|state| state.detail.as_ref().map_or(0, |detail| detail.log_file))
 }
 
 pub(crate) fn set_detail_tab(tab: DetailTab) {
@@ -594,7 +589,11 @@ pub(crate) fn load_log() {
             return None;
         }
         let file = detail.logs.get(detail.log_file)?;
-        Some((detail.item_id.clone(), file.path.clone(), detail.log_sequence))
+        Some((
+            detail.item_id.clone(),
+            file.path.clone(),
+            detail.log_sequence,
+        ))
     }) else {
         return;
     };

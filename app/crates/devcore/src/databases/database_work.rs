@@ -8,19 +8,30 @@
 //! (a GUI and a CLI see the same directory) and cannot be bypassed with an
 //! in-process mutex.
 //!
-//! This slice does not run the launchd worker. It owns the records, the idle
-//! discipline and the orphan-review listing; backup/restore/create actions run
-//! synchronously through the operation journal.
+//! [`Databases::run_database_worker`] is the launchd worker entry point: it
+//! verifies the recorded job, exempts its own record from the idle guard, runs
+//! the recorded backup/restore/create action, and writes the result the
+//! review APIs read. Synchronous backup/restore/create actions run through the
+//! operation journal.
 
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io;
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::fs::{digest_bytes, read_regular_file};
+use crate::engine::{Engine, EngineError};
+use crate::fs::{
+    atomic_write, create_private_dir_all, digest_bytes, read_regular_file, sync_directory,
+};
+use crate::health::read_job_state;
 use crate::model::Instance;
+use crate::operations::{OperationJournal, OperationRequest, OperationScope};
+use crate::software::Software;
 use crate::state::{ResourceBusyError, StateError, Store};
 
 use super::locations::deletion_identity;
@@ -395,3 +406,558 @@ fn work_artifact(dir: &Path, record: &DatabaseWorkRecord) -> String {
     }
     path.display().to_string()
 }
+
+/// A held raw resource lease. The resolver acquires the record's own instance
+/// lease while the record still exists; the store's ordinary lease path would
+/// refuse it through [`require_database_work_idle`], so this mirrors Go's
+/// `databaseWork` context exemption by taking the same `flock(2)` directly.
+struct RawResourceLease {
+    _file: File,
+}
+
+fn acquire_raw_instance_lease(
+    store: &Store,
+    instance_id: &str,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<RawResourceLease, StateError> {
+    if !store.root().is_absolute() {
+        return Err(StateError::invalid("storage root must be absolute"));
+    }
+    let dir = store.root().join("resource-locks");
+    match fs::symlink_metadata(&dir) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => {
+            return Err(StateError::invalid(
+                "resource lock store must be a plain directory",
+            ));
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    create_private_dir_all(&dir)?;
+    if cancelled() {
+        return Err(StateError::Cancelled);
+    }
+    let value = format!("database instance:{instance_id}");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(dir.join(digest_bytes(value.as_bytes())))?;
+    if !file.metadata()?.is_file() {
+        return Err(StateError::invalid("resource lease must be a regular file"));
+    }
+    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if result != 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
+            return Err(StateError::ResourceBusy(ResourceBusyError {
+                kind: "database instance".into(),
+                id: instance_id.to_string(),
+            }));
+        }
+        return Err(error.into());
+    }
+    Ok(RawResourceLease { _file: file })
+}
+
+/// Take the per-task `control.lock` operation lease. Any failure to open or
+/// lock it means a caller still owns the task, matching Go's single message.
+fn open_control_lease(path: &Path) -> io::Result<File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "operation lease is not a regular file",
+        ));
+    }
+    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(file)
+}
+
+fn database_work_dir(root: &Path, id: &str) -> Result<PathBuf, StateError> {
+    if !root.is_absolute() {
+        return Err(StateError::invalid("storage root must be absolute"));
+    }
+    if !crate::model::valid_id(id) {
+        return Err(StateError::invalid("invalid database task ID"));
+    }
+    let root = root.join("database-work");
+    match fs::symlink_metadata(&root) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => {
+            return Err(StateError::invalid(
+                "database-work store is not a plain directory",
+            ));
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    Ok(root.join(id))
+}
+
+/// The reviewed revision shown by [`Databases::pending_database_work`].
+fn database_work_revision(dir: &Path) -> Result<String, DatabaseError> {
+    let record = fs::read(dir.join("record.json"))?;
+    let result = fs::read(dir.join("result.json")).unwrap_or_default();
+    Ok(digest_bytes(&[record, result].concat()))
+}
+
+impl Databases {
+    /// Resolve one reviewed unfinished database task.
+    ///
+    /// This never retries writes and never rolls back an already changed
+    /// target. It marks the output for retention, stops only the
+    /// digest-verified finite job, reserves the instance, records the backup
+    /// artifact, and then clears the reservation. A held `control.lock`, a
+    /// changed revision, or a still-held execution lease refuses the request.
+    pub fn resolve_database_work(&self, id: &str, revision: &str) -> Result<(), DatabaseError> {
+        let actions = Arc::new(super::DatabaseActions::new(self.clone()));
+        let journal = OperationJournal::new(self.store().clone()).with_actions(actions);
+        let request = OperationRequest {
+            kind: "reconcile-database-work".into(),
+            resource: id.to_string(),
+            ..OperationRequest::default()
+        };
+        journal
+            .run_operation(request, "", &|| false, |scope| {
+                self.resolve_database_work_inner(id, revision, scope)
+            })
+            .map_err(DatabaseError::from)
+    }
+
+    fn resolve_database_work_inner(
+        &self,
+        id: &str,
+        revision: &str,
+        scope: &OperationScope<'_>,
+    ) -> Result<(), StateError> {
+        let dir = database_work_dir(self.store().root(), id)?;
+        let record = read_database_work(&dir, id).map_err(StateError::Io)?;
+        let _control = open_control_lease(&dir.join("control.lock")).map_err(|_| {
+            StateError::invalid("database task still has a caller; cancel it there or wait")
+        })?;
+
+        // This caller now owns control.lock; the revision still validates the
+        // exact files the user reviewed.
+        let current =
+            database_work_revision(&dir).map_err(|error| StateError::invalid(error.to_string()))?;
+        if current != revision {
+            return Err(StateError::invalid(
+                "database task changed; refresh and review its current result",
+            ));
+        }
+
+        // Keep diagnostic output even though the caller is gone; a normal
+        // cancellation still removes unfinished output in the original caller.
+        atomic_write(&dir.join("retain-output"), record.id.as_bytes(), 0o600)?;
+        sync_directory(&dir)?;
+
+        self.stop_database_work_job(&record).map_err(|error| {
+            StateError::invalid(format!("stop database task {}: {error}", record.id))
+        })?;
+        let _lease = acquire_raw_instance_lease(self.store(), &record.instance.id, &|| false)?;
+        let output = work_artifact(&dir, &record);
+        if !output.is_empty() {
+            scope.artifact(&output);
+        }
+        clear_database_work(&dir).map_err(|error| StateError::invalid(error.to_string()))?;
+        Ok(())
+    }
+
+    /// Stop only the finite job whose plist still matches the recorded digest,
+    /// then verify launchd no longer knows it. A changed job keeps its files.
+    fn stop_database_work_job(&self, record: &DatabaseWorkRecord) -> Result<(), DatabaseError> {
+        let job = format!("dbwork-{}", record.id);
+        let path = self.engine().job_path(&job);
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        let mut bytes = Vec::new();
+        match read_regular_file(parent, &name, 1 << 20) {
+            Ok(data) => {
+                if record.job_digest.is_empty() || digest_bytes(&data) != record.job_digest {
+                    return Err(DatabaseError::invalid(
+                        "database task job ownership changed; keep its files for inspection",
+                    ));
+                }
+                self.engine().stop_job(&job, &|| false)?;
+                bytes = data;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let target = self.engine().target(&job);
+        verify_shutdown_target(self.engine(), &target, &|| false)?;
+        if !bytes.is_empty() {
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
+}
+
+fn verify_shutdown_target(
+    engine: &crate::engine::Engine,
+    target: &str,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(), DatabaseError> {
+    if cancelled() {
+        return Err(DatabaseError::Cancelled);
+    }
+    match engine.run_with_timeout(
+        "launchctl",
+        &["print", target],
+        std::time::Duration::from_secs(1),
+    ) {
+        Ok(_) => Err(DatabaseError::invalid(format!(
+            "managed service is still registered: {target}"
+        ))),
+        Err(EngineError::Timeout(_)) => Err(DatabaseError::invalid(format!(
+            "could not verify stopped service: {target}"
+        ))),
+        Err(error) => {
+            let message = error.to_string();
+            if message.contains("Could not find service")
+                || message.contains("Could not find specified service")
+            {
+                Ok(())
+            } else {
+                Err(DatabaseError::invalid(format!(
+                    "could not verify stopped service {target}: {error}"
+                )))
+            }
+        }
+    }
+}
+
+fn clear_database_work(dir: &Path) -> Result<(), DatabaseError> {
+    let _execution = open_control_lease(&dir.join("execution.lock")).map_err(|_| {
+        DatabaseError::invalid(
+            "database task process still owns its execution lease; wait and refresh",
+        )
+    })?;
+    fs::remove_dir_all(dir)?;
+    if let Some(parent) = dir.parent() {
+        sync_directory(parent)?;
+    }
+    Ok(())
+}
+
+/// The worker's own hard deadline, matching Go's 30-minute `context.WithTimeout`.
+const DATABASE_WORKER_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+/// `input.json`: the only place a database-task password may live. It is
+/// removed as soon as the worker has read it.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct DatabaseWorkInput {
+    #[serde(default)]
+    user: String,
+    #[serde(default)]
+    password: String,
+}
+
+/// `result.json`: what `pending_database_work` and `resolve_database_work`
+/// read back. Field names match Go's untagged struct.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct DatabaseWorkResult {
+    status: String,
+    output: String,
+    finished_at: String,
+}
+
+/// `artifact.json`: the published backup path `work_artifact` will read.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct DatabaseWorkArtifact {
+    path: String,
+}
+
+impl Databases {
+    /// `RunDatabaseWorker`: the internal launchd entry point for one recorded
+    /// database task. It never replays an existing result and runs only while
+    /// the recorded job identifies this process.
+    ///
+    /// The worker holds its own record's `execution.lock` and exempts exactly
+    /// that record from the database-work idle guard, mirroring Go's
+    /// `m.databaseWork` context. Other callers still see the reservation.
+    pub fn run_database_worker(
+        &self,
+        id: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), DatabaseError> {
+        let deadline = Instant::now() + DATABASE_WORKER_TIMEOUT;
+        let cancelled = {
+            let outer = cancelled;
+            move || outer() || Instant::now() >= deadline
+        };
+
+        let dir = database_work_dir(self.store().root(), id).map_err(DatabaseError::State)?;
+        let record = read_database_work(&dir, id).map_err(DatabaseError::Io)?;
+        if read_work_result(&dir)?.is_some() {
+            return Err(DatabaseError::invalid("database task already has a result"));
+        }
+
+        // Wait like Go for another execution lease holder to release; a
+        // vanished/regular-file failure is immediate.
+        let _execution = loop {
+            match open_execution_lease(&dir.join("execution.lock")) {
+                Ok(file) => break file,
+                Err(error) if error.raw_os_error() == Some(libc::EWOULDBLOCK) => {
+                    if cancelled() {
+                        return Err(DatabaseError::Cancelled);
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) => {
+                    if cancelled() {
+                        return Err(DatabaseError::Cancelled);
+                    }
+                    return Err(DatabaseError::Io(error));
+                }
+            }
+        };
+
+        // The plist must still be the one this record describes, and the
+        // running process must be the recorded launchd job.
+        let job = format!("dbwork-{id}");
+        let path = self.engine().job_path(&job);
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let job_bytes = read_regular_file(parent, &name, 1 << 20)
+            .map_err(|_| DatabaseError::invalid("database task job ownership is not verified"))?;
+        if record.job_digest.is_empty() || digest_bytes(&job_bytes) != record.job_digest {
+            return Err(DatabaseError::invalid(
+                "database task job ownership is not verified",
+            ));
+        }
+        let (job_state, error) = read_job_state(self.engine(), &job, &cancelled);
+        if error.is_err() || job_state.pid != std::process::id() as i32 {
+            return Err(DatabaseError::invalid(
+                "database task must run as its recorded launchd job",
+            ));
+        }
+
+        let input_bytes =
+            read_regular_file(&dir, "input.json", 1 << 20).map_err(DatabaseError::Io)?;
+        let input: DatabaseWorkInput =
+            serde_json::from_slice(&input_bytes).map_err(DatabaseError::Json)?;
+        // Go defers this removal; reading is the last moment the password is
+        // needed, so remove before any database client runs.
+        let _ = fs::remove_file(dir.join("input.json"));
+
+        super::verify_data_location(self.store(), &record.instance)?;
+        self.store().emit(&format!("Executing database task {id}"));
+
+        let worker = self.worker_databases(id);
+        let request = &record.request;
+        let executed: Result<String, DatabaseError> = match request.kind.as_str() {
+            "backup" => worker.backup(&request.instance_id, &request.database, &cancelled),
+            "restore" => worker
+                .restore(
+                    &request.instance_id,
+                    &request.database,
+                    &request.source_path,
+                    &cancelled,
+                )
+                .map(|()| String::new()),
+            "create-database" => worker
+                .create_database(&request.instance_id, &request.database, &cancelled)
+                .map(|()| String::new()),
+            "create-user" => worker
+                .create_user(
+                    &request.instance_id,
+                    &input.user,
+                    &input.password,
+                    &request.database,
+                    &cancelled,
+                )
+                .map(|()| String::new()),
+            _ => Err(DatabaseError::invalid("unknown database task kind")),
+        };
+
+        let (status, output, failure) = match executed {
+            Ok(output) => ("Succeeded", output, None),
+            Err(error) => {
+                if cancelled() {
+                    ("Cancelled", String::new(), Some(error))
+                } else {
+                    ("Failed", String::new(), Some(error))
+                }
+            }
+        };
+
+        if let Some(error) = &failure {
+            let mut secrets = vec![input.password.clone()];
+            let password_path = self
+                .store()
+                .root()
+                .join("instances")
+                .join(&record.instance.id)
+                .join("password");
+            if let Ok(bytes) = read_regular_file(
+                password_path.parent().unwrap_or_else(|| Path::new(".")),
+                password_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default(),
+                4096,
+            ) {
+                secrets.push(String::from_utf8_lossy(&bytes).into_owned());
+            }
+            let message = redact_worker_message(error.to_string(), &secrets);
+            atomic_write(&dir.join("error.log"), message.as_bytes(), 0o600)?;
+        }
+
+        if status == "Succeeded" && request.kind == "backup" && !output.is_empty() {
+            let artifact = DatabaseWorkArtifact {
+                path: output.clone(),
+            };
+            let mut artifact_bytes =
+                serde_json::to_vec_pretty(&artifact).map_err(DatabaseError::Json)?;
+            artifact_bytes.push(b'\n');
+            atomic_write(&dir.join("artifact.json"), &artifact_bytes, 0o600)?;
+            sync_directory(&dir)?;
+        }
+
+        let result = DatabaseWorkResult {
+            status: status.into(),
+            output,
+            finished_at: crate::software::utc_now_rfc3339(),
+        };
+        let mut bytes = serde_json::to_vec_pretty(&result).map_err(DatabaseError::Json)?;
+        bytes.push(b'\n');
+        atomic_write(&dir.join("result.json"), &bytes, 0o600)?;
+        sync_directory(&dir)?;
+        if failure.is_some() {
+            return Err(DatabaseError::invalid(format!(
+                "database task {id} did not complete"
+            )));
+        }
+        Ok(())
+    }
+
+    /// A clone of this manager whose database-work guard exempts `exempt_id`,
+    /// the Rust equivalent of Go's worker-held `m.databaseWork` context.
+    fn worker_databases(&self, exempt_id: &str) -> Databases {
+        let root = self.store().root().to_path_buf();
+        let exempt = exempt_id.to_string();
+        let store = self
+            .store()
+            .clone()
+            .with_database_work_check(Arc::new(move |instance_id| {
+                require_database_work_idle_except(&root, instance_id, Some(&exempt)).map_err(
+                    |error| {
+                        if error.instance_id.is_empty() {
+                            StateError::invalid(error.work_id)
+                        } else {
+                            StateError::ResourceBusy(ResourceBusyError {
+                                kind: "database instance".into(),
+                                id: error.instance_id,
+                            })
+                        }
+                    },
+                )
+            }));
+        let runner = self.runner.clone();
+        Databases {
+            engine: Engine::new(store.root(), runner.clone()),
+            software: Software::new(store.clone()).with_runner(runner.clone()),
+            store,
+            runner,
+            binder: self.binder.clone(),
+            probe: self.probe.clone(),
+            mongo: self.mongo.clone(),
+            redis: self.redis.clone(),
+            publish_fault: None,
+        }
+    }
+}
+
+/// The database-work guard with Go's worker exemption: only the record the
+/// worker itself holds stops blocking `instance_id`.
+fn require_database_work_idle_except(
+    root: &Path,
+    instance_id: &str,
+    exempt: Option<&str>,
+) -> Result<(), DatabaseWorkBusyError> {
+    for record in database_work_records(root)? {
+        if record.instance.id == instance_id && Some(record.id.as_str()) != exempt {
+            return Err(DatabaseWorkBusyError {
+                instance_id: instance_id.to_string(),
+                work_id: record.id,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// The read-only exclusive lease Go's `openOperationLease` takes.
+fn open_execution_lease(path: &Path) -> io::Result<File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "operation lease is not a regular file",
+        ));
+    }
+    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(file)
+}
+
+/// Replace the task's passwords, including their JSON-escaped forms, exactly
+/// like the Go worker does before writing `error.log`.
+fn redact_worker_message(mut message: String, secrets: &[String]) -> String {
+    for secret in secrets {
+        if secret.is_empty() {
+            continue;
+        }
+        message = message.replace(secret, "[redacted]");
+        if let Ok(quoted) = serde_json::to_string(secret)
+            && quoted.len() > 2
+        {
+            message = message.replace(&quoted[1..quoted.len() - 1], "[redacted]");
+        }
+    }
+    if message.len() > 16_000 {
+        let mut limit = 16_000;
+        while !message.is_char_boundary(limit) {
+            limit -= 1;
+        }
+        message.truncate(limit);
+    }
+    message
+}
+
+#[cfg(test)]
+#[path = "database_work_resolve_tests.rs"]
+mod resolve_tests;
+
+#[cfg(test)]
+#[path = "database_work_worker_tests.rs"]
+mod worker_tests;

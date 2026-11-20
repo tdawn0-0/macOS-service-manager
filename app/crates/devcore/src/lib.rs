@@ -20,15 +20,22 @@
 //! [`shutdown`] the quit preview and database stop plan. [`databases`] holds
 //! the instance foundation: data locations, port preflight, staged
 //! initialization, the lifecycle, deletion staging and credential files.
+//! [`helper`] is the on-demand privileged helper: its HTTP/1.1 server over a
+//! launchd-activated Unix socket, the two-layer peer authorization, the
+//! install/uninstall client with the single administrator prompt, the helper
+//! and proxy-socket property lists, and an in-process helper for tests.
 
 pub mod databases;
+pub mod diagnostics;
 pub mod engine;
 pub mod fs;
 pub mod health;
+pub mod helper;
 pub mod launchd;
 pub mod model;
 pub mod operations;
 pub mod service;
+pub mod shell;
 pub mod shutdown;
 pub mod software;
 pub mod state;

@@ -78,14 +78,11 @@ fn source_rail() -> impl IntoElement {
         )
         .child(view().flex_1())
         .child(
-            view()
-                .px(tokens::space(2.0))
-                .pt(tokens::space(3.0))
-                .child(
-                    text("Phase 1 · three launchd sources")
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground),
-                ),
+            view().px(tokens::space(2.0)).pt(tokens::space(3.0)).child(
+                text("Phase 1 · three launchd sources")
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .text_color(move || theme().muted_foreground),
+            ),
         )
 }
 

@@ -7,7 +7,7 @@ use nsh_base::{input, theme};
 use nsh_core::prelude::*;
 
 use crate::{
-    components::{icons, icon_button, note, status_dot},
+    components::{icon_button, icons, note, status_dot},
     store::services::{self as svc, Filter},
     theme as tokens,
 };
@@ -19,12 +19,7 @@ pub(crate) fn list_pane() -> impl IntoElement {
         .flex_col()
         .child(header())
         .child(search_row())
-        .child(
-            view()
-                .h(px(1.0))
-                .flex_none()
-                .bg(move || tokens::hairline()),
-        )
+        .child(view().h(px(1.0)).flex_none().bg(move || tokens::hairline()))
         .child(when_some_note())
         .child(list())
 }
@@ -169,11 +164,7 @@ fn when_some_note() -> impl IntoElement {
 }
 
 fn list() -> impl IntoElement {
-    when(
-        move || svc::visible_items().is_empty(),
-        empty_list,
-    )
-    .otherwise(|| {
+    when(move || svc::visible_items().is_empty(), empty_list).otherwise(|| {
         scroll().flex_1().min_h(px(0.0)).child(
             view()
                 .flex_col()
@@ -274,9 +265,7 @@ fn row(item: ReadSignal<Item>) -> impl IntoElement {
                 svc::set_hovered_item(None);
             }
         })
-        .on_press(move || {
-            svc::select_item(&item.with_untracked(|item| item.id.clone()))
-        })
+        .on_press(move || svc::select_item(&item.with_untracked(|item| item.id.clone())))
         .child(status_dot(move || item.get().state))
         .child(
             text(name.clone())
@@ -356,7 +345,8 @@ fn row_action(item: ReadSignal<Item>, action_id: String) -> impl IntoElement {
         .hover(move |style| style.bg(tokens::row_hover()))
         .opacity(move || {
             let id = item.with_untracked(|item| item.id.clone());
-            let shown = svc::hovered_item().as_deref() == Some(id.as_str()) || svc::is_selected(&id);
+            let shown =
+                svc::hovered_item().as_deref() == Some(id.as_str()) || svc::is_selected(&id);
             if shown { 1.0_f32 } else { 0.0_f32 }
         })
         .accessibility_label(move || {

@@ -8,7 +8,7 @@ use nsh_base::{menu, menu_item, menu_separator, theme};
 use nsh_core::prelude::*;
 
 use crate::{
-    components::{icons, icon_button, labeled_button, state_color, status_dot},
+    components::{icon_button, icons, labeled_button, state_color, status_dot},
     store::services::{self as svc, DetailTab},
     theme as tokens,
 };
@@ -154,7 +154,9 @@ fn state_chip(item: &Item) -> impl IntoElement {
 /// a menu of the rest.
 fn action_row(item: &Item, actions: &[Action], busy: bool) -> impl IntoElement {
     let primary = devcore::service::primary(actions);
-    let restart = actions.contains(&Action::Restart).then_some(Action::Restart);
+    let restart = actions
+        .contains(&Action::Restart)
+        .then_some(Action::Restart);
     view()
         .flex_row()
         .items_center()
@@ -325,9 +327,7 @@ fn autostart_card(item: &Item, actions: &[Action], busy: bool) -> Option<impl In
                             .items_center()
                             .gap(tokens::space(1.5))
                             .disabled(words_busy)
-                            .on_press(move || {
-                                svc::request_action(words_item.clone(), toggle)
-                            })
+                            .on_press(move || svc::request_action(words_item.clone(), toggle))
                             .child(
                                 text(label)
                                     .text_size(px(tokens::TEXT_BODY))
@@ -375,12 +375,14 @@ fn switch(on: bool, busy: bool, on_press: impl Fn() + 'static) -> impl IntoEleme
         .disabled(busy)
         .opacity(if busy { 0.5 } else { 1.0 })
         .on_press(move || on_press())
-        .child(track.child(
-            view()
-                .size(px(14.0))
-                .rounded(px(7.0))
-                .bg(move || theme().primary_foreground),
-        ))
+        .child(
+            track.child(
+                view()
+                    .size(px(14.0))
+                    .rounded(px(7.0))
+                    .bg(move || theme().primary_foreground),
+            ),
+        )
 }
 
 /// What the switch of an item's autostart says.
@@ -470,18 +472,18 @@ fn info_tab(
         }))
         .child(when(has_groups, move || {
             let groups = groups.clone();
-            scroll()
-                .flex_1()
-                .min_h(px(0.0))
-                .selectable(true)
-                .child(
-                    view()
-                        .flex_col()
-                        .gap(tokens::space(4.0))
-                        .px(tokens::space(4.0))
-                        .py(tokens::space(2.0))
-                        .child(groups.into_iter().map(|(title, rows)| info_group(title, rows))),
-                )
+            scroll().flex_1().min_h(px(0.0)).selectable(true).child(
+                view()
+                    .flex_col()
+                    .gap(tokens::space(4.0))
+                    .px(tokens::space(4.0))
+                    .py(tokens::space(2.0))
+                    .child(
+                        groups
+                            .into_iter()
+                            .map(|(title, rows)| info_group(title, rows)),
+                    ),
+            )
         }))
 }
 
@@ -537,9 +539,7 @@ fn info_row(row: Row) -> impl IntoElement {
         .border_b_1()
         .border_color(move || tokens::hairline())
         .hover(move |style| style.bg(tokens::row_hover()))
-        .on_mouse_enter(move |_: &MouseEvent| {
-            svc::set_hovered_row(Some(hovered_key.clone()))
-        })
+        .on_mouse_enter(move |_: &MouseEvent| svc::set_hovered_row(Some(hovered_key.clone())))
         .on_mouse_leave(move |_: &MouseEvent| {
             if svc::hovered_row().as_deref() == Some(key.as_str()) {
                 svc::set_hovered_row(None);
@@ -594,7 +594,11 @@ fn info_key(row: &Row, grow: bool) -> impl IntoElement {
             px(tokens::TEXT_CAPTION)
         })
         .text_color(move || theme().muted_foreground);
-    if grow { text.flex_1().min_w(px(0.0)).truncate().into_element() } else { text.into_element() }
+    if grow {
+        text.flex_1().min_w(px(0.0)).truncate().into_element()
+    } else {
+        text.into_element()
+    }
 }
 
 fn info_value(row: &Row) -> AnyElement {
@@ -650,37 +654,34 @@ fn log_tab(item: &Item) -> AnyElement {
         .px(tokens::space(4.0))
         .py(tokens::space(2.0))
         .child(when(logs.len() > 1, move || {
-            view()
-                .flex_row()
-                .gap(tokens::space(1.0))
-                .child(
-                    view()
-                        .flex_row()
-                        .rounded(move || theme().radius)
-                        .border_1()
-                        .border_color(move || tokens::hairline())
-                        .child(logs.iter().enumerate().map(|(index, file)| {
-                            let label = file.label.clone();
-                            nsh_base::button()
-                                .h(px(24.0))
-                                .px(tokens::space(2.0))
-                                .items_center()
-                                .rounded(move || theme().radius)
-                                .bg(move || {
-                                    if selected == index {
-                                        tokens::row_selected()
-                                    } else {
-                                        AdaptiveColor::TRANSPARENT
-                                    }
-                                })
-                                .on_press(move || svc::set_log_file(index))
-                                .child(
-                                    text(label)
-                                        .text_size(px(tokens::TEXT_CAPTION))
-                                        .text_color(move || theme().foreground),
-                                )
-                        })),
-                )
+            view().flex_row().gap(tokens::space(1.0)).child(
+                view()
+                    .flex_row()
+                    .rounded(move || theme().radius)
+                    .border_1()
+                    .border_color(move || tokens::hairline())
+                    .child(logs.iter().enumerate().map(|(index, file)| {
+                        let label = file.label.clone();
+                        nsh_base::button()
+                            .h(px(24.0))
+                            .px(tokens::space(2.0))
+                            .items_center()
+                            .rounded(move || theme().radius)
+                            .bg(move || {
+                                if selected == index {
+                                    tokens::row_selected()
+                                } else {
+                                    AdaptiveColor::TRANSPARENT
+                                }
+                            })
+                            .on_press(move || svc::set_log_file(index))
+                            .child(
+                                text(label)
+                                    .text_size(px(tokens::TEXT_CAPTION))
+                                    .text_color(move || theme().foreground),
+                            )
+                    })),
+            )
         }))
         .child(
             view()
@@ -695,9 +696,11 @@ fn log_tab(item: &Item) -> AnyElement {
                         .text_color(move || theme().muted_foreground)
                         .truncate(),
                 )
-                .child(icon_button(icons::external(), "Open in Console", move || {
-                    open_log(open.clone())
-                })),
+                .child(icon_button(
+                    icons::external(),
+                    "Open in Console",
+                    move || open_log(open.clone()),
+                )),
         )
         .child(match (error, lines) {
             (Some(message), _) => text(message)
@@ -720,9 +723,11 @@ fn log_tab(item: &Item) -> AnyElement {
                     .min_h(px(0.0))
                     .gap(tokens::space(1.0))
                     .child(when(truncated, move || {
-                        text(format!("The last {count} lines, updated while this tab is open."))
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .text_color(move || theme().muted_foreground)
+                        text(format!(
+                            "The last {count} lines, updated while this tab is open."
+                        ))
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .text_color(move || theme().muted_foreground)
                     }))
                     .child(
                         scroll()
@@ -732,19 +737,15 @@ fn log_tab(item: &Item) -> AnyElement {
                             .bg(move || tokens::panel())
                             .border_1()
                             .border_color(move || tokens::hairline())
-                            .child(
-                                view()
-                                    .flex_col()
-                                    .gap(px(2.0))
-                                    .p(tokens::space(2.5))
-                                    .child(lines.into_iter().map(|line| {
-                                        text(line)
-                                            .font_family("monospace")
-                                            .text_size(px(tokens::TEXT_CAPTION))
-                                            .text_color(move || theme().foreground)
-                                            .selectable(true)
-                                    })),
-                            ),
+                            .child(view().flex_col().gap(px(2.0)).p(tokens::space(2.5)).child(
+                                lines.into_iter().map(|line| {
+                                    text(line)
+                                        .font_family("monospace")
+                                        .text_size(px(tokens::TEXT_CAPTION))
+                                        .text_color(move || theme().foreground)
+                                        .selectable(true)
+                                }),
+                            )),
                     )
                     .into_element()
             }

@@ -182,8 +182,9 @@ All tests use temp roots and fake command/HTTP seams; nothing runs `brew`,
 The first database slice, ported from the Go `database_locations.go`,
 `ports.go`, `database.go`, `instance_initialization.go`,
 `instance_deletion.go`, `connection_profiles.go` and `connections.go`. It is
-the foundation the remaining database screens build on; backup/restore and
-background database work land separately.
+the foundation the remaining database screens build on; backup/restore,
+background database work and its launchd worker entry point live in the
+database data-operations slice below.
 
 | Path | Contents |
 |---|---|
@@ -264,3 +265,166 @@ Guarantees pinned by the tests:
   confirmation.
 - Upgrades never touch data, port or credentials; they change the saved
   package version and remove the generated plist so the next start rewrites it.
+
+## Shell integration, Node/Java defaults and uv (Phase 2)
+
+The Development screen's backing API, ported from `runtime_shell.go`,
+`runtime_defaults.go`, `runtime_fish.go`, `node_manage.go`,
+`node_releases.go`, `java_catalog.go` and `uv_python.go`.
+
+| Path | Contents |
+|---|---|
+| `src/shell/mod.rs` | `Shell` facade, `ShellError`, shell detection (`LookPath`, `$SHELL`, `/bin`, `/usr/bin`, `/opt/homebrew/bin`, `/usr/local/bin`; regular+executable only), zsh/Bash/fish startup-file discovery with `ZDOTDIR`/`XDG_CONFIG_HOME`, `bash-env.sh`/`bash-setup.sh`/`bash-setup.fish`, echo-free `BASH_ENV`, the transactional block editor with rollback, and compare-and-swap startup-file commits that preserve symlinks and refuse hard links. |
+| `src/shell/block.rs` | `update_shell_block`: unique paired markers on their own lines, replace-in-place, remove-only-this-block, Node's one-blank-line trim, and byte-for-byte idempotency. |
+| `src/shell/node.rs` | `NodeRelease`, the nodejs.org index fetch/cache (one hour), semver parser and range matcher (`22`, `22.x`, `^`, `~`, `>=`, `||`, hyphen ranges, `lts/<name>`), `pick_node`, `resolve_node_spec`, installed-version detection, `.node-version`/`.nvmrc`/`engines.node` walking, `NodeSelection`, the default symlink, and the zsh/Bash/fish setup scripts. |
+| `src/shell/java.rs` | The JetBrains JDK feed parser with fail-closed predicate AST filtering (`macOS`/`aarch64` only), install-folder pinning (`+`→`_`), ambiguity refusal, `resolve_java`, Java default selection, and the zsh/Bash + fish runtime scripts. |
+| `src/shell/uv.rs` | `uv` discovery (`LookPath`, `~/.local/bin`, `/opt/homebrew/bin`), executable validation, managed-Python listing/install/uninstall/pin, description and global pin. |
+
+Guarantees pinned by the tests:
+
+- Applying the same startup block twice is byte-for-byte idempotent; disable
+  removes only the marked block, and duplicate/damaged/joined markers are
+  refused before any file is touched.
+- Detection treats a non-executable `LookPath` hit as absent and continues to
+  `$SHELL` and the fixed directories.
+- Node's index keeps only Apple Silicon archives, sorts newest first, and
+  falls back to the last copy (marked stale) when the network fails.
+- Node manifests are accepted only after the exact file appears in
+  `SHASUMS256.txt`, and only exact versions reach that resolver.
+- Java catalog keys are install folders and duplicate conflicting pins abort
+  the whole catalog instead of picking one silently.
+- uv paths must be absolute, regular and executable; a stored selection that
+  has become unavailable is reported, not silently replaced.
+
+All tests use a temp home/root and fake command/HTTP seams; no test executes a
+shell, `uv`, or touches the network.
+
+## Diagnostics, logs and log rotation (Phase 2)
+
+Ported from `diagnostics.go`, `diagnostic_report.go`, `logs.go` and
+`log_rotation.go`.
+
+| Path | Contents |
+|---|---|
+| `src/diagnostics.rs` | `RuntimeSnapshot` status maps (`instance:<id>`, `proxy`, `tunnel`), bounded `snapshot`, Phase 2 `diagnose`, `Phase3Probe` (`Unknown` until the proxy/CA wiring lands), redacted export, bounded log tail, `logs` validation, the maintenance job, and copy/truncate rotation. |
+
+Guarantees pinned by the tests:
+
+- A snapshot timeout yields `Unknown`; `Stopped` requires a definite launchd
+  absence, and a registered-but-exited job is `Failed`.
+- Diagnostic exports replace every resource with `resource-N`, allowlist only
+  known layers/statuses, and emit fixed `"<layer> check: <status>"` summaries
+  and remedies. No path, domain, command output, environment or secret is
+  carried through.
+- Reports are new 0600 files under `reports/`; the export never reads state or
+  the filesystem.
+- Logs are read from at most the last 64 KiB and 400 lines; empty or missing
+  files yield one fixed message.
+- Rotation uses an exclusive `logs.rotate.lock`, skips symlinks/directories,
+  shifts `.1`→`.2`, writes exactly the last 5 MiB to `.1`, and truncates in
+  place so launchd's open descriptors keep working.
+- Log rotation is a state setting: disabling it removes the maintenance job,
+  enabling it writes a 60-second scheduled user agent and bootstraps it.
+
+All tests use a temp root and fake command/dial seams; nothing runs
+`launchctl` or opens a database port.
+
+## Unfinished database tasks: review and resolve
+
+`Databases::resolve_database_work(id, revision)` ports `ResolveDatabaseWork`
+from `database_work.go`. It runs under the operation journal as
+`reconcile-database-work` and never retries writes or rolls back an already
+changed target.
+
+- The caller must not hold `control.lock`; otherwise the fixed message
+  "database task still has a caller; cancel it there or wait" is returned.
+- The revision must match the value shown by `pending_database_work`
+  (`sha256(record.json + result.json)`), else
+  "database task changed; refresh and review its current result" is returned.
+- A successful review writes the 0600 `retain-output` marker with the record
+  ID, fsyncs the directory, stops only the digest-verified `dbwork-<id>` job
+  and verifies launchd no longer knows it, takes the raw instance resource
+  lease (the same lock, exempting this record from the idle guard), records a
+  retained backup artifact on the operation, and only then removes the work
+  directory under the `execution.lock` lease.
+
+Tests use temp roots and a fake launchd runner; the held-control, stale
+revision and successful-retention paths are pinned.
+
+## Privileged helper (Phase 4)
+
+Ported from `internal/privhelper`, plus `network.go`'s proxy socket daemon.
+The helper is the Devbase executable itself, `ditto`-staged as a whole bundle
+under `/Library/PrivilegedHelperTools/xyz.jyeu.devbase.helper/bundle`, launched
+by launchd on demand as root with `--dev helper --owner-uid <uid>`, and served
+over one HTTP/1.1 request per operation on a launchd-activated Unix socket.
+There is no XPC, no smux and no generic shell.
+
+| Path | Contents |
+|---|---|
+| `src/helper/mod.rs` | Identity constants (label, plist, helper directory, socket, protocol 1, 4 MiB limit), `HelperState`/`HelperStatus`, `HelperError` and `NeedsReinstall` semantics, `PEER_REJECTED_MESSAGE`. |
+| `src/helper/protocol.rs` | serde equivalents of `protocol.go`; Go base64 `[]byte` fields, camelCase names, `omitempty` omissions, and the helper server's `json.Marshal` HTML escaping. |
+| `src/helper/admin.rs` | The only password prompt: `run_admin` builds `do shell script "<shell-quoted command>" with administrator privileges`, runs `osascript -e` with a five-minute timeout, and translates "User canceled" to `authorization canceled`. |
+| `src/helper/client.rs` | `BinaryInfo`/`CurrentBinaryInfo`, passive `Status` (plist, staged path, `--owner-uid`, socket, staged binary), install/uninstall scripts, delayed-socket health polling, and every RPC. Implements `HelperApi` + `PrivilegedHelper`. |
+| `src/helper/server.rs` | HTTP/1.1 server over `UnixListener`: auth middleware, exact routes, validation, atomic writes, `launchctl`/`lsof` argv, `409`/`403`/`500` mapping, 60-second idle shutdown. |
+| `src/helper/auth.rs` | `getpeereid` UID check, `LOCAL_PEERTOKEN` audit-token read, and `SecCodeCopySelf`/`SecCodeCopyDesignatedRequirement`/`SecCodeCheckValidity` against the helper's own requirement. |
+| `src/helper/activate.rs` | `launch_activate_socket` via `dlopen`, `--dev helper` entry (`serve_activated`, `parse_owner_uid`), and a trait seam for tests. |
+| `src/helper/plist_doc.rs` | Helper plist build/parse, bundle detection, staged executable path, `--owner-uid` matching. |
+| `src/helper/socket_job.rs` | `network.go`'s proxy socket LaunchDaemon: workspace label, `HTTPS-<port>` TCP passive sockets, `MSM_DEV_SOCKET_ACTIVATION`/`HOME`, plist write/stop/kickstart through the helper. |
+| `src/helper/testenv.rs` | In-process helper for tests: temp socket under `/tmp`, matching plist and staged executable, background server, client, cleanup on drop. |
+| `src/helper/validate.rs`, `paths.rs` | Ports of every `validate*` function, including Go `filepath.Clean`/`Dir`/`Base` semantics. |
+
+Guarantees pinned by the tests (89 helper tests):
+
+- Install runs exactly one administrator prompt; the script's order is pinned
+  byte-for-byte, including `ditto --noqtn` + `codesign --verify --deep
+  --strict` before the plist write, and the socket wait loop. Uninstall is one
+  script with no health check.
+- The helper plist has no `UserName`, `RunAtLoad` or `KeepAlive`; the socket is
+  mode 0666 and the staged executable runs as root only when launchd activates
+  it.
+- Status never launches the helper or prompts; every Go message is preserved
+  for missing/unreadable/invalid/mismatched configuration and missing staged
+  binaries.
+- Authorization runs before routing: missing connection, unreadable peer UID,
+  wrong UID, then the code requirement (in that order). A failed code check
+  returns the exact reinstall message from every endpoint, mapped to a typed
+  `PeerRejected`/`NeedsReinstall` in the client.
+- Every endpoint's Go validation matrix is enforced: normalized absolute paths,
+  symlink refusal, helper self-protection for targets, paths and every
+  `launchctl` argument, allowed subcommands/signals, trash-directory rules,
+  `409` destination conflicts, `Saved:true, Error:…` on bootstrap failure, and
+  trimmed command output as the `500` message.
+- Idle shutdown is clean and leaves the socket file, so launchd can activate
+  the helper again; requests reset the timer and in-flight requests delay it.
+- The proxy socket plist uses the workspace label, one sorted unique
+  `HTTPS-<port>` socket per listener, and is installed or removed only through
+  the helper.
+
+Tests use fakes for peer identity, code-signature results, command execution
+and ownership changes, and the in-process helper. They never install a real
+helper, run `launchctl`/`lsof`/`osascript`, touch the keychain or prompt for a
+password. The real Security.framework self-check tests only inspect this test
+process and `/bin/sleep`.
+
+## Database worker entry point
+
+`Databases::run_database_worker(id, cancelled)` ports Go's
+`RunDatabaseWorker` (`database_work.go:398-505`) — the finite launchd job that
+executes a recorded `database-work/<id>` task (argv:
+`--dev database-worker <root> <id>`). It:
+
+- refuses a task that already has `result.json`;
+- waits for the record's `execution.lock` and requires the recorded
+  `jobs/<label>.plist` digest and launchd PID to identify this process;
+- reads and removes `input.json` before any database client runs;
+- runs the recorded `backup`/`restore`/`create-database`/`create-user` through
+  the same database operations the journal uses;
+- exempts exactly its own record from the database-work idle guard, mirroring
+  Go's worker-held `m.databaseWork` context, while other callers still see the
+  reservation;
+- writes `result.json` (and a redacted `error.log` on failure), then returns
+  `database task <id> did not complete` for a failed/cancelled task.
+
+The worker tests use a temp workspace and fake launchd/database runner; they
+never start a job or a database client.

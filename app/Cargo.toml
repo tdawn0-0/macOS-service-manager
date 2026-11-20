@@ -5,13 +5,16 @@ edition = "2024"
 publish = false
 
 [workspace]
-exclude = ["crates/devcore"]
+exclude = ["crates/devcore", "crates/devproxy"]
 
 [dependencies]
 nsh-core = "0.6.1"
 nsh-base = "0.6.1"
 env_logger = "0.11"
+chrono = "0.4"
+tokio = { version = "1", features = ["rt"] }
 devcore = { path = "crates/devcore" }
+devproxy = { path = "crates/devproxy" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nsh-platform-linux = { version = "0.6.1", default-features = false, features = ["shader", "editor", "emoji-picker", "highlight", "math", "plot", "rich-editor", "term", "websocket", "updater", "svg", "net", "sound"] }

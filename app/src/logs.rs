@@ -84,10 +84,7 @@ mod tests {
         let snapshot = tail(&path).unwrap();
         assert_eq!(snapshot.lines.len(), MAX_LINES);
         assert!(snapshot.truncated);
-        assert_eq!(
-            snapshot.lines.last().map(String::as_str),
-            Some("line 219")
-        );
+        assert_eq!(snapshot.lines.last().map(String::as_str), Some("line 219"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -1,0 +1,5 @@
+exclude = ["crates/devcore"]
+devcore = { path = "crates/devcore" }
+[dev-dependencies]
+nsh-engine = "0.6.1"
+nsh-testing = "0.6.1"

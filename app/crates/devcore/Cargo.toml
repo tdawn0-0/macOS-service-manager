@@ -1,0 +1,19 @@
+[package]
+name = "devcore"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Devbase system core: the launchd provider ported from internal/launchd"
+
+# The app at app/Cargo.toml is its own workspace. This crate is intentionally
+# not a member yet (the app integration happens separately); declaring its own
+# workspace keeps `cargo test` here self-contained.
+[workspace]
+
+[dependencies]
+plist = "1.10"
+serde = { version = "1", features = ["derive"] }
+libc = "0.2"
+flate2 = "1"
+tar = "0.4"
+zip = { version = "9", default-features = false, features = ["deflate"] }

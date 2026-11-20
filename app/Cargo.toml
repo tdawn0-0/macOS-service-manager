@@ -1,16 +1,27 @@
-exclude = ["crates/devcore"]
-devcore = { path = "crates/devcore" }
-[dev-dependencies]
-nsh-engine = "0.6.1"
-nsh-testing = "0.6.1"
+[package]
+name = "nsh-app-devbase"
+version = "0.1.0"
+edition = "2024"
+publish = false
 
+[workspace]
 exclude = ["crates/devcore"]
-devcore = { path = "crates/devcore" }
-[dev-dependencies]
-nsh-engine = "0.6.1"
-nsh-testing = "0.6.1"
 
+[dependencies]
+nsh-core = "0.6.1"
+nsh-base = "0.6.1"
+env_logger = "0.11"
 devcore = { path = "crates/devcore" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nsh-platform-linux = { version = "0.6.1", default-features = false, features = ["shader", "editor", "emoji-picker", "highlight", "math", "plot", "rich-editor", "term", "websocket", "updater", "svg", "net", "sound"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nsh-platform-macos = { version = "0.6.1", default-features = false, features = ["shader", "editor", "emoji-picker", "highlight", "math", "plot", "rich-editor", "term", "websocket", "updater", "svg"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+nsh-platform-windows = { version = "0.6.1", default-features = false, features = ["shader", "editor", "emoji-picker", "highlight", "math", "plot", "rich-editor", "term", "websocket", "updater", "svg", "net"] }
+
 [dev-dependencies]
 nsh-engine = "0.6.1"
 nsh-testing = "0.6.1"

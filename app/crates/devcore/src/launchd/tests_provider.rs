@@ -830,3 +830,152 @@ fn the_facade_holds_the_three_launchd_sources_in_order() {
     );
     assert!(launchd.provider(Source::Brew).is_none());
 }
+
+#[test]
+fn type_mismatches_are_invalid_but_unknown_keys_are_fine() {
+    let dir = TempDir::new();
+    write_file(
+        dir.path(),
+        "badlabel.plist",
+        br#"<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><integer>5</integer></dict></plist>"#,
+    );
+    write_file(
+        dir.path(),
+        "badenv.plist",
+        br#"<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>com.example.badenv</string><key>EnvironmentVariables</key><dict><key>A</key><integer>1</integer></dict></dict></plist>"#,
+    );
+    write_file(
+        dir.path(),
+        "badargs.plist",
+        br#"<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>com.example.badargs</string><key>ProgramArguments</key><array><string>/bin/echo</string><integer>2</integer></array></dict></plist>"#,
+    );
+    write_file(
+        dir.path(),
+        "unknown.plist",
+        br#"<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>com.example.unknown</string><key>Weird</key><dict><key>Nested</key><array><integer>1</integer><string>x</string></array></dict></dict></plist>"#,
+    );
+    let runner = FakeRunner::new(PRINT_OUT);
+    let host = FakeHost::new(dir.path(), dir.path());
+    let helper = FakeHelper::missing();
+    let ctx = context(Arc::clone(&runner), &helper, Arc::clone(&host));
+    let provider = LaunchdProvider::new(
+        Config {
+            source: Source::UserAgent,
+            dir: dir.path().to_path_buf(),
+            domain: "gui/501".into(),
+            elevated: false,
+        },
+        ctx,
+    );
+    let items = provider.list().expect("list");
+    assert_eq!(items.len(), 4, "{items:?}");
+    for name in ["badlabel", "badenv", "badargs"] {
+        assert_eq!(by_name(&items, name).state, State::Invalid, "{name}");
+    }
+    let unknown = by_name(&items, "com.example.unknown");
+    assert_eq!(unknown.state, State::Stopped);
+    assert_eq!(unknown.kind, None);
+}
+
+#[test]
+fn command_arguments_replace_program_and_empty_arguments_are_skipped() {
+    let dir = TempDir::new();
+    write_file(
+        dir.path(),
+        "a.plist",
+        br#"<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>com.example.command</string><key>Program</key><string>/opt/a</string><key>ProgramArguments</key><array><string>/bin/b</string><string>x</string></array></dict></plist>"#,
+    );
+    write_file(
+        dir.path(),
+        "b.plist",
+        br#"<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>com.example.empty</string><key>Program</key><string>/opt/a</string><key>ProgramArguments</key><array></array></dict></plist>"#,
+    );
+    let runner = FakeRunner::new(PRINT_OUT);
+    let host = FakeHost::new(dir.path(), dir.path());
+    let helper = FakeHelper::missing();
+    let ctx = context(Arc::clone(&runner), &helper, Arc::clone(&host));
+    let provider = LaunchdProvider::new(
+        Config {
+            source: Source::UserAgent,
+            dir: dir.path().to_path_buf(),
+            domain: "gui/501".into(),
+            elevated: false,
+        },
+        ctx,
+    );
+    let items = provider.list().expect("list");
+    let command = provider
+        .detail(by_name(&items, "com.example.command"))
+        .expect("detail");
+    let command: BTreeMap<&str, &str> = command
+        .rows
+        .iter()
+        .map(|row| (row.key.as_str(), row.value.as_str()))
+        .collect();
+    assert_eq!(command["Command"], "/bin/b x");
+
+    let empty = provider
+        .detail(by_name(&items, "com.example.empty"))
+        .expect("detail");
+    assert!(
+        empty.rows.iter().all(|row| row.key != "Command"),
+        "{empty:?}"
+    );
+}
+
+#[test]
+fn detail_shows_a_negative_last_exit() {
+    let dir = TempDir::new();
+    write_file(
+        dir.path(),
+        "signaled.plist",
+        br#"<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>com.example.signaled</string><key>ProgramArguments</key><array><string>/bin/date</string></array></dict></plist>"#,
+    );
+    let runner = FakeRunner::new(PRINT_OUT);
+    let host = FakeHost::new(dir.path(), dir.path());
+    let helper = FakeHelper::missing();
+    let ctx = context(Arc::clone(&runner), &helper, Arc::clone(&host));
+    let provider = LaunchdProvider::new(
+        Config {
+            source: Source::UserAgent,
+            dir: dir.path().to_path_buf(),
+            domain: "gui/501".into(),
+            elevated: false,
+        },
+        ctx,
+    );
+    let items = provider.list().expect("list");
+    let signaled = by_name(&items, "com.example.signaled");
+    assert_eq!(signaled.state, State::Loaded);
+    let detail = provider.detail(signaled).expect("detail");
+    let rows: BTreeMap<&str, &str> = detail
+        .rows
+        .iter()
+        .map(|row| (row.key.as_str(), row.value.as_str()))
+        .collect();
+    assert_eq!(rows["Last exit code"], "-15");
+}
+
+#[test]
+fn works_behind_the_service_provider_trait() {
+    let fixture = fixture();
+    let provider: Arc<dyn crate::service::Provider> = Arc::new(LaunchdProvider::new(
+        Config {
+            source: Source::UserAgent,
+            dir: fixture.provider.config().dir.clone(),
+            domain: "gui/501".into(),
+            elevated: false,
+        },
+        fixture.provider.ctx(),
+    ));
+    assert_eq!(provider.source(), Source::UserAgent);
+    let items = provider.list().expect("list through the trait");
+    assert_eq!(items.len(), 4);
+    let running = items
+        .iter()
+        .find(|item| item.name == "com.example.running")
+        .expect("running item");
+    let detail = provider.detail(running).expect("detail through the trait");
+    assert!(detail.rows.iter().any(|row| row.key == "Command"));
+    assert!(provider.do_action(running, Action::Stop).is_ok());
+}

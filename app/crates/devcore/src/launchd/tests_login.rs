@@ -1,22 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use super::test_support::{FakeHost, FakeRunner, TempDir, write_file};
-use super::*;
-fn host_for(dir: &Path) -> Arc<FakeHost> {
-    FakeHost::new(dir, dir)
-}
 
-#[test]
-fn login_agent_paths_and_target() {
-    assert_eq!(login_agent_plist_path(Path::new("")), None);
-    assert_eq!(
-        login_agent_plist_path(Path::new("/x/LaunchAgents")),
-        Some(PathBuf::from(
-            "/x/LaunchAgents/xyz.jyeu.devbase.login.plist"
-        ))
-    );
-    assert_eq!(login_agent_target(501), "gui/501/xyz.jyeu.devbase.login");
-}
 use super::test_support::{FakeHost, FakeRunner, TempDir, write_file};
 use super::*;
 

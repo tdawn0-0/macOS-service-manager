@@ -67,7 +67,7 @@ fn preview_body() -> AnyElement {
                     Tone::Default,
                     "deletion-refresh",
                     db::operations_busy(),
-                    move || db::refresh_deletion_preview(),
+                    db::refresh_deletion_preview,
                 ))
                 .child(ui::action_button(
                     "Cancel deletion preview",
@@ -323,7 +323,7 @@ fn deletion_row(row: InstanceDeletionInfo) -> impl IntoElement {
         .child(when(busy, || {
             text("Another caller owns this deletion.")
                 .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || tokens::warning())
+                .text_color(tokens::warning)
         }))
         .child(ui::action_button(
             format!("Restore original data {restore_prefix}"),

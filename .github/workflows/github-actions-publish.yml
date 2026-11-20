@@ -3,7 +3,7 @@ name: release
 # Pushing a tag on master, as v0.2.0, releases that version: the app is tested,
 # built, signed with the Developer ID, notarized, and published with its disk
 # image. A tag with a suffix, as v0.2.0-rc.1, makes a prerelease. The version comes
-# from the tag, so mygo.json does not need changing first.
+# from the tag, so app/nsh.json does not need changing first.
 #
 #   git tag v0.2.0 && git push origin master v0.2.0
 #
@@ -18,23 +18,7 @@ permissions:
   contents: read
 
 jobs:
-  native-test:
-    runs-on: macos-26
-    timeout-minutes: 90
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: require executed native software tests
-        run: PYTHONDONTWRITEBYTECODE=1 python3 scripts/verify-native-release.py --run
-
   release:
-    needs: native-test
     runs-on: macos-26
     timeout-minutes: 90
     # Holds the secrets, and hands them only to the tags above.
@@ -49,9 +33,26 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
+      - name: install Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+          cargo --version
+          rustc --version
+
+      - name: install nsh
+        run: |
+          set -euo pipefail
+          brew install longbridge/tap/nsh
+          nsh --version
+
+      - name: fetch dependencies
+        run: |
+          set -euo pipefail
+          for dir in app app/crates/devcore app/crates/devproxy app/crates/devcli; do
+            (cd "$dir" && cargo fetch --locked)
+          done
 
       - name: check the tag
         env:
@@ -85,17 +86,20 @@ jobs:
         run: |
           set -euo pipefail
           test "$(uname -m)" = arm64
-          go vet ./...
-          go mod verify
-          go test -race ./...
+          (cd app && cargo test)
+          for crate in devcore devproxy devcli; do
+            (cd "app/crates/$crate" && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check)
+          done
+          (cd app && cargo clippy --all-targets -- -D warnings && cargo fmt --check && nsh build)
+          (cd app && nsh package --target macos)
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'
           python3 scripts/collect-third-party-notices.py --check
 
       - name: set the version
         run: |
           set -euo pipefail
-          jq --arg version "$VERSION" '.version = $version' mygo.json > mygo.json.new
-          mv mygo.json.new mygo.json
+          jq --arg version "$VERSION" '.version = $version' app/nsh.json > app/nsh.json.new
+          mv app/nsh.json.new app/nsh.json
 
       - name: install the signing certificate
         env:

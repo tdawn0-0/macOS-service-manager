@@ -127,14 +127,11 @@ fn record(record: OperationRecord) -> impl IntoElement {
                     ),
             )
             .child(
-                view()
-                    .flex_col()
-                    .gap(tokens::space(0.5))
-                    .children(
-                        details
-                            .into_iter()
-                            .map(|(label, value)| ui::kv(label, value)),
-                    ),
+                view().flex_col().gap(tokens::space(0.5)).children(
+                    details
+                        .into_iter()
+                        .map(|(label, value)| ui::kv(label, value)),
+                ),
             )
             .child(when(!record.phase.is_empty(), {
                 let phase = format!("{} · {}", record.status, record.phase);

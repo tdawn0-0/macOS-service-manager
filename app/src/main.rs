@@ -43,8 +43,7 @@ impl Seams for SystemSeams {
     fn public_cli(&self, args: &[String]) -> ExitCode {
         let mut input = Vec::new();
         let _ = std::io::stdin().read_to_end(&mut input);
-        let mut env =
-            devcli::CliEnv::default_env(Box::new(std::io::Cursor::new(input)));
+        let mut env = devcli::CliEnv::default_env(Box::new(std::io::Cursor::new(input)));
         let mut out = std::io::stdout();
         let mut err = std::io::stderr();
         match devcli::run_cli_with_env(args, &mut env, &mut out, &mut err) {
@@ -53,8 +52,11 @@ impl Seams for SystemSeams {
                 // `run_cli` formats a failed command after `RunCLIWithEnv`;
                 // keep that contract while dispatching through the env seam.
                 if env.json {
-                    let _ =
-                        devcli::output::write_action_error_json(&mut err, error.message(), error.exit_code());
+                    let _ = devcli::output::write_action_error_json(
+                        &mut err,
+                        error.message(),
+                        error.exit_code(),
+                    );
                 } else {
                     let _ = devcli::output::write_human_error(&mut err, error.message());
                 }
@@ -87,6 +89,4 @@ fn main() -> ExitCode {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-compile_error!(
-    "Run this binary on macOS, Windows or Linux; the app targets macOS 26 and later."
-);
+compile_error!("Run this binary on macOS, Windows or Linux; the app targets macOS 26 and later.");

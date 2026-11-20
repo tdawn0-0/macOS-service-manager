@@ -51,7 +51,7 @@ pub(crate) fn action_button(
         })
         .disabled(disabled)
         .opacity(if disabled { 0.45 } else { 1.0 })
-        .on_press(move || on_press())
+        .on_press(on_press)
         .child(
             text(label)
                 .text_size(px(tokens::TEXT_SMALL))
@@ -89,9 +89,9 @@ pub(crate) fn chip(
             }
         })
         .border_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .hover(move |style| style.bg(tokens::row_hover()))
-        .on_press(move || on_press())
+        .on_press(on_press)
         .child(
             text(label)
                 .text_size(px(tokens::TEXT_CAPTION))
@@ -150,10 +150,10 @@ pub(crate) fn card(title: impl Into<String>, body: impl IntoElement) -> impl Int
         .flex_col()
         .gap(tokens::space(3.0))
         .p(tokens::space(4.0))
-        .rounded(move || tokens::panel_radius())
-        .bg(move || tokens::panel())
+        .rounded(tokens::panel_radius)
+        .bg(tokens::panel)
         .border_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .child(
             text(title.into())
                 .text_size(px(tokens::TEXT_CAPTION))
@@ -169,7 +169,7 @@ pub(crate) fn danger_card(title: impl Into<String>, body: impl IntoElement) -> i
         .flex_col()
         .gap(tokens::space(3.0))
         .p(tokens::space(4.0))
-        .rounded(move || tokens::panel_radius())
+        .rounded(tokens::panel_radius)
         .bg(move || theme().destructive.opacity(0.06))
         .border_1()
         .border_color(move || theme().destructive.opacity(0.35))
@@ -184,11 +184,7 @@ pub(crate) fn danger_card(title: impl Into<String>, body: impl IntoElement) -> i
 
 /// A thin line between parts of a card.
 pub(crate) fn hairline() -> impl IntoElement {
-    view()
-        .h(px(1.0))
-        .flex_none()
-        .w_full()
-        .bg(move || tokens::hairline())
+    view().h(px(1.0)).flex_none().w_full().bg(tokens::hairline)
 }
 
 /// A labelled control.
@@ -220,9 +216,9 @@ pub(crate) fn text_field(
         .flex_row()
         .items_center()
         .rounded(move || theme().radius)
-        .bg(move || tokens::control())
+        .bg(tokens::control)
         .border_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .child(
             input()
                 .test_id(&test_id)
@@ -248,9 +244,9 @@ pub(crate) fn read_only_value(value: impl Into<String>) -> impl IntoElement {
         .px(tokens::space(2.0))
         .py(tokens::space(1.0))
         .rounded(move || theme().radius)
-        .bg(move || tokens::inset())
+        .bg(tokens::inset)
         .border_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .child(
             text(value)
                 .flex_1()
@@ -285,7 +281,7 @@ pub(crate) fn row_icon_button(
         .disabled(disabled)
         .opacity(if disabled { 0.4 } else { 1.0 })
         .accessibility_label(label.into())
-        .on_press(move || on_press())
+        .on_press(on_press)
         .child(
             icon.size(px(13.0))
                 .text_color(move || theme().muted_foreground),

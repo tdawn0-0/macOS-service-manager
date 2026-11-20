@@ -319,7 +319,10 @@ fn a_port_is_checked_and_a_free_port_is_suggested() {
 
     app.press("id:diagnostics-free-port").unwrap();
     app.wait_for("text:/Suggested port: 4321/").unwrap();
-    assert_eq!(app.screen().input_text("id:diagnostics-port").unwrap(), Some("4321"));
+    assert_eq!(
+        app.screen().input_text("id:diagnostics-port").unwrap(),
+        Some("4321")
+    );
 }
 
 #[test]

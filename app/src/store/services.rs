@@ -512,7 +512,9 @@ fn set_detail_error(id: &str, message: &str) {
 }
 
 /// The item chosen and its detail, for the inspector.
-pub(crate) fn detail() -> Option<(String, Vec<Row>, Vec<LogFile>, bool, Option<String>)> {
+pub(crate) type DetailSnapshot = (String, Vec<Row>, Vec<LogFile>, bool, Option<String>);
+
+pub(crate) fn detail() -> Option<DetailSnapshot> {
     services().with(|state| {
         let detail = state.detail.as_ref()?;
         Some((
@@ -567,7 +569,9 @@ pub(crate) fn set_log_file(index: usize) {
 
 /// The log tab's current content: the file, lines, error and whether the
 /// file holds more before them.
-pub(crate) fn log_view() -> Option<(LogFile, Option<Vec<String>>, Option<String>, bool)> {
+pub(crate) type LogView = (LogFile, Option<Vec<String>>, Option<String>, bool);
+
+pub(crate) fn log_view() -> Option<LogView> {
     services().with(|state| {
         let detail = state.detail.as_ref()?;
         let file = detail.logs.get(detail.log_file)?.clone();

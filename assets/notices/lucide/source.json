@@ -5,7 +5,7 @@
   "licenseRevision": "e715245d62667c800e7f54c94b1b023692e900a3",
   "licenseSHA256": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57",
   "usedBy": [
-    "icons.go"
+    "app/src/components/icons.rs"
   ],
   "notes": "License snapshot for existing adapted Lucide SVG paths, including Feather-derived icons. The original geometry revision is not recorded in Git."
 }

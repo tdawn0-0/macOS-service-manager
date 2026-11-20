@@ -94,8 +94,9 @@ app/                 # nsh app, --template rust (a Cargo project)
 ### Phase 5 — Cutover
 - Delete all Go (`*.go`, `go.mod`, `go.sum`, `mygo.json`, `cmd/`, `internal/`), the Rust
   app becomes the repo's product.
-- Replace verification gates: `cargo test`, `cargo clippy`, `nsh check`, `nsh build`,
-  `nsh package --target macos`, Python notice script retargeted to Cargo.lock.
+- Replace verification gates: `cargo test`, `cargo clippy --all-targets -- -D warnings`,
+  `cargo fmt --check`, `nsh build`, `nsh package --target macos`, Python notice script
+  retargeted to the Cargo.lock files.
 - Rewrite AGENTS.md sections 1–4 for the Rust stack; keep safety invariants verbatim.
 
 ## Invariants carried over unchanged
@@ -119,10 +120,10 @@ app/                 # nsh app, --template rust (a Cargo project)
 - The Rust-only form (no QuickJS) is nsh's preferred mode and removes the JS engine risk
   entirely, at the cost of hot TSX updates during development (cargo rebuilds only).
 
-## Progress ledger (2026-11-20)
+## Progress ledger (2026-11-20; cut over 2026-11-21)
 
 Every slice below is `cargo test`/`clippy -D warnings`/`fmt --check` green in its crate.
-The Go app is untouched and still the shipping product; nothing here is deleted yet.
+The Rust app is now the repository's product; the Go tree was deleted at cutover.
 
 | Slice | Where | Tests | Notes |
 |---|---|---|---|
@@ -137,20 +138,32 @@ The Go app is untouched and still the shipping product; nothing here is deleted 
 | Proxy/CA/tunnel (Phase 3 core) | `app/crates/devproxy/` | 97 | hand-written reverse proxy (101 tunneling, SSE flush verified), generational CA, full tunnel stack; Phase-4 socket seam returns `Unsupported` |
 | Software screen (UI) | `app/src/pages/software/`, `app/src/store/software.rs` | 7 | install/uninstall/review/verify/repair flows with confirm dialogs |
 
-Spec artifacts for the remaining slices (all file:line-cited, agent-ready):
-`local://devplatform-port-spec.md` (§9 items 7, 12 remain), `local://proxy-port-spec.md`
-(Phase-3 UI screens), `local://privcli-port-spec.md` (Phase 4 in full).
+## Cutover record (2026-11-21)
 
-Remaining work, in dependency order:
-1. §9 item 7 — shell integration + `java_catalog`/`node_releases` completion, then the
-   Development workspace screens.
-2. §9 item 12 — diagnostics/logs/snapshot (CA/proxy probes return `Unknown` until Phase-4
-   wiring), Diagnostics/Ports/Operations screens.
-3. Databases + HTTPS Proxy + Authority screens over the finished devcore/devproxy APIs;
-   `nsh/desktop` menu bar (menubar.go port) once databases rows + tunnel switch have their
-   stores.
-4. Phase 4 — helper + CLI per `local://privcli-port-spec.md` (same-binary dispatch from
-   `app/src/main.rs`, HTTP/1.1 over launchd-activated socket, `SecCodeCheckValidity` auth,
-   byte-compatible `--json`).
-5. Phase 5 — delete Go, rewrite AGENTS.md gates to `cargo`/`nsh`, retarget the notices
-   script to Cargo.lock.
+Phase 5 is complete. Deleted at the repository root: all 77 root `*.go` files (the app, the
+UI/e2e suites and `shots_test.go`), `internal/` and `cmd/` (241 tracked Go files in total),
+`go.mod`, `go.sum`, `mygo.json`, and `entitlements.plist`. `scripts/verify-native-release.py`
+and its tests were deleted with the Go release harness.
+
+The Rust app under `app/` is the product. `app/crates/devcore`, `app/crates/devproxy` and
+`app/crates/devcli` remain standalone workspaces; the app depends on them by path. The app
+crate was made `clippy -D warnings`/`rustfmt` clean at cutover with mechanical fixes only
+(redundant closures, three type aliases, formatting). The verification gates are now:
+
+```sh
+cd app && cargo test
+cd app/crates/devcore && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check
+cd app/crates/devproxy && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check
+cd app/crates/devcli && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check
+cd app && cargo clippy --all-targets -- -D warnings && cargo fmt --check && nsh build
+cd app && nsh package --target macos
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'
+python3 scripts/collect-third-party-notices.py --check
+```
+
+`scripts/collect-third-party-notices.py` now derives its inventory from `app/Cargo.lock` and
+`app/crates/*/Cargo.lock`, reading the fetched crates.io registry offline (run
+`cargo fetch --locked` in each workspace first). `licenses/` records every production crate's
+declared licence and copied notice files, replacing the Go module and Go toolchain notices.
+CI runs the cargo gates, `nsh build`, `nsh package --target macos`, the Python tests and the
+notice check; the release workflow signs and notarizes the packaged app.

@@ -1,9 +1,5 @@
 /build/
-# `go build` at the root writes the app binary here.
-/devbase
-/.mygo/
 /.cloudflare/
-mygo_windows_*.syso
 .DS_Store
 .idea
 .vscode/*

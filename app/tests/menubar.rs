@@ -93,10 +93,9 @@ fn TrayHarness() -> impl IntoElement {
             }
             Some(rows.into_element())
         }))
-        .child(when(
-            || nsh_app_devbase::testing::quit_open(),
-            || text("quit pending").test_id("quit-open"),
-        ))
+        .child(when(nsh_app_devbase::testing::quit_open, || {
+            text("quit pending").test_id("quit-open")
+        }))
 }
 
 /// A root that starts the guide and shows its overlay, as the app root does.

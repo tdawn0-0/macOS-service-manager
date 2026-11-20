@@ -68,14 +68,11 @@ fn header() -> impl IntoElement {
                         .truncate(),
                 ),
         )
-        .child(when(
-            move || sw::loading(),
-            || {
-                text("Loading")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground)
-            },
-        ))
+        .child(when(sw::loading, || {
+            text("Loading")
+                .text_size(px(tokens::TEXT_CAPTION))
+                .text_color(move || theme().muted_foreground)
+        }))
         .child(
             nsh_base::button()
                 .test_id("software-refresh")
@@ -297,7 +294,7 @@ fn installed_row(package: devcore::model::Package) -> impl IntoElement {
                 sw::progress(&id).map(|line| {
                     text(line)
                         .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || tokens::success())
+                        .text_color(tokens::success)
                         .selectable(true)
                 })
             }
@@ -451,7 +448,7 @@ fn version_chip(kind: SoftwareKind, version: String) -> impl IntoElement {
             }
         })
         .border_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .hover(move |style| style.bg(tokens::row_hover()))
         .on_press(move || sw::set_version(pressed.clone()))
         .child(
@@ -483,9 +480,9 @@ fn version_field() -> impl IntoElement {
                 .flex_row()
                 .items_center()
                 .rounded(move || theme().radius)
-                .bg(move || tokens::control())
+                .bg(tokens::control)
                 .border_1()
-                .border_color(move || tokens::hairline())
+                .border_color(tokens::hairline)
                 .child(
                     input()
                         .test_id("software-version-exact")
@@ -496,7 +493,7 @@ fn version_field() -> impl IntoElement {
                         .text_size(px(tokens::TEXT_SMALL))
                         .text_color(move || theme().foreground)
                         .placeholder("For example 22.14.0")
-                        .value(move || sw::version())
+                        .value(sw::version)
                         .on_change(|text: &str| sw::set_version(text.to_owned())),
                 ),
         )
@@ -522,7 +519,7 @@ fn preview_inner(preview: sw::Preview) -> impl IntoElement {
                 .gap(tokens::space(2.0))
                 .p(tokens::space(3.0))
                 .rounded(move || theme().radius)
-                .bg(move || tokens::inset())
+                .bg(tokens::inset)
                 .child(when(loading, || {
                     text("Reviewing…")
                         .text_size(px(tokens::TEXT_SMALL))
@@ -630,13 +627,13 @@ fn preview_details(details: PackageDetails) -> impl IntoElement {
         .child(when(needs_repair, move || {
             text(integrity_note.clone())
                 .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || tokens::warning())
+                .text_color(tokens::warning)
         }))
         .child(dynamic(move || {
             sw::progress(&progress_id).map(|line| {
                 text(line)
                     .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || tokens::success())
+                    .text_color(tokens::success)
                     .selectable(true)
             })
         }))

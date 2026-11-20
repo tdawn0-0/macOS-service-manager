@@ -19,7 +19,7 @@ pub(crate) fn list_pane() -> impl IntoElement {
         .flex_col()
         .child(header())
         .child(search_row())
-        .child(view().h(px(1.0)).flex_none().bg(move || tokens::hairline()))
+        .child(view().h(px(1.0)).flex_none().bg(tokens::hairline))
         .child(when_some_note())
         .child(list())
 }
@@ -41,14 +41,11 @@ fn header() -> impl IntoElement {
                 .flex_1()
                 .truncate(),
         )
-        .child(when(
-            move || svc::active_loading(),
-            || {
-                text("Loading")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground)
-            },
-        ))
+        .child(when(svc::active_loading, || {
+            text("Loading")
+                .text_size(px(tokens::TEXT_CAPTION))
+                .text_color(move || theme().muted_foreground)
+        }))
         .child(icon_button(icons::refresh(), "Refresh", || {
             svc::refresh_active()
         }))
@@ -73,9 +70,9 @@ fn search_row() -> impl IntoElement {
                 .gap(tokens::space(1.5))
                 .px(tokens::space(2.0))
                 .rounded(move || theme().radius)
-                .bg(move || tokens::control())
+                .bg(tokens::control)
                 .border_1()
-                .border_color(move || tokens::hairline())
+                .border_color(tokens::hairline)
                 .child(
                     icons::search()
                         .size(px(13.0))
@@ -91,7 +88,7 @@ fn search_row() -> impl IntoElement {
                         .text_size(px(tokens::TEXT_SMALL))
                         .text_color(move || theme().foreground)
                         .placeholder("Search")
-                        .value(move || svc::query())
+                        .value(svc::query)
                         .on_change(move |text: &str| svc::set_query(text.to_owned())),
                 ),
         )
@@ -102,7 +99,7 @@ fn search_row() -> impl IntoElement {
                 .items_center()
                 .rounded(move || theme().radius)
                 .border_1()
-                .border_color(move || tokens::hairline())
+                .border_color(tokens::hairline)
                 .child(Filter::ALL.iter().map(|filter| filter_button(*filter))),
         )
 }
@@ -172,7 +169,7 @@ fn list() -> impl IntoElement {
                 .py(tokens::space(2.0))
                 .px(tokens::space(2.0))
                 .child(each(
-                    move || svc::visible_items(),
+                    svc::visible_items,
                     |item| item.id.clone(),
                     |item, _| row(item),
                 )),
@@ -339,9 +336,9 @@ fn row_action(item: ReadSignal<Item>, action_id: String) -> impl IntoElement {
         .items_center()
         .justify_center()
         .rounded(move || theme().radius)
-        .bg(move || tokens::control())
+        .bg(tokens::control)
         .border_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .hover(move |style| style.bg(tokens::row_hover()))
         .opacity(move || {
             let id = item.with_untracked(|item| item.id.clone());

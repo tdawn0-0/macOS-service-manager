@@ -5,8 +5,7 @@ use nsh_engine::{EngineConfig, Root};
 use nsh_testing::Headless;
 
 fn start() -> Headless {
-    let mut app =
-        Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
+    let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
     app.wait_for("Services").unwrap();
     app
 }

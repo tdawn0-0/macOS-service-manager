@@ -23,7 +23,9 @@ use nsh_app_devbase::testing::{install_provider, use_fake_providers};
 static SERIAL: Mutex<()> = Mutex::new(());
 
 fn serial() -> MutexGuard<'static, ()> {
-    SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,9 +116,7 @@ impl Provider for FakeProvider {
 
     fn confirm(&self, item: &Item, action: Action) -> Option<String> {
         match (self.behaviour, action) {
-            (Behaviour::ConfirmStart, Action::Start) => {
-                Some(format!("Start {} now?", item.name))
-            }
+            (Behaviour::ConfirmStart, Action::Start) => Some(format!("Start {} now?", item.name)),
             (_, Action::Remove) => Some(format!("Remove {}?", item.name)),
             _ => None,
         }
@@ -166,13 +166,7 @@ impl Provider for FakeProvider {
     }
 }
 
-fn item(
-    source: Source,
-    name: &str,
-    state: State,
-    autostart: Autostart,
-    admin: bool,
-) -> Item {
+fn item(source: Source, name: &str, state: State, autostart: Autostart, admin: bool) -> Item {
     Item {
         id: format!("{}:{}", source.as_str(), name),
         source,
@@ -262,8 +256,7 @@ fn start(
     install_provider(Source::SystemAgent, system);
     install_provider(Source::Daemon, daemon);
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
-    app.set_viewport(Size::new(px(1100.0), px(720.0)))
-        .unwrap();
+    app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
     app.wait_for("Services").unwrap();
     (turn, app)
 }
@@ -318,7 +311,10 @@ fn selecting_an_item_shows_its_detail_groups() {
     app.wait_for("Program").unwrap();
     assert!(app.screen().shows("Files"));
     assert!(app.screen().shows("Property list"));
-    assert!(app.screen().shows("/tmp/devbase-tests/com.example.alpha.plist"));
+    assert!(
+        app.screen()
+            .shows("/tmp/devbase-tests/com.example.alpha.plist")
+    );
     assert!(app.screen().shows("Running · PID 4242"));
 }
 
@@ -330,7 +326,11 @@ fn actions_follow_the_state_matrix() {
     app.press("id:item-com.example.alpha").unwrap();
     app.wait_for("/tmp/devbase-tests/com.example.alpha.plist")
         .unwrap();
-    assert!(app.screen().matches("id:inspector >> role:button[Stop]").unwrap());
+    assert!(
+        app.screen()
+            .matches("id:inspector >> role:button[Stop]")
+            .unwrap()
+    );
     assert!(
         app.screen()
             .matches("id:inspector >> role:button[Restart]")
@@ -341,7 +341,11 @@ fn actions_follow_the_state_matrix() {
     app.press("id:item-com.example.bravo").unwrap();
     app.wait_for("/tmp/devbase-tests/com.example.bravo.plist")
         .unwrap();
-    assert!(app.screen().matches("id:inspector >> role:button[Start]").unwrap());
+    assert!(
+        app.screen()
+            .matches("id:inspector >> role:button[Start]")
+            .unwrap()
+    );
     assert!(
         !app.screen()
             .matches("id:inspector >> role:button[Restart]")
@@ -352,7 +356,11 @@ fn actions_follow_the_state_matrix() {
     app.press("id:item-com.example.charlie").unwrap();
     app.wait_for("/tmp/devbase-tests/com.example.charlie.plist")
         .unwrap();
-    assert!(app.screen().matches("id:inspector >> role:button[Load]").unwrap());
+    assert!(
+        app.screen()
+            .matches("id:inspector >> role:button[Load]")
+            .unwrap()
+    );
     assert!(
         !app.screen()
             .matches("id:inspector >> role:button[Stop]")

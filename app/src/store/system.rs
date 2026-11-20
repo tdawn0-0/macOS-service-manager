@@ -248,10 +248,7 @@ impl Facade {
     fn diagnostics(&self) -> Diagnostics {
         Diagnostics::new(
             self.store.clone(),
-            Engine::new(
-                self.store.root(),
-                Arc::new(SystemCommandRunner::new()),
-            ),
+            Engine::new(self.store.root(), Arc::new(SystemCommandRunner::new())),
             Software::new(self.store.clone()),
         )
     }
@@ -457,7 +454,9 @@ impl SettingsProvider for Facade {
     }
 
     fn open_full_disk_access(&self) -> Result<(), String> {
-        open_url("x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles")
+        open_url(
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles",
+        )
     }
 
     fn open_login_items(&self) -> Result<(), String> {
@@ -469,20 +468,14 @@ impl SettingsProvider for Facade {
     }
 
     fn preview_shutdown(&self) -> Result<ShutdownPlan, String> {
-        let engine = Engine::new(
-            self.store.root(),
-            Arc::new(SystemCommandRunner::new()),
-        );
+        let engine = Engine::new(self.store.root(), Arc::new(SystemCommandRunner::new()));
         Shutdown::new(&self.store, &engine)
             .preview(&|| false)
             .map_err(|error| error.to_string())
     }
 
     fn shutdown(&self, plan: &ShutdownPlan) -> Result<(), String> {
-        let engine = Engine::new(
-            self.store.root(),
-            Arc::new(SystemCommandRunner::new()),
-        );
+        let engine = Engine::new(self.store.root(), Arc::new(SystemCommandRunner::new()));
         Shutdown::new(&self.store, &engine)
             .execute(plan, &Default::default(), &|| false)
             .map_err(|error| error.to_string())
@@ -1213,9 +1206,8 @@ pub(crate) fn ports_loading() -> bool {
 
 /// Reads the helper, CLI, cache, rotation and login-item state.
 pub(crate) fn load_settings() {
-    let (loaded, loading) = workspace().with(|state| {
-        (state.settings.loaded, state.settings.loading)
-    });
+    let (loaded, loading) =
+        workspace().with(|state| (state.settings.loaded, state.settings.loading));
     if !loaded && !loading {
         refresh_settings();
     }
@@ -1461,8 +1453,7 @@ pub(crate) fn install_cli() {
                 }
                 None => {
                     state.settings.action_error = None;
-                    state.settings.notice =
-                        Some(format!("Installed devbase CLI at {wrapper}"));
+                    state.settings.notice = Some(format!("Installed devbase CLI at {wrapper}"));
                 }
             }
         });
@@ -1665,7 +1656,10 @@ fn perform_clear_cache() {
 }
 
 pub(crate) fn open_full_disk_access() {
-    run_settings_action(|provider| provider.open_full_disk_access(), "open Full Disk Access");
+    run_settings_action(
+        |provider| provider.open_full_disk_access(),
+        "open Full Disk Access",
+    );
 }
 
 pub(crate) fn open_login_items() {
@@ -1677,7 +1671,10 @@ pub(crate) fn reveal_workspace() {
     if root.is_empty() {
         return;
     }
-    run_settings_action(move |provider| provider.reveal(&root), "reveal the workspace");
+    run_settings_action(
+        move |provider| provider.reveal(&root),
+        "reveal the workspace",
+    );
 }
 
 fn run_settings_action(
@@ -1751,7 +1748,9 @@ pub(crate) fn request_quit() {
     });
     let Some(provider) = settings_provider_of() else {
         quit_state().update(|state| {
-            state.error = Some("Could not read the quit scope: no settings provider is available.".to_string());
+            state.error = Some(
+                "Could not read the quit scope: no settings provider is available.".to_string(),
+            );
             state.loading = false;
         });
         return;
@@ -1802,12 +1801,8 @@ fn cancel_quit() {
 }
 
 fn stop_for_quit() {
-    let (plan, busy) = quit_state().with(|state| {
-        (
-            state.plan.clone(),
-            state.stopping || state.loading,
-        )
-    });
+    let (plan, busy) =
+        quit_state().with(|state| (state.plan.clone(), state.stopping || state.loading));
     let Some(plan) = plan else {
         return;
     };
@@ -1816,7 +1811,9 @@ fn stop_for_quit() {
     }
     let Some(provider) = settings_provider_of() else {
         quit_state().update(|state| {
-            state.error = Some("Could not stop managed databases: no settings provider is available.".to_string());
+            state.error = Some(
+                "Could not stop managed databases: no settings provider is available.".to_string(),
+            );
         });
         return;
     };
@@ -1870,13 +1867,10 @@ pub(crate) fn quit_dialog() -> impl IntoElement {
         .child(
             view().flex_col().gap(px(6.0)).children(
                 [
-                    state.loading.then(|| {
-                        dialog_line("Reading managed service scope…".to_string(), false)
-                    }),
                     state
-                        .error
-                        .clone()
-                        .map(|error| dialog_line(error, true)),
+                        .loading
+                        .then(|| dialog_line("Reading managed service scope…".to_string(), false)),
+                    state.error.clone().map(|error| dialog_line(error, true)),
                     (!state.loading && state.error.is_none()).then(|| {
                         dialog_line(
                             if instances == 0 {
@@ -1887,9 +1881,9 @@ pub(crate) fn quit_dialog() -> impl IntoElement {
                             false,
                         )
                     }),
-                    state.stopping.then(|| {
-                        dialog_line("Stopping managed databases…".to_string(), false)
-                    }),
+                    state
+                        .stopping
+                        .then(|| dialog_line("Stopping managed databases…".to_string(), false)),
                 ]
                 .into_iter()
                 .flatten(),
@@ -1900,7 +1894,7 @@ pub(crate) fn quit_dialog() -> impl IntoElement {
                 .flex_row()
                 .items_center()
                 .gap(px(8.0))
-                .child(action("Cancel quit", false, stopping, || cancel_quit()))
+                .child(action("Cancel quit", false, stopping, cancel_quit))
                 .child(view().flex_1())
                 .child(when(can_stop, move || {
                     view()
@@ -1941,15 +1935,13 @@ pub(crate) fn quit_dialog() -> impl IntoElement {
 
 fn dialog_line(message: String, error: bool) -> impl IntoElement {
     use nsh_base::theme;
-    text(message)
-        .text_size(px(12.0))
-        .text_color(move || {
-            if error {
-                theme().destructive
-            } else {
-                theme().muted_foreground
-            }
-        })
+    text(message).text_size(px(12.0)).text_color(move || {
+        if error {
+            theme().destructive
+        } else {
+            theme().muted_foreground
+        }
+    })
 }
 
 fn action(

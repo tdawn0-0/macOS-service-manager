@@ -17,8 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  native-test:
-    if: github.event_name == 'workflow_dispatch'
+  test:
     runs-on: macos-26
     timeout-minutes: 90
     permissions:
@@ -27,34 +26,38 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: require executed native software tests
-        run: PYTHONDONTWRITEBYTECODE=1 python3 scripts/verify-native-release.py --run
 
-  test:
-    runs-on: macos-26
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
+      - name: install Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+          cargo --version
+          rustc --version
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
+      - name: install nsh
+        run: |
+          set -euo pipefail
+          brew install longbridge/tap/nsh
+          nsh --version
+
+      - name: fetch dependencies
+        run: |
+          set -euo pipefail
+          for dir in app app/crates/devcore app/crates/devproxy app/crates/devcli; do
+            (cd "$dir" && cargo fetch --locked)
+          done
 
       - name: test
         run: |
           set -euo pipefail
           test "$(uname -m)" = arm64
-          go vet ./...
-          go mod verify
-          go test -race ./...
+          (cd app && cargo test)
+          for crate in devcore devproxy devcli; do
+            (cd "app/crates/$crate" && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check)
+          done
+          (cd app && cargo clippy --all-targets -- -D warnings && cargo fmt --check && nsh build)
+          (cd app && nsh package --target macos)
+          python3 scripts/verify-macos-requirements.py app/.nsh/out/Devbase.app
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'
           python3 scripts/collect-third-party-notices.py --check
-          go tool mygo build -sign - -skip-notarize
-          python3 scripts/verify-macos-requirements.py build/darwin-arm64/Devbase.app

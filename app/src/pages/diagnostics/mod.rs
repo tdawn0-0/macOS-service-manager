@@ -31,27 +31,23 @@ pub(crate) fn diagnostics() -> impl IntoElement {
         .min_w(px(0.0))
         .child(dynamic(|| Some(header().into_element())))
         .child(dynamic(|| Some(toolbar().into_element())))
-        .child(
-            scroll().flex_1().min_h(px(0.0)).child(dynamic(|| {
-                Some(
-                    view()
-                        .w_full()
-                        .max_w(px(880.0))
-                        .flex_col()
-                        .gap(tokens::space(4.0))
-                        .px(tokens::space(6.0))
-                        .py(tokens::space(5.0))
-                        .children(system::report_notice().map(|notice| {
-                            ui::note(notice, false)
-                        }))
-                        .child(checks::runtime_card())
-                        .child(checks::checks_card())
-                        .child(ports::ports_card())
-                        .child(operations::operations_card())
-                        .into_element(),
-                )
-            })),
-        )
+        .child(scroll().flex_1().min_h(px(0.0)).child(dynamic(|| {
+            Some(
+                view()
+                    .w_full()
+                    .max_w(px(880.0))
+                    .flex_col()
+                    .gap(tokens::space(4.0))
+                    .px(tokens::space(6.0))
+                    .py(tokens::space(5.0))
+                    .children(system::report_notice().map(|notice| ui::note(notice, false)))
+                    .child(checks::runtime_card())
+                    .child(checks::checks_card())
+                    .child(ports::ports_card())
+                    .child(operations::operations_card())
+                    .into_element(),
+            )
+        })))
 }
 
 fn header() -> impl IntoElement {
@@ -66,7 +62,7 @@ fn header() -> impl IntoElement {
         .gap(tokens::space(2.0))
         .px(tokens::space(3.5))
         .border_b_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .child(
             text("Diagnostics")
                 .text_size(px(15.0))
@@ -110,7 +106,7 @@ fn toolbar() -> impl IntoElement {
         .px(tokens::space(3.5))
         .py(tokens::space(2.0))
         .border_b_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .child(ui::action_button(
             "Refresh",
             ui::Tone::Default,

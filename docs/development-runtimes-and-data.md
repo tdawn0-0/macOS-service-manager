@@ -73,12 +73,11 @@ Focused tests use temporary roots, injected HTTP/uv runners, and exact-keg comma
 Run the focused gate with:
 
 ```sh
-go test ./... -list '^(TestRuntimeCatalogs|TestUVPythonManagement|TestAdditionalRuntimeSelection|TestUIAdditionalRuntimes|TestDatabaseCustomDataDirectory|TestDatabaseVersionIsolation|TestUIDatabaseLocations)$'
-go test -race ./... -run '^(TestRuntimeCatalogs|TestUVPythonManagement|TestAdditionalRuntimeSelection|TestUIAdditionalRuntimes|TestDatabaseCustomDataDirectory|TestDatabaseVersionIsolation|TestUIDatabaseLocations)$' -count=1 -json
-MSM_SHOTS=build/shots go test . -run '^(TestUIAdditionalRuntimes|TestUIDatabaseLocations)$' -count=1
+cd app && cargo test
+cd app/crates/devcore && cargo test
 ```
 
-Screenshots contain synthetic examples. The database-location screenshot illustrates a path input; it does not claim that a volume was mounted or mutated.
+The database-location checks use temporary roots and injected providers; the screenshot illustrates a path input and does not claim that a volume was mounted or mutated.
 
 Java inventory verification uses `TestJavaDiscoveryPreservesDistributionIdentity`, `TestExistingJavaDefaultAndRemoval`, `TestJavaRemovalRejectsStaleReviewAndKeepsLinkTarget`, `TestJavaRemovalRollsBackOnCancellation`, `TestJavaIdeaNamingAndManagedTrash`, `TestUIExistingJavaManagement` and `TestUIJavaDistributions`. Mutation tests use temporary JVM/Trash directories. The development machine's existing Semeru and Temurin installations were enumerated read-only; none were selected or removed during verification.
 

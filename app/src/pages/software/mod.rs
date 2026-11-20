@@ -42,7 +42,7 @@ fn rail() -> impl IntoElement {
         .flex_col()
         .bg(move || theme().background)
         .border_r_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .px(tokens::space(2.0))
         .py(tokens::space(3.0))
         .child(
@@ -212,7 +212,7 @@ pub(super) fn action_button(
         })
         .disabled(disabled)
         .opacity(if disabled { 0.45 } else { 1.0 })
-        .on_press(move || on_press())
+        .on_press(on_press)
         .child(
             text(label)
                 .text_size(px(tokens::TEXT_SMALL))
@@ -259,10 +259,10 @@ pub(super) fn card(title: impl Into<String>, body: impl IntoElement) -> impl Int
         .flex_col()
         .gap(tokens::space(3.0))
         .p(tokens::space(4.0))
-        .rounded(move || tokens::panel_radius())
-        .bg(move || tokens::panel())
+        .rounded(tokens::panel_radius)
+        .bg(tokens::panel)
         .border_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .child(
             text(title.into())
                 .text_size(px(tokens::TEXT_CAPTION))
@@ -274,11 +274,7 @@ pub(super) fn card(title: impl Into<String>, body: impl IntoElement) -> impl Int
 
 /// A thin line between rows inside a card.
 pub(super) fn hairline() -> impl IntoElement {
-    view()
-        .h(px(1.0))
-        .flex_none()
-        .w_full()
-        .bg(move || tokens::hairline())
+    view().h(px(1.0)).flex_none().w_full().bg(tokens::hairline)
 }
 
 /// Re-exported so the detail pane names the icon set once.

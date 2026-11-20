@@ -379,7 +379,7 @@ fn guide_button(
         })
         .accessibility_label(label)
         .test_id(test_id)
-        .on_press(move || on_press())
+        .on_press(on_press)
         .child(text(label).text_size(px(tokens::TEXT_SMALL)))
 }
 
@@ -408,10 +408,10 @@ fn card() -> impl IntoElement {
         .flex_col()
         .items_center()
         .p(px(28.0))
-        .rounded(move || tokens::panel_radius())
-        .bg(move || tokens::panel())
+        .rounded(tokens::panel_radius)
+        .bg(tokens::panel)
         .border_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .shadow_xl()
         .child(match page {
             Page::Welcome => welcome().into_element(),
@@ -574,7 +574,7 @@ fn done() -> impl IntoElement {
                 .items_center()
                 .justify_center()
                 .rounded(px(28.0))
-                .bg(move || tokens::success())
+                .bg(tokens::success)
                 .child(
                     icon(CHECK_ICON)
                         .size(px(30.0))

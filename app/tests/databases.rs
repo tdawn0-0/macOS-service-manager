@@ -32,7 +32,9 @@ use nsh_app_devbase::testing::{
 static SERIAL: Mutex<()> = Mutex::new(());
 
 fn serial() -> MutexGuard<'static, ()> {
-    SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +50,7 @@ enum Behaviour {
     ExternalDeletion,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct Fixture {
     instances: Vec<Instance>,
     packages: BTreeMap<String, Package>,
@@ -60,25 +62,12 @@ struct Fixture {
     work: Vec<DatabaseWorkInfo>,
 }
 
-impl Default for Fixture {
-    fn default() -> Self {
-        Fixture {
-            instances: Vec::new(),
-            packages: BTreeMap::new(),
-            profiles: BTreeMap::new(),
-            statuses: BTreeMap::new(),
-            backups: BTreeMap::new(),
-            deletions: Vec::new(),
-            initializations: Vec::new(),
-            work: Vec::new(),
-        }
-    }
-}
+type Sink = Mutex<Option<Arc<dyn Fn(String) + Send + Sync>>>;
 
 struct FakeDatabases {
     fixture: Mutex<Fixture>,
     calls: Mutex<Vec<String>>,
-    sink: Mutex<Option<Arc<dyn Fn(String) + Send + Sync>>>,
+    sink: Sink,
     behaviour: Behaviour,
 }
 
@@ -163,7 +152,11 @@ impl DatabasesProvider for FakeDatabases {
         })
     }
 
-    fn create(&self, instance: Instance, _cancel: Arc<std::sync::atomic::AtomicBool>) -> Result<(), String> {
+    fn create(
+        &self,
+        instance: Instance,
+        _cancel: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<(), String> {
         self.record(format!(
             "create {} {} {} {} {}",
             instance.id, instance.kind, instance.package, instance.port, instance.data_directory
@@ -174,7 +167,9 @@ impl DatabasesProvider for FakeDatabases {
             .fixture
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        fixture.statuses.insert(instance.id.clone(), "Stopped".to_string());
+        fixture
+            .statuses
+            .insert(instance.id.clone(), "Stopped".to_string());
         fixture.instances.push(instance);
         Ok(())
     }
@@ -204,10 +199,14 @@ impl DatabasesProvider for FakeDatabases {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         match action {
             InstanceAction::Start | InstanceAction::Restart => {
-                fixture.statuses.insert(id.to_string(), "Running".to_string());
+                fixture
+                    .statuses
+                    .insert(id.to_string(), "Running".to_string());
             }
             InstanceAction::Stop => {
-                fixture.statuses.insert(id.to_string(), "Stopped".to_string());
+                fixture
+                    .statuses
+                    .insert(id.to_string(), "Stopped".to_string());
             }
             InstanceAction::Remove => {
                 fixture.instances.retain(|instance| instance.id != id);
@@ -299,9 +298,8 @@ impl DatabasesProvider for FakeDatabases {
         let path = format!("/tmp/devbase-tests/backups/{id}-{database}-0123456789abcdef.dump");
         let row = BackupFile {
             name: format!("{id}-{database}-0123456789abcdef.dump"),
-            path: PathBuf::from("/tmp/devbase-tests/backups").join(format!(
-                "{id}-{database}-0123456789abcdef.dump"
-            )),
+            path: PathBuf::from("/tmp/devbase-tests/backups")
+                .join(format!("{id}-{database}-0123456789abcdef.dump")),
             database: database.to_string(),
             size: 2048,
             modified: UNIX_EPOCH + Duration::from_secs(1_700_000_000),
@@ -388,11 +386,12 @@ impl DatabasesProvider for FakeDatabases {
             .ok_or_else(|| "database instance not found".to_string())?;
         if profile_id.is_empty() {
             Ok(ConnectionInfo {
-                uri: format!("postgresql://devmanager@127.0.0.1:{}/postgres", instance.port),
-                username: "devmanager".to_string(),
-                credential_file: format!(
-                    "/tmp/devbase-tests/instances/{instance_id}/password"
+                uri: format!(
+                    "postgresql://devmanager@127.0.0.1:{}/postgres",
+                    instance.port
                 ),
+                username: "devmanager".to_string(),
+                credential_file: format!("/tmp/devbase-tests/instances/{instance_id}/password"),
             })
         } else {
             let profile = fixture
@@ -520,9 +519,7 @@ impl DatabasesProvider for FakeDatabases {
         confirmation: &str,
         _cancel: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<(), String> {
-        self.record(format!(
-            "finish deletion {id} {revision} {confirmation}"
-        ));
+        self.record(format!("finish deletion {id} {revision} {confirmation}"));
         Ok(())
     }
 
@@ -613,8 +610,7 @@ fn start(fake: Arc<FakeDatabases>) -> (MutexGuard<'static, ()>, Headless) {
     use_fake_databases();
     install_databases_provider(fake as Arc<dyn DatabasesProvider>);
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
-    app.set_viewport(Size::new(px(1100.0), px(720.0)))
-        .unwrap();
+    app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
     app.wait_for("Services").unwrap();
     app.press("role:button[Databases]").unwrap();
     app.wait_for("id:db-create-form").unwrap();
@@ -627,7 +623,9 @@ fn with_instance(behaviour: Behaviour) -> Arc<FakeDatabases> {
     fixture
         .instances
         .push(instance("app", "postgresql", 5432, ""));
-    fixture.statuses.insert("app".to_string(), "Stopped".to_string());
+    fixture
+        .statuses
+        .insert("app".to_string(), "Stopped".to_string());
     FakeDatabases::new(fixture, behaviour)
 }
 
@@ -637,10 +635,10 @@ fn instances_list_their_engine_state_and_port() {
     fixture
         .instances
         .push(instance("app", "postgresql", 5432, ""));
+    fixture.instances.push(instance("cache", "redis", 6379, ""));
     fixture
-        .instances
-        .push(instance("cache", "redis", 6379, ""));
-    fixture.statuses.insert("app".to_string(), "Running".to_string());
+        .statuses
+        .insert("app".to_string(), "Running".to_string());
     fixture
         .statuses
         .insert("cache".to_string(), "Stopped".to_string());
@@ -691,10 +689,7 @@ fn a_non_numeric_port_is_refused_with_the_go_message() {
     app.press("id:db-create").unwrap();
     app.wait_for("Error: Enter a valid port").unwrap();
     assert!(
-        !fake
-            .calls()
-            .iter()
-            .any(|call| call.starts_with("create ")),
+        !fake.calls().iter().any(|call| call.starts_with("create ")),
         "an invalid port must not create an instance"
     );
 }
@@ -730,8 +725,10 @@ fn a_failed_action_is_surfaced_verbatim() {
     app.wait_for("id:db-start").unwrap();
 
     app.press("id:db-start").unwrap();
-    app.wait_for("Database operation did not complete.\nError: launchctl failed: permission denied")
-        .unwrap();
+    app.wait_for(
+        "Database operation did not complete.\nError: launchctl failed: permission denied",
+    )
+    .unwrap();
 }
 
 #[test]
@@ -754,10 +751,7 @@ fn permanent_deletion_refuses_external_data() {
     let _ = app.press("id:deletion-delete");
     app.wait(Duration::from_millis(800)).unwrap();
     assert!(
-        !fake
-            .calls()
-            .iter()
-            .any(|call| call.starts_with("delete ")),
+        !fake.calls().iter().any(|call| call.starts_with("delete ")),
         "external data must never be erased"
     );
 }
@@ -786,9 +780,16 @@ fn permanent_deletion_needs_the_typed_id_and_its_fingerprint() {
     app.clear("id:deletion-confirm").unwrap();
     app.type_text("id:deletion-confirm", "app").unwrap();
     app.press("id:deletion-delete").unwrap();
-    app.wait_for_within("Database deletion status refreshed.", Duration::from_secs(4))
-        .unwrap();
-    assert!(fake.calls().iter().any(|call| call == "delete app fp-1 app"));
+    app.wait_for_within(
+        "Database deletion status refreshed.",
+        Duration::from_secs(4),
+    )
+    .unwrap();
+    assert!(
+        fake.calls()
+            .iter()
+            .any(|call| call == "delete app fp-1 app")
+    );
 }
 
 #[test]
@@ -797,14 +798,14 @@ fn a_backup_is_deleted_only_after_the_confirmation() {
     fixture
         .instances
         .push(instance("app", "postgresql", 5432, ""));
-    fixture.statuses.insert("app".to_string(), "Running".to_string());
+    fixture
+        .statuses
+        .insert("app".to_string(), "Running".to_string());
     fixture.backups.insert(
         "app".to_string(),
         vec![BackupFile {
             name: "app-app-0123456789abcdef.dump".to_string(),
-            path: PathBuf::from(
-                "/tmp/devbase-tests/backups/app-app-0123456789abcdef.dump",
-            ),
+            path: PathBuf::from("/tmp/devbase-tests/backups/app-app-0123456789abcdef.dump"),
             database: "app".to_string(),
             size: 2048,
             modified: UNIX_EPOCH + Duration::from_secs(1_700_000_000),
@@ -821,15 +822,21 @@ fn a_backup_is_deleted_only_after_the_confirmation() {
     app.press("id:db-delete-backup-app-app-0123456789abcdef.dump")
         .unwrap();
     app.wait(Duration::from_millis(800)).unwrap();
-    assert!(!fake.calls().iter().any(|call| call.starts_with("delete backup")));
+    assert!(
+        !fake
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("delete backup"))
+    );
 
     app.on_dialog(|_| DialogAnswer::Press("Delete Backup".to_string()));
     app.press("id:db-delete-backup-app-app-0123456789abcdef.dump")
         .unwrap();
     app.wait_for("Deleted backup").unwrap();
     assert!(
-        fake.calls().iter().any(|call| call
-            == "delete backup app app-app-0123456789abcdef.dump")
+        fake.calls()
+            .iter()
+            .any(|call| call == "delete backup app app-app-0123456789abcdef.dump")
     );
 }
 
@@ -839,14 +846,14 @@ fn restoring_asks_first_and_creates_the_new_database() {
     fixture
         .instances
         .push(instance("app", "postgresql", 5432, ""));
-    fixture.statuses.insert("app".to_string(), "Running".to_string());
+    fixture
+        .statuses
+        .insert("app".to_string(), "Running".to_string());
     fixture.backups.insert(
         "app".to_string(),
         vec![BackupFile {
             name: "app-app-0123456789abcdef.dump".to_string(),
-            path: PathBuf::from(
-                "/tmp/devbase-tests/backups/app-app-0123456789abcdef.dump",
-            ),
+            path: PathBuf::from("/tmp/devbase-tests/backups/app-app-0123456789abcdef.dump"),
             database: "app".to_string(),
             size: 2048,
             modified: UNIX_EPOCH + Duration::from_secs(1_700_000_000),
@@ -884,9 +891,7 @@ fn the_connection_panel_copies_and_launches_without_storing_credentials() {
     app.press("id:connection-uri-copy").unwrap();
     app.wait_for("Connection URI copied").unwrap();
     assert!(
-        fake.calls()
-            .iter()
-            .any(|call| call == "connection app ")
+        fake.calls().iter().any(|call| call == "connection app ")
             || fake.calls().iter().any(|call| call == "connection app")
     );
 
@@ -915,7 +920,9 @@ fn unfinished_lists_render_and_resolve() {
         kind: "backup".to_string(),
         database: "app".to_string(),
         status: "Interrupted".to_string(),
-        detail: "Review this task before changing the instance. Database and output files are retained.".to_string(),
+        detail:
+            "Review this task before changing the instance. Database and output files are retained."
+                .to_string(),
         output: "/tmp/devbase-tests/backups/app-app-0123456789abcdef.dump".to_string(),
         revision: "rev-1".to_string(),
         caller_active: false,

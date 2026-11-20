@@ -23,7 +23,7 @@ fn workspace() -> impl IntoElement {
     view()
         .flex_1()
         .flex_col()
-        .bg(move || tokens::sheet())
+        .bg(tokens::sheet)
         .child(when(
             move || store::active_section() == Section::Services,
             pages::services,

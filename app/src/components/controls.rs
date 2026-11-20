@@ -45,7 +45,7 @@ pub(crate) fn labeled_button(
                 theme().foreground
             }
         })
-        .on_press(move || on_press())
+        .on_press(on_press)
         .child(
             text(label.into())
                 .text_size(px(tokens::TEXT_SMALL))
@@ -67,7 +67,7 @@ pub(crate) fn icon_button(
         .rounded(move || theme().radius)
         .hover(move |style| style.bg(tokens::row_hover()))
         .accessibility_label(label.into())
-        .on_press(move || on_press())
+        .on_press(on_press)
         .child(
             icon.size(px(14.0))
                 .text_color(move || theme().muted_foreground),

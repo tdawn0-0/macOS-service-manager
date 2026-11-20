@@ -121,9 +121,8 @@ impl SystemSettingsProvider for FakeSettings {
         }
         let status = SystemHelperStatus {
             installed: true,
-            message:
-                "Installed. Root operations run through it without password prompts."
-                    .to_string(),
+            message: "Installed. Root operations run through it without password prompts."
+                .to_string(),
         };
         self.snapshot
             .lock()
@@ -309,7 +308,8 @@ fn installing_the_helper_shows_the_busy_line_then_the_installed_status() {
     let (_turn, mut app) = start(fake.clone());
 
     app.wait_for("id:settings-install-helper").unwrap();
-    app.wait_for("text:/Not installed\\. Root operations need it/").unwrap();
+    app.wait_for("text:/Not installed\\. Root operations need it/")
+        .unwrap();
     app.press("id:settings-install-helper").unwrap();
     app.wait_for("Installing helper…").unwrap();
     app.wait_for_within(
@@ -327,7 +327,8 @@ fn a_helper_install_error_is_surfaced_verbatim() {
     let (_turn, mut app) = start(fake.clone());
 
     app.wait_for("id:settings-install-helper").unwrap();
-    app.wait_for("text:/Not installed\\. Root operations need it/").unwrap();
+    app.wait_for("text:/Not installed\\. Root operations need it/")
+        .unwrap();
     app.press("id:settings-install-helper").unwrap();
     app.wait_for("Could not install privileged helper: administrator password was rejected")
         .unwrap();
@@ -343,7 +344,8 @@ fn installing_the_cli_wrapper_updates_its_status() {
     let (_turn, mut app) = start(fake.clone());
 
     app.wait_for("id:settings-install-cli").unwrap();
-    app.wait_for("The public devbase command is not installed.").unwrap();
+    app.wait_for("The public devbase command is not installed.")
+        .unwrap();
     app.press("id:settings-install-cli").unwrap();
     app.wait_for("Installed devbase CLI at /tmp/devbase-tests/bin/devbase")
         .unwrap();
@@ -417,10 +419,7 @@ fn the_binary_dispatches_like_go_main() {
         ExitCode::from(7)
     );
     assert_eq!(
-        launch::run(
-            &["-psn_0_42".to_string(), "version".to_string()],
-            &seams
-        ),
+        launch::run(&["-psn_0_42".to_string(), "version".to_string()], &seams),
         ExitCode::from(7)
     );
     assert_eq!(
@@ -440,7 +439,11 @@ fn the_binary_dispatches_like_go_main() {
 fn a_dev_home_style_argv_is_not_mistaken_for_the_cli() {
     let seams = RecordingSeams::new();
     let _ = launch::run(
-        &["-NSFoo".to_string(), "YES".to_string(), "--background".to_string()],
+        &[
+            "-NSFoo".to_string(),
+            "YES".to_string(),
+            "--background".to_string(),
+        ],
         &seams,
     );
     let _ = launch::run(&["open".to_string()], &seams);

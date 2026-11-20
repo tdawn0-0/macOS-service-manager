@@ -433,7 +433,7 @@ pub(crate) fn set_version(next: String) {
         state.action_error = None;
         state.notice = None;
     });
-    later(Duration::from_millis(400), || review_quietly());
+    later(Duration::from_millis(400), review_quietly);
 }
 
 /// Reviews the version in the field: what Install acts on. Called by the

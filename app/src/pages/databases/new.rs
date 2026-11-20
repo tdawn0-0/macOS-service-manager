@@ -139,7 +139,7 @@ fn instance_body() -> impl IntoElement {
                 ),
         )
         .child(port_preview())
-        .child(dynamic(|| persistence_row()))
+        .child(dynamic(persistence_row))
 }
 
 fn install_warning() -> impl IntoElement {
@@ -156,7 +156,7 @@ fn install_warning() -> impl IntoElement {
                     .flex_1()
                     .min_w(px(0.0))
                     .text_size(px(tokens::TEXT_SMALL))
-                    .text_color(move || tokens::warning()),
+                    .text_color(tokens::warning),
             )
             .child(ui::action_button(
                 "Open Software",
@@ -186,7 +186,7 @@ fn persistence_row() -> Option<impl IntoElement> {
                     .justify_center()
                     .rounded(px(3.0))
                     .border_1()
-                    .border_color(move || tokens::hairline())
+                    .border_color(tokens::hairline)
                     .bg(move || {
                         if db::draft_persistent() {
                             theme().primary
@@ -299,7 +299,7 @@ fn port_preview() -> impl IntoElement {
                     .gap(tokens::space(1.0))
                     .p(tokens::space(2.0))
                     .rounded(move || theme().radius)
-                    .bg(move || tokens::inset())
+                    .bg(tokens::inset)
                     .child(
                         view()
                             .flex_row()

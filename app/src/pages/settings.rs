@@ -28,48 +28,37 @@ pub(crate) fn settings() -> impl IntoElement {
         .flex_col()
         .min_w(px(0.0))
         .child(dynamic(|| Some(header().into_element())))
-        .child(
-            scroll().flex_1().min_h(px(0.0)).child(dynamic(|| {
-                Some(
-                    view()
-                        .w_full()
-                        .max_w(px(880.0))
-                        .flex_col()
-                        .gap(tokens::space(4.0))
-                        .px(tokens::space(6.0))
-                        .py(tokens::space(5.0))
-                        .children(
-                            system::settings_error()
-                                .map(|error| ui::note(error, true)),
-                        )
-                        .children(
-                            system::settings_action_error()
-                                .map(|error| ui::note(error, true)),
-                        )
-                        .children(
-                            system::settings_notice()
-                                .map(|notice| ui::note(notice, false)),
-                        )
-                        .child(ui::card(
-                            "Privileged helper",
-                            dynamic(|| Some(helper_body().into_element())),
-                        ))
-                        .child(ui::card(
-                            "macOS permissions",
-                            dynamic(|| Some(permissions_body().into_element())),
-                        ))
-                        .child(ui::card(
-                            "Workspace",
-                            dynamic(|| Some(workspace_body().into_element())),
-                        ))
-                        .child(ui::card(
-                            "Command-line interface",
-                            dynamic(|| Some(cli_body().into_element())),
-                        ))
-                        .into_element(),
-                )
-            })),
-        )
+        .child(scroll().flex_1().min_h(px(0.0)).child(dynamic(|| {
+            Some(
+                view()
+                    .w_full()
+                    .max_w(px(880.0))
+                    .flex_col()
+                    .gap(tokens::space(4.0))
+                    .px(tokens::space(6.0))
+                    .py(tokens::space(5.0))
+                    .children(system::settings_error().map(|error| ui::note(error, true)))
+                    .children(system::settings_action_error().map(|error| ui::note(error, true)))
+                    .children(system::settings_notice().map(|notice| ui::note(notice, false)))
+                    .child(ui::card(
+                        "Privileged helper",
+                        dynamic(|| Some(helper_body().into_element())),
+                    ))
+                    .child(ui::card(
+                        "macOS permissions",
+                        dynamic(|| Some(permissions_body().into_element())),
+                    ))
+                    .child(ui::card(
+                        "Workspace",
+                        dynamic(|| Some(workspace_body().into_element())),
+                    ))
+                    .child(ui::card(
+                        "Command-line interface",
+                        dynamic(|| Some(cli_body().into_element())),
+                    ))
+                    .into_element(),
+            )
+        })))
 }
 
 fn header() -> impl IntoElement {
@@ -82,7 +71,7 @@ fn header() -> impl IntoElement {
         .gap(tokens::space(2.0))
         .px(tokens::space(3.5))
         .border_b_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .child(
             text("Settings")
                 .text_size(px(15.0))

@@ -253,7 +253,7 @@ fn connections_body() -> Option<impl IntoElement> {
             .flex_col()
             .gap(tokens::space(3.0))
             .child(chips)
-            .child(when(pending, || pending_switch_notice()))
+            .child(when(pending, pending_switch_notice))
             .child(editor)
             .child(
                 view()
@@ -326,7 +326,7 @@ fn connections_body() -> Option<impl IntoElement> {
                         .gap(tokens::space(1.0))
                         .p(tokens::space(2.0))
                         .rounded(move || theme().radius)
-                        .bg(move || tokens::inset())
+                        .bg(tokens::inset)
                         .child(
                             text(block)
                                 .font_family("monospace")
@@ -352,7 +352,7 @@ fn pending_switch_notice() -> impl IntoElement {
         .child(
             text("Unsaved connection changes. Discard or cancel the switch.")
                 .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || tokens::warning()),
+                .text_color(tokens::warning),
         )
         .child(
             view()
@@ -390,7 +390,7 @@ fn editor_panel(
         .gap(tokens::space(2.5))
         .p(tokens::space(3.0))
         .rounded(move || theme().radius)
-        .bg(move || tokens::inset())
+        .bg(tokens::inset)
         .child(
             view()
                 .flex_row()
@@ -539,7 +539,7 @@ fn endpoint_body() -> Option<impl IntoElement> {
             .child(when(!instance.data_directory.is_empty(), || {
                 text("External data is retained when the instance is removed; permanent erasure is not available for it.")
                     .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || tokens::warning())
+                    .text_color(tokens::warning)
                     .number_of_lines(2)
             })),
     )
@@ -703,7 +703,7 @@ fn databases_body() -> Option<impl IntoElement> {
                     ))
                     .into_element()
             })
-            .child(when(!redis, || ui::hairline()))
+            .child(when(!redis, ui::hairline))
             .child(when(!redis, || {
                 text("User")
                     .text_size(px(tokens::TEXT_CAPTION))

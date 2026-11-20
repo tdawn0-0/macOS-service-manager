@@ -138,7 +138,7 @@ pub(super) fn card(title: impl Into<String>, body: impl IntoElement) -> impl Int
         .gap(tokens::space(3.0))
         .p(tokens::space(4.0))
         .rounded(tokens::panel_radius)
-        .bg(move || tokens::panel())
+        .bg(tokens::panel)
         .border_1()
         .border_color(tokens::hairline)
         .child(

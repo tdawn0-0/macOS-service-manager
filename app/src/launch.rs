@@ -136,10 +136,7 @@ mod tests {
 
     #[test]
     fn gui_launches_fall_through() {
-        assert_eq!(
-            classify(&[]),
-            Launch::Gui { background: false }
-        );
+        assert_eq!(classify(&[]), Launch::Gui { background: false });
         assert_eq!(
             classify(&args(&["--background"])),
             Launch::Gui { background: true }
@@ -149,7 +146,7 @@ mod tests {
             Launch::Gui { background: false }
         );
         assert_eq!(
-            classify(&args(&["-NSFoo"])) ,
+            classify(&args(&["-NSFoo"])),
             Launch::Gui { background: false }
         );
         assert_eq!(

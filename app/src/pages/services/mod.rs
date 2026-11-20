@@ -48,7 +48,7 @@ fn source_rail() -> impl IntoElement {
         .flex_col()
         .bg(move || theme().background)
         .border_r_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .px(tokens::space(2.0))
         .py(tokens::space(3.0))
         .child(

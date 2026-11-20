@@ -54,7 +54,7 @@ fn tasks_body() -> impl IntoElement {
                 .gap(tokens::space(1.0))
                 .p(tokens::space(2.0))
                 .rounded(move || theme().radius)
-                .bg(move || tokens::inset())
+                .bg(tokens::inset)
                 .child(ui::hairline())
                 .child(
                     text(format!("{label} · {id}"))
@@ -144,7 +144,7 @@ fn work_body() -> AnyElement {
                     .gap(tokens::space(4.0))
                     .px(tokens::space(5.0))
                     .pb(tokens::space(5.0))
-                    .child(when(empty, || empty_line()))
+                    .child(when(empty, empty_line))
                     .child(rows.into_iter().map(work_row)),
             ),
         )
@@ -255,7 +255,7 @@ fn initializations_body() -> AnyElement {
                     .gap(tokens::space(4.0))
                     .px(tokens::space(5.0))
                     .pb(tokens::space(5.0))
-                    .child(when(empty, || empty_line()))
+                    .child(when(empty, empty_line))
                     .child(rows.into_iter().map(initialization_row)),
             ),
         )

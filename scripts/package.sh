@@ -19,6 +19,7 @@
 #   REQUIRE_NOTARIZE  when set, stop unless the disk image is notarized.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+repo=$PWD
 
 die() {
 	echo "error: $*" >&2
@@ -78,27 +79,44 @@ echo "==> Signing with: $identity"
 
 if [ "$run_tests" = 1 ]; then
 	echo "==> Testing"
-	go test ./...
+	(cd app && cargo test)
+	for crate in app/crates/*; do
+		(cd "$crate" && cargo test)
+	done
 fi
 
 echo "==> Checking bundled license notices"
-go mod verify
+for dir in app app/crates/devcore app/crates/devproxy app/crates/devcli; do
+	(cd "$dir" && cargo fetch --locked)
+done
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'
 python3 scripts/collect-third-party-notices.py --check
 
 out="build/${platform/\//-}"
 rm -rf "$out"
+mkdir -p "$out"
 echo "==> Building $platform"
-go tool mygo build -platform "$platform" -sign "$identity" -skip-notarize
+(cd app && nsh package --target macos --out "$repo/$out")
 
 app=$(find "$out" -maxdepth 1 -name '*.app' -print -quit)
-dmg=$(find "$out" -maxdepth 1 -name '*.dmg' -print -quit)
 [ -n "$app" ] || die "no app in $out"
-[ -n "$dmg" ] || die "no disk image in $out"
+
+echo "==> Signing the app"
+entitlements=$(mktemp)
+codesign --force --deep --options runtime --timestamp --sign "$identity" "$app"
+if codesign -d --entitlements :- "$app" > "$entitlements" 2>/dev/null && grep -q '<plist' "$entitlements"; then
+	codesign --force --options runtime --timestamp --entitlements "$entitlements" --sign "$identity" "$app"
+fi
+rm -f "$entitlements"
+
+echo "==> Checking the app"
+codesign --verify --deep --strict "$app" || die "the app's signature is not valid"
 python3 scripts/verify-macos-requirements.py "$app"
 
-echo "==> Checking the signature"
-codesign --verify --deep --strict "$app" || die "the app's signature is not valid"
+dmg="$out/Devbase.dmg"
+rm -f "$dmg"
+hdiutil create -volname "Devbase" -srcfolder "$app" -ov -format UDZO "$dmg" >/dev/null
+codesign --force --timestamp --sign "$identity" "$dmg"
 codesign --verify --strict "$dmg" || die "the disk image's signature is not valid"
 details=$(codesign -dvv "$app" 2>&1)
 printf '%s\n' "$details" | grep -q "^Authority=$identity\$" || die "the app is not signed by $identity"

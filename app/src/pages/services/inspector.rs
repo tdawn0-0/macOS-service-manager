@@ -20,9 +20,9 @@ pub(crate) fn inspector() -> impl IntoElement {
         .w(px(336.0))
         .flex_none()
         .flex_col()
-        .bg(move || tokens::sheet())
+        .bg(tokens::sheet)
         .border_l_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .child(bar())
         .child(dynamic(move || svc::selected_item().map(item_pane)))
 }
@@ -83,7 +83,7 @@ fn item_pane(item: Item) -> impl IntoElement {
                 .child(notice.map(|message| {
                     text(message)
                         .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || tokens::success())
+                        .text_color(tokens::success)
                 })),
         )
         .child(tabs(has_logs))
@@ -281,7 +281,7 @@ fn more_menu(item: &Item, actions: Vec<Action>, busy: bool) -> impl IntoElement 
                 .justify_center()
                 .rounded(move || theme().radius)
                 .border_1()
-                .border_color(move || tokens::hairline())
+                .border_color(tokens::hairline)
                 .hover(move |style| style.bg(tokens::row_hover()))
                 .accessibility_label("More")
                 .child(
@@ -315,10 +315,10 @@ fn autostart_card(item: &Item, actions: &[Action], busy: bool) -> Option<impl In
                     .gap(tokens::space(2.5))
                     .px(tokens::space(3.0))
                     .py(tokens::space(2.5))
-                    .rounded(move || tokens::panel_radius())
-                    .bg(move || tokens::panel())
+                    .rounded(tokens::panel_radius)
+                    .bg(tokens::panel)
                     .border_1()
-                    .border_color(move || tokens::hairline())
+                    .border_color(tokens::hairline)
                     .child(
                         nsh_base::button()
                             .flex_1()
@@ -374,7 +374,7 @@ fn switch(on: bool, busy: bool, on_press: impl Fn() + 'static) -> impl IntoEleme
         .accessibility_label(if on { "On" } else { "Off" })
         .disabled(busy)
         .opacity(if busy { 0.5 } else { 1.0 })
-        .on_press(move || on_press())
+        .on_press(on_press)
         .child(
             track.child(
                 view()
@@ -435,10 +435,7 @@ fn tab_button(label: &'static str, tab: DetailTab, current: DetailTab) -> impl I
         )
 }
 
-fn info_tab(
-    item: &Item,
-    detail: &Option<(String, Vec<Row>, Vec<svc::LogFile>, bool, Option<String>)>,
-) -> impl IntoElement {
+fn info_tab(item: &Item, detail: &Option<svc::DetailSnapshot>) -> impl IntoElement {
     let rows = match detail {
         Some((id, rows, _, _, _)) if id == &item.id => rows.clone(),
         _ => Vec::new(),
@@ -514,10 +511,10 @@ fn info_group(title: String, rows: Vec<Row>) -> impl IntoElement {
         .child(
             view()
                 .flex_col()
-                .rounded(move || tokens::panel_radius())
-                .bg(move || tokens::panel())
+                .rounded(tokens::panel_radius)
+                .bg(tokens::panel)
                 .border_1()
-                .border_color(move || tokens::hairline())
+                .border_color(tokens::hairline)
                 .overflow_hidden()
                 .child(rows.into_iter().map(info_row)),
         )
@@ -537,7 +534,7 @@ fn info_row(row: Row) -> impl IntoElement {
         .px(tokens::space(3.0))
         .py(tokens::space(2.0))
         .border_b_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .hover(move |style| style.bg(tokens::row_hover()))
         .on_mouse_enter(move |_: &MouseEvent| svc::set_hovered_row(Some(hovered_key.clone())))
         .on_mouse_leave(move |_: &MouseEvent| {
@@ -570,7 +567,7 @@ fn info_row(row: Row) -> impl IntoElement {
                 .items_center()
                 .justify_center()
                 .rounded(move || theme().radius)
-                .bg(move || tokens::panel())
+                .bg(tokens::panel)
                 .opacity(if hovered { 1.0 } else { 0.0 })
                 .accessibility_label(format!("Copy {}", row.key))
                 .on_press({
@@ -659,7 +656,7 @@ fn log_tab(item: &Item) -> AnyElement {
                     .flex_row()
                     .rounded(move || theme().radius)
                     .border_1()
-                    .border_color(move || tokens::hairline())
+                    .border_color(tokens::hairline)
                     .child(logs.iter().enumerate().map(|(index, file)| {
                         let label = file.label.clone();
                         nsh_base::button()
@@ -734,9 +731,9 @@ fn log_tab(item: &Item) -> AnyElement {
                             .flex_1()
                             .min_h(px(0.0))
                             .rounded(move || theme().radius)
-                            .bg(move || tokens::panel())
+                            .bg(tokens::panel)
                             .border_1()
-                            .border_color(move || tokens::hairline())
+                            .border_color(tokens::hairline)
                             .child(view().flex_col().gap(px(2.0)).p(tokens::space(2.5)).child(
                                 lines.into_iter().map(|line| {
                                     text(line)

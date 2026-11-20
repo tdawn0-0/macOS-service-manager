@@ -25,21 +25,24 @@ Requires an Apple Silicon Mac running macOS 26 or 27. Only the two latest macOS 
 
 The current product scope is [documented here](docs/product-scope.md). [Usage](docs/development-usage.md), [UI guidance](docs/development-ui.md), and the [acceptance matrix](docs/resources-acceptance.md) describe the new behavior. Verification evidence and missing real-machine checks are in [development-verification](docs/development-verification.md).
 
+Building requires Rust stable and [nsh](https://nsh.dev) 0.6.1 (`brew install longbridge/tap/nsh`).
+
 ```sh
-go test ./...
-go test -race ./...
-go vet ./...
-go mod verify
+cd app && cargo test
+cd app/crates/devcore && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check
+cd app/crates/devproxy && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check
+cd app/crates/devcli && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check
+cd app && cargo clippy --all-targets -- -D warnings && cargo fmt --check && nsh build
+cd app && nsh package --target macos
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'
 python3 scripts/collect-third-party-notices.py --check
-go tool mygo build -sign - -skip-notarize
 ```
 
-Native release acceptance uses `python3 scripts/verify-native-release.py --run` **only on a disposable GitHub-hosted macOS runner**. It requires the exact parent and child tests to execute and pass without skips. Real system trust and Chrome acceptance require a separately signed App on a disposable Mac, as specified in the [acceptance plan](docs/resources-acceptance.md). Neither an ad-hoc build nor private test CA proves that check.
+`nsh package --target macos` writes an ad-hoc signed `.app` under `app/.nsh/out/` for local verification. A release build is signed with the Developer ID and notarized by the release workflow. Real system trust and Chrome acceptance require a separately signed App on a disposable Mac, as specified in the [acceptance plan](docs/resources-acceptance.md). Neither an ad-hoc build nor a private test CA proves that check.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The Go/MyGo app, database workers, HTTPS proxy, and macOS service integrations are tested separately. Tests that need real launchd or database binaries must run in an isolated, clean environment.
+See [CONTRIBUTING.md](CONTRIBUTING.md). The Rust/nsh app, database workers, HTTPS proxy, and macOS service integrations are tested separately. Tests that need real launchd or database binaries must run in an isolated, clean environment.
 
 ## Command-line interface (CLI)
 

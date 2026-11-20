@@ -20,7 +20,7 @@ pub(crate) fn rail() -> impl IntoElement {
         .flex_col()
         .bg(move || theme().background)
         .border_r_1()
-        .border_color(move || tokens::hairline())
+        .border_color(tokens::hairline)
         .px(tokens::space(2.0))
         .py(tokens::space(3.0))
         .child(
@@ -61,7 +61,7 @@ pub(crate) fn rail() -> impl IntoElement {
                     "db-new",
                     None,
                     db::mode() == db::Mode::New,
-                    || db::open_new(),
+                    db::open_new,
                 )),
         )
         .child(view().flex_1())
@@ -76,21 +76,21 @@ pub(crate) fn rail() -> impl IntoElement {
                     "db-work",
                     Some(format!("{}", db::database_work().len())),
                     db::mode() == db::Mode::Work,
-                    || db::open_work(),
+                    db::open_work,
                 ))
                 .child(nav_row(
                     "Initializations",
                     "db-initializations",
                     Some(format!("{}", db::pending_initializations().len())),
                     db::mode() == db::Mode::Initializations,
-                    || db::open_initializations(),
+                    db::open_initializations,
                 ))
                 .child(nav_row(
                     "Pending deletions",
                     "db-deletions",
                     Some(format!("{}", db::pending_deletions().len())),
                     db::mode() == db::Mode::Deletions,
-                    || db::open_deletions(),
+                    db::open_deletions,
                 )),
         )
         .child(
@@ -240,7 +240,7 @@ fn nav_row(
             }
         })
         .hover(move |style| style.bg(tokens::row_hover()))
-        .on_press(move || on_press())
+        .on_press(on_press)
         .child(
             app_icons::external()
                 .size(px(13.0))

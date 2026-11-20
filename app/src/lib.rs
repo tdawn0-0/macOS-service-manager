@@ -100,9 +100,6 @@ pub fn App() -> impl IntoElement {
         .bg(move || theme().background)
         .text_color(move || theme().foreground)
         .child(shell::shell())
-        .child(when(
-            || store::system::quit_open(),
-            store::system::quit_dialog,
-        ))
+        .child(when(store::system::quit_open, store::system::quit_dialog))
         .child(when(guide::visible, guide::overlay))
 }

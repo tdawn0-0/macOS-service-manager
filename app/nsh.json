@@ -1,0 +1,25 @@
+{
+  "name": "Devbase",
+  "id": "xyz.jyeu.devbase",
+  "version": "0.1.0",
+  "build": 1,
+  "nsh": ">=0.6.1, <0.7",
+  "rust": ".",
+  "root": "App",
+  "theme": "theme.json",
+  "appearance": "system",
+  "window": {
+    "title": "Devbase",
+    "defaultSize": { "width": 1100, "height": 720 },
+    "minSize": { "width": 900, "height": 520 }
+  },
+  "macos": {
+    "infoPlist": {
+      "LSMinimumSystemVersion": "26.0",
+      "NSAppleEventsUsageDescription": "Devbase asks System Events to add apps to your login items, and to remove them."
+    },
+    "entitlements": {
+      "com.apple.security.automation.apple-events": true
+    }
+  }
+}

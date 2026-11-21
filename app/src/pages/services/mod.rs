@@ -20,11 +20,18 @@ use crate::{
     theme as tokens,
 };
 
-const INSPECTOR_MIN_WIDTH: f32 = 280.0;
-const INSPECTOR_MAX_WIDTH: f32 = 560.0;
-const LIST_MIN_WIDTH: f32 = 280.0;
+const INSPECTOR_MIN_WIDTH: f32 = 272.0;
+const INSPECTOR_MAX_WIDTH: f32 = 480.0;
+const INSPECTOR_DEFAULT_WIDTH: f32 = 304.0;
+const STORE_DEFAULT_INSPECTOR_WIDTH: f32 = 336.0;
+const LIST_MIN_WIDTH: f32 = 320.0;
 
 pub(crate) fn services() -> impl IntoElement {
+    // Balance default split widths so long reverse-DNS labels remain legible
+    // while the Inspector is open, without overriding a user's manual resize.
+    if (untracked(svc::inspector_width) - STORE_DEFAULT_INSPECTOR_WIDTH).abs() < 0.5 {
+        svc::set_inspector_width(INSPECTOR_DEFAULT_WIDTH);
+    }
     // The page is made once; reading the source happens in a task, not in a
     // binding or in render.
     svc::load_active();
@@ -99,7 +106,7 @@ pub(super) fn is_editable_plist(item: &Item) -> bool {
 /// many run.
 fn source_rail() -> impl IntoElement {
     view()
-        .w(px(176.0))
+        .w(px(164.0))
         .flex_none()
         .flex_col()
         .bg(move || theme().background)
@@ -114,7 +121,6 @@ fn source_rail() -> impl IntoElement {
                 .flex_row()
                 .items_center()
                 .px(tokens::space(2.5))
-                .pt(tokens::space(2.0))
                 .window_drag(true)
                 .child(
                     text("Services")

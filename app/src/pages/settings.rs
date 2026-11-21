@@ -13,7 +13,10 @@ use nsh_base::theme;
 use nsh_core::prelude::*;
 
 use crate::{
-    components::controls::{self as ui, Tone},
+    components::{
+        controls::{self as ui, Tone},
+        icons,
+    },
     meta,
     store::{Section, system},
     theme as tokens,
@@ -33,34 +36,38 @@ pub(crate) fn settings() -> impl IntoElement {
             scroll().flex_1().min_h(px(0.0)).child(
                 view()
                     .w_full()
-                    .max_w(px(760.0))
                     .flex_col()
-                    .gap(tokens::space(5.0))
+                    .items_center()
                     .px(tokens::space(6.0))
                     .py(tokens::space(5.0))
-                    .child(dynamic(|| {
-                        system::settings_error().map(|error| ui::plain_note(error, true))
-                    }))
-                    .child(dynamic(|| {
-                        system::settings_action_error().map(|error| ui::plain_note(error, true))
-                    }))
-                    .child(settings_group("Workspace", workspace_body()))
-                    .child(settings_group(
-                        "Privileged helper",
-                        dynamic(|| Some(helper_body().into_element())),
-                    ))
-                    .child(settings_group(
-                        "Command-line interface",
-                        dynamic(|| Some(cli_body().into_element())),
-                    ))
-                    .child(settings_group("Permissions", permissions_body()))
                     .child(
                         view()
-                            .test_id("settings-updates-card")
                             .w_full()
+                            .max_w(px(780.0))
+                            .flex_col()
+                            .gap(tokens::space(5.0))
+                            .child(dynamic(|| {
+                                system::settings_error().map(|error| ui::plain_note(error, true))
+                            }))
+                            .child(dynamic(|| {
+                                system::settings_action_error()
+                                    .map(|error| ui::plain_note(error, true))
+                            }))
+                            .child(settings_group("Workspace", workspace_body()))
                             .child(settings_group(
-                                "Updates & About",
-                                dynamic(|| Some(updates_body().into_element())),
+                                "Privileged helper",
+                                dynamic(|| Some(helper_body().into_element())),
+                            ))
+                            .child(settings_group(
+                                "Command-line interface",
+                                dynamic(|| Some(cli_body().into_element())),
+                            ))
+                            .child(settings_group("Permissions", permissions_body()))
+                            .child(view().test_id("settings-updates-card").w_full().child(
+                                settings_group(
+                                    "Updates & About",
+                                    dynamic(|| Some(updates_body().into_element())),
+                                ),
                             )),
                     ),
             ),
@@ -81,29 +88,52 @@ fn header() -> impl IntoElement {
                     .text_size(px(tokens::TEXT_CAPTION))
                     .text_color(move || theme().muted_foreground)
             }))
-            .child(ui::action_button(
-                "Refresh",
-                Tone::Default,
-                "settings-refresh",
-                system::settings_busy,
-                system::refresh_settings,
-            )),
+            .child(
+                view().flex_none().tooltip(ui::tooltip("Refresh")).child(
+                    nsh_base::button()
+                        .test_id("settings-refresh")
+                        .size(px(26.0))
+                        .flex_none()
+                        .items_center()
+                        .justify_center()
+                        .rounded(move || theme().radius)
+                        .hover(move |style| style.bg(tokens::row_hover()))
+                        .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
+                        .disabled(system::settings_busy)
+                        .opacity(move || {
+                            if system::settings_busy() {
+                                0.45_f32
+                            } else {
+                                1.0_f32
+                            }
+                        })
+                        .accessibility_label("Refresh")
+                        .on_press(system::refresh_settings)
+                        .child(
+                            icons::refresh()
+                                .size(px(14.0))
+                                .text_color(move || theme().muted_foreground),
+                        ),
+                ),
+            ),
     )
 }
 
 fn settings_group(title: &'static str, body: impl IntoElement) -> impl IntoElement {
     view()
+        .w_full()
         .flex_col()
         .gap(tokens::space(1.5))
         .child(
             text(title)
-                .px(tokens::space(1.0))
+                .px(tokens::space(1.5))
                 .text_size(px(tokens::TEXT_CAPTION))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(move || theme().muted_foreground),
         )
         .child(
             view()
+                .w_full()
                 .flex_col()
                 .rounded(tokens::panel_radius)
                 .bg(tokens::panel)
@@ -114,22 +144,27 @@ fn settings_group(title: &'static str, body: impl IntoElement) -> impl IntoEleme
         )
 }
 
+fn inset_hairline() -> impl IntoElement {
+    view().w_full().px(tokens::space(4.0)).child(ui::hairline())
+}
+
 fn settings_row(leading: impl IntoElement, trailing: impl IntoElement) -> impl IntoElement {
     view()
-        .min_h(px(40.0))
+        .w_full()
+        .min_h(px(44.0))
         .flex_row()
         .items_center()
         .justify_between()
-        .gap(tokens::space(3.0))
+        .gap(tokens::space(4.0))
         .px(tokens::space(4.0))
-        .py(tokens::space(2.25))
+        .py(tokens::space(2.5))
         .child(view().flex_1().min_w(px(0.0)).child(leading))
         .child(
             view()
                 .flex_none()
                 .flex_row()
                 .items_center()
-                .gap(tokens::space(1.5))
+                .gap(tokens::space(2.0))
                 .child(trailing),
         )
 }
@@ -153,7 +188,7 @@ fn workspace_body() -> impl IntoElement {
                 system::set_log_rotation,
             ),
         ))
-        .child(ui::hairline())
+        .child(inset_hairline())
         .child(settings_row(
             row_title("Start at login in menu bar"),
             ui::switch(
@@ -186,7 +221,7 @@ fn workspace_details() -> impl IntoElement {
 
     view()
         .flex_col()
-        .child(ui::hairline())
+        .child(inset_hairline())
         .child(settings_row(
             view()
                 .flex_col()
@@ -211,7 +246,7 @@ fn workspace_details() -> impl IntoElement {
                 system::reveal_workspace,
             ),
         ))
-        .child(ui::hairline())
+        .child(inset_hairline())
         .child(settings_row(
             view()
                 .flex_col()
@@ -248,7 +283,7 @@ fn workspace_details() -> impl IntoElement {
                 system::request_clear_cache,
             ),
         ))
-        .child(ui::hairline())
+        .child(inset_hairline())
         .child(settings_row(
             row_title("Diagnostics"),
             ui::action_button(
@@ -325,21 +360,21 @@ fn helper_body() -> impl IntoElement {
                         system::uninstall_helper,
                     )
                 }))
-                .child(ui::action_button(
-                    "Refresh",
-                    Tone::Default,
+                .child(ui::row_icon_button(
+                    icons::refresh(),
+                    "Refresh helper status",
                     "settings-refresh-helper",
                     settings_busy,
                     system::refresh_settings,
                 )),
         ))
-        .child(ui::hairline())
+        .child(inset_hairline())
         .child(
             view()
                 .flex_col()
                 .gap(tokens::space(1.5))
                 .px(tokens::space(4.0))
-                .py(tokens::space(2.5))
+                .py(tokens::space(3.0))
                 .child(ui::kv_mono("Daemon", PLIST_PATH))
                 .child(ui::kv_mono("Socket", SOCKET_PATH))
                 .child(ui::kv_mono("Helper", HELPER_DIR)),
@@ -426,7 +461,7 @@ fn cli_body() -> impl IntoElement {
                 .pb(tokens::space(2.5))
                 .child(ui::plain_note(hint, false))
         }))
-        .child(ui::hairline())
+        .child(inset_hairline())
         .child(settings_row(
             row_title("Agent & MCP"),
             view()
@@ -471,7 +506,7 @@ fn permissions_body() -> impl IntoElement {
                 system::open_full_disk_access,
             ),
         ))
-        .child(ui::hairline())
+        .child(inset_hairline())
         .child(settings_row(
             row_title("Login Items"),
             ui::action_button(
@@ -560,7 +595,7 @@ fn updates_body() -> impl IntoElement {
             .selectable(true),
             ui::status_tag(status_tag),
         ))
-        .child(ui::hairline())
+        .child(inset_hairline())
         .child(settings_row(
             view()
                 .flex_col()
@@ -602,13 +637,13 @@ fn updates_body() -> impl IntoElement {
                     )
                 })),
         ))
-        .child(ui::hairline())
+        .child(inset_hairline())
         .child(
             view()
                 .flex_col()
                 .gap(tokens::space(1.5))
                 .px(tokens::space(4.0))
-                .py(tokens::space(2.5))
+                .py(tokens::space(3.0))
                 .child(ui::kv("Channel", feed.channel))
                 .children(
                     feed.source

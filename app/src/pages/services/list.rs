@@ -147,12 +147,12 @@ fn header() -> impl IntoElement {
         .items_center()
         .gap(tokens::space(2.0))
         .px(tokens::space(5.0))
-        .pt(tokens::space(2.0))
         .window_drag(true)
         .child(
             text(move || svc::active_scope().title().to_string())
                 .text_size(px(15.0))
                 .font_weight(FontWeight::SEMIBOLD)
+                .text_color(move || theme().foreground)
                 .flex_1()
                 .truncate(),
         )
@@ -510,21 +510,22 @@ fn empty_list() -> impl IntoElement {
 }
 
 /// One item of the list: its state, its name, the lock for an item that
-/// takes root, and at most one action, which shows while the pointer is over
-/// the row or the row is chosen.
+/// takes root, and a hover-only quick action on unselected rows (when the
+/// Inspector is already open for the selected row, actions live beside it
+/// in the Inspector instead of duplicating `Stop` on the row).
 fn row(item: ReadSignal<Item>) -> impl IntoElement {
     let name = item.with_untracked(|item| item.name.clone());
     let test_id = format!("item-{}", name);
     let action_id = format!("action-{}", name);
     view()
         .test_id(&test_id)
+        .relative()
         .w_full()
         .h(px(34.0))
         .flex_row()
         .items_center()
-        .gap(tokens::space(2.5))
-        .pl(tokens::space(3.0))
-        .pr(tokens::space(1.0))
+        .gap(tokens::space(2.0))
+        .px(tokens::space(3.0))
         .rounded(move || theme().radius)
         .role(AccessibilityRole::Button)
         .bg(move || {
@@ -587,40 +588,50 @@ fn row(item: ReadSignal<Item>) -> impl IntoElement {
             },
         ))
         .child(
-            text(move || item.get().state.label().to_string())
-                .w(px(60.0))
-                .flex_none()
-                .text_right()
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground)
-                .truncate(),
+            text(move || {
+                let id = item.with_untracked(|item| item.id.clone());
+                if svc::is_busy(&id) {
+                    "Working".to_string()
+                } else {
+                    item.get().state.label().to_string()
+                }
+            })
+            .w(px(56.0))
+            .flex_none()
+            .text_right()
+            .text_size(px(tokens::TEXT_SMALL))
+            .text_color(move || theme().muted_foreground)
+            .opacity(move || {
+                let id = item.with_untracked(|item| item.id.clone());
+                let action_overlay_visible = !svc::is_busy(&id)
+                    && !svc::is_selected(&id)
+                    && svc::hovered_item().as_deref() == Some(id.as_str())
+                    && primary_action(&item.get()).is_some();
+                if action_overlay_visible {
+                    0.0_f32
+                } else {
+                    1.0_f32
+                }
+            })
+            .truncate(),
         )
-        .child(
-            view()
-                .size(px(84.0))
-                .flex_none()
-                .flex_row()
-                .items_center()
-                .justify_end()
-                .child(when(
-                    move || svc::is_busy(&item.with_untracked(|item| item.id.clone())),
-                    || {
-                        text("Working")
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .text_color(move || theme().muted_foreground)
-                    },
-                ))
-                .child(when(
-                    move || {
-                        !svc::is_busy(&item.with_untracked(|item| item.id.clone()))
-                            && primary_action(&item.get()).is_some()
-                    },
-                    move || {
-                        let action_id = action_id.clone();
-                        row_action(item, action_id)
-                    },
-                )),
-        )
+        .child(when(
+            move || {
+                let id = item.with_untracked(|item| item.id.clone());
+                !svc::is_selected(&id)
+                    && !svc::is_busy(&id)
+                    && primary_action(&item.get()).is_some()
+            },
+            move || {
+                let action_id = action_id.clone();
+                view()
+                    .absolute()
+                    .right(tokens::space(2.0))
+                    .top(px(5.0))
+                    .flex_none()
+                    .child(row_action(item, action_id))
+            },
+        ))
 }
 
 /// Subtle pill identifying which source owns an item when viewing `All Items`.
@@ -660,7 +671,7 @@ fn source_badge_label(source: Source) -> &'static str {
     }
 }
 
-/// The main action of a row, revealed on hover or while the row is chosen.
+/// The main action of an unselected row, revealed on hover.
 fn row_action(item: ReadSignal<Item>, action_id: String) -> impl IntoElement {
     nsh_base::button()
         .test_id(&action_id)
@@ -676,8 +687,7 @@ fn row_action(item: ReadSignal<Item>, action_id: String) -> impl IntoElement {
         .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
         .opacity(move || {
             let id = item.with_untracked(|item| item.id.clone());
-            let shown =
-                svc::hovered_item().as_deref() == Some(id.as_str()) || svc::is_selected(&id);
+            let shown = svc::hovered_item().as_deref() == Some(id.as_str());
             if shown { 1.0_f32 } else { 0.0_f32 }
         })
         .accessibility_label(move || {

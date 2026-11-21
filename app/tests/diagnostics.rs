@@ -270,9 +270,38 @@ fn start() -> (
 fn the_runtime_snapshot_and_the_unknown_phase3_checks_render() {
     let (_turn, mut app, diagnostics, _operations, _ports) = start();
 
-    app.wait_for("text:instance:blog").unwrap();
-    app.wait_for("text:proxy").unwrap();
+    app.wait_for("id:runtime-instance:blog").unwrap();
+    app.wait_for("id:runtime-proxy").unwrap();
+    app.wait_for("blog").unwrap();
+    app.wait_for("Database").unwrap();
+    app.wait_for("HTTPS Proxy").unwrap();
+    assert!(!app.screen().shows("instance:blog"));
     assert!(!app.screen().shows("Reading runtime status…"));
+    assert!(app.screen().matches("id:diagnostics-refresh").unwrap());
+    assert!(
+        !app.screen()
+            .matches("id:diagnostics-refresh-ports")
+            .unwrap()
+    );
+    assert!(!app.screen().matches("id:operations-refresh").unwrap());
+
+    // The diagnostics sheet is horizontally centered inside the Diagnostics page.
+    let nodes = app.screen().layout_nodes();
+    let page = nodes
+        .iter()
+        .find(|node| node.test_id.as_deref() == Some("diagnostics-page"))
+        .expect("diagnostics-page should be laid out");
+    let row = nodes
+        .iter()
+        .find(|node| node.test_id.as_deref() == Some("runtime-proxy"))
+        .expect("runtime-proxy should be laid out");
+    let left_gutter = row.bounds.origin.x.0 - page.bounds.origin.x.0;
+    let right_gutter = (page.bounds.origin.x.0 + page.bounds.size.width.0)
+        - (row.bounds.origin.x.0 + row.bounds.size.width.0);
+    assert!(
+        (left_gutter - right_gutter).abs() <= 2.0,
+        "diagnostics sheet should be horizontally centered (left={left_gutter}, right={right_gutter})"
+    );
 
     app.press("id:diagnostics-run").unwrap();
     app.wait_for("Unknown · CA").unwrap();
@@ -341,6 +370,10 @@ fn the_journal_lists_tasks_and_retries_and_dismisses_them() {
 
     app.wait_for("Task task-1").unwrap();
     app.wait_for("Task task-2").unwrap();
+    assert!(
+        !app.screen().matches("id:operation-retry-task-1").unwrap(),
+        "succeeded tasks should not show a Retry button"
+    );
     app.press("id:operation-retry-task-2").unwrap();
     app.wait(Duration::from_millis(500)).unwrap();
     assert!(

@@ -42,6 +42,9 @@ pub fn editor_panel() -> impl IntoElement {
     editor_panel_with_title(true)
 }
 
+/// Maximum sheet width for the centered plist editor form.
+const EDITOR_MAX_WIDTH: f32 = 640.0;
+
 fn editor_panel_with_title(show_title: bool) -> impl IntoElement {
     let s = signals();
 
@@ -57,32 +60,74 @@ fn editor_panel_with_title(show_title: bool) -> impl IntoElement {
         .flex_col()
         .min_h(px(0.0))
         .w_full()
-        .p(tokens::space(4.5))
-        .gap(tokens::space(3.5))
-        .bg(move || theme().background)
+        .bg(tokens::sheet)
         .text_color(move || theme().foreground)
         .child(when(
-            move || show_title || store::has_subtitle(),
-            move || header(show_title),
+            move || show_title || store::has_subtitle() || !store::is_existing(),
+            move || {
+                view()
+                    .w_full()
+                    .flex_none()
+                    .flex_col()
+                    .items_center()
+                    .px(tokens::space(5.0))
+                    .py(tokens::space(3.0))
+                    .border_b_1()
+                    .border_color(tokens::hairline)
+                    .child(
+                        view()
+                            .w_full()
+                            .max_w(px(EDITOR_MAX_WIDTH))
+                            .flex_col()
+                            .gap(tokens::space(3.0))
+                            .child(when(
+                                move || show_title || store::has_subtitle(),
+                                move || header(show_title),
+                            ))
+                            .child(when(move || !store::is_existing(), kind_selector)),
+                    )
+            },
         ))
-        .child(when(move || !store::is_existing(), kind_selector))
-        .child(when(store::is_loading, loading_banner))
         .child(
             scroll().flex_1().min_h(px(0.0)).child(
                 view()
+                    .w_full()
                     .flex_col()
-                    .gap(tokens::space(3.5))
-                    .pr(tokens::space(1.0))
-                    .child(program_section(s))
-                    .child(when_section(s))
-                    .child(when(
-                        move || s.source.get() == Source::Daemon,
-                        move || runs_as_section(s),
-                    ))
-                    .child(logs_section(s)),
+                    .items_center()
+                    .px(tokens::space(5.0))
+                    .py(tokens::space(4.0))
+                    .child(
+                        view()
+                            .w_full()
+                            .max_w(px(EDITOR_MAX_WIDTH))
+                            .flex_col()
+                            .gap(tokens::space(4.0))
+                            .child(when(store::is_loading, loading_banner))
+                            .child(program_section(s))
+                            .child(when_section(s))
+                            .child(when(
+                                move || s.source.get() == Source::Daemon,
+                                move || runs_as_section(s),
+                            ))
+                            .child(logs_section(s)),
+                    ),
             ),
         )
-        .child(when(store::has_error, error_banner))
+        .child(when(store::has_error, || {
+            view()
+                .w_full()
+                .flex_none()
+                .flex_col()
+                .items_center()
+                .px(tokens::space(5.0))
+                .pb(tokens::space(3.0))
+                .child(
+                    view()
+                        .w_full()
+                        .max_w(px(EDITOR_MAX_WIDTH))
+                        .child(error_banner()),
+                )
+        }))
         .child(footer(s))
 }
 
@@ -151,7 +196,7 @@ pub fn editor_window() -> impl IntoElement {
 fn header(show_title: bool) -> impl IntoElement {
     view()
         .flex_col()
-        .gap(tokens::space(0.75))
+        .gap(tokens::space(1.0))
         .child(when(show_title, || {
             text(move || {
                 if store::is_existing() {
@@ -161,7 +206,7 @@ fn header(show_title: bool) -> impl IntoElement {
                 }
             })
             .test_id("editor-title")
-            .text_size(px(16.0))
+            .text_size(px(15.0))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(move || theme().foreground)
         }))
@@ -202,7 +247,22 @@ fn kind_selector() -> impl IntoElement {
                     if s.source.get() == kind {
                         tokens::panel()
                     } else {
-                        tokens::panel().opacity(0.0)
+                        AdaptiveColor::TRANSPARENT
+                    }
+                })
+                .border_1()
+                .border_color(move || {
+                    if s.source.get() == kind {
+                        tokens::hairline()
+                    } else {
+                        AdaptiveColor::TRANSPARENT
+                    }
+                })
+                .hover(move |style| {
+                    if s.source.get() == kind {
+                        style.bg(tokens::panel())
+                    } else {
+                        style.bg(tokens::row_hover())
                     }
                 })
                 .child(
@@ -550,7 +610,7 @@ fn calendar_cell(
         .flex_1()
         .min_w(px(0.0))
         .flex_col()
-        .gap(px(3.0))
+        .gap(tokens::space(1.0))
         .tooltip(tooltip_bubble(move || hint.to_string()))
         .child(
             text(label)
@@ -677,58 +737,71 @@ fn error_banner() -> impl IntoElement {
 fn footer(s: store::EditorSignals) -> impl IntoElement {
     let disabled = move || store::is_saving() || store::is_loading();
     view()
-        .flex_row()
+        .w_full()
+        .flex_none()
+        .flex_col()
         .items_center()
-        .gap(tokens::space(2.0))
-        .pt(tokens::space(3.0))
+        .px(tokens::space(5.0))
+        .py(tokens::space(3.0))
+        .bg(tokens::panel)
         .border_t_1()
         .border_color(tokens::hairline)
-        .child(checkbox_row(
-            "editor-apply",
-            move || {
-                if store::is_existing() {
-                    "Reload it after saving".to_string()
-                } else {
-                    "Load it now".to_string()
-                }
-            },
-            move || s.apply.get(),
-            move |next| s.apply.set(next),
-        ))
-        .child(view().flex_1())
-        .child(action_button(
-            "editor-cancel",
-            "Cancel",
-            false,
-            || false,
-            store::close,
-        ))
-        .child(action_button(
-            "editor-save",
-            "Save",
-            true,
-            disabled,
-            store::save,
-        ))
+        .child(
+            view()
+                .w_full()
+                .max_w(px(EDITOR_MAX_WIDTH))
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(2.0))
+                .child(checkbox_row(
+                    "editor-apply",
+                    move || {
+                        if store::is_existing() {
+                            "Reload it after saving".to_string()
+                        } else {
+                            "Load it now".to_string()
+                        }
+                    },
+                    move || s.apply.get(),
+                    move |next| s.apply.set(next),
+                ))
+                .child(view().flex_1())
+                .child(action_button(
+                    "editor-cancel",
+                    "Cancel",
+                    false,
+                    || false,
+                    store::close,
+                ))
+                .child(action_button(
+                    "editor-save",
+                    "Save",
+                    true,
+                    disabled,
+                    store::save,
+                )),
+        )
 }
 
 // --- Shared field & control helpers ------------------------------------------
 
 fn fieldset(title: &'static str, body: impl IntoElement) -> impl IntoElement {
     view()
+        .w_full()
         .flex_col()
         .gap(tokens::space(1.5))
         .child(
             text(title)
-                .px(tokens::space(1.0))
+                .px(tokens::space(1.5))
                 .text_size(px(tokens::TEXT_CAPTION))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(move || theme().muted_foreground),
         )
         .child(
             view()
+                .w_full()
                 .flex_col()
-                .p(tokens::space(3.5))
+                .p(tokens::space(4.0))
                 .rounded(tokens::panel_radius)
                 .bg(tokens::panel)
                 .border_1()
@@ -878,7 +951,22 @@ fn segment_item(
             if active() {
                 tokens::panel()
             } else {
-                tokens::panel().opacity(0.0)
+                AdaptiveColor::TRANSPARENT
+            }
+        })
+        .border_1()
+        .border_color(move || {
+            if active() {
+                tokens::hairline()
+            } else {
+                AdaptiveColor::TRANSPARENT
+            }
+        })
+        .hover(move |style| {
+            if active() {
+                style.bg(tokens::panel())
+            } else {
+                style.bg(tokens::row_hover())
             }
         })
         .child(
@@ -967,7 +1055,7 @@ fn switch_row(
                             if checked() {
                                 theme().primary
                             } else {
-                                theme().secondary
+                                theme().muted_foreground.opacity(0.30)
                             }
                         })
                 })

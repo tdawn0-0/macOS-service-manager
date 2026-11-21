@@ -382,6 +382,16 @@ fn actions_follow_the_state_matrix() {
             .matches("id:inspector >> role:button[Restart]")
             .unwrap()
     );
+    // Selected row must not duplicate the Stop button next to the open Inspector,
+    // while unselected rows still expose their inline quick action.
+    assert!(
+        !app.screen().matches("id:action-com.example.alpha").unwrap(),
+        "selected row should not duplicate the Stop button while Inspector is open"
+    );
+    assert!(
+        app.screen().matches("id:action-com.example.bravo").unwrap(),
+        "unselected rows should keep their inline hover action"
+    );
 
     // Idle: Start is the main action, and Restart does not apply.
     app.press("id:item-com.example.bravo").unwrap();
@@ -426,7 +436,7 @@ fn a_confirming_action_waits_for_the_dialog() {
 
     app.press("id:item-com.example.bravo").unwrap();
     app.wait_for("Start").unwrap();
-    app.press("id:action-com.example.bravo").unwrap();
+    app.press("id:inspector >> role:button[Start]").unwrap();
     app.wait_for("Running · PID 900").unwrap();
 
     drop(app);
@@ -444,7 +454,7 @@ fn cancelling_a_confirming_action_changes_nothing() {
     app.press("id:item-com.example.bravo").unwrap();
     app.wait_for("Start").unwrap();
 
-    app.press("id:action-com.example.bravo").unwrap();
+    app.press("id:inspector >> role:button[Start]").unwrap();
     // The default answer presses Cancel: the action must not run.
     app.wait(Duration::from_millis(800)).unwrap();
     assert!(!app.screen().shows("Running · PID 900"));
@@ -461,8 +471,6 @@ fn an_action_shows_the_busy_state_while_it_runs() {
         daemons(Behaviour::Normal),
     );
     app.wait_for("com.example.alpha").unwrap();
-    app.press("id:item-com.example.alpha").unwrap();
-    app.wait_for("Stop").unwrap();
 
     app.press("id:action-com.example.alpha").unwrap();
     app.wait_for("Working").unwrap();
@@ -481,8 +489,6 @@ fn a_privileged_action_reports_the_missing_helper() {
     app.wait_for("com.example.alpha").unwrap();
     app.press("id:source-daemon").unwrap();
     app.wait_for("com.example.gamma").unwrap();
-    app.press("id:item-com.example.gamma").unwrap();
-    app.wait_for("Stop").unwrap();
 
     app.press("id:action-com.example.gamma").unwrap();
     app.wait_for("com.example.gamma: the privileged helper is not installed")

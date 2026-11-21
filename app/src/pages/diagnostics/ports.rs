@@ -4,7 +4,7 @@
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
-use super::section_card;
+use super::{inset_hairline, section_card};
 use crate::{
     components::controls::{self as ui, Tone},
     store::system,
@@ -22,20 +22,13 @@ fn parse_valid_port(input: &str) -> Option<i64> {
 pub(crate) fn ports_card() -> impl IntoElement {
     section_card(
         "Ports",
-        Some(
-            ui::action_button(
-                "Refresh",
-                Tone::Default,
-                "diagnostics-refresh-ports",
-                system::ports_loading,
-                system::refresh_ports,
-            )
-            .into_element(),
-        ),
+        None,
         view()
+            .w_full()
             .flex_col()
             .child(
                 view()
+                    .w_full()
                     .flex_col()
                     .gap(tokens::space(2.5))
                     .px(tokens::space(4.0))
@@ -48,7 +41,7 @@ pub(crate) fn ports_card() -> impl IntoElement {
                             .flex_row()
                             .items_center()
                             .gap(tokens::space(2.0))
-                            .child(view().w(px(110.0)).flex_none().child(ui::text_field(
+                            .child(view().w(px(112.0)).flex_none().child(ui::text_field(
                                 "diagnostics-port",
                                 "3000",
                                 system::port_input,
@@ -78,7 +71,7 @@ pub(crate) fn ports_card() -> impl IntoElement {
                             .map(port_result)
                     })),
             )
-            .child(ui::hairline())
+            .child(inset_hairline())
             .child(dynamic(|| Some(listening_ports_body().into_element()))),
     )
 }
@@ -86,7 +79,8 @@ pub(crate) fn ports_card() -> impl IntoElement {
 fn listening_ports_body() -> impl IntoElement {
     let listening = system::listening_ports();
     let loading = system::ports_loading();
-    view()
+    let mut rows = view()
+        .w_full()
         .flex_col()
         .child(when(loading, || {
             text("Loading…")
@@ -101,19 +95,25 @@ fn listening_ports_body() -> impl IntoElement {
                 .py(tokens::space(3.0))
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
-        }))
-        .children(listening.into_iter().enumerate().map(|(index, port)| {
-            let row = view()
+        }));
+
+    for (index, port) in listening.into_iter().enumerate() {
+        if index > 0 {
+            rows = rows.child(inset_hairline());
+        }
+        rows = rows.child(
+            view()
                 .test_id(&format!("listening-{}", port.port))
-                .min_h(px(34.0))
+                .w_full()
+                .min_h(px(36.0))
                 .flex_row()
                 .items_center()
                 .gap(tokens::space(2.0))
                 .px(tokens::space(4.0))
-                .py(tokens::space(1.75))
+                .py(tokens::space(2.0))
                 .child(
                     text(format!("Port {}", port.port))
-                        .w(px(90.0))
+                        .w(px(92.0))
                         .flex_none()
                         .font_family("monospace")
                         .tabular_nums()
@@ -128,13 +128,11 @@ fn listening_ports_body() -> impl IntoElement {
                         .text_size(px(tokens::TEXT_CAPTION))
                         .text_color(move || theme().muted_foreground)
                         .truncate(),
-                );
-            if index == 0 {
-                row
-            } else {
-                row.border_t_1().border_color(tokens::hairline)
-            }
-        }))
+                ),
+        );
+    }
+
+    rows
 }
 
 fn port_result(inspection: devcore::databases::PortInspection) -> impl IntoElement {

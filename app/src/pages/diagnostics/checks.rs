@@ -3,8 +3,12 @@
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
-use super::section_card;
-use crate::{components::controls as ui, store::system, theme as tokens};
+use super::{inset_hairline, section_card};
+use crate::{
+    components::controls::{self as ui, TagTone},
+    store::system,
+    theme as tokens,
+};
 
 /// The summary line: `%d failed · %d warnings · %d checks`.
 pub(crate) fn summary() -> String {
@@ -56,6 +60,31 @@ pub(crate) fn status() -> String {
     }
 }
 
+/// Maps raw runtime snapshot keys (`instance:pg-main`, `proxy`, `tunnel`)
+/// into human-readable labels while callers preserve the raw key on `test_id`.
+fn runtime_display(key: &str) -> (String, Option<&'static str>, bool) {
+    if let Some(name) = key.strip_prefix("instance:") {
+        (name.to_string(), Some("Database"), false)
+    } else {
+        match key {
+            "proxy" => ("HTTPS Proxy".to_string(), None, false),
+            "tunnel" => ("Cloudflare Tunnel".to_string(), None, false),
+            other => (other.to_string(), None, true),
+        }
+    }
+}
+
+fn check_tone(status: &str) -> TagTone {
+    match status {
+        "OK" | "Healthy" | "Running" | "Available" | "Succeeded" | "Installed" | "Published"
+        | "Trusted" | "Ready" => TagTone::Success,
+        "Warning" | "Not ready" | "Unknown" | "Stopped" | "Disabled" | "Pending"
+        | "Not checked" => TagTone::Warning,
+        "Failed" | "Invalid" | "Expired" => TagTone::Error,
+        _ => TagTone::Neutral,
+    }
+}
+
 pub(crate) fn runtime_card() -> impl IntoElement {
     section_card(
         "Runtime",
@@ -69,12 +98,13 @@ fn runtime_body() -> impl IntoElement {
     let loading = system::runtime_loading();
     let error = system::runtime_error();
     let empty = snapshot.is_empty();
-    view()
+    let mut rows = view()
+        .w_full()
         .flex_col()
         .children(error.map(|error| {
             view()
                 .px(tokens::space(4.0))
-                .py(tokens::space(2.5))
+                .py(tokens::space(3.0))
                 .child(ui::plain_note(error, true))
         }))
         .child(when(empty && !loading, || {
@@ -90,43 +120,83 @@ fn runtime_body() -> impl IntoElement {
                 .py(tokens::space(3.0))
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
-        }))
-        .children(
-            snapshot
-                .into_iter()
-                .enumerate()
-                .map(|(index, (key, state))| {
-                    let row = view()
-                        .test_id(&format!("runtime-{key}"))
-                        .min_h(px(36.0))
+        }));
+
+    for (index, (key, state)) in snapshot.into_iter().enumerate() {
+        if index > 0 {
+            rows = rows.child(inset_hairline());
+        }
+        let (label, category, monospace) = runtime_display(&key);
+        let name_el = if monospace {
+            text(label)
+                .font_family("monospace")
+                .text_size(px(tokens::TEXT_SMALL))
+                .text_color(move || theme().foreground)
+                .truncate()
+                .into_element()
+        } else {
+            text(label)
+                .text_size(px(tokens::TEXT_BODY))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(move || theme().foreground)
+                .truncate()
+                .into_element()
+        };
+        rows = rows.child(
+            view()
+                .test_id(&format!("runtime-{key}"))
+                .w_full()
+                .min_h(px(40.0))
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(2.0))
+                .px(tokens::space(4.0))
+                .py(tokens::space(2.0))
+                .child(
+                    view()
+                        .flex_1()
+                        .min_w(px(0.0))
                         .flex_row()
                         .items_center()
                         .gap(tokens::space(2.0))
-                        .px(tokens::space(4.0))
-                        .py(tokens::space(2.0))
-                        .child(
-                            text(key)
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .font_family("monospace")
-                                .text_size(px(tokens::TEXT_SMALL))
-                                .text_color(move || theme().foreground),
-                        )
-                        .child(ui::status_tag(state));
-                    if index == 0 {
-                        row
-                    } else {
-                        row.border_t_1().border_color(tokens::hairline)
-                    }
-                }),
-        )
+                        .child(name_el)
+                        .children(category.map(|cat| {
+                            text(cat)
+                                .flex_none()
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .text_color(move || theme().muted_foreground)
+                        })),
+                )
+                .child(ui::status_tag(state)),
+        );
+    }
+
+    rows
 }
 
 /// The checks, one row per `DiagnosticCheck`, as devcore returns them.
 pub(crate) fn checks_card() -> impl IntoElement {
+    let summary_trailing = view()
+        .flex_none()
+        .flex_row()
+        .items_center()
+        .gap(tokens::space(2.0))
+        .child(
+            text(summary)
+                .text_size(px(tokens::TEXT_CAPTION))
+                .tabular_nums()
+                .text_color(move || theme().muted_foreground)
+                .truncate(),
+        )
+        .child(dynamic(|| {
+            let status = status();
+            (!status.is_empty()).then(|| ui::status_tag(status))
+        }))
+        .into_element();
+
     section_card(
         "Checks",
-        None,
+        Some(summary_trailing),
         dynamic(|| Some(checks_body().into_element())),
     )
 }
@@ -136,12 +206,13 @@ fn checks_body() -> impl IntoElement {
     let loading = system::report_loading();
     let error = system::report_error();
     let has_report = report.is_some();
-    view()
+    let mut rows = view()
+        .w_full()
         .flex_col()
         .children(error.map(|error| {
             view()
                 .px(tokens::space(4.0))
-                .py(tokens::space(2.5))
+                .py(tokens::space(3.0))
                 .child(ui::plain_note(error, true))
         }))
         .child(when(!has_report && !loading, || {
@@ -157,24 +228,28 @@ fn checks_body() -> impl IntoElement {
                 .py(tokens::space(3.0))
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
-        }))
-        .children(report.into_iter().flat_map(|report| {
-            report.checks.into_iter().enumerate().map(|(index, check)| {
-                let remedy = check.remedy.clone();
-                let row = view()
+        }));
+
+    if let Some(report) = report {
+        for (index, check) in report.checks.into_iter().enumerate() {
+            if index > 0 {
+                rows = rows.child(inset_hairline());
+            }
+            let tone = check_tone(&check.status);
+            let remedy = check.remedy.clone();
+            rows = rows.child(
+                view()
+                    .w_full()
                     .flex_col()
                     .gap(tokens::space(1.0))
                     .px(tokens::space(4.0))
-                    .py(tokens::space(2.5))
+                    .py(tokens::space(3.0))
                     .child(
                         view()
                             .flex_row()
                             .items_center()
                             .gap(tokens::space(2.0))
-                            .child(ui::status_tag(format!(
-                                "{} · {}",
-                                check.status, check.layer
-                            )))
+                            .child(ui::tag(format!("{} · {}", check.status, check.layer), tone))
                             .child(
                                 text(check.resource.clone())
                                     .test_id(&format!("check-{index}"))
@@ -195,12 +270,35 @@ fn checks_body() -> impl IntoElement {
                         text(remedy.clone())
                             .text_size(px(tokens::TEXT_CAPTION))
                             .text_color(move || theme().muted_foreground)
-                    }));
-                if index == 0 {
-                    row
-                } else {
-                    row.border_t_1().border_color(tokens::hairline)
-                }
-            })
-        }))
+                    })),
+            );
+        }
+    }
+
+    rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_display_maps_known_keys_cleanly() {
+        assert_eq!(
+            runtime_display("instance:pg-main"),
+            ("pg-main".to_string(), Some("Database"), false)
+        );
+        assert_eq!(
+            runtime_display("proxy"),
+            ("HTTPS Proxy".to_string(), None, false)
+        );
+        assert_eq!(
+            runtime_display("tunnel"),
+            ("Cloudflare Tunnel".to_string(), None, false)
+        );
+        assert_eq!(
+            runtime_display("custom:svc"),
+            ("custom:svc".to_string(), None, true)
+        );
+    }
 }

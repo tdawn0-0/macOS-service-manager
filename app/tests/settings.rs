@@ -420,6 +420,24 @@ fn the_helper_and_cli_status_render() {
     app.wait_for("Updates & About").unwrap();
     app.wait_for("text:/Devbase v.* · macOS 26\\.0\\+ · xyz\\.jyeu\\.devbase/")
         .unwrap();
+
+    // The grouped-card sheet is horizontally centered inside the Settings page.
+    let nodes = app.screen().layout_nodes();
+    let page = nodes
+        .iter()
+        .find(|node| node.test_id.as_deref() == Some("settings-page"))
+        .expect("settings-page should be laid out");
+    let card = nodes
+        .iter()
+        .find(|node| node.test_id.as_deref() == Some("settings-updates-card"))
+        .expect("settings-updates-card should be laid out");
+    let left_gutter = card.bounds.origin.x.0 - page.bounds.origin.x.0;
+    let right_gutter = (page.bounds.origin.x.0 + page.bounds.size.width.0)
+        - (card.bounds.origin.x.0 + card.bounds.size.width.0);
+    assert!(
+        (left_gutter - right_gutter).abs() <= 2.0,
+        "settings sheet should be horizontally centered (left={left_gutter}, right={right_gutter})"
+    );
 }
 
 #[test]

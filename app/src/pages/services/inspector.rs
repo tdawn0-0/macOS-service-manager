@@ -42,7 +42,6 @@ fn bar() -> impl IntoElement {
         .items_center()
         .justify_end()
         .px(tokens::space(3.0))
-        .pt(tokens::space(2.0))
         .window_drag(true)
         .child(icon_button(icons::close(), "Close details", || {
             svc::clear_selection()
@@ -200,17 +199,18 @@ fn action_row(id: String) -> impl IntoElement {
                 .child(edit_target.map(|(source, path)| {
                     nsh_base::button()
                         .test_id("edit-job")
-                        .h(px(26.0))
+                        .h(px(28.0))
                         .flex_none()
                         .flex_row()
                         .items_center()
-                        .gap(tokens::space(1.0))
-                        .px(tokens::space(2.0))
+                        .gap(tokens::space(1.5))
+                        .px(tokens::space(2.5))
                         .rounded(move || theme().radius)
                         .bg(tokens::control)
                         .border_1()
                         .border_color(tokens::hairline)
                         .hover(move |style| style.bg(tokens::row_hover()))
+                        .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
                         .on_press(move || crate::editor::open_edit(source, path.clone()))
                         .child(
                             icons::edit()
@@ -220,7 +220,7 @@ fn action_row(id: String) -> impl IntoElement {
                         )
                         .child(
                             text("Edit")
-                                .text_size(px(tokens::TEXT_CAPTION))
+                                .text_size(px(tokens::TEXT_SMALL))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(move || theme().foreground),
                         )
@@ -352,14 +352,16 @@ fn more_menu(item: &Item, actions: Vec<Action>, busy: bool) -> impl IntoElement 
             .trigger(
                 nsh_base::button()
                     .test_id("more-actions")
-                    .size(px(26.0))
+                    .size(px(28.0))
                     .flex_none()
                     .items_center()
                     .justify_center()
                     .rounded(move || theme().radius)
+                    .bg(tokens::control)
                     .border_1()
                     .border_color(tokens::hairline)
                     .hover(move |style| style.bg(tokens::row_hover()))
+                    .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
                     .accessibility_label("More")
                     .child(
                         icons::more()
@@ -403,7 +405,7 @@ fn autostart_card(id: String) -> impl IntoElement {
                 .items_center()
                 .gap(tokens::space(2.5))
                 .px(tokens::space(3.0))
-                .py(tokens::space(2.25))
+                .py(tokens::space(2.5))
                 .rounded(tokens::panel_radius)
                 .bg(tokens::panel)
                 .border_1()
@@ -468,7 +470,7 @@ fn autostart_card(id: String) -> impl IntoElement {
                                     if on.get() {
                                         theme().primary
                                     } else {
-                                        theme().secondary
+                                        theme().muted_foreground.opacity(0.30)
                                     }
                                 })
                         })

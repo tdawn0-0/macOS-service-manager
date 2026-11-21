@@ -109,7 +109,7 @@ fn toolbar(filter_ref: ElementRef) -> impl IntoElement {
         .flex_row()
         .items_center()
         .gap(tokens::space(2.0))
-        .px(tokens::space(3.5))
+        .px(tokens::space(4.0))
         .pt(tokens::space(2.0))
         .pb(tokens::space(1.5))
         .child(target_tabs())
@@ -235,7 +235,7 @@ fn filter_input(filter_ref: ElementRef) -> impl IntoElement {
     view()
         .flex_1()
         .min_w(px(120.0))
-        .h(px(26.0))
+        .h(px(28.0))
         .flex_row()
         .items_center()
         .gap(tokens::space(1.5))
@@ -257,7 +257,7 @@ fn filter_input(filter_ref: ElementRef) -> impl IntoElement {
                 .element_ref(&filter_ref)
                 .flex_1()
                 .min_w(px(0.0))
-                .h(px(24.0))
+                .h(px(26.0))
                 .text_size(px(tokens::TEXT_CAPTION))
                 .text_color(move || theme().foreground)
                 .placeholder("Filter logs")
@@ -304,33 +304,25 @@ fn live_switch() -> impl IntoElement {
             .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
             .track_style(|style| {
                 style
-                    .w(px(28.0))
-                    .h(px(16.0))
-                    .rounded_full()
-                    .p(px(2.0))
+                    .w(px(30.0))
+                    .h(px(18.0))
+                    .rounded(px(9.0))
+                    .px(px(2.0))
                     .flex_row()
                     .items_center()
                     .bg(move || {
                         if !store::is_paused() {
                             tokens::success()
                         } else {
-                            tokens::inset()
-                        }
-                    })
-                    .border_1()
-                    .border_color(move || {
-                        if !store::is_paused() {
-                            tokens::success()
-                        } else {
-                            tokens::hairline()
+                            theme().muted_foreground.opacity(0.30)
                         }
                     })
             })
             .thumb_style(|style| {
                 style
-                    .size(px(10.0))
-                    .rounded_full()
-                    .bg(move || theme().background)
+                    .size(px(14.0))
+                    .rounded(px(7.0))
+                    .bg(move || theme().primary_foreground)
                     .ml(move || {
                         if !store::is_paused() {
                             px(12.0)
@@ -401,7 +393,7 @@ fn drawer_icon_button(
     view().flex_none().tooltip(tip(label)).child(
         nsh_base::button()
             .test_id(test_id)
-            .size(px(26.0))
+            .size(px(28.0))
             .flex_none()
             .items_center()
             .justify_center()
@@ -425,7 +417,7 @@ fn metadata_row() -> impl IntoElement {
         .flex_row()
         .items_center()
         .gap(tokens::space(2.0))
-        .px(tokens::space(3.5))
+        .px(tokens::space(4.0))
         .pb(tokens::space(1.5))
         .child(
             view()
@@ -437,7 +429,7 @@ fn metadata_row() -> impl IntoElement {
                         .px(tokens::space(2.0))
                         .py(tokens::space(1.0))
                         .rounded(move || theme().radius)
-                        .bg(tokens::panel)
+                        .bg(move || theme().popover)
                         .border_1()
                         .border_color(tokens::hairline)
                         .child(
@@ -447,7 +439,7 @@ fn metadata_row() -> impl IntoElement {
                                     .unwrap_or_default()
                             })
                             .text_size(px(tokens::TEXT_CAPTION))
-                            .text_color(move || theme().foreground),
+                            .text_color(move || theme().popover_foreground),
                         ),
                 )
                 .child(
@@ -476,8 +468,8 @@ fn log_viewport(scroll_ref: ElementRef) -> impl IntoElement {
     view()
         .flex_1()
         .min_h(px(0.0))
-        .px(tokens::space(3.5))
-        .pb(tokens::space(2.5))
+        .px(tokens::space(4.0))
+        .pb(tokens::space(3.0))
         .child(
             scroll()
                 .test_id("dev-log-scroll")
@@ -493,7 +485,7 @@ fn log_viewport(scroll_ref: ElementRef) -> impl IntoElement {
                     view()
                         .flex_col()
                         .gap(px(2.0))
-                        .px(tokens::space(2.5))
+                        .px(tokens::space(3.0))
                         .py(tokens::space(2.0))
                         .child(when(
                             move || store::empty_state().is_some(),
@@ -541,12 +533,12 @@ fn tip_owned(label: String) -> nsh_base::TooltipElement {
         .px(tokens::space(2.0))
         .py(tokens::space(1.0))
         .rounded(move || theme().radius)
-        .bg(tokens::panel)
+        .bg(move || theme().popover)
         .border_1()
         .border_color(tokens::hairline)
         .child(
             text(label)
                 .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().foreground),
+                .text_color(move || theme().popover_foreground),
         )
 }

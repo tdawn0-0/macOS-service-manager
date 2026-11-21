@@ -14,7 +14,10 @@ use nsh_base::theme;
 use nsh_core::prelude::*;
 
 use crate::{
-    components::controls::{self as ui, Tone},
+    components::{
+        controls::{self as ui, Tone},
+        icons,
+    },
     store::system,
     theme as tokens,
 };
@@ -31,25 +34,36 @@ pub(crate) fn diagnostics() -> impl IntoElement {
         .flex_col()
         .min_w(px(0.0))
         .child(header())
-        .child(toolbar())
         .child(
             scroll().flex_1().min_h(px(0.0)).child(
                 view()
                     .w_full()
-                    .max_w(px(760.0))
                     .flex_col()
-                    .gap(tokens::space(5.0))
+                    .items_center()
                     .px(tokens::space(6.0))
                     .py(tokens::space(5.0))
-                    .child(checks::runtime_card())
-                    .child(checks::checks_card())
-                    .child(ports::ports_card())
-                    .child(operations::operations_card()),
+                    .child(
+                        view()
+                            .w_full()
+                            .max_w(px(780.0))
+                            .flex_col()
+                            .gap(tokens::space(5.0))
+                            .child(checks::runtime_card())
+                            .child(checks::checks_card())
+                            .child(ports::ports_card())
+                            .child(operations::operations_card()),
+                    ),
             ),
         )
 }
 
 fn header() -> impl IntoElement {
+    let refresh_busy = || {
+        system::report_loading()
+            || system::runtime_loading()
+            || system::ports_loading()
+            || system::operations_loading()
+    };
     ui::page_header(
         "Diagnostics",
         None::<&str>,
@@ -57,18 +71,57 @@ fn header() -> impl IntoElement {
             .flex_none()
             .flex_row()
             .items_center()
-            .gap(tokens::space(2.0))
+            .gap(tokens::space(1.5))
             .child(
-                text(checks::summary)
-                    .text_size(px(tokens::TEXT_SMALL))
-                    .tabular_nums()
-                    .text_color(move || theme().muted_foreground)
-                    .truncate(),
+                view()
+                    .flex_none()
+                    .tooltip(ui::tooltip(REDACTED_TIP))
+                    .child(ui::action_button(
+                        "Copy redacted report",
+                        Tone::Default,
+                        "diagnostics-copy",
+                        || system::report().is_none() || system::report_loading(),
+                        system::copy_redacted_report,
+                    )),
             )
-            .child(dynamic(|| {
-                let status = checks::status();
-                (!status.is_empty()).then(|| ui::status_tag(status))
-            }))
+            .child(
+                view()
+                    .flex_none()
+                    .tooltip(ui::tooltip(REDACTED_TIP))
+                    .child(ui::action_button(
+                        "Export redacted report",
+                        Tone::Default,
+                        "diagnostics-export",
+                        || {
+                            system::report().is_none()
+                                || system::report_loading()
+                                || system::report_exporting()
+                        },
+                        system::export_report,
+                    )),
+            )
+            .child(
+                view().flex_none().tooltip(ui::tooltip("Refresh")).child(
+                    nsh_base::button()
+                        .test_id("diagnostics-refresh")
+                        .size(px(26.0))
+                        .flex_none()
+                        .items_center()
+                        .justify_center()
+                        .rounded(move || theme().radius)
+                        .hover(move |style| style.bg(tokens::row_hover()))
+                        .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
+                        .disabled(refresh_busy)
+                        .opacity(move || if refresh_busy() { 0.45_f32 } else { 1.0_f32 })
+                        .accessibility_label("Refresh")
+                        .on_press(system::refresh)
+                        .child(
+                            icons::refresh()
+                                .size(px(14.0))
+                                .text_color(move || theme().muted_foreground),
+                        ),
+                ),
+            )
             .child(ui::action_button(
                 "Run diagnostics",
                 Tone::Primary,
@@ -79,51 +132,8 @@ fn header() -> impl IntoElement {
     )
 }
 
-fn toolbar() -> impl IntoElement {
-    view()
-        .flex_none()
-        .flex_row()
-        .items_center()
-        .gap(tokens::space(2.0))
-        .px(tokens::space(5.0))
-        .py(tokens::space(2.0))
-        .border_b_1()
-        .border_color(tokens::hairline)
-        .child(ui::action_button(
-            "Refresh",
-            Tone::Default,
-            "diagnostics-refresh",
-            system::report_loading,
-            system::refresh,
-        ))
-        .child(
-            view()
-                .flex_none()
-                .tooltip(ui::tooltip(REDACTED_TIP))
-                .child(ui::action_button(
-                    "Copy redacted report",
-                    Tone::Default,
-                    "diagnostics-copy",
-                    || system::report().is_none() || system::report_loading(),
-                    system::copy_redacted_report,
-                )),
-        )
-        .child(
-            view()
-                .flex_none()
-                .tooltip(ui::tooltip(REDACTED_TIP))
-                .child(ui::action_button(
-                    "Export redacted report",
-                    Tone::Default,
-                    "diagnostics-export",
-                    || {
-                        system::report().is_none()
-                            || system::report_loading()
-                            || system::report_exporting()
-                    },
-                    system::export_report,
-                )),
-        )
+pub(super) fn inset_hairline() -> impl IntoElement {
+    view().w_full().px(tokens::space(4.0)).child(ui::hairline())
 }
 
 pub(super) fn section_card(
@@ -132,16 +142,20 @@ pub(super) fn section_card(
     body: impl IntoElement,
 ) -> impl IntoElement {
     view()
+        .w_full()
         .flex_col()
         .gap(tokens::space(1.5))
         .child(
             view()
+                .w_full()
                 .flex_row()
                 .items_center()
                 .justify_between()
-                .px(tokens::space(1.0))
+                .gap(tokens::space(2.0))
+                .px(tokens::space(1.5))
                 .child(
                     text(title)
+                        .flex_none()
                         .text_size(px(tokens::TEXT_CAPTION))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(move || theme().muted_foreground),
@@ -150,6 +164,7 @@ pub(super) fn section_card(
         )
         .child(
             view()
+                .w_full()
                 .flex_col()
                 .rounded(tokens::panel_radius)
                 .bg(tokens::panel)

@@ -22,7 +22,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
         Arc, LazyLock, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -30,10 +30,11 @@ use std::{
 use devcore::{
     databases::{
         BackupFile, ConnectionInfo, DatabaseWorkInfo, Databases, InstanceAction, InstanceCatalog,
-        InstanceDeletionInfo, InstanceDeletionPreview, InstanceInitializationInfo, PortInspection,
+        InstanceDeletionInfo, InstanceDeletionPreview, InstanceInitializationInfo,
+        InstanceTelemetry, PortInspection,
     },
     health::read_job_state,
-    model::{ConnectionProfile, Instance, Package, State},
+    model::{BackupCadence, BackupSchedule, ConnectionProfile, Instance, Package, State},
     state::Store,
 };
 use nsh_base::alert_dialog;
@@ -154,6 +155,22 @@ pub trait Provider: Send + Sync {
     ) -> Result<String, String>;
     fn pending_work(&self) -> Result<Vec<DatabaseWorkInfo>, String>;
     fn resolve_work(&self, id: &str, revision: &str) -> Result<(), String>;
+
+    fn telemetry(&self, _id: &str, _status: &str) -> Result<InstanceTelemetry, String> {
+        Ok(InstanceTelemetry::default())
+    }
+
+    fn set_backup_schedule(
+        &self,
+        _id: &str,
+        _schedule: Option<BackupSchedule>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn update_port(&self, _id: &str, _port: i64, _cancel: CancelToken) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 // --- The production provider -------------------------------------------------
@@ -205,7 +222,7 @@ impl Provider for Facade {
                 });
             let status = match error {
                 Ok(()) if job.running => "Running",
-                Ok(()) => "Stopped",
+                Ok(()) => "Failed",
                 Err(error) => {
                     let message = error.to_string();
                     if message.contains("Could not find service")
@@ -504,6 +521,29 @@ impl Provider for Facade {
             .resolve_database_work(id, revision)
             .map_err(|error| error.to_string())
     }
+
+    fn telemetry(&self, id: &str, status: &str) -> Result<InstanceTelemetry, String> {
+        self.databases()
+            .instance_telemetry(id, status)
+            .map_err(|error| error.to_string())
+    }
+
+    fn set_backup_schedule(
+        &self,
+        id: &str,
+        schedule: Option<BackupSchedule>,
+    ) -> Result<(), String> {
+        self.databases()
+            .set_backup_schedule(id, schedule)
+            .map_err(|error| error.to_string())
+    }
+
+    fn update_port(&self, id: &str, port: i64, cancel: CancelToken) -> Result<(), String> {
+        let cancelled = || cancel.load(Ordering::Relaxed);
+        self.databases()
+            .update_instance_port(id, port, &cancelled)
+            .map_err(|error| error.to_string())
+    }
 }
 
 // --- Providers ---------------------------------------------------------------
@@ -638,15 +678,36 @@ struct PreviewState {
 }
 
 /// The port preflight of the form.
+static PORT_DEBOUNCE: AtomicU64 = AtomicU64::new(0);
+static EDIT_PORT_DEBOUNCE: AtomicU64 = AtomicU64::new(0);
+
 #[derive(Debug, Clone, Default)]
 struct PortState {
     /// The port the inspection describes; `None` means "no answer yet".
     port: Option<i64>,
     inspection: Option<PortInspection>,
     suggestion: Option<i64>,
+    /// Suggested free port fetched when the inspected port is occupied.
+    conflict_suggestion: Option<i64>,
     loading: bool,
     error: Option<String>,
     sequence: u64,
+}
+
+/// Non-destructive telemetry for the selected instance.
+#[derive(Debug, Clone, Default)]
+struct TelemetryState {
+    instance_id: String,
+    telemetry: InstanceTelemetry,
+    loading: bool,
+    sequence: u64,
+}
+
+/// Port-edit preflight for the selected instance in detail view.
+#[derive(Debug, Clone, Default)]
+struct EditPortState {
+    instance_id: String,
+    port: PortState,
 }
 
 /// An operation in flight, or its result until dismissed.
@@ -668,6 +729,7 @@ enum PendingSwitch {
     Profile(String),
     Instance(String),
     NewInstance,
+    NewInstanceWith(&'static str, String),
 }
 
 /// The connection panel's selection (editable fields live in [`DraftSignals`]).
@@ -704,6 +766,8 @@ struct DraftSignals {
     // Backups & restore
     backup_path: Signal<String>,
     restore_database: Signal<String>,
+    // Instance port edit
+    edit_port: Signal<String>,
     // Permanent deletion confirmation
     confirmation: Signal<String>,
 }
@@ -728,6 +792,7 @@ impl Default for DraftSignals {
             database_password: signal(String::new()),
             backup_path: signal(String::new()),
             restore_database: signal(String::new()),
+            edit_port: signal(String::new()),
             confirmation: signal(String::new()),
         }
     }
@@ -770,6 +835,7 @@ struct Workspace {
     load: LoadState,
     catalog: Option<CatalogState>,
     backups: Option<BackupsState>,
+    telemetry: Option<TelemetryState>,
     preview: Option<PreviewState>,
     deletions: ListState<InstanceDeletionInfo>,
     initializations: ListState<InstanceInitializationInfo>,
@@ -778,6 +844,7 @@ struct Workspace {
     /// Non-task actions in flight, by a key of their own.
     aux_busy: BTreeSet<String>,
     port: PortState,
+    edit_port: EditPortState,
     profile: ProfileState,
     connection_details: Option<String>,
     action_error: Option<String>,
@@ -941,6 +1008,8 @@ pub(crate) fn refresh() {
             Err(error) => Err(format!("the database workspace did not answer: {error}")),
         };
         let mut default_package: Option<String> = None;
+        let mut telemetry_target: Option<String> = None;
+        let mut sync_edit_port: Option<String> = None;
         let d = drafts();
         let draft_kind = d.draft_kind.get_untracked();
         let draft_package_empty = d.draft_package.get_untracked().is_empty();
@@ -965,6 +1034,23 @@ pub(crate) fn refresh() {
                             .unwrap_or_default();
                         default_package = Some(package);
                     }
+                    if state.mode == Mode::Instance
+                        && let Some(selected) = state.selected.clone()
+                        && let Some(inst) = state
+                            .snapshot
+                            .instances
+                            .iter()
+                            .find(|instance| instance.id == selected)
+                    {
+                        telemetry_target = Some(selected.clone());
+                        if state.edit_port.instance_id != selected {
+                            state.edit_port = EditPortState {
+                                instance_id: selected,
+                                port: PortState::default(),
+                            };
+                            sync_edit_port = Some(inst.port.to_string());
+                        }
+                    }
                 }
                 Err(error) => state.load.error = Some(error),
             }
@@ -984,6 +1070,12 @@ pub(crate) fn refresh() {
         });
         if let Some(package) = default_package {
             d.draft_package.set(package);
+        }
+        if let Some(port) = sync_edit_port {
+            d.edit_port.set(port);
+        }
+        if let Some(id) = telemetry_target {
+            refresh_telemetry(&id);
         }
     });
 }
@@ -1050,6 +1142,70 @@ pub(crate) fn status(id: &str) -> String {
 
 pub(crate) fn is_running(id: &str) -> bool {
     matches!(status(id).as_str(), "Running" | "Healthy")
+}
+
+/// Number of currently running database instances.
+pub(crate) fn running_count() -> usize {
+    workspace().with(|state| {
+        state
+            .snapshot
+            .instances
+            .iter()
+            .filter(|instance| {
+                let effective = if let Some(task) = state.tasks.get(&instance.id)
+                    && task.running
+                {
+                    match task.kind.as_str() {
+                        "start" => "Starting",
+                        "stop" | "remove" => "Stopping",
+                        "restart" => "Restarting",
+                        _ => state
+                            .snapshot
+                            .statuses
+                            .get(&instance.id)
+                            .map(String::as_str)
+                            .unwrap_or("Stopped"),
+                    }
+                } else {
+                    state
+                        .snapshot
+                        .statuses
+                        .get(&instance.id)
+                        .map(String::as_str)
+                        .unwrap_or("Stopped")
+                };
+                matches!(effective, "Running" | "Healthy")
+            })
+            .count()
+    })
+}
+
+/// Stops all currently running database instances via background tasks.
+pub(crate) fn stop_all_running() {
+    let running_ids: Vec<String> = workspace().with(|state| {
+        state
+            .snapshot
+            .instances
+            .iter()
+            .filter_map(|instance| {
+                if let Some(task) = state.tasks.get(&instance.id)
+                    && task.running
+                    && matches!(task.kind.as_str(), "stop" | "remove")
+                {
+                    return None;
+                }
+                let running = state
+                    .snapshot
+                    .statuses
+                    .get(&instance.id)
+                    .is_some_and(|status| matches!(status.as_str(), "Running" | "Healthy"));
+                running.then(|| instance.id.clone())
+            })
+            .collect()
+    });
+    for id in running_ids {
+        stop_instance(&id);
+    }
 }
 
 pub(crate) fn package_version(id: &str) -> String {
@@ -1122,18 +1278,27 @@ pub(crate) fn open_instance(id: &str) {
 }
 
 fn show_instance(id: &str) {
-    drafts().confirmation.set(String::new());
+    let d = drafts();
+    d.confirmation.set(String::new());
+    if let Some(inst) = instance(id) {
+        d.edit_port.set(inst.port.to_string());
+    }
     workspace().update(|state| {
         state.mode = Mode::Instance;
         state.selected = Some(id.to_string());
         state.preview = None;
         state.action_error = None;
         state.connection_details = None;
+        state.edit_port = EditPortState {
+            instance_id: id.to_string(),
+            port: PortState::default(),
+        };
     });
     load_profile_for(id);
     refresh();
     load_catalog(id);
     load_backups(id);
+    refresh_telemetry(id);
 }
 
 /// Opens the new-instance form, filling its port from the provider.
@@ -1150,14 +1315,45 @@ pub(crate) fn open_new() {
     show_new();
 }
 
+/// Opens the new-instance form pre-selected to a specific database engine and
+/// installed package ID (used when jumping from Software or duplicating a setup).
+pub(crate) fn open_new_with_package(kind: &str, package_id: &str) {
+    let Some(resolved_kind) = SoftwareKind::from_key(kind)
+        .filter(|software| software.is_database())
+        .map(SoftwareKind::key)
+    else {
+        open_new();
+        return;
+    };
+    if workspace().with(|state| state.profile.pending.is_some()) {
+        return;
+    }
+    if profile_dirty() {
+        workspace().update(|state| {
+            state.profile.pending = Some(PendingSwitch::NewInstanceWith(
+                resolved_kind,
+                package_id.to_string(),
+            ));
+        });
+        return;
+    }
+    show_new_with(resolved_kind, package_id);
+}
+
 fn show_new() {
-    let package = packages("postgresql")
-        .first()
-        .map(Package::id)
-        .unwrap_or_default();
+    show_new_with("postgresql", "");
+}
+
+fn show_new_with(kind: &'static str, package_id: &str) {
+    let package = if !package_id.is_empty() {
+        package_id.to_string()
+    } else {
+        packages(kind).first().map(Package::id).unwrap_or_default()
+    };
     let d = drafts();
     d.confirmation.set(String::new());
     d.reset_new_draft(package);
+    d.draft_kind.set(kind);
     d.clear_profile_draft();
     d.clear_instance_inputs();
     workspace().update(|state| {
@@ -1186,6 +1382,7 @@ pub(crate) fn discard_pending_switch() {
         }
         PendingSwitch::Instance(id) => show_instance(&id),
         PendingSwitch::NewInstance => show_new(),
+        PendingSwitch::NewInstanceWith(kind, package_id) => show_new_with(kind, &package_id),
     }
 }
 
@@ -1241,7 +1438,10 @@ pub(crate) fn set_draft_port(next: String) {
     let d = drafts();
     d.draft_port.set(next);
     d.draft_auto_port.set(false);
-    later(Duration::from_millis(400), check_port_quietly);
+    let token = PORT_DEBOUNCE.fetch_add(1, Ordering::Relaxed) + 1;
+    later(Duration::from_millis(150), move || {
+        check_port_quietly(token);
+    });
 }
 
 pub(crate) fn draft_data_directory() -> String {
@@ -1367,7 +1567,10 @@ pub(crate) fn check_port() {
     }
 }
 
-fn check_port_quietly() {
+fn check_port_quietly(token: u64) {
+    if PORT_DEBOUNCE.load(Ordering::Relaxed) != token {
+        return;
+    }
     if workspace().with(|state| state.mode != Mode::New) {
         return;
     }
@@ -1382,6 +1585,33 @@ fn check_port_quietly() {
     }
 }
 
+/// Formats an inline port-conflict diagnosis when the port is occupied.
+pub(crate) fn format_port_conflict(inspection: &PortInspection) -> Option<String> {
+    if !matches!(inspection.status.as_str(), "In use" | "Devbase proxy") {
+        return None;
+    }
+    if let Some(first) = inspection.listeners.first() {
+        let name = if first.name.trim().is_empty() {
+            "another process"
+        } else {
+            first.name.trim()
+        };
+        if first.pid > 0 {
+            Some(format!(
+                "Port {} is in use by {} (PID {})",
+                inspection.port, name, first.pid
+            ))
+        } else {
+            Some(format!("Port {} is in use by {}", inspection.port, name))
+        }
+    } else {
+        Some(format!(
+            "Port {} is in use by another process",
+            inspection.port
+        ))
+    }
+}
+
 fn inspect_port_now(port: i64) {
     let Some(provider) = provider_of() else {
         return;
@@ -1391,10 +1621,22 @@ fn inspect_port_now(port: i64) {
     workspace().update(|state| {
         state.port.loading = true;
         state.port.error = None;
+        state.port.conflict_suggestion = None;
         state.port.sequence = sequence;
     });
     task(async move {
-        let answer = match blocking(move || provider.inspect_port(port)).await {
+        let answer = match blocking(move || {
+            let inspection = provider.inspect_port(port)?;
+            let conflict_suggestion =
+                if matches!(inspection.status.as_str(), "In use" | "Devbase proxy") {
+                    provider.next_port().ok().filter(|next| *next != port)
+                } else {
+                    None
+                };
+            Ok::<_, String>((inspection, conflict_suggestion))
+        })
+        .await
+        {
             Ok(answer) => answer,
             Err(error) => Err(format!("the port inspection did not answer: {error}")),
         };
@@ -1404,9 +1646,10 @@ fn inspect_port_now(port: i64) {
             }
             state.port.loading = false;
             match answer {
-                Ok(inspection) => {
+                Ok((inspection, conflict_suggestion)) => {
                     state.port.port = Some(inspection.port);
                     state.port.inspection = Some(inspection);
+                    state.port.conflict_suggestion = conflict_suggestion;
                 }
                 Err(error) => state.port.error = Some(error),
             }
@@ -1423,12 +1666,239 @@ pub(crate) fn port_inspection() -> Option<PortInspection> {
     })
 }
 
+/// Suggested free port when the entered new-instance port is occupied.
+pub(crate) fn port_conflict_suggestion() -> Option<i64> {
+    let field = drafts().draft_port.get().trim().parse::<i64>().ok();
+    workspace().with(|state| {
+        let inspection = state.port.inspection.as_ref()?;
+        if field != Some(inspection.port)
+            || !matches!(inspection.status.as_str(), "In use" | "Devbase proxy")
+        {
+            return None;
+        }
+        state.port.conflict_suggestion
+    })
+}
+
+/// Applies the suggested free port to the new-instance form and re-checks it.
+pub(crate) fn apply_suggested_port(suggested: i64) {
+    let d = drafts();
+    d.draft_port.set(suggested.to_string());
+    d.draft_auto_port.set(false);
+    PORT_DEBOUNCE.fetch_add(1, Ordering::Relaxed);
+    inspect_port_now(suggested);
+}
+
 pub(crate) fn port_error() -> Option<String> {
     workspace().with(|state| state.port.error.clone())
 }
 
 pub(crate) fn port_loading() -> bool {
     workspace().with(|state| state.port.loading)
+}
+
+// --- Detail instance port editing --------------------------------------------
+
+pub(crate) fn edit_port() -> String {
+    drafts().edit_port.get()
+}
+
+pub(crate) fn set_edit_port(next: String) {
+    drafts().edit_port.set(next);
+    let token = EDIT_PORT_DEBOUNCE.fetch_add(1, Ordering::Relaxed) + 1;
+    later(Duration::from_millis(150), move || {
+        check_edit_port_quietly(token);
+    });
+}
+
+pub(crate) fn check_edit_port() {
+    let Some(id) = selected_id() else {
+        return;
+    };
+    let port = drafts()
+        .edit_port
+        .get_untracked()
+        .trim()
+        .parse::<i64>()
+        .ok();
+    if let Some(port) = port {
+        inspect_edit_port_now(&id, port);
+    }
+}
+
+fn check_edit_port_quietly(token: u64) {
+    if EDIT_PORT_DEBOUNCE.load(Ordering::Relaxed) != token {
+        return;
+    }
+    if workspace().with(|state| state.mode != Mode::Instance) {
+        return;
+    }
+    let Some(inst) = selected_instance() else {
+        return;
+    };
+    let port = drafts()
+        .edit_port
+        .get_untracked()
+        .trim()
+        .parse::<i64>()
+        .ok();
+    let Some(port) = port else {
+        return;
+    };
+    if port == inst.port {
+        workspace().update(|state| {
+            if state.edit_port.instance_id == inst.id {
+                state.edit_port.port = PortState::default();
+            }
+        });
+        return;
+    }
+    inspect_edit_port_now(&inst.id, port);
+}
+
+fn inspect_edit_port_now(id: &str, port: i64) {
+    let Some(provider) = provider_of() else {
+        return;
+    };
+    attach_sink();
+    let sequence = next_sequence();
+    let id_owned = id.to_string();
+    workspace().update(|state| {
+        state.edit_port.instance_id = id_owned.clone();
+        state.edit_port.port.loading = true;
+        state.edit_port.port.error = None;
+        state.edit_port.port.conflict_suggestion = None;
+        state.edit_port.port.sequence = sequence;
+    });
+    task(async move {
+        let answer = match blocking(move || {
+            let inspection = provider.inspect_port(port)?;
+            let conflict_suggestion =
+                if matches!(inspection.status.as_str(), "In use" | "Devbase proxy") {
+                    provider.next_port().ok().filter(|next| *next != port)
+                } else {
+                    None
+                };
+            Ok::<_, String>((inspection, conflict_suggestion))
+        })
+        .await
+        {
+            Ok(answer) => answer,
+            Err(error) => Err(format!("the port inspection did not answer: {error}")),
+        };
+        workspace().update(|state| {
+            if state.edit_port.instance_id != id_owned || state.edit_port.port.sequence != sequence
+            {
+                return;
+            }
+            state.edit_port.port.loading = false;
+            match answer {
+                Ok((inspection, conflict_suggestion)) => {
+                    state.edit_port.port.port = Some(inspection.port);
+                    state.edit_port.port.inspection = Some(inspection);
+                    state.edit_port.port.conflict_suggestion = conflict_suggestion;
+                }
+                Err(error) => state.edit_port.port.error = Some(error),
+            }
+        });
+    });
+}
+
+pub(crate) fn edit_port_inspection(id: &str) -> Option<PortInspection> {
+    let field = drafts().edit_port.get().trim().parse::<i64>().ok();
+    workspace().with(|state| {
+        if state.edit_port.instance_id != id {
+            return None;
+        }
+        let inspection = state.edit_port.port.inspection.clone()?;
+        (field == Some(inspection.port)).then_some(inspection)
+    })
+}
+
+pub(crate) fn edit_port_conflict_suggestion(id: &str) -> Option<i64> {
+    let field = drafts().edit_port.get().trim().parse::<i64>().ok();
+    workspace().with(|state| {
+        if state.edit_port.instance_id != id {
+            return None;
+        }
+        let inspection = state.edit_port.port.inspection.as_ref()?;
+        if field != Some(inspection.port)
+            || !matches!(inspection.status.as_str(), "In use" | "Devbase proxy")
+        {
+            return None;
+        }
+        state.edit_port.port.conflict_suggestion
+    })
+}
+
+pub(crate) fn edit_port_loading(id: &str) -> bool {
+    workspace().with(|state| state.edit_port.instance_id == id && state.edit_port.port.loading)
+}
+
+pub(crate) fn edit_port_error(id: &str) -> Option<String> {
+    workspace().with(|state| {
+        (state.edit_port.instance_id == id)
+            .then(|| state.edit_port.port.error.clone())
+            .flatten()
+    })
+}
+
+pub(crate) fn apply_suggested_edit_port(id: &str, suggested: i64) {
+    drafts().edit_port.set(suggested.to_string());
+    EDIT_PORT_DEBOUNCE.fetch_add(1, Ordering::Relaxed);
+    inspect_edit_port_now(id, suggested);
+}
+
+pub(crate) fn save_edit_port(id: &str) {
+    if operations_busy() {
+        return;
+    }
+    let port_text = drafts().edit_port.get_untracked();
+    let port = match port_text.trim().parse::<i64>() {
+        Ok(port) if (1024..=65535).contains(&port) => port,
+        _ => {
+            ctrl_error("Error: Enter a valid port (1024–65535)".to_string());
+            return;
+        }
+    };
+    let Some(provider) = provider_of() else {
+        ctrl_error("no database provider is available".to_string());
+        return;
+    };
+    let id_owned = id.to_string();
+    let key = format!("update-port:{id}");
+    workspace().update(|state| {
+        state.aux_busy.insert(key.clone());
+        state.action_error = None;
+    });
+    task(async move {
+        let cancel: CancelToken = Arc::new(AtomicBool::new(false));
+        let request = id_owned.clone();
+        let answer = match blocking(move || provider.update_port(&request, port, cancel)).await {
+            Ok(answer) => answer,
+            Err(error) => Err(format!("the port update did not finish: {error}")),
+        };
+        workspace().update(|state| {
+            state.aux_busy.remove(&key);
+            if answer.is_ok()
+                && let Some(inst) = state
+                    .snapshot
+                    .instances
+                    .iter_mut()
+                    .find(|inst| inst.id == id_owned)
+            {
+                inst.port = port;
+                state.edit_port.port = PortState::default();
+            }
+        });
+        match answer {
+            Ok(()) => {
+                show_notice(format!("Updated port for {id_owned} to {port}"));
+                refresh();
+            }
+            Err(error) => ctrl_error(error),
+        }
+    });
 }
 
 /// Creates the instance in the form. Non-numeric ports surface the Go
@@ -1461,6 +1931,7 @@ pub(crate) fn create_instance() {
             package,
             port,
             persistent,
+            backup_schedule: None,
         })
     })();
     let instance = match prepared {
@@ -1508,14 +1979,20 @@ pub(crate) fn create_instance() {
             let d = drafts();
             d.reset_new_draft(String::new());
             d.confirmation.set(String::new());
+            d.edit_port.set(instance.port.to_string());
             workspace().update(|state| {
                 state.mode = Mode::Instance;
                 state.selected = Some(id.clone());
+                state.edit_port = EditPortState {
+                    instance_id: id.clone(),
+                    port: PortState::default(),
+                };
             });
             load_profile_for(&id);
             refresh();
             load_catalog(&id);
             load_backups(&id);
+            refresh_telemetry(&id);
         }
     });
 }
@@ -1727,10 +2204,66 @@ fn instance_action(id: &str, action: InstanceAction) {
                 show_new();
             } else {
                 load_catalog(&id);
+                refresh_telemetry(&id);
             }
             load_backups(&id);
         }
     });
+}
+
+// --- Telemetry ---------------------------------------------------------------
+
+pub(crate) fn refresh_telemetry(id: &str) {
+    let Some(provider) = provider_of() else {
+        return;
+    };
+    let current_status = status(id);
+    let sequence = next_sequence();
+    let id_owned = id.to_string();
+    workspace().update(|state| {
+        let existing = state
+            .telemetry
+            .as_ref()
+            .filter(|entry| entry.instance_id == id_owned)
+            .map(|entry| entry.telemetry.clone())
+            .unwrap_or_default();
+        state.telemetry = Some(TelemetryState {
+            instance_id: id_owned.clone(),
+            telemetry: existing,
+            loading: true,
+            sequence,
+        });
+    });
+    task(async move {
+        let request = id_owned.clone();
+        let status_for_call = current_status.clone();
+        let answer = match blocking(move || provider.telemetry(&request, &status_for_call)).await {
+            Ok(answer) => answer,
+            Err(_) => Ok(InstanceTelemetry::default()),
+        };
+        workspace().update(|state| {
+            let Some(entry) = state.telemetry.as_mut() else {
+                return;
+            };
+            if entry.instance_id != id_owned || entry.sequence != sequence {
+                return;
+            }
+            entry.loading = false;
+            if let Ok(telemetry) = answer {
+                entry.telemetry = telemetry;
+            }
+        });
+    });
+}
+
+pub(crate) fn telemetry(id: &str) -> Option<InstanceTelemetry> {
+    workspace().with(|state| {
+        state
+            .telemetry
+            .as_ref()
+            .filter(|entry| entry.instance_id == id)
+            .map(|entry| entry.telemetry.clone())
+    })
 }
 
 // --- Catalog -----------------------------------------------------------------
@@ -2296,8 +2829,83 @@ pub(crate) fn request_delete_backup(id: &str, row: BackupFile) {
             }
         });
         refresh_backups(&id_owned);
+        refresh_telemetry(&id_owned);
         if succeeded {
             show_notice("Deleted backup");
+        }
+    });
+}
+
+// --- Automatic backup schedule -----------------------------------------------
+
+pub(crate) fn backup_schedule(id: &str) -> BackupSchedule {
+    instance(id)
+        .and_then(|instance| instance.backup_schedule)
+        .unwrap_or_default()
+}
+
+pub(crate) fn set_backup_schedule_enabled(id: &str, enabled: bool) {
+    let mut schedule = backup_schedule(id);
+    schedule.enabled = enabled;
+    save_backup_schedule(id, schedule);
+}
+
+pub(crate) fn set_backup_schedule_cadence(id: &str, cadence: BackupCadence) {
+    let mut schedule = backup_schedule(id);
+    schedule.cadence = cadence;
+    save_backup_schedule(id, schedule);
+}
+
+pub(crate) fn set_backup_schedule_keep_last(id: &str, keep_last: u32) {
+    let mut schedule = backup_schedule(id);
+    schedule.keep_last = keep_last.max(1);
+    save_backup_schedule(id, schedule);
+}
+
+fn save_backup_schedule(id: &str, mut schedule: BackupSchedule) {
+    schedule.keep_last = schedule.keep_last.max(1);
+    let Some(provider) = provider_of() else {
+        ctrl_error("no database provider is available".to_string());
+        return;
+    };
+    let id_owned = id.to_string();
+    let key = format!("backup-schedule:{id}");
+    workspace().update(|state| {
+        state.aux_busy.insert(key.clone());
+        state.action_error = None;
+    });
+    let schedule_for_call = schedule.clone();
+    task(async move {
+        let request = id_owned.clone();
+        let answer =
+            match blocking(move || provider.set_backup_schedule(&request, Some(schedule_for_call)))
+                .await
+            {
+                Ok(answer) => answer,
+                Err(error) => Err(format!("the backup schedule was not saved: {error}")),
+            };
+        workspace().update(|state| {
+            state.aux_busy.remove(&key);
+            if answer.is_ok()
+                && let Some(inst) = state
+                    .snapshot
+                    .instances
+                    .iter_mut()
+                    .find(|inst| inst.id == id_owned)
+            {
+                inst.backup_schedule = Some(schedule.clone());
+            }
+        });
+        match answer {
+            Ok(()) => {
+                show_notice(if schedule.enabled {
+                    "Automatic backups updated"
+                } else {
+                    "Automatic backups disabled"
+                });
+                refresh();
+            }
+            Err(error) => ctrl_error(error),
         }
     });
 }
@@ -2753,6 +3361,76 @@ pub(crate) fn copy_jdbc(id: &str) {
             Ok(jdbc) => {
                 set_clipboard(jdbc);
                 show_info_notice("JDBC URL copied");
+            }
+            Err(error) => ctrl_error(error),
+        }
+    });
+}
+
+/// Copies the credential-free Docker URI (`host.docker.internal:<port>`).
+pub(crate) fn copy_docker_uri(id: &str) {
+    let Some(provider) = provider_of() else {
+        return;
+    };
+    let profile = copy_profile_for(id);
+    let kind = instance(id)
+        .map(|instance| instance.kind)
+        .unwrap_or_default();
+    let database = selected_database_for(id, &kind);
+    let id_owned = id.to_string();
+    let profile_for_call = profile.clone();
+    task(async move {
+        let answer =
+            match blocking(move || provider.connection_info(&id_owned, &profile_for_call)).await {
+                Ok(answer) => answer,
+                Err(error) => Err(format!("the connection did not answer: {error}")),
+            };
+        let answer = answer.and_then(|info| {
+            let info = match (profile.is_empty(), database) {
+                (true, Some(database)) => info.with_database(&kind, &database),
+                _ => info,
+            };
+            info.docker_uri().map_err(|error| error.to_string())
+        });
+        match answer {
+            Ok(uri) => {
+                set_clipboard(uri);
+                show_info_notice("Docker URI copied");
+            }
+            Err(error) => ctrl_error(error),
+        }
+    });
+}
+
+/// Copies the password-free CLI invocation (`psql` / `mysql` / `redis-cli` / `mongosh`).
+pub(crate) fn copy_cli_command(id: &str) {
+    let Some(provider) = provider_of() else {
+        return;
+    };
+    let profile = copy_profile_for(id);
+    let kind = instance(id)
+        .map(|instance| instance.kind)
+        .unwrap_or_default();
+    let database = selected_database_for(id, &kind);
+    let id_owned = id.to_string();
+    let profile_for_call = profile.clone();
+    task(async move {
+        let answer =
+            match blocking(move || provider.connection_info(&id_owned, &profile_for_call)).await {
+                Ok(answer) => answer,
+                Err(error) => Err(format!("the connection did not answer: {error}")),
+            };
+        let answer = answer.and_then(|info| {
+            let info = match (profile.is_empty(), database) {
+                (true, Some(database)) => info.with_database(&kind, &database),
+                _ => info,
+            };
+            info.cli_command(&kind).map_err(|error| error.to_string())
+        });
+        match answer {
+            Ok(command) => {
+                set_clipboard(command);
+                show_info_notice("CLI command copied");
             }
             Err(error) => ctrl_error(error),
         }

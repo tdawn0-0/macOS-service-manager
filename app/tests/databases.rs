@@ -16,9 +16,10 @@ use std::{
 use devcore::{
     databases::{
         BackupFile, ConnectionInfo, DatabaseWorkInfo, InstanceAction, InstanceCatalog,
-        InstanceDeletionInfo, InstanceDeletionPreview, InstanceInitializationInfo, PortInspection,
+        InstanceDeletionInfo, InstanceDeletionPreview, InstanceInitializationInfo,
+        InstanceTelemetry, PortInspection, PortListener,
     },
-    model::{ConnectionProfile, Instance, Package},
+    model::{BackupCadence, BackupSchedule, ConnectionProfile, Instance, Package},
 };
 use nsh_core::{Checked, prelude::*};
 use nsh_engine::{EngineConfig, Root};
@@ -26,6 +27,7 @@ use nsh_testing::{DialogAnswer, Headless};
 
 use nsh_app_devbase::testing::{
     DatabasesProvider, DatabasesSnapshot, install_databases_provider, use_fake_databases,
+    use_fake_dev_logs,
 };
 
 /// The database tests share one fake-provider registry, so they take turns.
@@ -57,6 +59,11 @@ struct Fixture {
     profiles: BTreeMap<String, ConnectionProfile>,
     statuses: BTreeMap<String, String>,
     backups: BTreeMap<String, Vec<BackupFile>>,
+    telemetry: BTreeMap<String, InstanceTelemetry>,
+    /// Ports reported as occupied: `port -> (process_name, pid)`.
+    occupied_ports: BTreeMap<i64, (String, i64)>,
+    /// Override for `next_port()` when testing conflict suggestions.
+    suggested_port: Option<i64>,
     deletions: Vec<InstanceDeletionInfo>,
     initializations: Vec<InstanceInitializationInfo>,
     work: Vec<DatabaseWorkInfo>,
@@ -137,11 +144,40 @@ impl DatabasesProvider for FakeDatabases {
 
     fn next_port(&self) -> Result<i64, String> {
         self.record("next port".to_string());
-        Ok(55432)
+        let suggested = self
+            .fixture
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .suggested_port
+            .unwrap_or(55432);
+        Ok(suggested)
     }
 
     fn inspect_port(&self, port: i64) -> Result<PortInspection, String> {
         self.record(format!("inspect port {port}"));
+        let occupied = self
+            .fixture
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .occupied_ports
+            .get(&port)
+            .cloned();
+        if let Some((name, pid)) = occupied {
+            return Ok(PortInspection {
+                port,
+                status: "In use".to_string(),
+                checked_at: "2026-11-20T12:00:00Z".to_string(),
+                listeners: vec![PortListener {
+                    pid,
+                    uid: 501,
+                    name,
+                    address: format!("127.0.0.1:{port}"),
+                    own: false,
+                }],
+                truncated: false,
+                detail: "Listeners reported for this TCP port.".to_string(),
+            });
+        }
         Ok(PortInspection {
             port,
             status: "Available".to_string(),
@@ -385,12 +421,30 @@ impl DatabasesProvider for FakeDatabases {
             .find(|instance| instance.id == instance_id)
             .ok_or_else(|| "database instance not found".to_string())?;
         if profile_id.is_empty() {
-            Ok(ConnectionInfo {
-                uri: format!(
-                    "postgresql://devmanager@127.0.0.1:{}/postgres",
-                    instance.port
+            let (uri, username) = match instance.kind.as_str() {
+                "redis" => (
+                    format!("redis://default@127.0.0.1:{}/0", instance.port),
+                    "default",
                 ),
-                username: "devmanager".to_string(),
+                "mysql" => (format!("mysql://root@127.0.0.1:{}/", instance.port), "root"),
+                "mongodb" => (
+                    format!(
+                        "mongodb://devmanager@127.0.0.1:{}/admin?authSource=admin&directConnection=true",
+                        instance.port
+                    ),
+                    "devmanager",
+                ),
+                _ => (
+                    format!(
+                        "postgresql://devmanager@127.0.0.1:{}/postgres",
+                        instance.port
+                    ),
+                    "devmanager",
+                ),
+            };
+            Ok(ConnectionInfo {
+                uri,
+                username: username.to_string(),
                 credential_file: format!("/tmp/devbase-tests/instances/{instance_id}/password"),
             })
         } else {
@@ -560,6 +614,55 @@ impl DatabasesProvider for FakeDatabases {
             .retain(|row| row.id != id);
         Ok(())
     }
+
+    fn telemetry(&self, id: &str, status: &str) -> Result<InstanceTelemetry, String> {
+        self.record(format!("telemetry {id} {status}"));
+        let mut telemetry = self
+            .fixture
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .telemetry
+            .get(id)
+            .cloned()
+            .unwrap_or_default();
+        if status != "Failed" {
+            telemetry.last_stderr.clear();
+        }
+        Ok(telemetry)
+    }
+
+    fn set_backup_schedule(
+        &self,
+        id: &str,
+        schedule: Option<BackupSchedule>,
+    ) -> Result<(), String> {
+        self.record(format!("set backup schedule {id} {schedule:?}"));
+        let mut fixture = self
+            .fixture
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(inst) = fixture.instances.iter_mut().find(|inst| inst.id == id) {
+            inst.backup_schedule = schedule;
+        }
+        Ok(())
+    }
+
+    fn update_port(
+        &self,
+        id: &str,
+        port: i64,
+        _cancel: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<(), String> {
+        self.record(format!("update port {id} {port}"));
+        let mut fixture = self
+            .fixture
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(inst) = fixture.instances.iter_mut().find(|inst| inst.id == id) {
+            inst.port = port;
+        }
+        Ok(())
+    }
 }
 
 fn package(name: &str, version: &str) -> Package {
@@ -577,15 +680,22 @@ fn package(name: &str, version: &str) -> Package {
 }
 
 fn instance(id: &str, kind: &str, port: i64, data_directory: &str) -> Instance {
+    let version = match kind {
+        "mysql" => "8.4.13",
+        "redis" => "7.4.1",
+        "mongodb" => "8.0.4",
+        _ => "17.11",
+    };
     Instance {
         data_identity: String::new(),
         data_directory: data_directory.to_string(),
         data_owner: String::new(),
         id: id.to_string(),
         kind: kind.to_string(),
-        package: format!("{kind}@17.11-arm64"),
+        package: format!("{kind}@{version}-arm64"),
         port,
         persistent: true,
+        backup_schedule: None,
     }
 }
 
@@ -1284,4 +1394,266 @@ fn restore_dropzone_sets_backup_path_and_rail_context_menu_lists_actions() {
             "expected context menu item `{expected}`, got {labels:?}"
         );
     }
+}
+
+#[test]
+fn stop_all_running_stops_every_running_instance_from_rail() {
+    let mut fixture = fixture_with_packages();
+    fixture
+        .instances
+        .push(instance("app", "postgresql", 5432, ""));
+    fixture.instances.push(instance("cache", "redis", 6379, ""));
+    fixture.instances.push(instance("idle", "mysql", 3306, ""));
+    fixture
+        .statuses
+        .insert("app".to_string(), "Running".to_string());
+    fixture
+        .statuses
+        .insert("cache".to_string(), "Running".to_string());
+    fixture
+        .statuses
+        .insert("idle".to_string(), "Stopped".to_string());
+    let fake = FakeDatabases::new(fixture, Behaviour::Normal);
+    let (_turn, mut app) = start(fake.clone());
+
+    app.wait_for("id:db-stop-all").unwrap();
+    app.press("id:db-stop-all").unwrap();
+    app.wait_for("Stopped app").unwrap();
+    app.wait_for("Stopped cache").unwrap();
+
+    let calls = fake.calls();
+    assert!(calls.iter().any(|c| c == "stop app"));
+    assert!(calls.iter().any(|c| c == "stop cache"));
+    assert!(!calls.iter().any(|c| c == "stop idle"));
+}
+
+#[test]
+fn open_new_with_package_preselects_engine_and_package_from_context_menu() {
+    let mut fixture = fixture_with_packages();
+    fixture.instances.push(instance("cache", "redis", 6379, ""));
+    fixture
+        .statuses
+        .insert("cache".to_string(), "Stopped".to_string());
+    let fake = FakeDatabases::new(fixture, Behaviour::Normal);
+    let (_turn, mut app) = start(fake);
+    app.set_environment("macos", |env| {
+        env.os = nsh_core::platform::Os::MacOs;
+    })
+    .unwrap();
+
+    app.wait_for("id:db-instance-cache").unwrap();
+    app.press("id:db-instance-cache").unwrap();
+    app.wait_for("127.0.0.1:6379").unwrap();
+
+    // Right-click and trigger "New Instance with Same Version" -> calls open_new_with_package("redis", "redis@7.4.1-arm64").
+    app.right_click("id:db-instance-cache").unwrap();
+    app.choose_menu_item("New Instance with Same Version")
+        .unwrap();
+    app.wait_for("id:db-create-form").unwrap();
+    app.wait_for("id:db-persistent").unwrap();
+    assert!(app.screen().selected("id:db-engine-redis").unwrap());
+    assert!(
+        app.screen()
+            .selected("id:db-version-redis@7.4.1-arm64")
+            .unwrap()
+    );
+}
+
+#[test]
+fn inline_port_conflict_diagnosis_and_suggested_port_in_new_and_detail() {
+    let mut fixture = fixture_with_packages();
+    fixture
+        .instances
+        .push(instance("app", "postgresql", 55440, ""));
+    fixture
+        .statuses
+        .insert("app".to_string(), "Stopped".to_string());
+    fixture
+        .occupied_ports
+        .insert(5432, ("postgres".to_string(), 1234));
+    fixture.suggested_port = Some(5433);
+    let fake = FakeDatabases::new(fixture, Behaviour::Normal);
+    let (_turn, mut app) = start(fake.clone());
+
+    // 1. New-instance form: typing occupied port 5432 shows inline conflict + "Use :5433".
+    app.clear("id:db-port").unwrap();
+    app.type_text("id:db-port", "5432").unwrap();
+    app.wait_for("id:db-port-conflict").unwrap();
+    app.wait_for("Port 5432 is in use by postgres (PID 1234)")
+        .unwrap();
+    app.wait_for("id:db-use-suggested-port").unwrap();
+    app.wait_for("Use :5433").unwrap();
+
+    app.press("id:db-use-suggested-port").unwrap();
+    app.wait_for("Available").unwrap();
+    assert_eq!(app.screen().input_text("id:db-port").unwrap(), Some("5433"));
+
+    // 2. Detail form: editing port on stopped instance shows conflict + "Use :5433" + saves port.
+    app.wait_for("id:db-instance-app").unwrap();
+    app.press("id:db-instance-app").unwrap();
+    app.wait_for("id:db-edit-port").unwrap();
+    app.clear("id:db-edit-port").unwrap();
+    app.type_text("id:db-edit-port", "5432").unwrap();
+    app.wait_for("id:db-port-conflict").unwrap();
+    app.wait_for("Port 5432 is in use by postgres (PID 1234)")
+        .unwrap();
+    app.wait_for("id:db-use-suggested-port").unwrap();
+
+    app.press("id:db-use-suggested-port").unwrap();
+    app.wait_for("Available").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:db-edit-port").unwrap(),
+        Some("5433")
+    );
+
+    app.press("id:db-save-port").unwrap();
+    app.wait_for("Updated port for app to 5433").unwrap();
+    assert!(fake.calls().iter().any(|c| c == "update port app 5433"));
+}
+
+#[test]
+fn telemetry_and_failure_stderr_snippet_with_explicit_logs_button() {
+    use_fake_dev_logs();
+    let mut fixture = fixture_with_packages();
+    fixture
+        .instances
+        .push(instance("app", "postgresql", 5432, ""));
+    fixture
+        .statuses
+        .insert("app".to_string(), "Failed".to_string());
+    fixture.telemetry.insert(
+        "app".to_string(),
+        InstanceTelemetry {
+            data_size_bytes: Some(2 * 1024 * 1024),
+            last_backup: Some(("shop · 2026-11-20 12:00".to_string(), 4096)),
+            last_stderr: vec![
+                "FATAL: could not bind IPv4 address".to_string(),
+                "HINT: Is another postmaster already running?".to_string(),
+                "LOG: database system is shut down".to_string(),
+            ],
+        },
+    );
+    let fake = FakeDatabases::new(fixture, Behaviour::Normal);
+    let (_turn, mut app) = start(fake);
+
+    app.wait_for("id:db-instance-app").unwrap();
+    app.press("id:db-instance-app").unwrap();
+    app.wait_for("id:db-open-logs").unwrap();
+    app.wait_for("id:db-failure-stderr").unwrap();
+    app.wait_for("FATAL: could not bind IPv4 address").unwrap();
+    app.wait_for("HINT: Is another postmaster already running?")
+        .unwrap();
+    app.wait_for("2.0 MiB").unwrap();
+    app.wait_for("shop · 2026-11-20 12:00 · 4.0 KiB").unwrap();
+
+    // Clicking the explicit Logs button opens the Live Log Drawer targeted at db-app.
+    app.press("id:db-open-logs").unwrap();
+    app.wait_for("id:dev-log-drawer").unwrap();
+    app.wait_for("id:dev-log-target-db-app").unwrap();
+}
+
+#[test]
+fn auto_backup_schedule_controls_toggle_cadence_and_retention() {
+    let fake = with_instance(Behaviour::Normal);
+    let (_turn, mut app) = start(fake.clone());
+
+    app.wait_for("id:db-instance-app").unwrap();
+    app.press("id:db-instance-app").unwrap();
+    app.wait_for("id:db-auto-backup-row").unwrap();
+    app.wait_for("id:db-auto-backup-switch").unwrap();
+
+    assert_eq!(
+        app.screen()
+            .accessibility_state("id:db-auto-backup-switch")
+            .unwrap()
+            .checked,
+        Some(Checked::False)
+    );
+
+    app.press("id:db-auto-backup-switch").unwrap();
+    app.wait_for("Automatic backups updated").unwrap();
+    assert_eq!(
+        app.screen()
+            .accessibility_state("id:db-auto-backup-switch")
+            .unwrap()
+            .checked,
+        Some(Checked::True)
+    );
+
+    app.press("id:db-backup-cadence-weekly").unwrap();
+    app.wait(Duration::from_millis(200)).unwrap();
+    app.press("id:db-backup-keep-10").unwrap();
+    app.wait(Duration::from_millis(200)).unwrap();
+
+    let saved = fake
+        .fixture
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .instances
+        .iter()
+        .find(|i| i.id == "app")
+        .and_then(|i| i.backup_schedule.clone())
+        .expect("backup schedule should be persisted");
+    assert!(saved.enabled);
+    assert_eq!(saved.cadence, BackupCadence::Weekly);
+    assert_eq!(saved.keep_last, 10);
+}
+
+#[test]
+fn docker_uri_and_cli_command_copy_are_password_free() {
+    let mut fixture = fixture_with_packages();
+    fixture
+        .instances
+        .push(instance("app", "postgresql", 5432, ""));
+    fixture
+        .instances
+        .push(instance("docs", "mongodb", 27017, ""));
+    fixture
+        .statuses
+        .insert("app".to_string(), "Running".to_string());
+    fixture
+        .statuses
+        .insert("docs".to_string(), "Running".to_string());
+    let fake = FakeDatabases::new(fixture, Behaviour::Normal);
+    let (_turn, mut app) = start(fake);
+
+    app.wait_for("id:db-instance-app").unwrap();
+    app.press("id:db-instance-app").unwrap();
+    app.wait_for("id:connection-docker-uri-copy").unwrap();
+    app.wait_for("id:connection-cli-copy").unwrap();
+
+    app.press("id:connection-docker-uri-copy").unwrap();
+    app.wait_for("Docker URI copied").unwrap();
+    assert_eq!(
+        app.screen().clipboard(),
+        Some("postgresql://devmanager@host.docker.internal:5432/postgres")
+    );
+
+    app.press("id:connection-cli-copy").unwrap();
+    app.wait_for("CLI command copied").unwrap();
+    assert_eq!(
+        app.screen().clipboard(),
+        Some("psql -h 127.0.0.1 -p 5432 -U devmanager -d postgres")
+    );
+
+    // MongoDB instance also supports Copy Docker URI and Copy CLI command (mongosh).
+    app.press("id:db-instance-docs").unwrap();
+    app.wait_for("127.0.0.1:27017").unwrap();
+    app.press("id:connection-docker-uri-copy").unwrap();
+    app.wait_for("Docker URI copied").unwrap();
+    assert_eq!(
+        app.screen().clipboard(),
+        Some(
+            "mongodb://devmanager@host.docker.internal:27017/admin?authSource=admin&directConnection=true"
+        )
+    );
+
+    app.press("id:connection-cli-copy").unwrap();
+    app.wait_for("CLI command copied").unwrap();
+    assert_eq!(
+        app.screen().clipboard(),
+        Some(
+            "mongosh 'mongodb://devmanager@127.0.0.1:27017/admin?authSource=admin&directConnection=true'"
+        )
+    );
 }

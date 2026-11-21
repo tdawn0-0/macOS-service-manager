@@ -6,13 +6,14 @@
 use devcore::{
     databases::BackupFile,
     databases::inventory::{is_protected_database, is_protected_database_user},
+    model::BackupCadence,
 };
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
 use crate::{
     components::{
-        controls::{self as ui, Tone},
+        controls::{self as ui, TagTone, Tone},
         icons, note,
     },
     store::databases as db,
@@ -147,6 +148,7 @@ fn header() -> AnyElement {
     let start_id = id.clone();
     let restart_id = id.clone();
     let stop_id = id.clone();
+    let log_job = format!("db-{id}");
 
     ui::page_header_with_leading(
         Some(
@@ -188,6 +190,13 @@ fn header() -> AnyElement {
                     db::operations_busy,
                     move || db::stop_instance(&stop_id),
                 ))
+                .child(ui::action_button(
+                    "Logs",
+                    Tone::Default,
+                    "db-open-logs",
+                    false,
+                    move || crate::dev_logs::open(&log_job),
+                ))
                 .child(ui::toolbar_icon_button(
                     icons::refresh(),
                     "Refresh databases",
@@ -203,6 +212,73 @@ fn notes() -> impl IntoElement {
     view()
         .flex_col()
         .flex_none()
+        .child(dynamic(move || {
+            let instance = db::selected_instance()?;
+            let status = db::status(&instance.id);
+            if status != "Failed" {
+                return None;
+            }
+            let telemetry = db::telemetry(&instance.id)?;
+            if telemetry.last_stderr.is_empty() {
+                return None;
+            }
+            let lines = telemetry.last_stderr;
+            let log_job = format!("db-{}", instance.id);
+            Some(
+                view()
+                    .test_id("db-failure-stderr")
+                    .flex_col()
+                    .gap(tokens::space(1.5))
+                    .px(tokens::space(5.0))
+                    .py(tokens::space(2.5))
+                    .bg(move || theme().destructive.opacity(0.08))
+                    .border_b_1()
+                    .border_color(move || theme().destructive.opacity(0.25))
+                    .child(
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .justify_between()
+                            .gap(tokens::space(2.0))
+                            .child(
+                                view()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(tokens::space(1.5))
+                                    .child(
+                                        icons::warn()
+                                            .size(px(13.0))
+                                            .text_color(move || theme().destructive),
+                                    )
+                                    .child(
+                                        text("Last stderr output")
+                                            .text_size(px(tokens::TEXT_CAPTION))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(move || theme().destructive),
+                                    ),
+                            )
+                            .child(ui::action_button(
+                                "Open Logs",
+                                Tone::Default,
+                                "db-failure-open-logs",
+                                false,
+                                move || crate::dev_logs::open(&log_job),
+                            )),
+                    )
+                    .child(
+                        view()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(lines.into_iter().map(|line| {
+                                text(line)
+                                    .font_family("monospace")
+                                    .text_size(px(tokens::TEXT_CAPTION))
+                                    .text_color(move || theme().foreground)
+                                    .selectable(true)
+                            })),
+                    ),
+            )
+        }))
         .child(dynamic(move || {
             db::load_error().map(|message| note(icons::warn(), message, true))
         }))
@@ -335,8 +411,10 @@ fn connection_actions(id: String, kind: String, can_copy: bool, admin: bool) -> 
     let cli = kind != "mongodb";
 
     let id_uri = id.clone();
+    let id_docker = id.clone();
     let id_env = id.clone();
     let id_jdbc = id.clone();
+    let id_cli_copy = id.clone();
     let id_password = id.clone();
     let id_client = id.clone();
     let id_cli = id.clone();
@@ -357,6 +435,13 @@ fn connection_actions(id: String, kind: String, can_copy: bool, admin: bool) -> 
             move || db::copy_uri(&id_uri),
         ))
         .child(ui::action_button(
+            "Copy Docker URI",
+            Tone::Default,
+            "connection-docker-uri-copy",
+            copy_disabled,
+            move || db::copy_docker_uri(&id_docker),
+        ))
+        .child(ui::action_button(
             "Copy .env",
             Tone::Default,
             "connection-env-copy",
@@ -372,6 +457,13 @@ fn connection_actions(id: String, kind: String, can_copy: bool, admin: bool) -> 
                 move || db::copy_jdbc(&id_jdbc),
             )
         }))
+        .child(ui::action_button(
+            "Copy CLI command",
+            Tone::Default,
+            "connection-cli-copy",
+            copy_disabled,
+            move || db::copy_cli_command(&id_cli_copy),
+        ))
         .child(admin.then(|| {
             ui::action_button(
                 "Copy database password",
@@ -543,66 +635,230 @@ fn editor_panel(kind: &str, save_id: String, delete_id: String) -> impl IntoElem
 // --- Endpoint and storage ----------------------------------------------------
 
 fn endpoint_card() -> impl IntoElement {
+    let key = computed(|| {
+        let instance = db::selected_instance()?;
+        let version = db::package_version(&instance.package);
+        Some((instance.id, version, instance.port, instance.data_directory))
+    });
     ui::card(
         "Endpoint & storage",
-        dynamic(|| {
+        dynamic(move || {
             Some(
-                endpoint_body()
-                    .map(|body| body.into_element())
+                key.get()
+                    .map(|(id, version, port, data_directory)| {
+                        endpoint_body(id, version, port, data_directory).into_element()
+                    })
                     .unwrap_or_else(|| empty().into_element()),
             )
         }),
     )
 }
 
-fn endpoint_body() -> Option<impl IntoElement> {
-    let instance = db::selected_instance()?;
-    let id = instance.id.clone();
-    let status = db::status(&id);
-    let running = matches!(status.as_str(), "Running" | "Healthy");
-    let target = db::upgrade_target(&id);
-    let version = db::package_version(&instance.package);
-    let data = if instance.data_directory.is_empty() {
-        format!("instances/{}", instance.id)
+fn endpoint_body(
+    id: String,
+    version: String,
+    port: i64,
+    data_directory: String,
+) -> impl IntoElement {
+    let data = if data_directory.is_empty() {
+        format!("instances/{id}")
     } else {
-        instance.data_directory.clone()
+        data_directory.clone()
     };
-    let endpoint = format!("127.0.0.1:{}", instance.port);
-    let upgrade_version = target.clone().map(|target| db::package_version(&target));
-    let upgrade_id = id.clone();
+    let endpoint = format!("127.0.0.1:{port}");
+    let external = !data_directory.is_empty();
 
-    Some(
-        view()
-            .flex_col()
-            .gap(tokens::space(2.5))
-            .child(kv("Version", version))
-            .child(upgrade_version.map(|version| {
+    let id_upgrade = id.clone();
+    let id_save_port = id.clone();
+    let id_save_disabled = id.clone();
+    let id_preview = id.clone();
+    let id_telemetry = id.clone();
+
+    view()
+        .flex_col()
+        .gap(tokens::space(2.5))
+        .child(kv("Version", version))
+        .child(dynamic(move || {
+            let target = db::upgrade_target(&id_upgrade)?;
+            let upgrade_version = db::package_version(&target);
+            let upgrade_id = id_upgrade.clone();
+            let running_id = id_upgrade.clone();
+            Some(
                 view()
                     .flex_row()
                     .items_center()
                     .gap(tokens::space(1.5))
                     .child(ui::action_button(
-                        format!("Upgrade to {version}…"),
+                        format!("Upgrade to {upgrade_version}…"),
                         Tone::Default,
                         "db-upgrade",
-                        move || db::operations_busy() || running,
+                        move || db::operations_busy() || db::is_running(&running_id),
                         move || db::request_upgrade(&upgrade_id),
                     ))
                     .child(
                         text("Only the server version changes; data, port and credentials are kept.")
                             .text_size(px(tokens::TEXT_CAPTION))
                             .text_color(move || theme().muted_foreground),
-                    )
-            }))
-            .child(kv("Endpoint", endpoint))
-            .child(kv("Data", data))
-            .child(when(!instance.data_directory.is_empty(), || {
-                text("External data is retained when the instance is removed; permanent erasure is not available for it.")
+                    ),
+            )
+        }))
+        .child(kv("Endpoint", endpoint))
+        .child(
+            view()
+                .flex_col()
+                .gap(tokens::space(1.5))
+                .child(
+                    view()
+                        .flex_row()
+                        .items_end()
+                        .flex_wrap()
+                        .gap(tokens::space(2.0))
+                        .child(view().w(px(140.0)).flex_none().child(ui::field(
+                            "Local port",
+                            ui::text_field(
+                                "db-edit-port",
+                                "5432",
+                                db::edit_port,
+                                db::set_edit_port,
+                            ),
+                        )))
+                        .child(ui::action_button(
+                            "Check port",
+                            Tone::Default,
+                            "db-edit-check-port",
+                            false,
+                            db::check_edit_port,
+                        ))
+                        .child(ui::action_button(
+                            "Save port",
+                            Tone::Default,
+                            "db-save-port",
+                            move || {
+                                db::operations_busy()
+                                    || db::is_running(&id_save_disabled)
+                                    || db::edit_port().trim().parse::<i64>().ok() == Some(port)
+                            },
+                            move || db::save_edit_port(&id_save_port),
+                        )),
+                )
+                .child(edit_port_preview(id_preview)),
+        )
+        .child(kv("Data", data))
+        .child(dynamic(move || {
+            let telemetry = db::telemetry(&id_telemetry);
+            let disk = telemetry
+                .as_ref()
+                .and_then(|t| t.data_size_bytes)
+                .map(|bytes| db::format_size(bytes as i64))
+                .unwrap_or_else(|| "—".to_string());
+            let backup = telemetry
+                .as_ref()
+                .and_then(|t| t.last_backup.as_ref())
+                .map(|(summary, size)| format!("{summary} · {}", db::format_size(*size as i64)))
+                .unwrap_or_else(|| "None".to_string());
+            Some(
+                view()
+                    .test_id("db-telemetry")
+                    .flex_col()
+                    .gap(tokens::space(2.0))
+                    .child(kv("Disk usage", disk))
+                    .child(kv("Latest backup", backup)),
+            )
+        }))
+        .child(when(external, || {
+            text("External data is retained when the instance is removed; permanent erasure is not available for it.")
+                .text_size(px(tokens::TEXT_CAPTION))
+                .text_color(tokens::warning)
+                .number_of_lines(2)
+        }))
+}
+
+fn edit_port_preview(id: String) -> impl IntoElement {
+    let id_err = id.clone();
+    let id_insp = id.clone();
+    let id_load = id;
+    view()
+        .flex_col()
+        .child(dynamic(move || {
+            db::edit_port_error(&id_err).map(|message| {
+                text(message)
                     .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(tokens::warning)
-                    .number_of_lines(2)
-            })),
-    )
+                    .text_color(move || theme().destructive)
+                    .selectable(true)
+            })
+        }))
+        .child(dynamic(move || {
+            let inspection = db::edit_port_inspection(&id_insp)?;
+            let tone = match inspection.status.as_str() {
+                "Available" => TagTone::Success,
+                "In use" => TagTone::Warning,
+                "Devbase proxy" => TagTone::Neutral,
+                _ => TagTone::Warning,
+            };
+            let conflict = db::format_port_conflict(&inspection);
+            let suggested = db::edit_port_conflict_suggestion(&id_insp);
+            let use_id = id_insp.clone();
+            let label = format!("Port {}", inspection.port);
+            Some(
+                view()
+                    .test_id("db-edit-port-preview")
+                    .flex_col()
+                    .gap(tokens::space(1.0))
+                    .p(tokens::space(2.0))
+                    .rounded(move || theme().radius)
+                    .bg(tokens::inset)
+                    .child(
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .flex_wrap()
+                            .gap(tokens::space(2.0))
+                            .child(
+                                text(label)
+                                    .text_size(px(tokens::TEXT_SMALL))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .tabular_nums()
+                                    .text_color(move || theme().foreground),
+                            )
+                            .child(ui::tag(inspection.status.clone(), tone)),
+                    )
+                    .child(conflict.map(|warning| {
+                        view()
+                            .test_id("db-port-conflict")
+                            .flex_row()
+                            .items_center()
+                            .flex_wrap()
+                            .gap(tokens::space(2.0))
+                            .child(
+                                text(warning)
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .text_size(px(tokens::TEXT_SMALL))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .tabular_nums()
+                                    .text_color(tokens::warning)
+                                    .selectable(true),
+                            )
+                            .child(suggested.map(|next_port| {
+                                let press_id = use_id.clone();
+                                ui::action_button(
+                                    format!("Use :{next_port}"),
+                                    Tone::Primary,
+                                    "db-use-suggested-port",
+                                    false,
+                                    move || db::apply_suggested_edit_port(&press_id, next_port),
+                                )
+                            }))
+                    })),
+            )
+        }))
+        .child(dynamic(move || {
+            db::edit_port_loading(&id_load).then(|| {
+                text("Checking the port…")
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .text_color(move || theme().muted_foreground)
+            })
+        }))
 }
 
 fn kv(label: &'static str, value: String) -> impl IntoElement {
@@ -869,6 +1125,7 @@ fn backups_card() -> impl IntoElement {
 
 fn backups_body(id: String, kind: String) -> impl IntoElement {
     let redis = kind == "redis";
+    let id_schedule = id.clone();
     let id_backup = id.clone();
     let id_rows = id.clone();
     let catalog_databases = computed(|| db::catalog().unwrap_or_default().databases);
@@ -878,6 +1135,8 @@ fn backups_body(id: String, kind: String) -> impl IntoElement {
     view()
         .flex_col()
         .gap(tokens::space(2.5))
+        .child(auto_backup_row(id_schedule))
+        .child(ui::hairline())
         .child(dynamic(move || {
             let names = catalog_databases.get();
             (!names.is_empty()).then(|| {
@@ -1032,6 +1291,123 @@ fn backups_body(id: String, kind: String) -> impl IntoElement {
                     move || db::request_restore(&id),
                 )),
         )
+}
+
+fn auto_backup_row(id: String) -> impl IntoElement {
+    let id_switch_read = id.clone();
+    let id_switch_write = id.clone();
+    let id_daily_read = id.clone();
+    let id_daily_write = id.clone();
+    let id_weekly_read = id.clone();
+    let id_weekly_write = id.clone();
+    let id_keep_3_read = id.clone();
+    let id_keep_3_write = id.clone();
+    let id_keep_5_read = id.clone();
+    let id_keep_5_write = id.clone();
+    let id_keep_10_read = id.clone();
+    let id_keep_10_write = id.clone();
+    let id_last = id;
+
+    view()
+        .test_id("db-auto-backup-row")
+        .flex_col()
+        .gap(tokens::space(1.5))
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .flex_wrap()
+                .gap(tokens::space(2.0))
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(1.5))
+                        .child(ui::switch(
+                            "db-auto-backup-switch",
+                            move || db::backup_schedule(&id_switch_read).enabled,
+                            db::operations_busy,
+                            "Automatic backups",
+                            move |next| db::set_backup_schedule_enabled(&id_switch_write, next),
+                        ))
+                        .child(
+                            text("Automatic backups")
+                                .text_size(px(tokens::TEXT_SMALL))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(move || theme().foreground),
+                        ),
+                )
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(1.0))
+                        .child(ui::chip(
+                            "Daily",
+                            move || {
+                                db::backup_schedule(&id_daily_read).cadence == BackupCadence::Daily
+                            },
+                            "db-backup-cadence-daily",
+                            db::operations_busy,
+                            move || {
+                                db::set_backup_schedule_cadence(
+                                    &id_daily_write,
+                                    BackupCadence::Daily,
+                                )
+                            },
+                        ))
+                        .child(ui::chip(
+                            "Weekly",
+                            move || {
+                                db::backup_schedule(&id_weekly_read).cadence
+                                    == BackupCadence::Weekly
+                            },
+                            "db-backup-cadence-weekly",
+                            db::operations_busy,
+                            move || {
+                                db::set_backup_schedule_cadence(
+                                    &id_weekly_write,
+                                    BackupCadence::Weekly,
+                                )
+                            },
+                        )),
+                )
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(1.0))
+                        .child(ui::chip(
+                            "Keep 3",
+                            move || db::backup_schedule(&id_keep_3_read).keep_last == 3,
+                            "db-backup-keep-3",
+                            db::operations_busy,
+                            move || db::set_backup_schedule_keep_last(&id_keep_3_write, 3),
+                        ))
+                        .child(ui::chip(
+                            "Keep 5",
+                            move || db::backup_schedule(&id_keep_5_read).keep_last == 5,
+                            "db-backup-keep-5",
+                            db::operations_busy,
+                            move || db::set_backup_schedule_keep_last(&id_keep_5_write, 5),
+                        ))
+                        .child(ui::chip(
+                            "Keep 10",
+                            move || db::backup_schedule(&id_keep_10_read).keep_last == 10,
+                            "db-backup-keep-10",
+                            db::operations_busy,
+                            move || db::set_backup_schedule_keep_last(&id_keep_10_write, 10),
+                        )),
+                ),
+        )
+        .child(dynamic(move || {
+            db::backup_schedule(&id_last).last_run_at.map(|ts| {
+                text(format!("Last automatic backup: {ts}"))
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .tabular_nums()
+                    .text_color(move || theme().muted_foreground)
+            })
+        }))
 }
 
 /// Decodes a `file://` URI (with percent-encoded bytes) into a local path;

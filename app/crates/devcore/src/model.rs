@@ -238,6 +238,54 @@ pub fn java_folder_base(package: &Package) -> String {
     format!("temurin-{version}")
 }
 
+/// How frequently periodic maintenance runs an automatic backup for a running instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum BackupCadence {
+    #[default]
+    Daily,
+    Weekly,
+}
+
+impl BackupCadence {
+    /// Minimum elapsed window between automatic backups.
+    pub fn interval_secs(self) -> u64 {
+        match self {
+            BackupCadence::Daily => 24 * 60 * 60,
+            BackupCadence::Weekly => 7 * 24 * 60 * 60,
+        }
+    }
+}
+
+fn default_backup_keep_last() -> u32 {
+    5
+}
+
+/// Optional automatic backup schedule and retention policy for an instance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BackupSchedule {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub cadence: BackupCadence,
+    #[serde(default = "default_backup_keep_last")]
+    pub keep_last: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_at: Option<String>,
+}
+
+impl Default for BackupSchedule {
+    fn default() -> Self {
+        BackupSchedule {
+            enabled: false,
+            cadence: BackupCadence::Daily,
+            keep_last: default_backup_keep_last(),
+            last_run_at: None,
+        }
+    }
+}
+
 /// A database instance registered in state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -258,6 +306,8 @@ pub struct Instance {
     pub port: i64,
     #[serde(default)]
     pub persistent: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_schedule: Option<BackupSchedule>,
 }
 
 /// Instance-owned connection metadata. Credentials are never stored here.

@@ -35,7 +35,35 @@ pub(crate) fn rail() -> impl IntoElement {
                 .flex_col()
                 .px(tokens::space(2.0))
                 .py(tokens::space(3.0))
-                .child(section_label("Instances"))
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .gap(tokens::space(1.0))
+                        .child(section_label("Instances"))
+                        .child(when(
+                            || db::running_count() > 0,
+                            || {
+                                nsh_base::button()
+                                    .test_id("db-stop-all")
+                                    .px(tokens::space(1.5))
+                                    .py(tokens::space(0.5))
+                                    .rounded(move || theme().radius)
+                                    .hover(move |style| style.bg(tokens::row_hover()))
+                                    .focus_visible(|style| {
+                                        style.ring(px(2.0)).ring_color(move || theme().ring)
+                                    })
+                                    .on_press(db::stop_all_running)
+                                    .child(
+                                        text("Stop all")
+                                            .text_size(px(tokens::TEXT_CAPTION))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(move || theme().muted_foreground),
+                                    )
+                            },
+                        )),
+                )
                 .child(dynamic(|| Some(rows())))
                 .child(
                     view()
@@ -119,10 +147,12 @@ fn rows() -> impl IntoElement {
 fn instance_row(instance: devcore::model::Instance) -> impl IntoElement {
     let id = instance.id.clone();
     let kind = instance.kind.clone();
+    let package = instance.package.clone();
     let selected = db::mode() == db::Mode::Instance && db::selected_id().as_deref() == Some(&id);
     let press_id = id.clone();
     let ctx_id = id.clone();
     let ctx_kind = kind.clone();
+    let ctx_package = package.clone();
     let title = instance_title(&kind);
     let meta = format!("{}:{}", title, instance.port);
     let working = db::status(&id);
@@ -131,7 +161,7 @@ fn instance_row(instance: devcore::model::Instance) -> impl IntoElement {
     view()
         .w_full()
         .on_context_menu(move |event: &ContextMenuEvent| {
-            let items = instance_context_menu(&ctx_id, &ctx_kind);
+            let items = instance_context_menu(&ctx_id, &ctx_kind, &ctx_package);
             drop(popup_menu_at(items, event.page_position));
         })
         .child(
@@ -205,7 +235,7 @@ fn instance_row(instance: devcore::model::Instance) -> impl IntoElement {
         )
 }
 
-fn instance_context_menu(id: &str, kind: &str) -> Vec<MenuItem> {
+fn instance_context_menu(id: &str, kind: &str, package: &str) -> Vec<MenuItem> {
     let busy = db::operations_busy();
     let running = db::is_running(id);
     let start_id = id.to_string();
@@ -215,6 +245,8 @@ fn instance_context_menu(id: &str, kind: &str) -> Vec<MenuItem> {
     let cli_id = id.to_string();
     let log_job = format!("db-{id}");
     let remove_id = id.to_string();
+    let new_kind = kind.to_string();
+    let new_package = package.to_string();
 
     let mut items = vec![
         MenuItem::new("Start")
@@ -241,6 +273,10 @@ fn instance_context_menu(id: &str, kind: &str) -> Vec<MenuItem> {
     }
 
     items.push(MenuItem::new("View Logs").on_select(move || crate::dev_logs::open(&log_job)));
+    items.push(
+        MenuItem::new("New Instance with Same Version")
+            .on_select(move || db::open_new_with_package(&new_kind, &new_package)),
+    );
     items.push(MenuItem::separator());
     items.push(
         MenuItem::new("Remove…")

@@ -269,6 +269,8 @@ fn port_preview() -> impl IntoElement {
                     _ => TagTone::Warning,
                 };
                 let label = format!("Port {}", inspection.port);
+                let conflict = db::format_port_conflict(&inspection);
+                let suggested = db::port_conflict_suggestion();
                 let detail = inspection.detail.clone();
                 let listeners = inspection.listeners.clone();
                 let port = inspection.port;
@@ -294,6 +296,33 @@ fn port_preview() -> impl IntoElement {
                             )
                             .child(ui::tag(inspection.status.clone(), tone)),
                     )
+                    .child(conflict.map(|warning| {
+                        view()
+                            .test_id("db-port-conflict")
+                            .flex_row()
+                            .items_center()
+                            .flex_wrap()
+                            .gap(tokens::space(2.0))
+                            .child(
+                                text(warning)
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .text_size(px(tokens::TEXT_SMALL))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .tabular_nums()
+                                    .text_color(tokens::warning)
+                                    .selectable(true),
+                            )
+                            .child(suggested.map(|next_port| {
+                                ui::action_button(
+                                    format!("Use :{next_port}"),
+                                    Tone::Primary,
+                                    "db-use-suggested-port",
+                                    false,
+                                    move || db::apply_suggested_port(next_port),
+                                )
+                            }))
+                    }))
                     .child(listeners.into_iter().map(|listener| {
                         text(format!(
                             "PID {} · {} · {}",

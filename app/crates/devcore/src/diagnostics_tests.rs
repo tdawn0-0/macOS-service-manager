@@ -387,3 +387,198 @@ fn tail_marks_truncation_for_large_files() {
     assert!(snapshot.truncated);
     assert_eq!(snapshot.lines, vec!["last".to_string()]);
 }
+
+#[test]
+fn maintain_runs_due_automatic_backups_for_running_instances_and_prunes() {
+    use crate::databases::{Databases, RedisAdmin};
+    use crate::model::{BackupCadence, BackupSchedule};
+
+    struct FakeRedis {
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl RedisAdmin for FakeRedis {
+        fn keyspace_databases(
+            &self,
+            _port: i64,
+            _password: &str,
+        ) -> Result<Vec<String>, crate::databases::DatabaseError> {
+            Ok(vec!["0".to_string()])
+        }
+
+        fn backup(
+            &self,
+            _port: i64,
+            _password: &str,
+            db: i64,
+            output: &Path,
+        ) -> Result<(), crate::databases::DatabaseError> {
+            self.calls.lock().unwrap().push(format!("backup {db}"));
+            std::fs::write(output, b"redis-scheduled-dump")?;
+            Ok(())
+        }
+
+        fn restore(
+            &self,
+            _port: i64,
+            _password: &str,
+            _db: i64,
+            _input: &Path,
+        ) -> Result<(), crate::databases::DatabaseError> {
+            Ok(())
+        }
+    }
+
+    let (_temp, store) = temp_root();
+    store.init().unwrap();
+
+    // Running instance with Daily schedule due (never run yet), keep_last = 2.
+    // Stopped instance with Daily schedule enabled must be skipped.
+    // Running instance with Weekly schedule run 2 days ago must be skipped until 7 days elapse.
+    let base_time = UNIX_EPOCH + Duration::from_secs(1_760_000_000);
+    let two_days_ago =
+        crate::databases::backups::format_rfc3339_utc(base_time - Duration::from_secs(2 * 86_400));
+    let eight_days_later = base_time + Duration::from_secs(8 * 86_400);
+
+    let mut state = State::default();
+    for (id, port, schedule) in [
+        (
+            "cache-daily",
+            16379,
+            Some(BackupSchedule {
+                enabled: true,
+                cadence: BackupCadence::Daily,
+                keep_last: 2,
+                last_run_at: None,
+            }),
+        ),
+        (
+            "cache-stopped",
+            16380,
+            Some(BackupSchedule {
+                enabled: true,
+                cadence: BackupCadence::Daily,
+                keep_last: 2,
+                last_run_at: None,
+            }),
+        ),
+        (
+            "cache-weekly",
+            16381,
+            Some(BackupSchedule {
+                enabled: true,
+                cadence: BackupCadence::Weekly,
+                keep_last: 2,
+                last_run_at: Some(two_days_ago.clone()),
+            }),
+        ),
+    ] {
+        state.instances.insert(
+            id.into(),
+            Instance {
+                id: id.into(),
+                kind: "redis".into(),
+                package: "redis@8.2.0-arm64".into(),
+                port,
+                persistent: true,
+                backup_schedule: schedule,
+                ..Instance::default()
+            },
+        );
+        let dir = store.root().join("instances").join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("password"), b"secret").unwrap();
+    }
+    store.write_state(&state).unwrap();
+
+    // Pre-seed two older backups for cache-daily so retention pruning removes the oldest one.
+    let backups_dir = store.root().join("backups");
+    std::fs::create_dir_all(&backups_dir).unwrap();
+    for (idx, name) in [
+        "cache-daily-0-0000000000000001.dump",
+        "cache-daily-0-0000000000000002.dump",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let p = backups_dir.join(name);
+        std::fs::write(&p, b"old").unwrap();
+        let file = std::fs::File::options().write(true).open(&p).unwrap();
+        file.set_modified(UNIX_EPOCH + Duration::from_secs(1_700_000_000 + (idx as u64) * 60))
+            .unwrap();
+    }
+
+    let runner = Arc::new(FakeRunner::new(|program, args| {
+        if program == "launchctl" && args.first() == Some(&"print") {
+            let target = args.get(1).copied().unwrap_or_default();
+            if target.ends_with(".db-cache-daily") || target.ends_with(".db-cache-weekly") {
+                return Ok("state = running\npid = 99\n".into());
+            }
+            return Err(CommandError::new(
+                program,
+                args.iter().map(|arg| (*arg).to_string()).collect(),
+                "Could not find service",
+            ));
+        }
+        Err(CommandError::new(
+            program,
+            args.iter().map(|arg| (*arg).to_string()).collect(),
+            "unexpected",
+        ))
+    }));
+    let redis = Arc::new(FakeRedis {
+        calls: Mutex::new(Vec::new()),
+    });
+    let databases =
+        Databases::with_runner(store.clone(), runner.clone()).with_redis_admin(redis.clone());
+    let diag = diagnostics(&store, runner, Arc::new(FakeDial::default()))
+        .with_databases(databases.clone());
+
+    // First tick at base_time: only cache-daily is due & running.
+    diag.maintain_at(base_time).unwrap();
+    assert_eq!(redis.calls.lock().unwrap().len(), 1);
+    let daily_backups = databases.backups("cache-daily", &|| false).unwrap();
+    assert_eq!(
+        daily_backups.len(),
+        2,
+        "keep_last=2 should prune oldest backup"
+    );
+    assert!(
+        !backups_dir
+            .join("cache-daily-0-0000000000000001.dump")
+            .exists()
+    );
+    let updated = store.read().unwrap();
+    assert_eq!(
+        updated.instances["cache-daily"]
+            .backup_schedule
+            .as_ref()
+            .and_then(|s| s.last_run_at.as_deref()),
+        Some(crate::databases::backups::format_rfc3339_utc(base_time).as_str())
+    );
+    assert_eq!(
+        updated.instances["cache-stopped"]
+            .backup_schedule
+            .as_ref()
+            .and_then(|s| s.last_run_at.as_deref()),
+        None
+    );
+    assert_eq!(
+        updated.instances["cache-weekly"]
+            .backup_schedule
+            .as_ref()
+            .and_then(|s| s.last_run_at.as_deref()),
+        Some(two_days_ago.as_str())
+    );
+
+    // Second tick 1 hour later: nothing is due yet.
+    diag.maintain_at(base_time + Duration::from_secs(3600))
+        .unwrap();
+    assert_eq!(redis.calls.lock().unwrap().len(), 1);
+
+    // Tick 8 days later: both cache-daily and cache-weekly are due & running.
+    diag.maintain_at(eight_days_later).unwrap();
+    assert_eq!(redis.calls.lock().unwrap().len(), 3);
+    let weekly_backups = databases.backups("cache-weekly", &|| false).unwrap();
+    assert_eq!(weekly_backups.len(), 1);
+}

@@ -1732,3 +1732,294 @@ fn redis_inventory_and_backup_use_the_resp_seam() {
         vec!["keyspace", "backup 3", "restore 3"]
     );
 }
+
+#[test]
+fn backup_schedule_is_backwards_compatible_and_clamps_keep_last() {
+    use crate::model::{BackupCadence, BackupSchedule, decode_state_strict};
+
+    // Legacy state.json without backupSchedule decodes cleanly and omits the field when saved.
+    let legacy = r#"{
+        "schemaVersion": 2,
+        "proxyListenerPort": 443,
+        "proxyRules": [],
+        "packages": {},
+        "instances": {
+            "app": {
+                "id": "app",
+                "kind": "postgresql",
+                "package": "postgresql@17.11-arm64",
+                "port": 5432,
+                "persistent": true
+            }
+        },
+        "connectionProfiles": {}
+    }"#;
+    let decoded = decode_state_strict(legacy.as_bytes()).unwrap();
+    assert_eq!(decoded.instances["app"].backup_schedule, None);
+    let serialized = serde_json::to_string(&decoded).unwrap();
+    assert!(!serialized.contains("backupSchedule"));
+
+    // Unknown fields inside backupSchedule are strictly rejected.
+    let with_secret = r#"{
+        "schemaVersion": 2,
+        "proxyListenerPort": 443,
+        "proxyRules": [],
+        "packages": {},
+        "instances": {
+            "app": {
+                "id": "app",
+                "kind": "postgresql",
+                "package": "postgresql@17.11-arm64",
+                "port": 5432,
+                "persistent": true,
+                "backupSchedule": {
+                    "enabled": true,
+                    "cadence": "daily",
+                    "keepLast": 5,
+                    "password": "nope"
+                }
+            }
+        },
+        "connectionProfiles": {}
+    }"#;
+    assert!(decode_state_strict(with_secret.as_bytes()).is_err());
+
+    // set_backup_schedule persists and clamps keep_last to at least 1.
+    let f = fixture();
+    let package = install_pg(&f);
+    seed_instance(&f, pg_instance("app", 5432, &package));
+    f.databases
+        .set_backup_schedule(
+            "app",
+            Some(BackupSchedule {
+                enabled: true,
+                cadence: BackupCadence::Weekly,
+                keep_last: 0,
+                last_run_at: Some("2026-11-20T00:00:00Z".into()),
+            }),
+        )
+        .unwrap();
+    let saved = f.databases.instance("app").unwrap();
+    assert_eq!(
+        saved.backup_schedule,
+        Some(BackupSchedule {
+            enabled: true,
+            cadence: BackupCadence::Weekly,
+            keep_last: 1,
+            last_run_at: Some("2026-11-20T00:00:00Z".into()),
+        })
+    );
+    assert!(f.databases.set_backup_schedule("missing", None).is_err());
+}
+
+#[test]
+fn prune_backups_keeps_newest_minimum_one_and_protects_external_data() {
+    let f = fixture();
+    let package = install_pg(&f);
+    let external = f._dir.path().join("external-pg-data");
+    fs::create_dir_all(&external).unwrap();
+    let external_marker = external.join("PG_VERSION");
+    fs::write(&external_marker, b"17\n").unwrap();
+
+    let mut inst = pg_instance("app", 5432, &package);
+    inst.data_directory = external.display().to_string();
+    seed_instance(&f, inst);
+    seed_instance(&f, pg_instance("app-2", 5433, &package));
+
+    let backups_dir = f.root.join("backups");
+    fs::create_dir_all(&backups_dir).unwrap();
+    let names = [
+        "app-db-0000000000000001.dump",
+        "app-db-0000000000000002.dump",
+        "app-db-0000000000000003.dump",
+        "app-db-0000000000000004.dump",
+    ];
+    for (idx, name) in names.iter().enumerate() {
+        let path = backups_dir.join(name);
+        fs::write(&path, format!("dump-{idx}")).unwrap();
+        // Set distinct mtimes so newest-first ordering is deterministic.
+        let ts = std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_000 + (idx as u64) * 60);
+        let file = fs::File::options().write(true).open(&path).unwrap();
+        file.set_modified(ts).unwrap();
+    }
+    // Prefix-colliding instance backup must never be touched.
+    let other_backup = backups_dir.join("app-2-db-ffffffffffffffff.dump");
+    fs::write(&other_backup, b"other").unwrap();
+
+    // Keep last 2 => removes oldest 2.
+    let removed = f.databases.prune_backups("app", 2, &|| false).unwrap();
+    assert_eq!(removed.len(), 2);
+    assert!(removed.contains(&"app-db-0000000000000001.dump".to_string()));
+    assert!(removed.contains(&"app-db-0000000000000002.dump".to_string()));
+    let remaining = f.databases.backups("app", &|| false).unwrap();
+    assert_eq!(remaining.len(), 2);
+    assert_eq!(remaining[0].name, "app-db-0000000000000004.dump");
+    assert_eq!(remaining[1].name, "app-db-0000000000000003.dump");
+
+    // keep_last = 0 still preserves at least 1 newest backup!
+    let removed_again = f.databases.prune_backups("app", 0, &|| false).unwrap();
+    assert_eq!(removed_again, vec!["app-db-0000000000000003.dump"]);
+    let final_rows = f.databases.backups("app", &|| false).unwrap();
+    assert_eq!(final_rows.len(), 1);
+    assert_eq!(final_rows[0].name, "app-db-0000000000000004.dump");
+
+    // External data and prefix-colliding instance backup are untouched.
+    assert_eq!(fs::read(&external_marker).unwrap(), b"17\n");
+    assert!(other_backup.exists());
+}
+
+#[test]
+fn instance_telemetry_reports_disk_usage_latest_backup_and_failed_stderr() {
+    let f = fixture();
+    let package = install_pg(&f);
+    seed_instance(&f, pg_instance("app", 5432, &package));
+
+    let data_dir = f.root.join("instances/app/data");
+    fs::create_dir_all(data_dir.join("base")).unwrap();
+    fs::write(data_dir.join("PG_VERSION"), b"17\n").unwrap();
+    fs::write(data_dir.join("base/table.bin"), vec![0u8; 1024]).unwrap();
+
+    let backups_dir = f.root.join("backups");
+    fs::create_dir_all(&backups_dir).unwrap();
+    let dump = backups_dir.join("app-shop-0123456789abcdef.dump");
+    fs::write(&dump, vec![1u8; 4096]).unwrap();
+
+    let logs_dir = f.root.join("logs");
+    fs::create_dir_all(&logs_dir).unwrap();
+    fs::write(
+        logs_dir.join("db-app.err.log"),
+        "line 1\nline 2\n\nfatal: port already in use\nline 4\nline 5\n\n",
+    )
+    .unwrap();
+
+    let running = f.databases.instance_telemetry("app", "Running").unwrap();
+    assert_eq!(running.data_size_bytes, Some(1027));
+    let (summary, size) = running.last_backup.expect("expected latest backup");
+    assert!(summary.starts_with("shop · "));
+    assert_eq!(size, 4096);
+    assert!(running.last_stderr.is_empty());
+
+    let failed = f.databases.instance_telemetry("app", "Failed").unwrap();
+    assert_eq!(failed.data_size_bytes, Some(1027));
+    assert_eq!(
+        failed.last_stderr,
+        vec![
+            "fatal: port already in use".to_string(),
+            "line 4".to_string(),
+            "line 5".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn connection_info_builds_password_free_docker_uri_and_cli_commands() {
+    use crate::databases::ConnectionInfo;
+
+    let pg = ConnectionInfo {
+        uri: "postgresql://devmanager@127.0.0.1:5432/app".into(),
+        username: "devmanager".into(),
+        credential_file: String::new(),
+    };
+    assert_eq!(
+        pg.docker_uri().unwrap(),
+        "postgresql://devmanager@host.docker.internal:5432/app"
+    );
+    assert_eq!(
+        pg.cli_command("postgresql").unwrap(),
+        "psql -h 127.0.0.1 -p 5432 -U devmanager -d app"
+    );
+
+    // Any accidental password in a URI is stripped.
+    let pg_with_secret = ConnectionInfo {
+        uri: "postgresql://devmanager:secret@127.0.0.1:5432/app".into(),
+        username: "devmanager".into(),
+        credential_file: String::new(),
+    };
+    let docker = pg_with_secret.docker_uri().unwrap();
+    assert!(!docker.contains("secret"));
+    assert_eq!(
+        docker,
+        "postgresql://devmanager@host.docker.internal:5432/app"
+    );
+
+    let mysql = ConnectionInfo {
+        uri: "mysql://root@127.0.0.1:3306/shop".into(),
+        username: "root".into(),
+        credential_file: String::new(),
+    };
+    assert_eq!(
+        mysql.docker_uri().unwrap(),
+        "mysql://root@host.docker.internal:3306/shop"
+    );
+    assert_eq!(
+        mysql.cli_command("mysql").unwrap(),
+        "mysql -h 127.0.0.1 -P 3306 -u root -p shop"
+    );
+
+    let redis = ConnectionInfo {
+        uri: "redis://default@127.0.0.1:6379/2".into(),
+        username: "default".into(),
+        credential_file: String::new(),
+    };
+    assert_eq!(
+        redis.docker_uri().unwrap(),
+        "redis://default@host.docker.internal:6379/2"
+    );
+    assert_eq!(
+        redis.cli_command("redis").unwrap(),
+        "redis-cli -h 127.0.0.1 -p 6379 -n 2"
+    );
+
+    let mongo = ConnectionInfo {
+        uri: "mongodb://devmanager@127.0.0.1:27017/admin?authSource=admin&directConnection=true"
+            .into(),
+        username: "devmanager".into(),
+        credential_file: String::new(),
+    };
+    assert_eq!(
+        mongo.docker_uri().unwrap(),
+        "mongodb://devmanager@host.docker.internal:27017/admin?authSource=admin&directConnection=true"
+    );
+    assert_eq!(
+        mongo.cli_command("mongodb").unwrap(),
+        "mongosh 'mongodb://devmanager@127.0.0.1:27017/admin?authSource=admin&directConnection=true'"
+    );
+}
+
+#[test]
+fn update_instance_port_updates_state_and_config_for_stopped_instance() {
+    let f = fixture();
+    let package = install_pg(&f);
+    seed_instance(&f, pg_instance("app", 5432, &package));
+    let mut cache = pg_instance("cache", 6379, &package);
+    cache.kind = "redis".into();
+    seed_instance(&f, cache);
+
+    let cache_dir = f.root.join("instances/cache");
+    fs::create_dir_all(&cache_dir).unwrap();
+    fs::write(
+        cache_dir.join("valkey.conf"),
+        "bind 127.0.0.1\nport 6379\nrequirepass secret\n",
+    )
+    .unwrap();
+    let plist = f.databases.engine().job_path("db-cache");
+    fs::create_dir_all(plist.parent().unwrap()).unwrap();
+    fs::write(&plist, b"<plist/>").unwrap();
+
+    // Colliding with another Devbase instance is rejected.
+    assert!(
+        f.databases
+            .update_instance_port("cache", 5432, &|| false)
+            .is_err()
+    );
+
+    // Moving to a free port updates state, rewrites valkey.conf, and removes stale plist.
+    f.databases
+        .update_instance_port("cache", 6380, &|| false)
+        .unwrap();
+    assert_eq!(f.databases.instance("cache").unwrap().port, 6380);
+    let conf = fs::read_to_string(cache_dir.join("valkey.conf")).unwrap();
+    assert!(conf.contains("port 6380"));
+    assert!(!conf.contains("port 6379"));
+    assert!(!plist.exists());
+}

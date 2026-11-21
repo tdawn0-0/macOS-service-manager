@@ -149,6 +149,66 @@ impl Databases {
         }
     }
 
+    /// Change the loopback port of a stopped database instance.
+    pub fn update_instance_port(
+        &self,
+        id: &str,
+        new_port: i64,
+        cancelled: Cancelled<'_>,
+    ) -> Result<(), DatabaseError> {
+        if !crate::model::valid_id(id) {
+            return Err(DatabaseError::invalid(format!("invalid identifier {id:?}")));
+        }
+        if !(1024..=65535).contains(&new_port) {
+            return Err(DatabaseError::invalid(
+                "locked database port must be 1024–65535",
+            ));
+        }
+        if cancelled() {
+            return Err(DatabaseError::Cancelled);
+        }
+        self.init()?;
+        let _instance_lease = self
+            .store()
+            .resource_leases_cancellable(&[ResourceKey::new("database instance", id)], cancelled)?;
+        let job_id = format!("db-{id}");
+        self.store()
+            .with_state_transaction_cancellable(cancelled, |state| {
+                let Some(instance) = state.instances.get(id).cloned() else {
+                    return Err(crate::state::StateError::invalid("instance not found"));
+                };
+                if instance.port == new_port {
+                    return Ok(Tx::new(()));
+                }
+                verify_shutdown_target(self.engine(), &self.engine().target(&job_id), cancelled)
+                    .map_err(|error| {
+                        crate::state::StateError::invalid(format!(
+                            "stop the database before changing its port: {error}"
+                        ))
+                    })?;
+                let mut reserved = super::ports::AvailablePorts::from_state(state).reserved;
+                reserved.remove(&instance.port);
+                if reserved.contains(&new_port) {
+                    return Err(crate::state::StateError::invalid(format!(
+                        "port {new_port} is already assigned to another Devbase service"
+                    )));
+                }
+                super::ports::free_database_port(self.binder(), new_port)
+                    .map_err(crate::state::StateError::from)?;
+                let mut updated = instance.clone();
+                updated.port = new_port;
+                let config_dir = config_directory(self.store().root(), &updated, None);
+                let kind = updated.kind.clone();
+                let job_path = self.engine().job_path(&job_id);
+                state.instances.insert(id.to_string(), updated);
+                Ok(Tx::new(()).with_commit(move || {
+                    let _ = update_engine_config_port(&kind, &config_dir, new_port);
+                    let _ = std::fs::remove_file(&job_path);
+                }))
+            })?;
+        Ok(())
+    }
+
     fn check_instance_action(
         &self,
         state: &State,
@@ -312,6 +372,61 @@ pub(crate) fn remove_instance_profiles(state: &mut State, instance_id: &str) {
     state
         .connection_profiles
         .retain(|_, profile| profile.instance_id != instance_id);
+}
+
+fn update_engine_config_port(
+    kind: &str,
+    config_dir: &std::path::Path,
+    new_port: i64,
+) -> std::io::Result<()> {
+    match kind {
+        "redis" => {
+            let path = config_dir.join("valkey.conf");
+            if let Ok(contents) = std::fs::read_to_string(&path) {
+                let mut replaced = false;
+                let mut lines: Vec<String> = contents
+                    .lines()
+                    .map(|line| {
+                        if line.trim_start().starts_with("port ") {
+                            replaced = true;
+                            format!("port {new_port}")
+                        } else {
+                            line.to_string()
+                        }
+                    })
+                    .collect();
+                if !replaced {
+                    lines.push(format!("port {new_port}"));
+                }
+                let updated = format!("{}\n", lines.join("\n"));
+                crate::fs::atomic_write(&path, updated.as_bytes(), crate::fs::PRIVATE_FILE)?;
+            }
+        }
+        "mysql" => {
+            let path = config_dir.join("client.cnf");
+            if let Ok(contents) = std::fs::read_to_string(&path) {
+                let mut replaced = false;
+                let mut lines: Vec<String> = contents
+                    .lines()
+                    .map(|line| {
+                        if line.trim_start().starts_with("port=") {
+                            replaced = true;
+                            format!("port={new_port}")
+                        } else {
+                            line.to_string()
+                        }
+                    })
+                    .collect();
+                if !replaced {
+                    lines.push(format!("port={new_port}"));
+                }
+                let updated = format!("{}\n", lines.join("\n"));
+                crate::fs::atomic_write(&path, updated.as_bytes(), crate::fs::PRIVATE_FILE)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// A failed `launchctl print` is not proof that a job is absent: only the

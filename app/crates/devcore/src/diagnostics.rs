@@ -293,6 +293,7 @@ pub struct Diagnostics {
     software: Software,
     dial: std::sync::Arc<dyn DialProbe>,
     program: PathBuf,
+    databases: Option<crate::databases::Databases>,
 }
 
 impl std::fmt::Debug for Diagnostics {
@@ -311,6 +312,7 @@ impl Diagnostics {
             software,
             dial: std::sync::Arc::new(TcpDialProbe),
             program: PathBuf::from("/Applications/Devbase.app/Contents/MacOS/Devbase"),
+            databases: None,
         }
     }
 
@@ -321,6 +323,13 @@ impl Diagnostics {
 
     pub fn with_program(mut self, program: impl Into<PathBuf>) -> Self {
         self.program = program.into();
+        self
+    }
+
+    /// Inject a configured [`crate::databases::Databases`] facade for periodic
+    /// scheduled backups (tests pass one wired to fake command/protocol seams).
+    pub fn with_databases(mut self, databases: crate::databases::Databases) -> Self {
+        self.databases = Some(databases);
         self
     }
 
@@ -846,9 +855,130 @@ impl Diagnostics {
         Ok(())
     }
 
-    /// Rotate oversized logs without a maintenance job (the CLI entry point).
+    /// Rotate oversized logs and execute any due automatic database backups
+    /// plus retention pruning (the `--dev maintain` entry point).
     pub fn maintain(&self) -> Result<(), DiagnosticError> {
-        self.rotate_logs()
+        self.maintain_at(SystemTime::now())
+    }
+
+    /// Periodic maintenance at an explicit wall-clock instant.
+    pub fn maintain_at(&self, now: SystemTime) -> Result<(), DiagnosticError> {
+        self.rotate_logs()?;
+        self.run_scheduled_backups_at(now)
+    }
+
+    fn run_scheduled_backups_at(&self, now: SystemTime) -> Result<(), DiagnosticError> {
+        self.store.init()?;
+        let lock_path = self.store.root().join("backups.maintain.lock");
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(&lock_path)?;
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result != 0 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
+                return Ok(());
+            }
+            return Err(error.into());
+        }
+        let state = self.store.read()?;
+        let due: Vec<(String, crate::model::Instance, u32)> = state
+            .instances
+            .iter()
+            .filter_map(|(id, instance)| {
+                let schedule = instance.backup_schedule.as_ref()?;
+                if crate::databases::backups::schedule_is_due(schedule, now) {
+                    Some((id.clone(), instance.clone(), schedule.keep_last.max(1)))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if due.is_empty() {
+            return Ok(());
+        }
+        let databases = self
+            .databases
+            .clone()
+            .unwrap_or_else(|| crate::databases::Databases::new(self.store.clone()));
+        let stamp = crate::databases::backups::format_rfc3339_utc(now);
+        for (id, instance, keep_last) in due {
+            let (job, error) = read_job_state(&self.engine, &format!("db-{id}"), &|| false);
+            if error.is_err() || !job.running {
+                continue;
+            }
+            let targets = scheduled_backup_targets(&databases, &instance);
+            if targets.is_empty() {
+                continue;
+            }
+            let mut backed_up = false;
+            for db_name in targets {
+                match databases.backup(&id, &db_name, &|| false) {
+                    Ok(_) => {
+                        backed_up = true;
+                    }
+                    Err(error) => {
+                        self.store.emit(&format!(
+                            "Automatic backup failed for {id}/{db_name}: {error}"
+                        ));
+                    }
+                }
+            }
+            if backed_up {
+                if let Err(error) = databases.prune_backups(&id, keep_last, &|| false) {
+                    self.store.emit(&format!(
+                        "Automatic backup pruning failed for {id}: {error}"
+                    ));
+                }
+                let stamp_copy = stamp.clone();
+                let id_copy = id.clone();
+                let _ = self.store.with_state(|latest| {
+                    if let Some(current) = latest.instances.get_mut(&id_copy)
+                        && let Some(schedule) = current.backup_schedule.as_mut()
+                    {
+                        schedule.last_run_at = Some(stamp_copy);
+                    }
+                    Ok(())
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+fn scheduled_backup_targets(
+    databases: &crate::databases::Databases,
+    instance: &crate::model::Instance,
+) -> Vec<String> {
+    let catalog = databases
+        .inspect_instance_catalog(&instance.id, &|| false)
+        .ok();
+    let user_dbs: Vec<String> = catalog
+        .map(|cat| {
+            cat.databases
+                .into_iter()
+                .filter(|db| {
+                    if instance.kind == "redis" {
+                        !db.is_empty()
+                    } else {
+                        !crate::databases::inventory::is_protected_database(db)
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if !user_dbs.is_empty() {
+        return user_dbs;
+    }
+    match instance.kind.as_str() {
+        "postgresql" => vec!["postgres".to_string()],
+        "redis" => vec!["0".to_string()],
+        "mongodb" => vec!["admin".to_string()],
+        _ => Vec::new(),
     }
 }
 

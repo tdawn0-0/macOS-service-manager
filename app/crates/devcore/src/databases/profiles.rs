@@ -91,6 +91,72 @@ impl ConnectionInfo {
         }
         Ok(out)
     }
+
+    /// Password-free URI rewritten for Docker containers (`host.docker.internal`).
+    pub fn docker_uri(&self) -> Result<String, DatabaseError> {
+        let mut url = Url::parse(&self.uri)
+            .map_err(|_| DatabaseError::invalid("invalid database connection URI"))?;
+        if url.password().is_some() {
+            let _ = url.set_password(None);
+        }
+        url.set_host(Some("host.docker.internal"))
+            .map_err(|_| DatabaseError::invalid("invalid database connection URI"))?;
+        Ok(url.to_string())
+    }
+
+    /// Password-free interactive CLI command for the engine (`psql`, `mysql`,
+    /// `redis-cli`, or `mongosh`). Secrets never appear in the command text.
+    pub fn cli_command(&self, kind: &str) -> Result<String, DatabaseError> {
+        let mut url = Url::parse(&self.uri)
+            .map_err(|_| DatabaseError::invalid("invalid database connection URI"))?;
+        if url.password().is_some() {
+            let _ = url.set_password(None);
+        }
+        let host = url.host_str().unwrap_or("127.0.0.1");
+        let port = url
+            .port()
+            .ok_or_else(|| DatabaseError::invalid("invalid database connection port"))?;
+        let user = url.username();
+        let db = url.path().trim_start_matches('/');
+        match kind {
+            "postgresql" => {
+                let user = if user.is_empty() { "devmanager" } else { user };
+                let db = if db.is_empty() { "postgres" } else { db };
+                Ok(format!(
+                    "psql -h {host} -p {port} -U {} -d {}",
+                    cli_arg(user),
+                    cli_arg(db)
+                ))
+            }
+            "mysql" => {
+                let user = if user.is_empty() { "root" } else { user };
+                let mut cmd = format!("mysql -h {host} -P {port} -u {} -p", cli_arg(user));
+                if !db.is_empty() {
+                    cmd.push(' ');
+                    cmd.push_str(&cli_arg(db));
+                }
+                Ok(cmd)
+            }
+            "redis" => {
+                let db = if db.is_empty() { "0" } else { db };
+                Ok(format!("redis-cli -h {host} -p {port} -n {}", cli_arg(db)))
+            }
+            "mongodb" => Ok(format!("mongosh {}", shell_quote(url.as_str()))),
+            _ => Err(DatabaseError::invalid("unsupported database engine")),
+        }
+    }
+}
+
+fn cli_arg(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    {
+        value.to_string()
+    } else {
+        shell_quote(value)
+    }
 }
 
 fn encode_query_value(value: &str) -> String {

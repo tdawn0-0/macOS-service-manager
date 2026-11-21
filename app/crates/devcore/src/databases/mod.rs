@@ -43,6 +43,7 @@ pub mod mongo;
 pub mod ports;
 pub mod profiles;
 pub mod redis;
+pub mod telemetry;
 pub mod upgrade;
 
 #[cfg(test)]
@@ -77,6 +78,7 @@ pub use ports::{
 };
 pub use profiles::ConnectionInfo;
 pub use redis::{RedisAdmin, WireRedisAdmin};
+pub use telemetry::InstanceTelemetry;
 
 /// A cancellation predicate, matching the engine/software/shutdown seams.
 pub type Cancelled<'a> = &'a dyn Fn() -> bool;

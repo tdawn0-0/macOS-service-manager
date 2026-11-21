@@ -4,6 +4,7 @@
 //! [`theme`] names the design tokens from the Go app's `theme.go`.
 
 mod components;
+pub mod dev_logs;
 mod guide;
 pub mod launch;
 mod logs;
@@ -19,6 +20,12 @@ mod theme;
 /// provider instead of the shell facade. Call the `use_fake_*` function and
 /// the matching `install_provider` before the surface starts.
 pub mod testing {
+    pub use crate::dev_logs::{
+        DevLogsProvider, EmptyState as DevLogsEmptyState, KnownFile as DevLogsKnownFile,
+        LogRead as DevLogsRead, LogSnapshot as DevLogsSnapshot, Stream as DevLogsStream,
+        Target as DevLogsTarget, drawer as dev_logs_drawer,
+        install_provider as install_dev_logs_provider, use_fake_provider as use_fake_dev_logs,
+    };
     pub use crate::guide::{
         Access as GuideAccess, Page as GuidePage, Persistence as GuidePersistence,
         close as guide_close, install_access as install_guide_access,

@@ -1,97 +1,69 @@
-(function () {
+(() => {
   'use strict';
 
-  var STORAGE_KEY = 'devbase-theme';
-  var root = document.documentElement;
-  var metaTheme = document.getElementById('meta-theme-color');
+  const $ = (id) => document.getElementById(id);
+  const $$ = (sel) => document.querySelectorAll(sel);
+  const root = document.documentElement;
+  const metaTheme = $('meta-theme-color');
 
-  /* ---------- 1. Theme Sync (Header Toggle + Footer Pill) ---------- */
-
-  function applyTheme(theme, persist) {
-    var isDark = theme === 'dark';
-    root.classList.toggle('dark', isDark);
-    if (metaTheme) {
-      metaTheme.setAttribute('content', isDark ? '#0a0a0d' : '#fafaf8');
-    }
-    var pillBtns = document.querySelectorAll('[data-set-theme]');
-    pillBtns.forEach(function (btn) {
-      btn.setAttribute('aria-pressed', String(btn.getAttribute('data-set-theme') === (isDark ? 'dark' : 'light')));
-    });
+  /* Theme */
+  const applyTheme = (theme, persist) => {
+    const dark = theme === 'dark';
+    root.classList.toggle('dark', dark);
+    metaTheme?.setAttribute('content', dark ? '#0a0a0d' : '#fafaf8');
+    $$('[data-set-theme]').forEach((b) =>
+      b.setAttribute('aria-pressed', String(b.dataset.setTheme === (dark ? 'dark' : 'light')))
+    );
     if (persist) {
-      try {
-        localStorage.setItem(STORAGE_KEY, isDark ? 'dark' : 'light');
-      } catch (_) {}
+      try { localStorage.setItem('devbase-theme', dark ? 'dark' : 'light'); } catch (_) {}
     }
-  }
+  };
 
   applyTheme(root.classList.contains('dark') ? 'dark' : 'light', false);
+  $('theme-toggle')?.addEventListener('click', () => applyTheme(root.classList.contains('dark') ? 'light' : 'dark', true));
+  $$('[data-set-theme]').forEach((b) => b.addEventListener('click', () => applyTheme(b.dataset.setTheme, true)));
 
-  var headerThemeBtn = document.getElementById('theme-toggle');
-  if (headerThemeBtn) {
-    headerThemeBtn.addEventListener('click', function () {
-      applyTheme(root.classList.contains('dark') ? 'light' : 'dark', true);
-    });
-  }
-
-  document.querySelectorAll('[data-set-theme]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      applyTheme(btn.getAttribute('data-set-theme'), true);
-    });
-  });
-
-  /* ---------- 2. Sticky Frosted Header & Mobile Drawer ---------- */
-
-  var nav = document.getElementById('nav');
-  function onScroll() {
-    if (!nav) return;
-    nav.setAttribute('data-scrolled', window.scrollY > 12 ? 'true' : 'false');
-  }
+  /* Header & Mobile Drawer */
+  const nav = $('nav');
+  const onScroll = () => nav?.setAttribute('data-scrolled', String(window.scrollY > 12));
   window.addEventListener('scroll', onScroll, { passive: true });
   onScroll();
 
-  var mobileBtn = document.getElementById('mobile-menu-btn');
-  var mobileMenu = document.getElementById('mobile-menu');
-  if (mobileBtn && mobileMenu) {
-    mobileBtn.addEventListener('click', function () {
-      var open = mobileMenu.classList.toggle('open');
-      mobileBtn.setAttribute('aria-expanded', String(open));
-    });
-    mobileMenu.querySelectorAll('a').forEach(function (link) {
-      link.addEventListener('click', function () {
-        mobileMenu.classList.remove('open');
-        mobileBtn.setAttribute('aria-expanded', 'false');
-      });
-    });
-  }
+  const mobileBtn = $('mobile-menu-btn');
+  const mobileMenu = $('mobile-menu');
+  const closeMobile = () => {
+    mobileMenu?.classList.remove('open');
+    mobileBtn?.setAttribute('aria-expanded', 'false');
+  };
+  mobileBtn?.addEventListener('click', () => {
+    const open = mobileMenu.classList.toggle('open');
+    mobileBtn.setAttribute('aria-expanded', String(open));
+  });
+  mobileMenu?.querySelectorAll('a').forEach((a) => a.addEventListener('click', closeMobile));
 
-  /* ---------- 3. Clipboard Helper ---------- */
-
-  function copyText(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      return navigator.clipboard.writeText(text).catch(function () {
-        return fallbackCopy(text);
-      });
+  /* Clipboard */
+  const copyText = (text) => {
+    if (navigator.clipboard?.writeText) {
+      return navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
     }
-    return Promise.resolve(fallbackCopy(text));
-  }
+    fallbackCopy(text);
+    return Promise.resolve();
+  };
 
-  function fallbackCopy(text) {
+  const fallbackCopy = (text) => {
     try {
-      var ta = document.createElement('textarea');
-      ta.value = text;
+      const ta = Object.assign(document.createElement('textarea'), { value: text });
       ta.setAttribute('readonly', '');
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
+      ta.style.cssText = 'position:fixed;opacity:0';
       document.body.appendChild(ta);
       ta.select();
       document.execCommand('copy');
-      document.body.removeChild(ta);
+      ta.remove();
     } catch (_) {}
-  }
+  };
 
-  /* ---------- 4. Interactive macOS 26 Demo Frame ---------- */
-
-  var demoState = {
+  /* Interactive macOS 26 Demo */
+  const state = {
     'pg-main': true,
     'redis-cache': true,
     'mysql-analytics': false,
@@ -99,481 +71,256 @@
     'cf-tunnel': true
   };
 
-  var serviceMeta = {
-    'pg-main': { kind: 'db', label: 'db-pg-main', stream: 'db', onBadge: 'Running', offBadge: 'Stopped' },
-    'redis-cache': { kind: 'db', label: 'db-redis-cache', stream: 'db', onBadge: 'Running', offBadge: 'Stopped' },
-    'mysql-analytics': { kind: 'db', label: 'db-mysql-analytics', stream: 'db', onBadge: 'Running', offBadge: 'Stopped' },
-    'https-proxy': { kind: 'net', label: 'proxy', stream: 'proxy', onBadge: 'Listening :443', offBadge: 'Stopped' },
-    'cf-tunnel': { kind: 'net', label: 'tunnel', stream: 'tunnel', onBadge: 'Tunnel connected', offBadge: 'Disconnected' }
+  const meta = {
+    'pg-main': ['db', 'pg-main', 'db'],
+    'redis-cache': ['db', 'redis-cache', 'db'],
+    'mysql-analytics': ['db', 'mysql-analytics', 'db'],
+    'https-proxy': ['net', 'proxy', 'proxy'],
+    'cf-tunnel': ['net', 'tunnel', 'tunnel']
   };
 
-  var viewTitles = {
-    software: 'Software',
-    databases: 'Databases',
-    https: 'HTTPS & Tunnels',
-    services: 'All Items — Services Inspector'
-  };
+  const titles = { software: 'Software', databases: 'Databases', https: 'HTTPS', services: 'Services' };
 
-  var toastEl = document.getElementById('demo-toast');
-  var toastTimer = null;
-
-  function showDemoToast(message) {
+  let toastTimer = null;
+  const toastEl = $('demo-toast');
+  const showToast = (msg) => {
     if (!toastEl) return;
-    toastEl.textContent = message;
+    toastEl.textContent = msg;
     toastEl.classList.add('show');
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () {
-      toastEl.classList.remove('show');
-    }, 2400);
-  }
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
+  };
 
-  var logLinesEl = document.getElementById('demo-log-lines');
-  var activeLogFilter = 'all';
+  const logLines = $('demo-log-lines');
+  let logFilter = 'all';
 
-  function formatNow() {
-    var d = new Date();
-    var hh = String(d.getHours()).padStart(2, '0');
-    var mm = String(d.getMinutes()).padStart(2, '0');
-    var ss = String(d.getSeconds()).padStart(2, '0');
-    return hh + ':' + mm + ':' + ss;
-  }
-
-  function appendDemoLog(stream, source, message, highlight) {
-    if (!logLinesEl) return;
-    var row = document.createElement('div');
+  const appendLog = (stream, src, msg, ok) => {
+    if (!logLines) return;
+    const now = new Date();
+    const ts = [now.getHours(), now.getMinutes(), now.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
+    const row = document.createElement('div');
     row.className = 'log-line';
-    row.setAttribute('data-stream', stream);
+    row.dataset.stream = stream;
+    if (logFilter !== 'all' && logFilter !== stream) row.style.display = 'none';
+    const mk = (cls, txt) => Object.assign(document.createElement('span'), { className: cls, textContent: txt });
+    row.append(mk('log-ts', ts), mk('log-src', `[${src}]`), mk(ok ? 'log-ok' : '', msg));
+    logLines.append(row);
+    while (logLines.children.length > 16) logLines.firstChild.remove();
+    logLines.scrollTop = logLines.scrollHeight;
+  };
 
-    var tsSpan = document.createElement('span');
-    tsSpan.className = 'log-ts';
-    tsSpan.textContent = formatNow();
-
-    var srcSpan = document.createElement('span');
-    srcSpan.className = 'log-src';
-    srcSpan.textContent = '[' + source + ']';
-
-    var msgSpan = document.createElement('span');
-    if (highlight) msgSpan.className = 'log-ok';
-    msgSpan.textContent = message;
-
-    row.appendChild(tsSpan);
-    row.appendChild(srcSpan);
-    row.appendChild(msgSpan);
-
-    if (activeLogFilter !== 'all' && activeLogFilter !== stream) {
-      row.style.display = 'none';
-    }
-
-    logLinesEl.appendChild(row);
-    while (logLinesEl.children.length > 18) {
-      logLinesEl.removeChild(logLinesEl.firstChild);
-    }
-    logLinesEl.scrollTop = logLinesEl.scrollHeight;
-  }
-
-  function syncDemoUI() {
-    var dbRunning = 0;
-    var totalActive = 0;
-
-    Object.keys(demoState).forEach(function (id) {
-      var on = !!demoState[id];
-      var meta = serviceMeta[id];
+  const syncDemo = () => {
+    let dbRunning = 0;
+    let totalActive = 0;
+    for (const [id, on] of Object.entries(state)) {
       if (on) {
         totalActive += 1;
-        if (meta && meta.kind === 'db') dbRunning += 1;
+        if (meta[id][0] === 'db') dbRunning += 1;
       }
-
-      document.querySelectorAll('[data-toggle-service="' + id + '"]').forEach(function (sw) {
-        sw.setAttribute('aria-checked', String(on));
-      });
-
-      document.querySelectorAll('[data-status-badge="' + id + '"]').forEach(function (badge) {
-        badge.textContent = on ? meta.onBadge : meta.offBadge;
-        badge.classList.toggle('status-chip-green', on);
-        badge.classList.toggle('status-chip-muted', !on);
-      });
-    });
-
-    var dbCountEl = document.getElementById('sidebar-db-count');
-    if (dbCountEl) dbCountEl.textContent = String(dbRunning);
-
-    var httpsPill = document.getElementById('sidebar-https-pill');
-    if (httpsPill) httpsPill.textContent = demoState['https-proxy'] ? 'ON' : 'OFF';
-
-    var mbLabel = document.getElementById('mb-running-label');
-    if (mbLabel) mbLabel.textContent = totalActive + ' running';
-
-    var mbPopCount = document.getElementById('mb-pop-count');
-    if (mbPopCount) {
-      mbPopCount.textContent = totalActive + ' active';
-      mbPopCount.classList.toggle('status-chip-green', totalActive > 0);
-      mbPopCount.classList.toggle('status-chip-muted', totalActive === 0);
+      $$(`[data-toggle-service="${id}"]`).forEach((sw) => sw.setAttribute('aria-checked', String(on)));
+      $$(`[data-status-dot="${id}"]`).forEach((dot) => dot.classList.toggle('is-off', !on));
     }
+    if ($('sidebar-db-count')) $('sidebar-db-count').textContent = String(dbRunning);
+    if ($('sidebar-https-pill')) $('sidebar-https-pill').textContent = state['https-proxy'] ? 'ON' : 'OFF';
+    if ($('mb-running-label')) $('mb-running-label').textContent = `${totalActive} running`;
+    if ($('mb-pop-count')) $('mb-pop-count').textContent = `${totalActive} active`;
+    $('mb-status-dot')?.classList.toggle('is-off', totalActive === 0);
+  };
 
-    var mbDot = document.getElementById('mb-status-dot');
-    if (mbDot) {
-      mbDot.style.background = totalActive > 0 ? '#22c55e' : '#71717a';
-    }
-  }
+  $$('[data-toggle-service]').forEach((sw) =>
+    sw.addEventListener('click', () => {
+      const id = sw.dataset.toggleService;
+      if (!(id in state)) return;
+      state[id] = !state[id];
+      syncDemo();
+      const [, src, stream] = meta[id];
+      const verb = state[id] ? 'started' : 'stopped';
+      appendLog(stream, src, `${id} ${verb}`, state[id]);
+      showToast(`${id} ${verb}`);
+    })
+  );
+  syncDemo();
 
-  document.querySelectorAll('[data-toggle-service]').forEach(function (sw) {
-    sw.addEventListener('click', function () {
-      var id = sw.getAttribute('data-toggle-service');
-      if (!Object.prototype.hasOwnProperty.call(demoState, id)) return;
-      demoState[id] = !demoState[id];
-      syncDemoUI();
-      var meta = serviceMeta[id];
-      var verb = demoState[id] ? 'started' : 'stopped';
-      appendDemoLog(meta.stream, meta.label, id + ' ' + verb + ' cleanly', demoState[id]);
-      showDemoToast(id + ' ' + verb);
-    });
+  const selectTab = (key) => {
+    $$('[data-app-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.appTab === key)));
+    $$('.app-view').forEach((v) => v.classList.toggle('active', v.id === `app-view-${key}`));
+    if ($('ws-view-title') && titles[key]) $('ws-view-title').textContent = titles[key];
+  };
+  $$('[data-app-tab]').forEach((b) => b.addEventListener('click', () => selectTab(b.dataset.appTab)));
+
+  /* Menu Bar Popover */
+  const mbTrigger = $('mb-popover-trigger');
+  const mbPopover = $('mb-popover');
+  const setPopover = (open) => {
+    mbPopover?.classList.toggle('open', open);
+    mbTrigger?.setAttribute('aria-expanded', String(open));
+  };
+
+  mbTrigger?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setPopover(!mbPopover.classList.contains('open'));
+  });
+  document.addEventListener('click', (e) => {
+    if (mbPopover?.classList.contains('open') && !mbPopover.contains(e.target) && e.target !== mbTrigger) setPopover(false);
   });
 
-  syncDemoUI();
-
-  /* Sidebar tab switching inside Demo */
-  function selectAppTab(tabKey) {
-    document.querySelectorAll('[data-app-tab]').forEach(function (btn) {
-      btn.setAttribute('aria-selected', String(btn.getAttribute('data-app-tab') === tabKey));
-    });
-    document.querySelectorAll('.app-view').forEach(function (view) {
-      view.classList.toggle('active', view.id === 'app-view-' + tabKey);
-    });
-    var titleEl = document.getElementById('ws-view-title');
-    if (titleEl && viewTitles[tabKey]) {
-      titleEl.textContent = viewTitles[tabKey];
-    }
-  }
-
-  document.querySelectorAll('[data-app-tab]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      selectAppTab(btn.getAttribute('data-app-tab'));
-    });
+  $('mb-stop-all')?.addEventListener('click', () => {
+    state['pg-main'] = state['redis-cache'] = state['mysql-analytics'] = false;
+    syncDemo();
+    appendLog('db', 'devbase', 'stopped all databases (external data retained)', false);
+    showToast('Stopped all databases');
   });
-
-  /* Menu Bar Popover Toggle */
-  var mbTrigger = document.getElementById('mb-popover-trigger');
-  var mbPopover = document.getElementById('mb-popover');
-
-  function setPopoverOpen(open) {
-    if (!mbTrigger || !mbPopover) return;
-    mbPopover.classList.toggle('open', open);
-    mbTrigger.setAttribute('aria-expanded', String(open));
-  }
-
-  if (mbTrigger && mbPopover) {
-    mbTrigger.addEventListener('click', function (e) {
-      e.stopPropagation();
-      setPopoverOpen(!mbPopover.classList.contains('open'));
-    });
-
-    document.addEventListener('click', function (e) {
-      if (mbPopover.classList.contains('open') && !mbPopover.contains(e.target) && e.target !== mbTrigger) {
-        setPopoverOpen(false);
-      }
-    });
-  }
-
-  var mbPopClose = document.getElementById('mb-pop-close');
-  if (mbPopClose) {
-    mbPopClose.addEventListener('click', function () {
-      setPopoverOpen(false);
-    });
-  }
-
-  var mbStopAll = document.getElementById('mb-stop-all');
-  if (mbStopAll) {
-    mbStopAll.addEventListener('click', function () {
-      demoState['pg-main'] = false;
-      demoState['redis-cache'] = false;
-      demoState['mysql-analytics'] = false;
-      syncDemoUI();
-      appendDemoLog('db', 'devbase', 'Stopped all managed database instances (external data retained)', false);
-      showDemoToast('Stopped all managed databases');
-    });
-  }
-
-  var mbCopyUrl = document.getElementById('mb-pop-copy-url');
-  if (mbCopyUrl) {
-    mbCopyUrl.addEventListener('click', function () {
-      copyText('https://api.devbase.localhost');
-      showDemoToast('Copied https://api.devbase.localhost');
-      setPopoverOpen(false);
-    });
-  }
-
-  /* Live Log Drawer Toggle & Stream Filtering */
-  var logsBtn = document.getElementById('demo-logs-btn');
-  var logsDrawer = document.getElementById('demo-log-drawer');
-  var logsClose = document.getElementById('demo-logs-close');
-  var mbPopLogs = document.getElementById('mb-pop-logs');
-
-  function setLogsOpen(open) {
-    if (!logsDrawer || !logsBtn) return;
-    logsDrawer.classList.toggle('open', open);
-    logsBtn.setAttribute('aria-pressed', String(open));
-  }
-
-  if (logsBtn) {
-    logsBtn.addEventListener('click', function () {
-      setLogsOpen(!logsDrawer.classList.contains('open'));
-    });
-  }
-  if (logsClose) {
-    logsClose.addEventListener('click', function () {
-      setLogsOpen(false);
-    });
-  }
-  if (mbPopLogs) {
-    mbPopLogs.addEventListener('click', function () {
-      setPopoverOpen(false);
-      setLogsOpen(true);
-    });
-  }
-
-  document.querySelectorAll('[data-log-filter]').forEach(function (tab) {
-    tab.addEventListener('click', function () {
-      activeLogFilter = tab.getAttribute('data-log-filter');
-      document.querySelectorAll('[data-log-filter]').forEach(function (t) {
-        t.classList.toggle('active', t === tab);
-      });
-      if (!logLinesEl) return;
-      Array.prototype.forEach.call(logLinesEl.children, function (line) {
-        var stream = line.getAttribute('data-stream');
-        line.style.display = activeLogFilter === 'all' || activeLogFilter === stream ? '' : 'none';
-      });
-    });
+  $('mb-pop-copy-url')?.addEventListener('click', () => {
+    copyText('https://api.devbase.localhost');
+    showToast('Copied https://api.devbase.localhost');
+    setPopover(false);
   });
+  $('mb-pop-close')?.addEventListener('click', () => setPopover(false));
 
-  /* Command Palette (⌘K) inside Simulated App */
-  var cmdkBackdrop = document.getElementById('demo-cmdk');
-  var cmdkBtn = document.getElementById('demo-cmdk-btn');
-  var cmdkClose = document.getElementById('demo-cmdk-close');
-  var cmdkInput = document.getElementById('demo-cmdk-input');
-  var cmdkList = document.getElementById('demo-cmdk-list');
+  /* Live Log Drawer */
+  const logsDrawer = $('demo-log-drawer');
+  const setLogs = (open) => {
+    logsDrawer?.classList.toggle('open', open);
+    $$('[data-toggle-logs]').forEach((b) => b.setAttribute('aria-pressed', String(open)));
+  };
+  $$('[data-toggle-logs]').forEach((b) => b.addEventListener('click', () => setLogs(!logsDrawer?.classList.contains('open'))));
+  $('demo-logs-close')?.addEventListener('click', () => setLogs(false));
+  $('mb-pop-logs')?.addEventListener('click', () => { setPopover(false); setLogs(true); });
 
-  function setCmdkOpen(open) {
-    if (!cmdkBackdrop) return;
-    cmdkBackdrop.classList.toggle('open', open);
+  $$('[data-log-filter]').forEach((tab) =>
+    tab.addEventListener('click', () => {
+      logFilter = tab.dataset.logFilter;
+      $$('[data-log-filter]').forEach((t) => t.classList.toggle('active', t === tab));
+      if (!logLines) return;
+      [...logLines.children].forEach((line) => {
+        line.style.display = logFilter === 'all' || logFilter === line.dataset.stream ? '' : 'none';
+      });
+    })
+  );
+
+  /* Command Palette */
+  const cmdk = $('demo-cmdk');
+  const cmdkInput = $('demo-cmdk-input');
+  const cmdkList = $('demo-cmdk-list');
+
+  const filterCmdk = (q) => {
+    const needle = q.trim().toLowerCase();
+    cmdkList?.querySelectorAll('.cmdk-item').forEach((item) => {
+      item.style.display = !needle || item.textContent.toLowerCase().includes(needle) ? '' : 'none';
+    });
+  };
+
+  const setCmdk = (open) => {
+    cmdk?.classList.toggle('open', open);
     if (open && cmdkInput) {
       cmdkInput.value = '';
       filterCmdk('');
       cmdkInput.focus();
     }
-  }
+  };
 
-  function filterCmdk(query) {
-    if (!cmdkList) return;
-    var q = query.trim().toLowerCase();
-    cmdkList.querySelectorAll('.cmdk-item').forEach(function (item) {
-      var text = item.textContent.toLowerCase();
-      item.style.display = !q || text.indexOf(q) !== -1 ? '' : 'none';
-    });
-  }
+  $('demo-cmdk-btn')?.addEventListener('click', () => setCmdk(true));
+  $('demo-cmdk-close')?.addEventListener('click', () => setCmdk(false));
+  cmdk?.addEventListener('click', (e) => { if (e.target === cmdk) setCmdk(false); });
+  cmdkInput?.addEventListener('input', () => filterCmdk(cmdkInput.value));
+  cmdkList?.querySelectorAll('[data-cmd-action]').forEach((item) =>
+    item.addEventListener('click', () => {
+      const act = item.dataset.cmdAction;
+      setCmdk(false);
+      if (act.startsWith('tab:')) selectTab(act.slice(4));
+      else if (act === 'toggle-popover') setPopover(!mbPopover?.classList.contains('open'));
+      else if (act === 'toggle-logs') setLogs(!logsDrawer?.classList.contains('open'));
+    })
+  );
 
-  if (cmdkBtn) {
-    cmdkBtn.addEventListener('click', function () {
-      setCmdkOpen(true);
-    });
-  }
-  if (cmdkClose) {
-    cmdkClose.addEventListener('click', function () {
-      setCmdkOpen(false);
-    });
-  }
-  if (cmdkBackdrop) {
-    cmdkBackdrop.addEventListener('click', function (e) {
-      if (e.target === cmdkBackdrop) setCmdkOpen(false);
-    });
-  }
-  if (cmdkInput) {
-    cmdkInput.addEventListener('input', function () {
-      filterCmdk(cmdkInput.value);
-    });
-  }
-  if (cmdkList) {
-    cmdkList.querySelectorAll('[data-cmd-action]').forEach(function (item) {
-      item.addEventListener('click', function () {
-        var action = item.getAttribute('data-cmd-action');
-        setCmdkOpen(false);
-        if (action.indexOf('tab:') === 0) {
-          selectAppTab(action.slice(4));
-        } else if (action === 'toggle-popover') {
-          setPopoverOpen(!mbPopover.classList.contains('open'));
-        } else if (action === 'toggle-logs') {
-          setLogsOpen(!logsDrawer.classList.contains('open'));
-        }
-      });
-    });
-  }
+  /* QR, Shell Cycler, Toasts, Backup, Services Filter */
+  const qrBtn = $('demo-qr-btn');
+  const qrPanel = $('demo-qr-panel');
+  qrBtn?.addEventListener('click', () => qrBtn.setAttribute('aria-expanded', String(qrPanel.classList.toggle('open'))));
 
-  /* QR Panel Toggle inside HTTPS View */
-  var qrBtn = document.getElementById('demo-qr-btn');
-  var qrPanel = document.getElementById('demo-qr-panel');
-  if (qrBtn && qrPanel) {
-    qrBtn.addEventListener('click', function () {
-      var open = qrPanel.classList.toggle('open');
-      qrBtn.setAttribute('aria-expanded', String(open));
+  const shells = ['zsh', 'bash', 'fish'];
+  $$('[data-shell-cycle]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      const next = shells[(shells.indexOf(btn.dataset.shellCycle || 'zsh') + 1) % shells.length];
+      btn.dataset.shellCycle = next;
+      btn.textContent = `Shell: ${next}`;
+      showToast(`Reversible ${next} hook active`);
+    })
+  );
+
+  $$('[data-copy-toast]').forEach((btn) => btn.addEventListener('click', () => showToast(btn.dataset.copyToast)));
+  $$('[data-backup-db]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      const db = btn.dataset.backupDb;
+      appendLog('db', db, `snapshot saved ${db}-20261121.sql.gz`, true);
+      showToast(`Backup saved for ${db}`);
+    })
+  );
+
+  const svcSearch = $('demo-svc-search');
+  let svcSource = 'all';
+  const filterServices = () => {
+    const q = (svcSearch?.value || '').trim().toLowerCase();
+    $$('[data-svc-item]').forEach((row) => {
+      const okSrc = svcSource === 'all' || row.dataset.source === svcSource;
+      const okQ = !q || (row.dataset.name || '').toLowerCase().includes(q);
+      row.style.display = okSrc && okQ ? '' : 'none';
     });
-  }
-
-  /* Shell Hook Cycler inside Software View */
-  var shells = ['zsh', 'bash', 'fish'];
-  document.querySelectorAll('[data-shell-cycle]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var current = btn.getAttribute('data-shell-cycle') || 'zsh';
-      var next = shells[(shells.indexOf(current) + 1) % shells.length];
-      btn.setAttribute('data-shell-cycle', next);
-      btn.textContent = 'Shell: ' + next;
-      showDemoToast('Reversible ' + next + ' integration + NODE_EXTRA_CA_CERTS active');
-    });
-  });
-
-  /* Demo Copy-Toast & Backup Buttons */
-  document.querySelectorAll('[data-copy-toast]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var msg = btn.getAttribute('data-copy-toast');
-      showDemoToast(msg);
-    });
-  });
-
-  document.querySelectorAll('[data-backup-db]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var db = btn.getAttribute('data-backup-db');
-      appendDemoLog('db', 'db-' + db, 'Created snapshot backup ' + db + '-20261121.sql.gz', true);
-      showDemoToast('Backup saved for ' + db);
-    });
-  });
-
-  /* Services 5-Source Live Filter */
-  var svcSearch = document.getElementById('demo-svc-search');
-  var svcSource = 'all';
-
-  function filterServices() {
-    var q = svcSearch ? svcSearch.value.trim().toLowerCase() : '';
-    document.querySelectorAll('[data-svc-item]').forEach(function (row) {
-      var src = row.getAttribute('data-source');
-      var name = (row.getAttribute('data-name') || '').toLowerCase();
-      var matchSource = svcSource === 'all' || src === svcSource;
-      var matchQuery = !q || name.indexOf(q) !== -1;
-      row.style.display = matchSource && matchQuery ? '' : 'none';
-    });
-  }
-
-  if (svcSearch) {
-    svcSearch.addEventListener('input', filterServices);
-  }
-  document.querySelectorAll('[data-svc-source]').forEach(function (pill) {
-    pill.addEventListener('click', function () {
-      svcSource = pill.getAttribute('data-svc-source');
-      document.querySelectorAll('[data-svc-source]').forEach(function (p) {
-        p.classList.toggle('active', p === pill);
-      });
+  };
+  svcSearch?.addEventListener('input', filterServices);
+  $$('[data-svc-source]').forEach((pill) =>
+    pill.addEventListener('click', () => {
+      svcSource = pill.dataset.svcSource;
+      $$('[data-svc-source]').forEach((p) => p.classList.toggle('active', p === pill));
       filterServices();
-    });
-  });
+    })
+  );
 
-  /* Global Keyboard Shortcuts (Escape, ⌘K, ⌃⌥⌘D) */
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') {
-      setCmdkOpen(false);
-      setPopoverOpen(false);
-      if (mobileMenu && mobileMenu.classList.contains('open')) {
-        mobileMenu.classList.remove('open');
-        if (mobileBtn) mobileBtn.setAttribute('aria-expanded', 'false');
-      }
-      return;
-    }
-    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'k') {
+  /* Keyboard Shortcuts */
+  const demoFrame = $('demo-frame');
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { setCmdk(false); setPopover(false); closeMobile(); return; }
+    const k = e.key.toLowerCase();
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && k === 'k') {
       e.preventDefault();
-      var isOpen = cmdkBackdrop && cmdkBackdrop.classList.contains('open');
-      setCmdkOpen(!isOpen);
-      return;
-    }
-    if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'd') {
+      setCmdk(!cmdk?.classList.contains('open'));
+    } else if (e.ctrlKey && e.altKey && k === 'd') {
       e.preventDefault();
-      setPopoverOpen(!(mbPopover && mbPopover.classList.contains('open')));
+      setPopover(!mbPopover?.classList.contains('open'));
+    } else if ((e.metaKey || e.ctrlKey) && !e.altKey && k === 'l' && demoFrame?.contains(document.activeElement)) {
+      e.preventDefault();
+      setLogs(!logsDrawer?.classList.contains('open'));
     }
   });
 
-  /* ---------- 5. Four Pillars Segmented Tabs (#features) ---------- */
+  /* CLI & MCP 3-Tab Terminal */
+  const cliCopyBtn = $('cli-copy-btn');
+  let activeTerm = 'schema';
 
-  document.querySelectorAll('[data-pillar-tab]').forEach(function (tab) {
-    tab.addEventListener('click', function () {
-      var key = tab.getAttribute('data-pillar-tab');
-      document.querySelectorAll('[data-pillar-tab]').forEach(function (t) {
-        t.setAttribute('aria-selected', String(t === tab));
-      });
-      document.querySelectorAll('.pillar-panel').forEach(function (panel) {
-        panel.classList.toggle('active', panel.id === 'pillar-' + key);
-      });
-    });
-  });
-
-  /* ---------- 6. CLI & MCP Interactive Terminal (#cli) ---------- */
-
-  var cliCopyBtn = document.getElementById('cli-copy-btn');
-  var activeTermKey = 'mcp';
-
-  document.querySelectorAll('[data-term-tab]').forEach(function (tab) {
-    tab.addEventListener('click', function () {
-      activeTermKey = tab.getAttribute('data-term-tab');
-      document.querySelectorAll('[data-term-tab]').forEach(function (t) {
-        t.setAttribute('aria-selected', String(t === tab));
-      });
-      document.querySelectorAll('.terminal-pane').forEach(function (pane) {
-        pane.classList.toggle('active', pane.id === 'term-' + activeTermKey);
-      });
+  $$('[data-term-tab]').forEach((tab) =>
+    tab.addEventListener('click', () => {
+      activeTerm = tab.dataset.termTab;
+      $$('[data-term-tab]').forEach((t) => t.setAttribute('aria-selected', String(t === tab)));
+      $$('.terminal-pane').forEach((p) => p.classList.toggle('active', p.id === `term-${activeTerm}`));
       if (cliCopyBtn) {
         cliCopyBtn.classList.remove('copied');
-        var lbl = cliCopyBtn.querySelector('span');
+        const lbl = cliCopyBtn.querySelector('span');
         if (lbl) lbl.textContent = 'Copy';
       }
+    })
+  );
+
+  cliCopyBtn?.addEventListener('click', () => {
+    const pane = $(`term-${activeTerm}`);
+    if (!pane) return;
+    copyText(pane.dataset.copyText || pane.textContent).then(() => {
+      cliCopyBtn.classList.add('copied');
+      const lbl = cliCopyBtn.querySelector('span');
+      if (lbl) lbl.textContent = 'Copied';
+      setTimeout(() => {
+        cliCopyBtn.classList.remove('copied');
+        if (lbl) lbl.textContent = 'Copy';
+      }, 1600);
     });
   });
-
-  if (cliCopyBtn) {
-    cliCopyBtn.addEventListener('click', function () {
-      var activePane = document.getElementById('term-' + activeTermKey);
-      if (!activePane) return;
-      var text = activePane.getAttribute('data-copy-text') || activePane.textContent;
-      copyText(text).then(function () {
-        cliCopyBtn.classList.add('copied');
-        var lbl = cliCopyBtn.querySelector('span');
-        if (lbl) lbl.textContent = 'Copied';
-        setTimeout(function () {
-          cliCopyBtn.classList.remove('copied');
-          if (lbl) lbl.textContent = 'Copy';
-        }, 1800);
-      });
-    });
-  }
-
-  /* ---------- 7. Split Download Card Switcher (#get) ---------- */
-
-  document.querySelectorAll('[data-install-tab]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var mode = btn.getAttribute('data-install-tab');
-      document.querySelectorAll('[data-install-tab]').forEach(function (b) {
-        b.setAttribute('aria-selected', String(b === btn));
-      });
-      document.querySelectorAll('.split-mode').forEach(function (panel) {
-        panel.classList.toggle('active', panel.id === 'install-' + mode);
-      });
-    });
-  });
-
-  var copyInstallBtn = document.getElementById('copy-install-snippet');
-  var installCode = document.getElementById('install-snippet-code');
-  if (copyInstallBtn && installCode) {
-    copyInstallBtn.addEventListener('click', function () {
-      copyText(installCode.textContent.trim()).then(function () {
-        var orig = copyInstallBtn.textContent;
-        copyInstallBtn.textContent = 'Copied to clipboard';
-        setTimeout(function () {
-          copyInstallBtn.textContent = orig;
-        }, 1800);
-      });
-    });
-  }
 })();

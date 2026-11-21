@@ -1682,7 +1682,7 @@ fn clicking_proxy_and_tunnel_rows_navigates_to_https_proxy_and_closes_popover() 
     app.press("id:popover-open-proxy").unwrap();
     app.wait_for_gone("id:menubar-popover", Duration::from_secs(2))
         .unwrap();
-    app.wait_for("HTTPS proxy rules").unwrap();
+    app.wait_for("id:proxy-add-rule").unwrap();
 
     // Switch back to Services, reopen popover, click Tunnel row -> navigates to HTTPS Proxy.
     app.press("role:button[Services]").unwrap();
@@ -1692,7 +1692,7 @@ fn clicking_proxy_and_tunnel_rows_navigates_to_https_proxy_and_closes_popover() 
     app.press("id:popover-open-tunnel").unwrap();
     app.wait_for_gone("id:menubar-popover", Duration::from_secs(2))
         .unwrap();
-    app.wait_for("HTTPS proxy rules").unwrap();
+    app.wait_for("id:proxy-add-rule").unwrap();
     drop(turn);
 }
 

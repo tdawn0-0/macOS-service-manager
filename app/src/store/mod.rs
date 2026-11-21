@@ -96,13 +96,6 @@ impl Section {
             Section::Settings => "Settings",
         }
     }
-
-    /// Kept empty so top-level page headers stay clean single-row toolbars
-    /// without subtitle taglines.
-    #[allow(dead_code)]
-    pub(crate) fn summary(self) -> &'static str {
-        ""
-    }
 }
 
 fn section() -> Signal<Section> {

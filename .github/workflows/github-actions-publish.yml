@@ -2,13 +2,18 @@ name: release
 
 # Pushing a tag on master, as v0.2.0, releases that version: the app is tested,
 # built, signed with the Developer ID, notarized, and published with its disk
-# image. A tag with a suffix, as v0.2.0-rc.1, makes a prerelease. The version comes
-# from the tag, so app/nsh.json does not need changing first.
+# image, macOS arm64 update archive, and Ed25519-signed nsh-updater manifest
+# (latest.json + latest.json.sig). A tag with a suffix, as v0.2.0-rc.1, makes
+# a prerelease (--latest=false so /releases/latest/download/latest.json serves
+# only stable releases). The version comes from the tag, so app/nsh.json does
+# not need changing first.
 #
 #   git tag v0.2.0 && git push origin master v0.2.0
 #
-# scripts/setup-release-secrets.sh sets up the secrets this needs. The job
-# cannot start until that environment allows the tag.
+# scripts/setup-release-secrets.sh sets up the Apple signing/notarizing secrets
+# in the "release" environment, alongside NSH_UPDATER_SECRET_KEY (Ed25519
+# secret key matching app/nsh.json's updater.publicKey). The job cannot start
+# until that environment allows the tag.
 on:
   push:
     tags:
@@ -108,11 +113,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NSH_UPDATER_SECRET_KEY: ${{ secrets.NSH_UPDATER_SECRET_KEY }}
         run: |
           set -euo pipefail
-          for name in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD APPLE_ID APPLE_APP_PASSWORD APPLE_TEAM_ID; do
+          for name in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD APPLE_ID APPLE_APP_PASSWORD APPLE_TEAM_ID NSH_UPDATER_SECRET_KEY; do
             if [ -z "${!name:-}" ]; then
-              echo "::error::The secret $name is missing. See scripts/setup-release-secrets.sh"
+              echo "::error::The secret $name is missing from the release environment."
               exit 1
             fi
           done
@@ -152,6 +158,7 @@ jobs:
         env:
           NOTARY_PROFILE: msm
           REQUIRE_NOTARIZE: "1"
+          NSH_UPDATER_SECRET_KEY: ${{ secrets.NSH_UPDATER_SECRET_KEY }}
         run: |
           set -euo pipefail
           # A new step does not keep the keychain unlocked.
@@ -166,17 +173,29 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          dmg=$(find build/darwin-arm64 -maxdepth 1 -name '*.dmg' -print -quit)
-          if [ -z "$dmg" ] || [ ! -f "$dmg" ]; then
-            echo "::error::no disk image in build/darwin-arm64"
-            exit 1
-          fi
+          dmg="build/darwin-arm64/Devbase.dmg"
+          archive="build/darwin-arm64/Devbase-${VERSION}-macos-aarch64.tar.gz"
+          manifest="build/darwin-arm64/latest.json"
+          manifest_sig="build/darwin-arm64/latest.json.sig"
+          for file in "$dmg" "$archive" "$manifest" "$manifest_sig"; do
+            if [ ! -s "$file" ]; then
+              echo "::error::missing release artifact: $file"
+              exit 1
+            fi
+          done
           # Nothing goes out that macOS would warn about.
           xcrun stapler validate "$dmg"
-          sha=$(shasum -a 256 "$dmg" | cut -d' ' -f1)
-          args=(gh release create "$TAG" "$dmg" --verify-tag
+          jq -e --arg version "$VERSION" \
+            '.id == "xyz.jyeu.devbase" and .version == $version and (.platforms["macos-aarch64"].url | length > 0)' \
+            "$manifest" >/dev/null
+          dmg_sha=$(shasum -a 256 "$dmg" | cut -d' ' -f1)
+          archive_sha=$(shasum -a 256 "$archive" | cut -d' ' -f1)
+          notes=$(printf 'SHA-256 checksums:\n- `%s`: `%s`\n- `%s`: `%s`' \
+            "$(basename "$dmg")" "$dmg_sha" \
+            "$(basename "$archive")" "$archive_sha")
+          args=(gh release create "$TAG" "$dmg" "$archive" "$manifest" "$manifest_sig" --verify-tag
             --title "Devbase v$VERSION"
-            --notes "SHA-256 of the disk image: \`$sha\`"
+            --notes "$notes"
             --generate-notes)
           case "$VERSION" in
           *-*) args+=(--prerelease --latest=false) ;;

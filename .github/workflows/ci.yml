@@ -58,6 +58,7 @@ jobs:
           done
           (cd app && cargo clippy --all-targets -- -D warnings && cargo fmt --check && nsh build)
           (cd app && nsh package --target macos)
+          test -s app/.nsh/out/Devbase.app/Contents/Resources/nsh/assets/nsh-updater.json
           python3 scripts/verify-macos-requirements.py app/.nsh/out/Devbase.app
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'
           python3 scripts/collect-third-party-notices.py --check

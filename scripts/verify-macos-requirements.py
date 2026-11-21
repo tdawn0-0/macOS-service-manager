@@ -88,6 +88,24 @@ def verify(app, release_bundle=False):
                 f'CLI `version --json` ({cli_version!r})'
             )
 
+        updater_path = app / 'Contents/Resources/nsh/assets/nsh-updater.json'
+        if not updater_path.is_file() or updater_path.stat().st_size == 0:
+            raise ValueError(f'Required bundled updater config is missing or empty: {updater_path}')
+        updater_cfg = json.loads(updater_path.read_text(encoding='utf-8'))
+        bundle_id = info.get('CFBundleIdentifier')
+        if updater_cfg.get('id') != bundle_id:
+            raise ValueError(
+                f'Bundled nsh-updater.json id ({updater_cfg.get("id")!r}) does not match '
+                f'CFBundleIdentifier ({bundle_id!r})'
+            )
+        if updater_cfg.get('version') != bundle_version:
+            raise ValueError(
+                f'Bundled nsh-updater.json version ({updater_cfg.get("version")!r}) does not match '
+                f'CFBundleShortVersionString ({bundle_version!r})'
+            )
+        if not isinstance(updater_cfg.get('publicKey'), str) or not updater_cfg['publicKey'].strip():
+            raise ValueError('Bundled nsh-updater.json is missing publicKey')
+
         dev = subprocess.run(
             [str(binary), '--dev'],
             stdin=subprocess.DEVNULL,

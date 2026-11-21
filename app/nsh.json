@@ -35,5 +35,9 @@
     "entitlements": {
       "com.apple.security.automation.apple-events": true
     }
+  },
+  "updater": {
+    "github": "tdawn0-0/macOS-service-manager",
+    "publicKey": "kkxoonpTgEEqY42yEJ63rmSd9PpvMXsHS57Dfxad14s="
   }
 }

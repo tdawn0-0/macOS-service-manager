@@ -8,7 +8,10 @@ use serde::Serialize;
 
 use crate::error::{CliError, CliResult};
 
-pub const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const CLI_VERSION: &str = match option_env!("DEVBASE_VERSION") {
+    Some(version) if !version.is_empty() => version,
+    _ => env!("CARGO_PKG_VERSION"),
+};
 pub const CLI_ARCH: &str = "darwin/arm64";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

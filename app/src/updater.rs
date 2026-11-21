@@ -1,8 +1,8 @@
 //! Signed in-app updater backed by [`nsh_updater`].
 //!
 //! Reads the packaged `nsh-updater.json` from the running `.app` bundle
-//! (`Contents/Resources/nsh/nsh-updater.json` or
-//! `Contents/Resources/nsh/assets/nsh-updater.json`), verifies release
+//! (`Contents/Resources/nsh/assets/nsh-updater.json`, with legacy fallback to
+//! `Contents/Resources/nsh/nsh-updater.json`), verifies release
 //! manifests with Ed25519 signatures via [`nsh_updater::Config::check`],
 //! verifies downloaded archives with SHA-256 via [`nsh_updater::Download`],
 //! and installs updates atomically via [`nsh_updater::install::Installation`].
@@ -291,8 +291,8 @@ fn current_app_bundle_path() -> Option<PathBuf> {
 fn candidate_config_paths(bundle_root: &Path) -> [PathBuf; 2] {
     let nsh_dir = bundle_root.join("Contents/Resources/nsh");
     [
-        nsh_dir.join(CONFIG_ASSET),
         nsh_dir.join("assets").join(CONFIG_ASSET),
+        nsh_dir.join(CONFIG_ASSET),
     ]
 }
 
@@ -670,15 +670,50 @@ mod tests {
             other => panic!("expected signature error, got {other:?}"),
         }
 
-        // 5. Bundle config discovery reads Contents/Resources/nsh/nsh-updater.json
+        // 5. Bundle config discovery reads Contents/Resources/nsh/assets/nsh-updater.json
+        // (matching `nsh package --target macos` and `nsh_updater::install::Installation::of`).
         let dir =
             std::env::temp_dir().join(format!("devbase-updater-bundle-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
-        let nsh_dir = dir.join("Devbase.app/Contents/Resources/nsh");
-        fs::create_dir_all(&nsh_dir).unwrap();
-        fs::write(nsh_dir.join(CONFIG_ASSET), &config_bytes).unwrap();
+        let assets_dir = dir.join("Devbase.app/Contents/Resources/nsh/assets");
+        fs::create_dir_all(&assets_dir).unwrap();
+        fs::write(assets_dir.join(CONFIG_ASSET), &config_bytes).unwrap();
         let found = load_config_from_bundle(&dir.join("Devbase.app"));
         assert!(matches!(found, ConfigLookup::Loaded(_)));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nsh_json_updater_config_is_signed_and_valid() {
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../nsh.json")).expect("valid app/nsh.json");
+        let updater = manifest
+            .get("updater")
+            .expect("app/nsh.json must configure updater");
+        let bundled = serde_json::to_vec(&serde_json::json!({
+            "id": manifest["id"],
+            "version": manifest["version"],
+            "github": updater["github"],
+            "publicKey": updater["publicKey"],
+            "build": manifest["build"],
+        }))
+        .unwrap();
+        let ConfigLookup::Loaded(loaded) = parse_and_require_signing(&bundled) else {
+            panic!("app/nsh.json updater config must parse and require Ed25519 signing");
+        };
+        assert_eq!(
+            loaded.config.github.as_deref(),
+            Some("tdawn0-0/macOS-service-manager")
+        );
+        assert_eq!(
+            loaded.config.manifest_url(),
+            "https://github.com/tdawn0-0/macOS-service-manager/releases/latest/download/latest.json"
+        );
+        assert_eq!(
+            loaded.config.signature_url().as_deref(),
+            Some(
+                "https://github.com/tdawn0-0/macOS-service-manager/releases/latest/download/latest.json.sig"
+            )
+        );
     }
 }

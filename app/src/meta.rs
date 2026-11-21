@@ -7,7 +7,13 @@ pub(crate) const NAME: &str = "Devbase";
 pub(crate) const IDENTIFIER: &str = "xyz.jyeu.devbase";
 
 /// The user-visible version; `nsh.json` `"version"` carries the same one.
-pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Release builds set `DEVBASE_VERSION` from the release tag so the compiled
+/// binary matches `Info.plist` and `nsh-updater.json` without mutating
+/// `Cargo.lock`.
+pub(crate) const VERSION: &str = match option_env!("DEVBASE_VERSION") {
+    Some(version) if !version.is_empty() => version,
+    _ => env!("CARGO_PKG_VERSION"),
+};
 
 /// The oldest macOS this app supports (`nsh.json` `macos.infoPlist`).
 pub(crate) const MINIMUM_MACOS: &str = "26.0";

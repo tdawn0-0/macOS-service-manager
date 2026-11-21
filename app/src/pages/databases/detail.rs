@@ -26,36 +26,114 @@ pub(crate) fn detail_pane() -> impl IntoElement {
         .test_id("database-detail")
         .flex_1()
         .min_w(px(0.0))
-        .child(when(
-            move || db::selected_instance().is_some(),
-            || {
-                view()
-                    .flex_col()
-                    .flex_1()
-                    .child(dynamic(|| Some(header())))
-                    .child(notes())
-                    .child(
-                        scroll().flex_1().min_h(px(0.0)).child(
-                            view()
-                                .flex_col()
-                                .gap(tokens::space(4.0))
-                                .px(tokens::space(5.0))
-                                .pb(tokens::space(5.0))
-                                .child(tasks_section())
-                                .child(connections_card())
-                                .child(endpoint_card())
-                                .child(databases_card())
-                                .child(backups_card())
-                                .child(remove_card()),
+        .child(
+            when(
+                move || db::selected_instance().is_some(),
+                || {
+                    view()
+                        .flex_col()
+                        .flex_1()
+                        .child(dynamic(|| Some(header())))
+                        .child(notes())
+                        .child(
+                            scroll().flex_1().min_h(px(0.0)).child(
+                                view()
+                                    .flex_col()
+                                    .gap(tokens::space(4.0))
+                                    .px(tokens::space(5.0))
+                                    .pt(tokens::space(4.0))
+                                    .pb(tokens::space(5.0))
+                                    .child(tasks_section())
+                                    .child(connections_card())
+                                    .child(endpoint_card())
+                                    .child(databases_card())
+                                    .child(backups_card())
+                                    .child(remove_card()),
+                            ),
+                        )
+                },
+            )
+            .otherwise(empty_state),
+        )
+}
+
+fn empty_state() -> impl IntoElement {
+    view()
+        .test_id("db-empty-state")
+        .flex_col()
+        .flex_1()
+        .min_w(px(0.0))
+        .child(
+            view()
+                .h(px(52.0))
+                .flex_none()
+                .flex_row()
+                .items_center()
+                .px(tokens::space(5.0))
+                .border_b_1()
+                .border_color(tokens::hairline)
+                .window_drag(true),
+        )
+        .child(
+            view()
+                .flex_1()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(tokens::space(3.0))
+                .px(tokens::space(6.0))
+                .child(
+                    view()
+                        .size(px(48.0))
+                        .items_center()
+                        .justify_center()
+                        .rounded(tokens::panel_radius)
+                        .bg(tokens::inset)
+                        .border_1()
+                        .border_color(tokens::hairline)
+                        .child(
+                            icons::engine("postgresql")
+                                .size(px(22.0))
+                                .text_color(move || theme().muted_foreground),
                         ),
-                    )
-            },
-        ))
+                )
+                .child(
+                    view()
+                        .flex_col()
+                        .items_center()
+                        .gap(tokens::space(1.0))
+                        .child(
+                            text("No instance selected")
+                                .text_size(px(15.0))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(move || theme().foreground),
+                        )
+                        .child(
+                            text("Choose an instance from the sidebar, or create a new local database instance.")
+                                .text_size(px(tokens::TEXT_SMALL))
+                                .text_color(move || theme().muted_foreground),
+                        ),
+                )
+                .child(ui::action_button(
+                    "New instance",
+                    Tone::Primary,
+                    "db-empty-new-instance",
+                    false,
+                    db::open_new,
+                )),
+        )
 }
 
 fn header() -> AnyElement {
     let Some(instance) = db::selected_instance() else {
-        return view().h(px(60.0)).flex_none().into_element();
+        return view()
+            .h(px(52.0))
+            .flex_none()
+            .px(tokens::space(5.0))
+            .border_b_1()
+            .border_color(tokens::hairline)
+            .window_drag(true)
+            .into_element();
     };
     let id = instance.id.clone();
     let status = db::status(&id);
@@ -71,13 +149,15 @@ fn header() -> AnyElement {
     let stop_id = id.clone();
 
     view()
-        .h(px(68.0))
+        .h(px(52.0))
         .flex_none()
         .flex_row()
         .items_center()
         .gap(tokens::space(2.0))
         .px(tokens::space(5.0))
-        .pt(tokens::space(2.0))
+        .border_b_1()
+        .border_color(tokens::hairline)
+        .window_drag(true)
         .child(
             icons::engine(&instance.kind)
                 .size(px(16.0))
@@ -100,6 +180,7 @@ fn header() -> AnyElement {
                 .child(
                     text(meta)
                         .text_size(px(tokens::TEXT_CAPTION))
+                        .tabular_nums()
                         .text_color(move || theme().muted_foreground)
                         .truncate(),
                 ),
@@ -165,35 +246,54 @@ fn empty() -> impl IntoElement {
 // --- Connections -------------------------------------------------------------
 
 fn connections_card() -> impl IntoElement {
+    let chips_key = computed(|| {
+        let instance = db::selected_instance()?;
+        let profiles = db::profiles(&instance.id);
+        Some((instance.id, profiles))
+    });
+    let editor_key = computed(|| {
+        let instance = db::selected_instance()?;
+        if db::selected_profile().is_empty() {
+            return None;
+        }
+        Some((instance.id, instance.kind))
+    });
+    let actions_key = computed(|| {
+        let instance = db::selected_instance()?;
+        let selected = db::selected_profile();
+        Some((
+            instance.id,
+            instance.kind,
+            selected != "new",
+            selected.is_empty(),
+        ))
+    });
+    let details = computed(db::connection_details);
+
     ui::card(
         "Connections",
         view()
             .flex_col()
             .gap(tokens::space(3.0))
-            .child(dynamic(|| {
+            .child(dynamic(move || {
                 Some(
-                    profile_chips()
-                        .map(|chips| chips.into_element())
+                    chips_key
+                        .get()
+                        .map(|(id, profiles)| profile_chips(id, profiles).into_element())
                         .unwrap_or_else(|| empty().into_element()),
                 )
             }))
             .child(when(db::pending_switch, pending_switch_notice))
-            .child(dynamic(|| {
-                let instance = db::selected_instance()?;
-                let selected = db::selected_profile();
-                if selected.is_empty() {
-                    return None;
-                }
-                let id = instance.id;
-                Some(
-                    editor_panel(&instance.kind, id.clone(), id, selected == "new").into_element(),
-                )
-            }))
-            .child(dynamic(|| {
-                connection_actions().map(|actions| actions.into_element())
+            .child(dynamic(move || {
+                let (id, kind) = editor_key.get()?;
+                Some(editor_panel(&kind, id.clone(), id).into_element())
             }))
             .child(dynamic(move || {
-                db::connection_details().map(|block| {
+                let (id, kind, can_copy, admin) = actions_key.get()?;
+                Some(connection_actions(id, kind, can_copy, admin).into_element())
+            }))
+            .child(dynamic(move || {
+                details.get().map(|block| {
                     view()
                         .flex_col()
                         .gap(tokens::space(1.0))
@@ -218,54 +318,43 @@ fn connections_card() -> impl IntoElement {
     )
 }
 
-fn profile_chips() -> Option<impl IntoElement> {
-    let instance = db::selected_instance()?;
-    let id = instance.id;
-    let profiles = db::profiles(&id);
-    let id_add = id.clone();
+fn profile_chips(id: String, profiles: Vec<devcore::model::ConnectionProfile>) -> impl IntoElement {
+    let id_add = id;
 
-    Some(
-        view()
-            .flex_row()
-            .items_center()
-            .flex_wrap()
-            .gap(tokens::space(1.5))
-            .child(ui::chip(
-                "Administrator",
-                || db::selected_profile().is_empty(),
-                "profile-admin",
+    view()
+        .flex_row()
+        .items_center()
+        .flex_wrap()
+        .gap(tokens::space(1.5))
+        .child(ui::chip(
+            "Administrator",
+            || db::selected_profile().is_empty(),
+            "profile-admin",
+            false,
+            move || db::select_profile(""),
+        ))
+        .child(profiles.into_iter().map(|profile| {
+            let press = profile.id.clone();
+            let selected_id = profile.id.clone();
+            ui::chip(
+                profile.name.clone(),
+                move || db::selected_profile() == selected_id,
+                format!("profile-{}", profile.id),
                 false,
-                move || db::select_profile(""),
-            ))
-            .child(profiles.into_iter().map(|profile| {
-                let press = profile.id.clone();
-                let selected_id = profile.id.clone();
-                ui::chip(
-                    profile.name.clone(),
-                    move || db::selected_profile() == selected_id,
-                    format!("profile-{}", profile.id),
-                    false,
-                    move || db::select_profile(&press),
-                )
-                .into_element()
-            }))
-            .child(ui::chip(
-                "Add profile",
-                || db::selected_profile() == "new",
-                "profile-new",
-                false,
-                move || db::add_profile(&id_add),
-            )),
-    )
+                move || db::select_profile(&press),
+            )
+            .into_element()
+        }))
+        .child(ui::chip(
+            "Add profile",
+            || db::selected_profile() == "new",
+            "profile-new",
+            false,
+            move || db::add_profile(&id_add),
+        ))
 }
 
-fn connection_actions() -> Option<impl IntoElement> {
-    let instance = db::selected_instance()?;
-    let selected = db::selected_profile();
-    let kind = instance.kind;
-    let id = instance.id;
-    let can_copy = selected != "new";
-    let admin = selected.is_empty();
+fn connection_actions(id: String, kind: String, can_copy: bool, admin: bool) -> impl IntoElement {
     let jdbc = kind == "postgresql" || kind == "mysql";
     let cli = kind != "mongodb";
 
@@ -279,70 +368,68 @@ fn connection_actions() -> Option<impl IntoElement> {
 
     let copy_disabled = move || db::operations_busy() || !can_copy || db::profile_dirty();
 
-    Some(
-        view()
-            .flex_row()
-            .items_center()
-            .flex_wrap()
-            .gap(tokens::space(1.5))
-            .child(ui::action_button(
-                "Copy connection URI",
+    view()
+        .flex_row()
+        .items_center()
+        .flex_wrap()
+        .gap(tokens::space(1.5))
+        .child(ui::action_button(
+            "Copy connection URI",
+            Tone::Default,
+            "connection-uri-copy",
+            copy_disabled,
+            move || db::copy_uri(&id_uri),
+        ))
+        .child(ui::action_button(
+            "Copy .env",
+            Tone::Default,
+            "connection-env-copy",
+            copy_disabled,
+            move || db::copy_env(&id_env),
+        ))
+        .child(jdbc.then(|| {
+            ui::action_button(
+                "Copy JDBC URL",
                 Tone::Default,
-                "connection-uri-copy",
+                "connection-jdbc-copy",
                 copy_disabled,
-                move || db::copy_uri(&id_uri),
-            ))
-            .child(ui::action_button(
-                "Copy .env",
+                move || db::copy_jdbc(&id_jdbc),
+            )
+        }))
+        .child(admin.then(|| {
+            ui::action_button(
+                "Copy database password",
                 Tone::Default,
-                "connection-env-copy",
-                copy_disabled,
-                move || db::copy_env(&id_env),
-            ))
-            .child(jdbc.then(|| {
-                ui::action_button(
-                    "Copy JDBC URL",
-                    Tone::Default,
-                    "connection-jdbc-copy",
-                    copy_disabled,
-                    move || db::copy_jdbc(&id_jdbc),
-                )
-            }))
-            .child(admin.then(|| {
-                ui::action_button(
-                    "Copy database password",
-                    Tone::Default,
-                    "connection-password-copy",
-                    db::operations_busy,
-                    move || db::copy_password(&id_password),
-                )
-            }))
-            .child(ui::action_button(
-                "Open in client",
+                "connection-password-copy",
+                db::operations_busy,
+                move || db::copy_password(&id_password),
+            )
+        }))
+        .child(ui::action_button(
+            "Open in client",
+            Tone::Default,
+            "connection-client",
+            copy_disabled,
+            move || db::open_client(&id_client),
+        ))
+        .child(cli.then(|| {
+            ui::action_button(
+                "Open CLI in Terminal",
                 Tone::Default,
-                "connection-client",
+                "connection-cli",
                 copy_disabled,
-                move || db::open_client(&id_client),
-            ))
-            .child(cli.then(|| {
-                ui::action_button(
-                    "Open CLI in Terminal",
-                    Tone::Default,
-                    "connection-cli",
-                    copy_disabled,
-                    move || db::open_cli(&id_cli),
-                )
-            }))
-            .child(admin.then(|| {
-                ui::action_button(
-                    "Details",
-                    Tone::Default,
-                    "connection-details",
-                    db::operations_busy,
-                    move || db::show_connection_details(&id_details),
-                )
-            })),
-    )
+                move || db::open_cli(&id_cli),
+            )
+        }))
+        .child(admin.then(|| {
+            ui::action_button(
+                "Details",
+                Tone::Default,
+                "connection-details",
+                db::operations_busy,
+                move || db::show_connection_details(&id_details),
+            )
+        }))
 }
 
 fn pending_switch_notice() -> impl IntoElement {
@@ -376,7 +463,7 @@ fn pending_switch_notice() -> impl IntoElement {
         )
 }
 
-fn editor_panel(kind: &str, save_id: String, delete_id: String, is_new: bool) -> impl IntoElement {
+fn editor_panel(kind: &str, save_id: String, delete_id: String) -> impl IntoElement {
     let redis = kind == "redis";
     let mongo = kind == "mongodb";
     view()
@@ -461,16 +548,19 @@ fn editor_panel(kind: &str, save_id: String, delete_id: String, is_new: bool) ->
                     db::operations_busy,
                     move || db::save_profile(&save_id),
                 ))
-                .child(when(!is_new, move || {
-                    let delete_id = delete_id.clone();
-                    ui::action_button(
-                        "Delete connection profile",
-                        Tone::Danger,
-                        "profile-delete",
-                        db::operations_busy,
-                        move || db::delete_profile(&delete_id),
-                    )
-                })),
+                .child(when(
+                    move || db::selected_profile() != "new",
+                    move || {
+                        let delete_id = delete_id.clone();
+                        ui::action_button(
+                            "Delete connection profile",
+                            Tone::Danger,
+                            "profile-delete",
+                            db::operations_busy,
+                            move || db::delete_profile(&delete_id),
+                        )
+                    },
+                )),
         )
 }
 
@@ -556,6 +646,7 @@ fn kv(label: &'static str, value: String) -> impl IntoElement {
                 .flex_1()
                 .min_w(px(0.0))
                 .text_size(px(tokens::TEXT_SMALL))
+                .tabular_nums()
                 .text_color(move || theme().foreground)
                 .selectable(true),
         )
@@ -564,27 +655,25 @@ fn kv(label: &'static str, value: String) -> impl IntoElement {
 // --- Databases and users -----------------------------------------------------
 
 fn databases_card() -> impl IntoElement {
-    dynamic(|| {
-        let title = db::selected_instance()
-            .filter(|instance| instance.kind == "redis")
-            .map(|_| "Database")
-            .unwrap_or("Databases & users");
-        Some(
-            ui::card(
-                title,
-                databases_body()
-                    .map(|body| body.into_element())
-                    .unwrap_or_else(|| empty().into_element()),
-            )
-            .into_element(),
-        )
+    let key = computed(|| db::selected_instance().map(|instance| (instance.id, instance.kind)));
+    dynamic(move || {
+        let Some((id, kind)) = key.get() else {
+            return Some(ui::card("Databases & users", empty()).into_element());
+        };
+        let title = if kind == "redis" {
+            "Database"
+        } else {
+            "Databases & users"
+        };
+        Some(ui::card(title, databases_body(id, kind)).into_element())
     })
 }
 
-fn databases_body() -> Option<impl IntoElement> {
-    let instance = db::selected_instance()?;
-    let id = instance.id;
-    let redis = instance.kind == "redis";
+fn databases_body(id: String, kind: String) -> impl IntoElement {
+    let redis = kind == "redis";
+    let catalog_error = computed(db::catalog_error);
+    let catalog_databases = computed(|| db::catalog().unwrap_or_default().databases);
+    let catalog_users = computed(|| db::catalog().unwrap_or_default().users);
 
     let id_refresh = id.clone();
     let id_refresh_disabled = id.clone();
@@ -594,320 +683,413 @@ fn databases_body() -> Option<impl IntoElement> {
     let id_create_user = id.clone();
     let id_drop_user = id;
 
-    Some(
-        view()
-            .flex_col()
-            .gap(tokens::space(2.5))
-            .child(
+    view()
+        .flex_col()
+        .gap(tokens::space(2.5))
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(2.0))
+                .child(ui::action_button(
+                    "Refresh databases",
+                    Tone::Default,
+                    "db-catalog-refresh",
+                    move || db::operations_busy() || !db::is_running(&id_refresh_disabled),
+                    move || db::refresh_catalog(&id_refresh),
+                ))
+                .child(when(
+                    move || !db::is_running(&id_running),
+                    || {
+                        text("Start the instance to read its databases.")
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().muted_foreground)
+                    },
+                ))
+                .child(when(db::catalog_loading, || {
+                    text("Reading…")
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .text_color(move || theme().muted_foreground)
+                })),
+        )
+        .child(dynamic(move || {
+            catalog_error
+                .get()
+                .map(|message| note(app_icons::warn(), message, true))
+        }))
+        .child(dynamic(move || {
+            let names = catalog_databases.get();
+            (!names.is_empty()).then(|| {
                 view()
                     .flex_row()
                     .items_center()
-                    .gap(tokens::space(2.0))
-                    .child(ui::action_button(
-                        "Refresh databases",
-                        Tone::Default,
-                        "db-catalog-refresh",
-                        move || db::operations_busy() || !db::is_running(&id_refresh_disabled),
-                        move || db::refresh_catalog(&id_refresh),
-                    ))
-                    .child(when(
-                        move || !db::is_running(&id_running),
-                        || {
-                            text("Start the instance to read its databases.")
-                                .text_size(px(tokens::TEXT_CAPTION))
-                                .text_color(move || theme().muted_foreground)
-                        },
-                    ))
-                    .child(when(db::catalog_loading, || {
-                        text("Reading…")
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .text_color(move || theme().muted_foreground)
-                    })),
+                    .flex_wrap()
+                    .gap(tokens::space(1.5))
+                    .child(names.into_iter().map(|database| {
+                        let press = database.clone();
+                        let selected = database.clone();
+                        ui::chip(
+                            database.clone(),
+                            move || db::database_name() == selected,
+                            format!("db-name-{database}"),
+                            false,
+                            move || db::set_database_name(press.clone()),
+                        )
+                        .into_element()
+                    }))
+            })
+        }))
+        .child(if redis {
+            ui::field(
+                "Database number (0–15)",
+                ui::text_field(
+                    "db-database-name",
+                    "0",
+                    db::database_name,
+                    db::set_database_name,
+                ),
             )
-            .child(dynamic(move || {
-                db::catalog_error().map(|message| note(app_icons::warn(), message, true))
-            }))
-            .child(dynamic(|| {
-                let names = db::catalog().unwrap_or_default().databases;
-                (!names.is_empty()).then(|| {
+            .into_element()
+        } else {
+            ui::field(
+                "Database name",
+                ui::text_field(
+                    "db-database-name",
+                    "app",
+                    db::database_name,
+                    db::set_database_name,
+                ),
+            )
+            .into_element()
+        })
+        .child(if redis {
+            view().into_element()
+        } else {
+            view()
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(1.5))
+                .child(ui::action_button(
+                    "Create database",
+                    Tone::Default,
+                    "db-create-database",
+                    db::operations_busy,
+                    move || db::create_database(&id_create),
+                ))
+                .child(ui::action_button(
+                    "Drop database",
+                    Tone::Danger,
+                    "db-drop-database",
+                    || db::operations_busy() || is_protected_database(&db::database_name()),
+                    move || db::request_drop_database(&id_drop),
+                ))
+                .into_element()
+        })
+        .child(when(!redis, ui::hairline))
+        .child(when(!redis, || {
+            text("User")
+                .text_size(px(tokens::TEXT_CAPTION))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(move || theme().muted_foreground)
+        }))
+        .child(when(!redis, move || {
+            dynamic(move || {
+                let users = catalog_users.get();
+                (!users.is_empty()).then(|| {
                     view()
                         .flex_row()
                         .items_center()
                         .flex_wrap()
                         .gap(tokens::space(1.5))
-                        .child(names.into_iter().map(|database| {
-                            let press = database.clone();
-                            let selected = database.clone();
+                        .child(users.into_iter().map(|entry| {
+                            let press = entry.clone();
+                            let selected = entry.clone();
                             ui::chip(
-                                database.clone(),
-                                move || db::database_name() == selected,
-                                format!("db-name-{database}"),
+                                entry.clone(),
+                                move || db::database_user() == selected,
+                                format!("db-user-{entry}"),
                                 false,
-                                move || db::set_database_name(press.clone()),
+                                move || {
+                                    let (user, database) = press
+                                        .split_once('@')
+                                        .map(|(user, db)| (user.to_string(), Some(db.to_string())))
+                                        .unwrap_or((press.clone(), None));
+                                    db::set_database_user(user);
+                                    if let Some(database) = database
+                                        && !database.is_empty()
+                                    {
+                                        db::set_database_name(database);
+                                    }
+                                },
                             )
                             .into_element()
                         }))
                 })
-            }))
-            .child(if redis {
-                ui::field(
-                    "Database number (0–15)",
-                    ui::text_field(
-                        "db-database-name",
-                        "0",
-                        db::database_name,
-                        db::set_database_name,
-                    ),
-                )
-                .into_element()
-            } else {
-                ui::field(
-                    "Database name",
-                    ui::text_field(
-                        "db-database-name",
-                        "app",
-                        db::database_name,
-                        db::set_database_name,
-                    ),
-                )
-                .into_element()
             })
-            .child(if redis {
-                view().into_element()
-            } else {
-                view()
-                    .flex_row()
-                    .items_center()
-                    .gap(tokens::space(1.5))
-                    .child(ui::action_button(
-                        "Create database",
-                        Tone::Default,
-                        "db-create-database",
-                        db::operations_busy,
-                        move || db::create_database(&id_create),
-                    ))
-                    .child(ui::action_button(
-                        "Drop database",
-                        Tone::Danger,
-                        "db-drop-database",
-                        || db::operations_busy() || is_protected_database(&db::database_name()),
-                        move || db::request_drop_database(&id_drop),
-                    ))
-                    .into_element()
-            })
-            .child(when(!redis, ui::hairline))
-            .child(when(!redis, || {
-                text("User")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(move || theme().muted_foreground)
-            }))
-            .child(when(!redis, || {
-                dynamic(|| {
-                    let users = db::catalog().unwrap_or_default().users;
-                    (!users.is_empty()).then(|| {
-                        view()
-                            .flex_row()
-                            .items_center()
-                            .flex_wrap()
-                            .gap(tokens::space(1.5))
-                            .child(users.into_iter().map(|entry| {
-                                let press = entry.clone();
-                                let selected = entry.clone();
-                                ui::chip(
-                                    entry.clone(),
-                                    move || db::database_user() == selected,
-                                    format!("db-user-{entry}"),
-                                    false,
-                                    move || {
-                                        let (user, database) = press
-                                            .split_once('@')
-                                            .map(|(user, db)| {
-                                                (user.to_string(), Some(db.to_string()))
-                                            })
-                                            .unwrap_or((press.clone(), None));
-                                        db::set_database_user(user);
-                                        if let Some(database) = database
-                                            && !database.is_empty()
-                                        {
-                                            db::set_database_name(database);
-                                        }
-                                    },
-                                )
-                                .into_element()
-                            }))
-                    })
-                })
-            }))
-            .child(when(!redis, || {
-                view()
-                    .flex_row()
-                    .gap(tokens::space(3.0))
-                    .flex_wrap()
-                    .child(view().flex_1().min_w(px(160.0)).child(ui::field(
-                        "Database user",
-                        ui::text_field(
-                            "db-database-user",
-                            "app_user",
-                            db::database_user,
-                            db::set_database_user,
-                        ),
-                    )))
-                    .child(view().flex_1().min_w(px(160.0)).child(ui::field(
-                        "New user password",
-                        ui::text_field(
-                            "db-database-password",
-                            "",
-                            db::database_password,
-                            db::set_database_password,
-                        ),
-                    )))
-            }))
-            .child(when(!redis, move || {
-                let id_create_user = id_create_user.clone();
-                let id_drop_user = id_drop_user.clone();
-                view()
-                    .flex_row()
-                    .items_center()
-                    .gap(tokens::space(1.5))
-                    .child(ui::action_button(
-                        "Create database user",
-                        Tone::Default,
-                        "db-create-user",
-                        db::operations_busy,
-                        move || db::create_database_user(&id_create_user),
-                    ))
-                    .child(ui::action_button(
-                        "Drop user",
-                        Tone::Danger,
-                        "db-drop-user",
-                        || {
-                            db::operations_busy()
-                                || is_protected_database_user(&db::database_user())
-                        },
-                        move || db::request_drop_user(&id_drop_user),
-                    ))
-            })),
-    )
+        }))
+        .child(when(!redis, || {
+            view()
+                .flex_row()
+                .gap(tokens::space(3.0))
+                .flex_wrap()
+                .child(view().flex_1().min_w(px(160.0)).child(ui::field(
+                    "Database user",
+                    ui::text_field(
+                        "db-database-user",
+                        "app_user",
+                        db::database_user,
+                        db::set_database_user,
+                    ),
+                )))
+                .child(view().flex_1().min_w(px(160.0)).child(ui::field(
+                    "New user password",
+                    ui::text_field(
+                        "db-database-password",
+                        "",
+                        db::database_password,
+                        db::set_database_password,
+                    ),
+                )))
+        }))
+        .child(when(!redis, move || {
+            let id_create_user = id_create_user.clone();
+            let id_drop_user = id_drop_user.clone();
+            view()
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(1.5))
+                .child(ui::action_button(
+                    "Create database user",
+                    Tone::Default,
+                    "db-create-user",
+                    db::operations_busy,
+                    move || db::create_database_user(&id_create_user),
+                ))
+                .child(ui::action_button(
+                    "Drop user",
+                    Tone::Danger,
+                    "db-drop-user",
+                    || db::operations_busy() || is_protected_database_user(&db::database_user()),
+                    move || db::request_drop_user(&id_drop_user),
+                ))
+        }))
 }
 
 // --- Backups -----------------------------------------------------------------
 
 fn backups_card() -> impl IntoElement {
+    let key = computed(|| db::selected_instance().map(|instance| (instance.id, instance.kind)));
     ui::card(
         "Backups",
-        dynamic(|| {
+        dynamic(move || {
             Some(
-                backups_body()
-                    .map(|body| body.into_element())
+                key.get()
+                    .map(|(id, kind)| backups_body(id, kind).into_element())
                     .unwrap_or_else(|| empty().into_element()),
             )
         }),
     )
 }
 
-fn backups_body() -> Option<impl IntoElement> {
-    let instance = db::selected_instance()?;
-    let id = instance.id;
-    let redis = instance.kind == "redis";
+fn backups_body(id: String, kind: String) -> impl IntoElement {
+    let redis = kind == "redis";
     let id_backup = id.clone();
     let id_rows = id.clone();
+    let catalog_databases = computed(|| db::catalog().unwrap_or_default().databases);
+    let backups_error = computed(db::backups_error);
+    let drag_over = signal(false);
 
-    Some(
-        view()
-            .flex_col()
-            .gap(tokens::space(2.5))
-            .child(dynamic(|| {
-                let names = db::catalog().unwrap_or_default().databases;
-                (!names.is_empty()).then(|| {
+    view()
+        .flex_col()
+        .gap(tokens::space(2.5))
+        .child(dynamic(move || {
+            let names = catalog_databases.get();
+            (!names.is_empty()).then(|| {
+                view()
+                    .flex_col()
+                    .gap(tokens::space(1.0))
+                    .child(
+                        text("Target database")
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().muted_foreground),
+                    )
+                    .child(
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .flex_wrap()
+                            .gap(tokens::space(1.5))
+                            .child(names.into_iter().map(|name| {
+                                let press = name.clone();
+                                let selected = name.clone();
+                                ui::chip(
+                                    name.clone(),
+                                    move || db::database_name() == selected,
+                                    format!("backup-target-{name}"),
+                                    false,
+                                    move || db::set_database_name(press.clone()),
+                                )
+                                .into_element()
+                            })),
+                    )
+            })
+        }))
+        .child(ui::action_button(
+            "Back up database",
+            Tone::Default,
+            "db-backup",
+            db::operations_busy,
+            move || db::backup(&id_backup),
+        ))
+        .child(dynamic(move || {
+            backups_error
+                .get()
+                .map(|message| note(app_icons::warn(), message, true))
+        }))
+        .child(dynamic(move || Some(backups_list(&id_rows).into_element())))
+        .child(ui::hairline())
+        .child(
+            view()
+                .test_id("db-restore-dropzone")
+                .flex_col()
+                .gap(tokens::space(2.5))
+                .p(tokens::space(3.0))
+                .rounded(move || theme().radius)
+                .bg(move || {
+                    if drag_over.get() {
+                        theme().primary.opacity(0.08)
+                    } else {
+                        tokens::inset()
+                    }
+                })
+                .border_1()
+                .border_color(move || {
+                    if drag_over.get() {
+                        theme().ring
+                    } else {
+                        tokens::hairline()
+                    }
+                })
+                .on_file_drag_enter(move |_: &FileDragEvent| {
+                    drag_over.set(true);
+                })
+                .on_file_drag_leave(move || {
+                    drag_over.set(false);
+                })
+                .on_file_drop(move |event: &FileDropEvent| {
+                    drag_over.set(false);
+                    if let Some(first) = event.uris.first() {
+                        let path = decode_file_uri(first);
+                        if !path.is_empty() {
+                            db::set_backup_path(path);
+                        }
+                    }
+                })
+                .child(
                     view()
-                        .flex_col()
-                        .gap(tokens::space(1.0))
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .gap(tokens::space(2.0))
                         .child(
-                            text("Target database")
+                            text("Restore")
                                 .text_size(px(tokens::TEXT_CAPTION))
+                                .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(move || theme().muted_foreground),
                         )
                         .child(
-                            view()
-                                .flex_row()
-                                .items_center()
-                                .flex_wrap()
-                                .gap(tokens::space(1.5))
-                                .child(names.into_iter().map(|name| {
-                                    let press = name.clone();
-                                    let selected = name.clone();
-                                    ui::chip(
-                                        name.clone(),
-                                        move || db::database_name() == selected,
-                                        format!("backup-target-{name}"),
-                                        false,
-                                        move || db::set_database_name(press.clone()),
-                                    )
-                                    .into_element()
-                                })),
-                        )
-                })
-            }))
-            .child(ui::action_button(
-                "Back up database",
-                Tone::Default,
-                "db-backup",
-                db::operations_busy,
-                move || db::backup(&id_backup),
-            ))
-            .child(dynamic(move || {
-                db::backups_error().map(|message| note(app_icons::warn(), message, true))
-            }))
-            .child(dynamic(move || Some(backups_list(&id_rows).into_element())))
-            .child(ui::hairline())
-            .child(
-                text("Restore")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(move || theme().muted_foreground),
-            )
-            .child(ui::field(
-                "Backup file",
-                view()
-                    .flex_row()
-                    .items_center()
-                    .gap(tokens::space(1.5))
-                    .child(view().flex_1().min_w(px(0.0)).child(ui::text_field(
-                        "db-backup-path",
-                        "Select a backup file",
-                        db::backup_path,
-                        db::set_backup_path,
-                    )))
-                    .child(ui::action_button(
-                        "Choose backup file…",
-                        Tone::Default,
-                        "db-choose-backup",
-                        false,
-                        db::choose_backup_file,
-                    )),
-            ))
-            .child(ui::field(
-                if redis {
-                    "Restore Redis database (0–15)"
-                } else {
-                    "Restore target database"
-                },
-                ui::text_field(
-                    "db-restore-target",
-                    if redis { "1" } else { "app_restored" },
-                    db::restore_database,
-                    db::set_restore_database,
-                ),
-            ))
-            .child(ui::action_button(
-                "Restore into new database",
-                Tone::Default,
-                "db-restore",
-                db::operations_busy,
-                move || db::request_restore(&id),
-            )),
-    )
+                            text(move || {
+                                if drag_over.get() {
+                                    "Drop backup file to restore"
+                                } else {
+                                    "Drop a backup file here"
+                                }
+                            })
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || {
+                                if drag_over.get() {
+                                    theme().foreground
+                                } else {
+                                    theme().muted_foreground
+                                }
+                            }),
+                        ),
+                )
+                .child(ui::field(
+                    "Backup file",
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(1.5))
+                        .child(view().flex_1().min_w(px(0.0)).child(ui::text_field(
+                            "db-backup-path",
+                            "Select a backup file",
+                            db::backup_path,
+                            db::set_backup_path,
+                        )))
+                        .child(ui::action_button(
+                            "Choose backup file…",
+                            Tone::Default,
+                            "db-choose-backup",
+                            false,
+                            db::choose_backup_file,
+                        )),
+                ))
+                .child(ui::field(
+                    if redis {
+                        "Restore Redis database (0–15)"
+                    } else {
+                        "Restore target database"
+                    },
+                    ui::text_field(
+                        "db-restore-target",
+                        if redis { "1" } else { "app_restored" },
+                        db::restore_database,
+                        db::set_restore_database,
+                    ),
+                ))
+                .child(ui::action_button(
+                    "Restore into new database",
+                    Tone::Default,
+                    "db-restore",
+                    db::operations_busy,
+                    move || db::request_restore(&id),
+                )),
+        )
+}
+
+/// Decodes a `file://` URI (with percent-encoded bytes) into a local path;
+/// plain filesystem paths pass through unchanged.
+fn decode_file_uri(uri: &str) -> String {
+    let raw = uri
+        .strip_prefix("file://localhost")
+        .or_else(|| uri.strip_prefix("file://"))
+        .unwrap_or(uri);
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(hi), Some(lo)) = (hex_nibble(bytes[i + 1]), hex_nibble(bytes[i + 2]))
+        {
+            out.push((hi << 4) | lo);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| raw.to_string())
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn backups_list(id: &str) -> impl IntoElement {
@@ -959,6 +1141,7 @@ fn backup_row(id: &str, row: BackupFile) -> impl IntoElement {
                 .flex_1()
                 .min_w(px(0.0))
                 .text_size(px(tokens::TEXT_SMALL))
+                .tabular_nums()
                 .text_color(move || theme().muted_foreground)
                 .truncate(),
         )
@@ -988,15 +1171,19 @@ fn backup_row(id: &str, row: BackupFile) -> impl IntoElement {
 // --- Remove ------------------------------------------------------------------
 
 fn remove_card() -> impl IntoElement {
-    ui::danger_card("Remove", dynamic(|| Some(remove_body().into_element())))
+    let key = computed(|| {
+        db::selected_instance().map(|instance| (instance.id, !instance.data_directory.is_empty()))
+    });
+    ui::danger_card(
+        "Remove",
+        dynamic(move || {
+            let (id, external) = key.get().unwrap_or_default();
+            Some(remove_body(id, external).into_element())
+        }),
+    )
 }
 
-fn remove_body() -> impl IntoElement {
-    let id = db::selected_id().unwrap_or_default();
-    let instance = db::selected_instance();
-    let external = instance
-        .as_ref()
-        .is_some_and(|instance| !instance.data_directory.is_empty());
+fn remove_body(id: String, external: bool) -> impl IntoElement {
     let remove_id = id.clone();
     let preview_id = id;
     view()

@@ -20,7 +20,7 @@ use devcore::{
     },
     model::{ConnectionProfile, Instance, Package},
 };
-use nsh_core::prelude::*;
+use nsh_core::{Checked, prelude::*};
 use nsh_engine::{EngineConfig, Root};
 use nsh_testing::{DialogAnswer, Headless};
 
@@ -963,4 +963,325 @@ fn unfinished_lists_render_and_resolve() {
     app.wait_for("Pending data deletions").unwrap();
     app.wait_for("Original data path deletion").unwrap();
     app.wait_for("Restore original data deletion").unwrap();
+}
+
+#[test]
+fn detail_inputs_keep_their_node_ids_across_keystrokes_and_notices() {
+    let mut fixture = fixture_with_packages();
+    fixture
+        .instances
+        .push(instance("app", "postgresql", 5432, ""));
+    fixture
+        .statuses
+        .insert("app".to_string(), "Running".to_string());
+    let fake = FakeDatabases::new(fixture, Behaviour::Normal);
+    let (_turn, mut app) = start(fake);
+
+    app.wait_for("id:db-instance-app").unwrap();
+    app.press("id:db-instance-app").unwrap();
+    app.wait_for("id:profile-new").unwrap();
+    app.press("id:profile-new").unwrap();
+    app.wait_for("id:profile-name").unwrap();
+    app.wait_for("id:db-database-name").unwrap();
+    app.wait_for("id:db-database-user").unwrap();
+    app.wait_for("id:db-database-password").unwrap();
+    app.wait_for("id:db-backup-path").unwrap();
+    app.wait_for("id:db-restore-target").unwrap();
+
+    let profile_name_id = app.screen().id("id:profile-name").unwrap();
+    let profile_db_id = app.screen().id("id:profile-database").unwrap();
+    let db_name_id = app.screen().id("id:db-database-name").unwrap();
+    let db_user_id = app.screen().id("id:db-database-user").unwrap();
+    let db_password_id = app.screen().id("id:db-database-password").unwrap();
+    let backup_path_id = app.screen().id("id:db-backup-path").unwrap();
+    let restore_target_id = app.screen().id("id:db-restore-target").unwrap();
+
+    // Keystrokes across every detail-pane input must never tear down or recreate the input node.
+    app.type_text("id:profile-name", "Web").unwrap();
+    assert_eq!(app.screen().id("id:profile-name").unwrap(), profile_name_id);
+    app.type_text("id:profile-name", " App").unwrap();
+    assert_eq!(app.screen().id("id:profile-name").unwrap(), profile_name_id);
+
+    app.type_text("id:profile-database", "analytics").unwrap();
+    assert_eq!(
+        app.screen().id("id:profile-database").unwrap(),
+        profile_db_id
+    );
+
+    app.type_text("id:db-database-name", "billing").unwrap();
+    assert_eq!(app.screen().id("id:db-database-name").unwrap(), db_name_id);
+
+    app.type_text("id:db-database-user", "billing_user")
+        .unwrap();
+    assert_eq!(app.screen().id("id:db-database-user").unwrap(), db_user_id);
+
+    app.type_text("id:db-database-password", "pw123").unwrap();
+    assert_eq!(
+        app.screen().id("id:db-database-password").unwrap(),
+        db_password_id
+    );
+
+    app.type_text("id:db-backup-path", "/tmp/snap.dump")
+        .unwrap();
+    assert_eq!(
+        app.screen().id("id:db-backup-path").unwrap(),
+        backup_path_id
+    );
+
+    app.type_text("id:db-restore-target", "billing_copy")
+        .unwrap();
+    assert_eq!(
+        app.screen().id("id:db-restore-target").unwrap(),
+        restore_target_id
+    );
+
+    // Saving a profile emits a notice and triggers refresh(); every detail input stays mounted.
+    app.press("id:profile-save").unwrap();
+    app.wait_for("Connection profile saved").unwrap();
+    app.press("id:db-refresh").unwrap();
+    app.wait(Duration::from_millis(200)).unwrap();
+
+    assert_eq!(app.screen().id("id:profile-name").unwrap(), profile_name_id);
+    assert_eq!(
+        app.screen().id("id:profile-database").unwrap(),
+        profile_db_id
+    );
+    assert_eq!(app.screen().id("id:db-database-name").unwrap(), db_name_id);
+    assert_eq!(app.screen().id("id:db-database-user").unwrap(), db_user_id);
+    assert_eq!(
+        app.screen().id("id:db-database-password").unwrap(),
+        db_password_id
+    );
+    assert_eq!(
+        app.screen().id("id:db-backup-path").unwrap(),
+        backup_path_id
+    );
+    assert_eq!(
+        app.screen().id("id:db-restore-target").unwrap(),
+        restore_target_id
+    );
+}
+
+#[test]
+fn rail_nav_rows_reactively_update_selection_and_unfinished_counts() {
+    let mut fixture = fixture_with_packages();
+    fixture
+        .instances
+        .push(instance("app", "postgresql", 5432, ""));
+    fixture
+        .statuses
+        .insert("app".to_string(), "Stopped".to_string());
+    fixture.work.push(DatabaseWorkInfo {
+        id: "work-1".to_string(),
+        instance_id: "app".to_string(),
+        kind: "backup".to_string(),
+        database: "app".to_string(),
+        status: "Interrupted".to_string(),
+        detail: "Interrupted backup".to_string(),
+        output: String::new(),
+        revision: "rev-1".to_string(),
+        caller_active: false,
+        running: false,
+        can_resolve: true,
+    });
+    for i in 1..=2 {
+        fixture.initializations.push(InstanceInitializationInfo {
+            id: format!("init-{i}"),
+            instance_id: format!("prep-{i}"),
+            kind: "postgresql".to_string(),
+            package: "postgresql@17.11-arm64".to_string(),
+            port: 55430 + i,
+            path: PathBuf::from(format!("/tmp/devbase-tests/init-{i}")),
+            status: "Interrupted".to_string(),
+            detail: "Interrupted initialization".to_string(),
+            revision: format!("rev-init-{i}"),
+            busy: false,
+            can_resolve: true,
+        });
+    }
+    fixture.deletions.push(InstanceDeletionInfo {
+        tree_digest: String::new(),
+        id: "deletion-1".to_string(),
+        instance_id: "app".to_string(),
+        kind: "postgresql".to_string(),
+        original_path: "/tmp/devbase-tests/instances/app".to_string(),
+        staged_path: String::new(),
+        status: "Not moved".to_string(),
+        detail: "Removal did not commit".to_string(),
+        revision: "rev-del-1".to_string(),
+        entries: 0,
+        bytes: 0,
+        can_erase: false,
+        can_restore: true,
+        busy: false,
+    });
+
+    let fake = FakeDatabases::new(fixture, Behaviour::Normal);
+    let (_turn, mut app) = start(fake);
+
+    // Initial selection is "New instance", and unfinished counts populate live after db::load().
+    assert!(app.screen().selected("id:db-new").unwrap());
+    assert!(!app.screen().selected("id:db-work").unwrap());
+    assert!(!app.screen().selected("id:db-initializations").unwrap());
+    assert!(!app.screen().selected("id:db-deletions").unwrap());
+
+    app.wait_for("id:db-work >> text:1").unwrap();
+    app.wait_for("id:db-initializations >> text:2").unwrap();
+    app.wait_for("id:db-deletions >> text:1").unwrap();
+
+    // Switching to Database tasks highlights it immediately; resolving updates the count to 0.
+    app.press("id:db-work").unwrap();
+    app.wait_for("id:db-work-page").unwrap();
+    assert!(app.screen().selected("id:db-work").unwrap());
+    assert!(!app.screen().selected("id:db-new").unwrap());
+
+    app.press("id:work-resolve-work-1").unwrap();
+    app.wait_for("id:db-work >> text:0").unwrap();
+
+    // Switching across Initializations, Pending deletions, and back to New instance tracks selection.
+    app.press("id:db-initializations").unwrap();
+    app.wait_for("id:db-initializations-page").unwrap();
+    assert!(app.screen().selected("id:db-initializations").unwrap());
+    assert!(!app.screen().selected("id:db-work").unwrap());
+
+    app.press("id:db-deletions").unwrap();
+    app.wait_for("id:db-pending-deletions").unwrap();
+    assert!(app.screen().selected("id:db-deletions").unwrap());
+    assert!(!app.screen().selected("id:db-initializations").unwrap());
+
+    app.press("id:db-new").unwrap();
+    app.wait_for("id:db-create-form").unwrap();
+    assert!(app.screen().selected("id:db-new").unwrap());
+    assert!(!app.screen().selected("id:db-deletions").unwrap());
+}
+
+#[test]
+fn empty_detail_pane_shows_new_instance_cta_when_no_instance_is_selected() {
+    let fake = with_instance(Behaviour::Normal);
+    let (_turn, mut app) = start(fake.clone());
+
+    app.wait_for("id:db-instance-app").unwrap();
+    app.press("id:db-instance-app").unwrap();
+    app.wait_for("127.0.0.1:5432").unwrap();
+
+    // Simulate the selected instance being removed outside the UI, then refresh.
+    {
+        let mut fixture = fake
+            .fixture
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        fixture.instances.clear();
+        fixture.statuses.clear();
+    }
+    app.press("id:db-refresh").unwrap();
+
+    app.wait_for("id:db-empty-state").unwrap();
+    app.wait_for("No instance selected").unwrap();
+    app.wait_for("id:db-empty-new-instance").unwrap();
+
+    app.press("id:db-empty-new-instance").unwrap();
+    app.wait_for("id:db-create-form").unwrap();
+    assert!(app.screen().selected("id:db-new").unwrap());
+}
+
+#[test]
+fn redis_persistence_uses_native_checkbox_and_toggles_cleanly() {
+    let fake = FakeDatabases::new(fixture_with_packages(), Behaviour::Normal);
+    let (_turn, mut app) = start(fake.clone());
+
+    app.press("id:db-engine-redis").unwrap();
+    app.wait_for("id:db-persistent").unwrap();
+    app.wait_for("Persist database contents").unwrap();
+
+    // Rendered as an accessible checkbox, checked by default.
+    assert!(app.screen().matches("role:checkbox").unwrap());
+    assert_eq!(
+        app.screen()
+            .accessibility_state("id:db-persistent")
+            .unwrap()
+            .checked,
+        Some(Checked::True)
+    );
+
+    // Clicking toggles off and back on cleanly.
+    app.press("id:db-persistent").unwrap();
+    assert_eq!(
+        app.screen()
+            .accessibility_state("id:db-persistent")
+            .unwrap()
+            .checked,
+        Some(Checked::False)
+    );
+
+    app.press("id:db-persistent").unwrap();
+    assert_eq!(
+        app.screen()
+            .accessibility_state("id:db-persistent")
+            .unwrap()
+            .checked,
+        Some(Checked::True)
+    );
+
+    // Toggle off and create to verify the form submits persistent = false.
+    app.press("id:db-persistent").unwrap();
+    app.type_text("id:db-name", "ephemeral-cache").unwrap();
+    app.press("id:db-create").unwrap();
+    app.wait_for("Created ephemeral-cache").unwrap();
+    let persisted = fake
+        .fixture
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .instances
+        .iter()
+        .find(|i| i.id == "ephemeral-cache")
+        .map(|i| i.persistent);
+    assert_eq!(persisted, Some(false));
+}
+
+#[test]
+fn restore_dropzone_sets_backup_path_and_rail_context_menu_lists_actions() {
+    let fake = with_instance(Behaviour::Normal);
+    let (_turn, mut app) = start(fake);
+    app.set_environment("macos", |env| {
+        env.os = nsh_core::platform::Os::MacOs;
+    })
+    .unwrap();
+
+    app.wait_for("id:db-instance-app").unwrap();
+    app.press("id:db-instance-app").unwrap();
+    app.wait_for("id:db-restore-dropzone").unwrap();
+
+    // Drag-and-drop a percent-encoded file:// URL onto the Restore card.
+    app.drop_files(
+        "id:db-restore-dropzone",
+        vec!["file:///tmp/devbase-tests/my%20backup.dump".to_string()],
+    )
+    .unwrap();
+    assert_eq!(
+        app.screen().input_text("id:db-backup-path").unwrap(),
+        Some("/tmp/devbase-tests/my backup.dump")
+    );
+
+    // Right-clicking a rail instance row opens the native context menu with lifecycle/utility actions.
+    app.right_click("id:db-instance-app").unwrap();
+    let labels: Vec<String> = app
+        .menu()
+        .expect("context menu should open on right click")
+        .into_iter()
+        .map(|entry| entry.label)
+        .collect();
+    for expected in [
+        "Start",
+        "Stop",
+        "Restart",
+        "Copy URI",
+        "Open CLI in Terminal",
+        "View Logs",
+        "Remove…",
+    ] {
+        assert!(
+            labels.iter().any(|label| label == expected),
+            "expected context menu item `{expected}`, got {labels:?}"
+        );
+    }
 }

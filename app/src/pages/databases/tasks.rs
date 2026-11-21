@@ -141,6 +141,7 @@ fn work_list() -> impl IntoElement {
         .flex_col()
         .gap(tokens::space(4.0))
         .px(tokens::space(5.0))
+        .pt(tokens::space(4.0))
         .pb(tokens::space(5.0))
         .child(when(empty, empty_line))
         .child(rows.into_iter().map(work_row))
@@ -249,6 +250,7 @@ fn initializations_list() -> impl IntoElement {
         .flex_col()
         .gap(tokens::space(4.0))
         .px(tokens::space(5.0))
+        .pt(tokens::space(4.0))
         .pb(tokens::space(5.0))
         .child(when(empty, empty_line))
         .child(rows.into_iter().map(initialization_row))
@@ -285,6 +287,7 @@ fn initialization_row(row: InstanceInitializationInfo) -> impl IntoElement {
         .child(
             text(format!("{} · port {port}", rail::instance_title(&kind)))
                 .text_size(px(tokens::TEXT_SMALL))
+                .tabular_nums()
                 .text_color(move || theme().muted_foreground),
         )
         .child(
@@ -313,13 +316,15 @@ fn heading(
     on_refresh: impl Fn() + 'static,
 ) -> impl IntoElement {
     view()
-        .h(px(60.0))
+        .h(px(52.0))
         .flex_none()
         .flex_row()
         .items_center()
         .gap(tokens::space(2.0))
         .px(tokens::space(5.0))
-        .pt(tokens::space(2.0))
+        .border_b_1()
+        .border_color(tokens::hairline)
+        .window_drag(true)
         .child(
             text(title)
                 .flex_1()

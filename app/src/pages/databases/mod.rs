@@ -1,7 +1,5 @@
 //! Database instances: the managed engines, their lifecycle, connection
-//! profiles, backups, permanent deletion and the unfinished work lists
-//! (Phase 2), ported from `view_databases.go`, `view_instance_deletion.go`,
-//! `view_database_work.go` and `view_database_connections.go`.
+//! profiles, backups, permanent deletion and the unfinished work lists.
 //!
 //! The page reads [`crate::store::databases`] and never calls devcore itself:
 //! every read, creation, lifecycle action, backup, restore or deletion is a

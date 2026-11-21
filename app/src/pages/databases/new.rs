@@ -31,6 +31,7 @@ pub(crate) fn new_pane() -> impl IntoElement {
                     .flex_col()
                     .gap(tokens::space(4.0))
                     .px(tokens::space(5.0))
+                    .pt(tokens::space(4.0))
                     .pb(tokens::space(5.0))
                     .child(tasks_section())
                     .child(instance_card())
@@ -44,13 +45,15 @@ fn header() -> impl IntoElement {
     let kind = db::draft_kind();
     let title = rail::instance_title(kind);
     view()
-        .h(px(60.0))
+        .h(px(52.0))
         .flex_none()
         .flex_row()
         .items_center()
         .gap(tokens::space(2.0))
         .px(tokens::space(5.0))
-        .pt(tokens::space(2.0))
+        .border_b_1()
+        .border_color(tokens::hairline)
+        .window_drag(true)
         .child(
             icons::engine(kind)
                 .size(px(16.0))
@@ -138,7 +141,7 @@ fn instance_body() -> impl IntoElement {
                 ),
         )
         .child(port_preview())
-        .child(dynamic(persistence_row))
+        .child(when(move || db::draft_kind() == "redis", persistence_row))
 }
 
 fn install_warning() -> impl IntoElement {
@@ -167,45 +170,49 @@ fn install_warning() -> impl IntoElement {
     }))
 }
 
-fn persistence_row() -> Option<impl IntoElement> {
-    if db::draft_kind() != "redis" {
-        return None;
-    }
-    Some(
-        view()
-            .flex_row()
-            .items_center()
-            .gap(tokens::space(1.5))
-            .child(
-                nsh_base::button()
-                    .test_id("db-persistent")
-                    .size(px(16.0))
-                    .flex_none()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(3.0))
-                    .border_1()
-                    .border_color(tokens::hairline)
-                    .bg(move || {
-                        if db::draft_persistent() {
-                            theme().primary
-                        } else {
-                            AdaptiveColor::TRANSPARENT
-                        }
-                    })
-                    .on_press(db::toggle_persistent)
-                    .child(when(db::draft_persistent(), || {
-                        icons::check()
-                            .size(px(10.0))
-                            .text_color(move || theme().primary_foreground)
-                    })),
-            )
-            .child(
-                text("Persist database contents")
-                    .text_size(px(tokens::TEXT_SMALL))
-                    .text_color(move || theme().foreground),
-            ),
-    )
+fn persistence_row() -> impl IntoElement {
+    nsh_base::checkbox()
+        .test_id("db-persistent")
+        .flex_row()
+        .items_center()
+        .gap(tokens::space(2.0))
+        .rounded(move || theme().radius)
+        .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
+        .checked(db::draft_persistent)
+        .on_change(|next: &bool| db::set_draft_persistent(*next))
+        .indicator_style(|style| {
+            style
+                .size(px(16.0))
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .rounded(px(4.0))
+                .border_1()
+                .border_color(move || {
+                    if db::draft_persistent() {
+                        theme().primary
+                    } else {
+                        tokens::hairline()
+                    }
+                })
+                .bg(move || {
+                    if db::draft_persistent() {
+                        theme().primary
+                    } else {
+                        tokens::control()
+                    }
+                })
+        })
+        .indicator(view().child(when(db::draft_persistent, || {
+            icons::check()
+                .size(px(10.0))
+                .text_color(move || theme().primary_foreground)
+        })))
+        .child(
+            text("Persist database contents")
+                .text_size(px(tokens::TEXT_SMALL))
+                .text_color(move || theme().foreground),
+        )
 }
 
 fn engine_row() -> impl IntoElement {
@@ -311,6 +318,7 @@ fn port_preview() -> impl IntoElement {
                                 text(label)
                                     .text_size(px(tokens::TEXT_SMALL))
                                     .font_weight(FontWeight::MEDIUM)
+                                    .tabular_nums()
                                     .text_color(move || theme().foreground),
                             )
                             .child(ui::tag(inspection.status.clone(), tone)),
@@ -322,6 +330,7 @@ fn port_preview() -> impl IntoElement {
                         ))
                         .font_family("monospace")
                         .text_size(px(tokens::TEXT_CAPTION))
+                        .tabular_nums()
                         .text_color(move || theme().muted_foreground)
                         .selectable(true)
                     }))
@@ -333,6 +342,7 @@ fn port_preview() -> impl IntoElement {
                     .child(
                         text(format!("This checks port {port}; it does not reserve it."))
                             .text_size(px(tokens::TEXT_CAPTION))
+                            .tabular_nums()
                             .text_color(move || theme().muted_foreground),
                     )
             })
@@ -363,20 +373,21 @@ fn storage_body() -> impl IntoElement {
                 db::set_draft_data_directory,
             ),
         ))
-        .child(dynamic(|| {
-            Some(
-                view()
-                    .flex_row()
-                    .items_center()
-                    .gap(tokens::space(1.5))
-                    .child(ui::action_button(
-                        "Choose parent folder…",
-                        Tone::Default,
-                        "db-choose-parent",
-                        false,
-                        db::choose_data_parent,
-                    ))
-                    .child(when(!db::draft_data_directory().is_empty(), || {
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(1.5))
+                .child(ui::action_button(
+                    "Choose parent folder…",
+                    Tone::Default,
+                    "db-choose-parent",
+                    false,
+                    db::choose_data_parent,
+                ))
+                .child(when(
+                    move || !db::draft_data_directory().is_empty(),
+                    || {
                         ui::action_button(
                             "Use app storage",
                             Tone::Default,
@@ -384,9 +395,9 @@ fn storage_body() -> impl IntoElement {
                             false,
                             db::use_app_storage,
                         )
-                    })),
-            )
-        }))
+                    },
+                )),
+        )
         .child(
             text("A chosen folder becomes a new subfolder for this instance. External data is retained when the instance is removed.")
                 .text_size(px(tokens::TEXT_CAPTION))

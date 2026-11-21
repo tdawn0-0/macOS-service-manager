@@ -666,41 +666,94 @@ enum PendingSwitch {
     NewInstance,
 }
 
-/// The connection panel's selection and its unsaved draft.
+/// The connection panel's selection (editable fields live in [`DraftSignals`]).
 #[derive(Debug, Clone, Default)]
 struct ProfileState {
     instance_id: String,
     /// `""` is the administrator, `"new"` a profile being added, else an id.
     selected: String,
-    draft: ConnectionProfile,
-    redis_db: String,
     pending: Option<PendingSwitch>,
 }
 
-/// The new-instance form.
-#[derive(Debug, Clone)]
-struct Draft {
-    name: String,
-    kind: &'static str,
-    package: String,
-    port: String,
-    data_directory: String,
-    persistent: bool,
-    /// Whether the port field still follows the suggestions.
-    auto_port: bool,
+/// Per-field draft input signals kept outside [`Workspace`] so typing never
+/// invalidates workspace-level views or tears down focused `input()` nodes.
+#[derive(Clone, Copy)]
+struct DraftSignals {
+    // New-instance form
+    draft_name: Signal<String>,
+    draft_kind: Signal<&'static str>,
+    draft_package: Signal<String>,
+    draft_port: Signal<String>,
+    draft_data_directory: Signal<String>,
+    draft_persistent: Signal<bool>,
+    draft_auto_port: Signal<bool>,
+    // Profile editor
+    profile_name: Signal<String>,
+    profile_database: Signal<String>,
+    profile_user: Signal<String>,
+    profile_mongo_auth_source: Signal<String>,
+    profile_redis_db: Signal<String>,
+    // Catalog / databases & users
+    database_name: Signal<String>,
+    database_user: Signal<String>,
+    database_password: Signal<String>,
+    // Backups & restore
+    backup_path: Signal<String>,
+    restore_database: Signal<String>,
+    // Permanent deletion confirmation
+    confirmation: Signal<String>,
 }
 
-impl Default for Draft {
+impl Default for DraftSignals {
     fn default() -> Self {
-        Draft {
-            name: String::new(),
-            kind: "postgresql",
-            package: String::new(),
-            port: "55432".to_string(),
-            data_directory: String::new(),
-            persistent: true,
-            auto_port: true,
+        DraftSignals {
+            draft_name: signal(String::new()),
+            draft_kind: signal("postgresql"),
+            draft_package: signal(String::new()),
+            draft_port: signal("55432".to_string()),
+            draft_data_directory: signal(String::new()),
+            draft_persistent: signal(true),
+            draft_auto_port: signal(true),
+            profile_name: signal(String::new()),
+            profile_database: signal(String::new()),
+            profile_user: signal(String::new()),
+            profile_mongo_auth_source: signal(String::new()),
+            profile_redis_db: signal("0".to_string()),
+            database_name: signal(String::new()),
+            database_user: signal(String::new()),
+            database_password: signal(String::new()),
+            backup_path: signal(String::new()),
+            restore_database: signal(String::new()),
+            confirmation: signal(String::new()),
         }
+    }
+}
+
+impl DraftSignals {
+    fn reset_new_draft(&self, package: String) {
+        self.draft_name.set(String::new());
+        self.draft_kind.set("postgresql");
+        self.draft_package.set(package);
+        self.draft_port.set("55432".to_string());
+        self.draft_data_directory.set(String::new());
+        self.draft_persistent.set(true);
+        self.draft_auto_port.set(true);
+    }
+
+    fn clear_profile_draft(&self) {
+        self.profile_name.set(String::new());
+        self.profile_database.set(String::new());
+        self.profile_user.set(String::new());
+        self.profile_mongo_auth_source.set(String::new());
+        self.profile_redis_db.set("0".to_string());
+    }
+
+    fn clear_instance_inputs(&self) {
+        self.database_name.set(String::new());
+        self.database_user.set(String::new());
+        self.database_password.set(String::new());
+        self.backup_path.set(String::new());
+        self.restore_database.set(String::new());
     }
 }
 
@@ -720,16 +773,8 @@ struct Workspace {
     tasks: BTreeMap<String, Task>,
     /// Non-task actions in flight, by a key of their own.
     aux_busy: BTreeSet<String>,
-    draft: Draft,
     port: PortState,
     profile: ProfileState,
-    /// The typed instance ID that confirms a permanent deletion.
-    confirmation: String,
-    database_name: String,
-    database_user: String,
-    database_password: String,
-    backup_path: String,
-    restore_database: String,
     connection_details: Option<String>,
     action_error: Option<String>,
     notice: Option<String>,
@@ -738,6 +783,10 @@ struct Workspace {
 
 fn workspace() -> Signal<Workspace> {
     global::<Workspace>()
+}
+
+fn drafts() -> DraftSignals {
+    global::<DraftSignals>().get_untracked()
 }
 
 /// Runs store work outside the view that asked for it: a pane the store
@@ -839,9 +888,26 @@ fn attach_sink() {
 
 pub(crate) fn load() {
     attach_sink();
-    let (loaded, loading) = workspace().with(|state| (state.load.loaded, state.load.loading));
+    let (loaded, loading, need_work, need_inits, need_deletions) = workspace().with(|state| {
+        (
+            state.load.loaded,
+            state.load.loading,
+            !state.work.loaded && !state.work.loading,
+            !state.initializations.loaded && !state.initializations.loading,
+            !state.deletions.loaded && !state.deletions.loading,
+        )
+    });
     if !loaded && !loading {
         refresh();
+    }
+    if need_work {
+        load_work();
+    }
+    if need_inits {
+        load_initializations();
+    }
+    if need_deletions {
+        load_pending_deletions();
     }
     let needs_port = workspace().with(|state| {
         state.port.suggestion.is_none() && !state.port.loading && state.port.error.is_none()
@@ -873,6 +939,10 @@ pub(crate) fn refresh() {
             Ok(answer) => answer,
             Err(error) => Err(format!("the database workspace did not answer: {error}")),
         };
+        let mut default_package: Option<String> = None;
+        let d = drafts();
+        let draft_kind = d.draft_kind.get_untracked();
+        let draft_package_empty = d.draft_package.get_untracked().is_empty();
         workspace().update(|state| {
             if state.load.sequence != sequence {
                 return;
@@ -883,17 +953,16 @@ pub(crate) fn refresh() {
                 Ok(snapshot) => {
                     state.snapshot = snapshot;
                     state.load.error = None;
-                    if state.mode == Mode::New && state.draft.package.is_empty() {
-                        let kind = state.draft.kind;
+                    if state.mode == Mode::New && draft_package_empty {
                         let package = state
                             .snapshot
                             .packages
                             .values()
-                            .filter(|package| package.name == kind)
+                            .filter(|package| package.name == draft_kind)
                             .max_by(|left, right| left.version.cmp(&right.version))
                             .map(Package::id)
                             .unwrap_or_default();
-                        state.draft.package = package;
+                        default_package = Some(package);
                     }
                 }
                 Err(error) => state.load.error = Some(error),
@@ -906,12 +975,15 @@ pub(crate) fn refresh() {
                     .any(|instance| instance.id == selected)
             {
                 state.selected = None;
-                if state.mode == Mode::Instance || state.mode == Mode::DeletionPreview {
-                    state.mode = Mode::New;
+                if state.mode == Mode::DeletionPreview {
+                    state.mode = Mode::Instance;
                     state.preview = None;
                 }
             }
         });
+        if let Some(package) = default_package {
+            d.draft_package.set(package);
+        }
     });
 }
 
@@ -1053,11 +1125,11 @@ pub(crate) fn open_instance(id: &str) {
 }
 
 fn show_instance(id: &str) {
+    drafts().confirmation.set(String::new());
     workspace().update(|state| {
         state.mode = Mode::Instance;
         state.selected = Some(id.to_string());
         state.preview = None;
-        state.confirmation.clear();
         state.action_error = None;
         state.notice = None;
         state.connection_details = None;
@@ -1083,26 +1155,23 @@ pub(crate) fn open_new() {
 }
 
 fn show_new() {
-    let kind = workspace().with(|state| state.draft.kind);
-    let package = packages(kind).first().map(Package::id).unwrap_or_default();
+    let package = packages("postgresql")
+        .first()
+        .map(Package::id)
+        .unwrap_or_default();
+    let d = drafts();
+    d.confirmation.set(String::new());
+    d.reset_new_draft(package);
+    d.clear_profile_draft();
+    d.clear_instance_inputs();
     workspace().update(|state| {
         state.mode = Mode::New;
         state.selected = None;
         state.preview = None;
-        state.confirmation.clear();
         state.action_error = None;
         state.notice = None;
-        state.draft = Draft {
-            package,
-            ..Draft::default()
-        };
         state.profile = ProfileState::default();
         state.port = PortState::default();
-        state.database_name.clear();
-        state.database_user.clear();
-        state.database_password.clear();
-        state.backup_path.clear();
-        state.restore_database.clear();
         state.connection_details = None;
     });
     suggest_port();
@@ -1136,15 +1205,15 @@ pub(crate) fn pending_switch() -> bool {
 // --- The new-instance form ---------------------------------------------------
 
 pub(crate) fn draft_name() -> String {
-    workspace().with(|state| state.draft.name.clone())
+    drafts().draft_name.get()
 }
 
 pub(crate) fn set_draft_name(next: String) {
-    workspace().update(|state| state.draft.name = next);
+    drafts().draft_name.set(next);
 }
 
 pub(crate) fn draft_kind() -> &'static str {
-    workspace().with(|state| state.draft.kind)
+    drafts().draft_kind.get()
 }
 
 pub(crate) fn set_draft_kind(kind: &'static str) {
@@ -1152,54 +1221,52 @@ pub(crate) fn set_draft_kind(kind: &'static str) {
         return;
     }
     let package = packages(kind).first().map(Package::id).unwrap_or_default();
-    workspace().update(|state| {
-        state.draft.kind = kind;
-        state.draft.package = package;
-        state.draft.auto_port = true;
-        state.database_name.clear();
-        state.database_user.clear();
-    });
+    let d = drafts();
+    d.draft_kind.set(kind);
+    d.draft_package.set(package);
+    d.draft_auto_port.set(true);
+    d.database_name.set(String::new());
+    d.database_user.set(String::new());
     suggest_port();
 }
 
 pub(crate) fn draft_package() -> String {
-    workspace().with(|state| state.draft.package.clone())
+    drafts().draft_package.get()
 }
 
 pub(crate) fn set_draft_package(id: String) {
-    workspace().update(|state| state.draft.package = id);
+    drafts().draft_package.set(id);
 }
 
 pub(crate) fn draft_port() -> String {
-    workspace().with(|state| state.draft.port.clone())
+    drafts().draft_port.get()
 }
 
 pub(crate) fn set_draft_port(next: String) {
-    workspace().update(|state| {
-        state.draft.port = next;
-        state.draft.auto_port = false;
-    });
+    let d = drafts();
+    d.draft_port.set(next);
+    d.draft_auto_port.set(false);
     later(Duration::from_millis(400), check_port_quietly);
 }
 
 pub(crate) fn draft_data_directory() -> String {
-    workspace().with(|state| state.draft.data_directory.clone())
+    drafts().draft_data_directory.get()
 }
 
 pub(crate) fn set_draft_data_directory(next: String) {
-    workspace().update(|state| state.draft.data_directory = next);
+    drafts().draft_data_directory.set(next);
 }
 
 pub(crate) fn use_app_storage() {
-    workspace().update(|state| state.draft.data_directory.clear());
+    drafts().draft_data_directory.set(String::new());
 }
 
 pub(crate) fn draft_persistent() -> bool {
-    workspace().with(|state| state.draft.persistent)
+    drafts().draft_persistent.get()
 }
 
-pub(crate) fn toggle_persistent() {
-    workspace().update(|state| state.draft.persistent = !state.draft.persistent);
+pub(crate) fn set_draft_persistent(next: bool) {
+    drafts().draft_persistent.set(next);
 }
 
 /// Asks the provider for a free port and puts it in an untouched field. The
@@ -1221,6 +1288,7 @@ pub(crate) fn suggest_port() {
             Ok(answer) => answer,
             Err(error) => Err(format!("the port suggestion failed: {error}")),
         };
+        let mut fill_port: Option<i64> = None;
         workspace().update(|state| {
             if state.port.sequence != sequence {
                 return;
@@ -1229,15 +1297,19 @@ pub(crate) fn suggest_port() {
             match answer {
                 Ok(port) => {
                     state.port.suggestion = Some(port);
-                    if state.draft.auto_port || state.draft.port.trim().is_empty() {
-                        state.draft.port = port.to_string();
-                        state.draft.auto_port = true;
-                    }
+                    fill_port = Some(port);
                     state.port.error = None;
                 }
                 Err(error) => state.port.error = Some(error),
             }
         });
+        if let Some(port) = fill_port {
+            let d = drafts();
+            if d.draft_auto_port.get_untracked() || d.draft_port.get_untracked().trim().is_empty() {
+                d.draft_port.set(port.to_string());
+                d.draft_auto_port.set(true);
+            }
+        }
     });
 }
 
@@ -1260,6 +1332,7 @@ pub(crate) fn find_free_port() {
             Ok(answer) => answer,
             Err(error) => Err(format!("the port suggestion failed: {error}")),
         };
+        let mut suggested: Option<i64> = None;
         workspace().update(|state| {
             state.aux_busy.remove("find-port");
             if state.port.sequence != sequence {
@@ -1269,8 +1342,7 @@ pub(crate) fn find_free_port() {
             match answer {
                 Ok(port) => {
                     state.port.suggestion = Some(port);
-                    state.draft.port = port.to_string();
-                    state.draft.auto_port = true;
+                    suggested = Some(port);
                     state.action_error = None;
                     state.notice = Some(format!(
                         "Suggested port: {port}. An unchanged form is filled automatically. Review, save and retry; this does not reserve the port."
@@ -1279,24 +1351,37 @@ pub(crate) fn find_free_port() {
                 Err(error) => state.port.error = Some(error),
             }
         });
+        if let Some(port) = suggested {
+            let d = drafts();
+            d.draft_port.set(port.to_string());
+            d.draft_auto_port.set(true);
+        }
     });
 }
 
 /// The port preflight of the form, on request.
 pub(crate) fn check_port() {
-    let port = workspace().with(|state| state.draft.port.trim().parse::<i64>().ok());
+    let port = drafts()
+        .draft_port
+        .get_untracked()
+        .trim()
+        .parse::<i64>()
+        .ok();
     if let Some(port) = port {
         inspect_port_now(port);
     }
 }
 
 fn check_port_quietly() {
-    let port = workspace().with(|state| {
-        if state.mode != Mode::New {
-            return None;
-        }
-        state.draft.port.trim().parse::<i64>().ok()
-    });
+    if workspace().with(|state| state.mode != Mode::New) {
+        return;
+    }
+    let port = drafts()
+        .draft_port
+        .get_untracked()
+        .trim()
+        .parse::<i64>()
+        .ok();
     if let Some(port) = port {
         inspect_port_now(port);
     }
@@ -1336,9 +1421,9 @@ fn inspect_port_now(port: i64) {
 
 /// The port inspection of the form, when it describes the port in the field.
 pub(crate) fn port_inspection() -> Option<PortInspection> {
+    let field = drafts().draft_port.get().trim().parse::<i64>().ok();
     workspace().with(|state| {
         let inspection = state.port.inspection.clone()?;
-        let field = state.draft.port.trim().parse::<i64>().ok();
         (field == Some(inspection.port)).then_some(inspection)
     })
 }
@@ -1354,29 +1439,35 @@ pub(crate) fn port_loading() -> bool {
 /// Creates the instance in the form. Non-numeric ports surface the Go
 /// `Enter a valid port` message; everything else is devcore's own wording.
 pub(crate) fn create_instance() {
-    let prepared = workspace().with(|state| {
-        let draft = &state.draft;
-        let port = match draft.port.trim().parse::<i64>() {
+    let d = drafts();
+    let port_text = d.draft_port.get_untracked();
+    let kind = d.draft_kind.get_untracked();
+    let package = d.draft_package.get_untracked();
+    let data_directory = d.draft_data_directory.get_untracked();
+    let name = d.draft_name.get_untracked();
+    let persistent = d.draft_persistent.get_untracked();
+    let prepared = (|| {
+        let port = match port_text.trim().parse::<i64>() {
             Ok(port) => port,
             Err(_) => return Err("Error: Enter a valid port".to_string()),
         };
-        if draft.package.is_empty() {
-            let title = SoftwareKind::from_key(draft.kind)
+        if package.is_empty() {
+            let title = SoftwareKind::from_key(kind)
                 .map(SoftwareKind::title)
-                .unwrap_or(draft.kind);
+                .unwrap_or(kind);
             return Err(format!("Install {title} first, then create the instance."));
         }
         Ok(Instance {
             data_identity: String::new(),
-            data_directory: draft.data_directory.trim().to_string(),
+            data_directory: data_directory.trim().to_string(),
             data_owner: String::new(),
-            id: draft.name.trim().to_string(),
-            kind: draft.kind.to_string(),
-            package: draft.package.clone(),
+            id: name.trim().to_string(),
+            kind: kind.to_string(),
+            package,
             port,
-            persistent: draft.persistent,
+            persistent,
         })
-    });
+    })();
     let instance = match prepared {
         Ok(instance) => instance,
         Err(message) => {
@@ -1419,11 +1510,12 @@ pub(crate) fn create_instance() {
                     .is_some_and(|line| !line.contains("Error:"))
             })
         }) {
+            let d = drafts();
+            d.reset_new_draft(String::new());
+            d.confirmation.set(String::new());
             workspace().update(|state| {
                 state.mode = Mode::Instance;
                 state.selected = Some(id.clone());
-                state.draft = Draft::default();
-                state.confirmation.clear();
             });
             load_profile_for(&id);
             refresh();
@@ -1529,6 +1621,29 @@ pub(crate) fn restart_instance(id: &str) {
 /// is never touched.
 pub(crate) fn remove_instance(id: &str) {
     instance_action(id, InstanceAction::Remove);
+}
+
+/// Asks before removing an instance registration (used from the rail context
+/// menu); data files are always kept.
+pub(crate) fn request_remove_instance(id: &str) {
+    let id_owned = id.to_string();
+    let answer = alert_dialog()
+        .title(format!("Remove {id_owned}?"))
+        .description(
+            "Removes the instance registration from Devbase. Its data files are kept on disk.",
+        )
+        .cancel("cancel", "Cancel")
+        .destructive("confirm", "Remove Instance")
+        .show();
+    task(async move {
+        let chosen = matches!(
+            answer.await,
+            Ok(result) if result.action.as_deref() == Some("confirm")
+        );
+        if chosen {
+            remove_instance(&id_owned);
+        }
+    });
 }
 
 fn instance_action(id: &str, action: InstanceAction) {
@@ -1678,32 +1793,32 @@ pub(crate) fn catalog_error() -> Option<String> {
 }
 
 pub(crate) fn database_name() -> String {
-    workspace().with(|state| state.database_name.clone())
+    drafts().database_name.get()
 }
 
 pub(crate) fn set_database_name(next: String) {
-    workspace().update(|state| state.database_name = next);
+    drafts().database_name.set(next);
 }
 
 pub(crate) fn database_user() -> String {
-    workspace().with(|state| state.database_user.clone())
+    drafts().database_user.get()
 }
 
 pub(crate) fn set_database_user(next: String) {
-    workspace().update(|state| state.database_user = next);
+    drafts().database_user.set(next);
 }
 
 pub(crate) fn database_password() -> String {
-    workspace().with(|state| state.database_password.clone())
+    drafts().database_password.get()
 }
 
 pub(crate) fn set_database_password(next: String) {
-    workspace().update(|state| state.database_password = next);
+    drafts().database_password.set(next);
 }
 
 /// Creates a database in the instance.
 pub(crate) fn create_database(id: &str) {
-    let name = database_name().trim().to_string();
+    let name = drafts().database_name.get_untracked().trim().to_string();
     run_catalog_task(
         id,
         "create database",
@@ -1715,7 +1830,7 @@ pub(crate) fn create_database(id: &str) {
 
 /// Drops a database after the Go confirmation dialog.
 pub(crate) fn request_drop_database(id: &str) {
-    let name = database_name().trim().to_string();
+    let name = drafts().database_name.get_untracked().trim().to_string();
     let id_owned = id.to_string();
     let answer = alert_dialog()
         .title(format!("Drop database {name}?"))
@@ -1743,11 +1858,10 @@ pub(crate) fn request_drop_database(id: &str) {
             move |provider, instance, cancel| provider.drop_database(instance, &name, cancel),
         );
         later(Duration::from_secs(2), move || {
-            workspace().update(|state| {
-                if state.database_name.trim() == cleared {
-                    state.database_name.clear();
-                }
-            });
+            let d = drafts();
+            if d.database_name.get_untracked().trim() == cleared {
+                d.database_name.set(String::new());
+            }
         });
     });
 }
@@ -1755,10 +1869,11 @@ pub(crate) fn request_drop_database(id: &str) {
 /// Creates a database user; the password is passed through and then dropped
 /// from the form, never kept in the store.
 pub(crate) fn create_database_user(id: &str) {
-    let user = database_user().trim().to_string();
-    let database = database_name().trim().to_string();
-    let password = workspace().with(|state| state.database_password.clone());
-    workspace().update(|state| state.database_password.clear());
+    let d = drafts();
+    let user = d.database_user.get_untracked().trim().to_string();
+    let database = d.database_name.get_untracked().trim().to_string();
+    let password = d.database_password.get_untracked();
+    d.database_password.set(String::new());
     run_catalog_task(
         id,
         "create user",
@@ -1772,8 +1887,9 @@ pub(crate) fn create_database_user(id: &str) {
 
 /// Drops a user after the Go confirmation dialog.
 pub(crate) fn request_drop_user(id: &str) {
-    let user = database_user().trim().to_string();
-    let database = database_name().trim().to_string();
+    let d = drafts();
+    let user = d.database_user.get_untracked().trim().to_string();
+    let database = d.database_name.get_untracked().trim().to_string();
     let id_owned = id.to_string();
     let answer = alert_dialog()
         .title(format!("Drop user {user}?"))
@@ -1802,11 +1918,10 @@ pub(crate) fn request_drop_user(id: &str) {
             },
         );
         later(Duration::from_secs(2), move || {
-            workspace().update(|state| {
-                if state.database_user.trim() == cleared {
-                    state.database_user.clear();
-                }
-            });
+            let d = drafts();
+            if d.database_user.get_untracked().trim() == cleared {
+                d.database_user.set(String::new());
+            }
         });
     });
 }
@@ -1937,39 +2052,33 @@ pub(crate) fn backups_error() -> Option<String> {
 }
 
 pub(crate) fn backup_path() -> String {
-    workspace().with(|state| state.backup_path.clone())
+    drafts().backup_path.get()
 }
 
 pub(crate) fn set_backup_path(next: String) {
-    workspace().update(|state| state.backup_path = next);
+    drafts().backup_path.set(next);
 }
 
 pub(crate) fn restore_database() -> String {
-    workspace().with(|state| state.restore_database.clone())
+    drafts().restore_database.get()
 }
 
 pub(crate) fn set_restore_database(next: String) {
-    workspace().update(|state| state.restore_database = next);
+    drafts().restore_database.set(next);
 }
 
 /// Uses a listed backup for the restore form, naming the new database the way
 /// the Go row does.
 pub(crate) fn use_backup_for_restore(row: BackupFile) {
-    workspace().update(|state| {
-        state.backup_path = row.path.display().to_string();
-        state.restore_database = if state.draft.kind == "redis" {
-            String::new()
-        } else {
-            format!("{}{}", row.database, "_restored")
-        };
-    });
+    let is_redis = selected_instance().is_some_and(|instance| instance.kind == "redis");
+    let d = drafts();
+    d.backup_path.set(row.path.display().to_string());
     // The Redis target is the other numbered database, as the Go row chooses.
-    if let Some(instance) = selected_instance()
-        && instance.kind == "redis"
-    {
-        let next = if row.database == "0" { "1" } else { "0" };
-        workspace().update(|state| state.restore_database = next.to_string());
-    }
+    d.restore_database.set(if is_redis {
+        if row.database == "0" { "1" } else { "0" }.to_string()
+    } else {
+        format!("{}{}", row.database, "_restored")
+    });
 }
 
 /// The system's open dialog chooses the restore file, as the Go
@@ -2001,17 +2110,16 @@ pub(crate) fn choose_data_parent() {
         let Some(parent) = paths.first() else {
             return;
         };
-        let leaf = workspace().with(|state| {
-            let name = state.draft.name.trim();
-            if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
-                format!("{}-data", state.draft.kind)
-            } else {
-                name.to_string()
-            }
-        });
-        workspace().update(|state| {
-            state.draft.data_directory = parent.join(leaf).display().to_string();
-        });
+        let d = drafts();
+        let name_owned = d.draft_name.get_untracked();
+        let name = name_owned.trim();
+        let leaf = if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
+            format!("{}-data", d.draft_kind.get_untracked())
+        } else {
+            name.to_string()
+        };
+        d.draft_data_directory
+            .set(parent.join(leaf).display().to_string());
     });
 }
 
@@ -2247,6 +2355,12 @@ fn load_profile_draft(instance_id: &str, profile_id: &str) {
             "0".to_string(),
         ),
     };
+    let d = drafts();
+    d.profile_name.set(draft.name);
+    d.profile_database.set(draft.database);
+    d.profile_user.set(draft.username);
+    d.profile_mongo_auth_source.set(draft.mongo_auth_source);
+    d.profile_redis_db.set(redis_db);
     workspace().update(|state| {
         state.profile = ProfileState {
             instance_id: instance_id.to_string(),
@@ -2255,8 +2369,6 @@ fn load_profile_draft(instance_id: &str, profile_id: &str) {
             } else {
                 draft.id.clone()
             },
-            draft,
-            redis_db,
             pending: None,
         };
     });
@@ -2302,65 +2414,81 @@ fn select_profile_for(instance_id: &str, profile_id: &str) {
 
 /// Whether the draft differs from the saved profile (or is a used "new").
 pub(crate) fn profile_dirty() -> bool {
-    workspace().with(|state| {
-        let profile = &state.profile;
-        if profile.instance_id.is_empty() || profile.selected.is_empty() {
-            return false;
+    let (instance_id, selected, saved) = workspace().with(|state| {
+        let selected = state.profile.selected.clone();
+        let saved = if selected.is_empty() || selected == "new" {
+            None
+        } else {
+            state.snapshot.profiles.get(&selected).cloned()
+        };
+        (state.profile.instance_id.clone(), selected, saved)
+    });
+    if instance_id.is_empty() || selected.is_empty() {
+        return false;
+    }
+    let d = drafts();
+    let name = d.profile_name.get();
+    let database = d.profile_database.get();
+    let username = d.profile_user.get();
+    let mongo_auth_source = d.profile_mongo_auth_source.get();
+    let redis = d.profile_redis_db.get().trim().parse::<i64>().ok();
+    if selected == "new" {
+        return !name.is_empty()
+            || !database.is_empty()
+            || !username.is_empty()
+            || !mongo_auth_source.is_empty()
+            || redis.unwrap_or(0) != 0;
+    }
+    match saved {
+        Some(saved) => {
+            name != saved.name
+                || database != saved.database
+                || username != saved.username
+                || mongo_auth_source != saved.mongo_auth_source
+                || redis != Some(saved.redis_db)
         }
-        let redis = profile.redis_db.trim().parse::<i64>().ok();
-        if profile.selected == "new" {
-            let draft = &profile.draft;
-            return !draft.name.is_empty()
-                || !draft.database.is_empty()
-                || !draft.username.is_empty()
-                || !draft.mongo_auth_source.is_empty()
-                || redis.unwrap_or(0) != 0;
-        }
-        match state.snapshot.profiles.get(&profile.selected) {
-            Some(saved) => &profile.draft != saved || redis != Some(saved.redis_db),
-            None => true,
-        }
-    })
+        None => true,
+    }
 }
 
 pub(crate) fn profile_name() -> String {
-    workspace().with(|state| state.profile.draft.name.clone())
+    drafts().profile_name.get()
 }
 
 pub(crate) fn set_profile_name(next: String) {
-    workspace().update(|state| state.profile.draft.name = next);
+    drafts().profile_name.set(next);
 }
 
 pub(crate) fn profile_database() -> String {
-    workspace().with(|state| state.profile.draft.database.clone())
+    drafts().profile_database.get()
 }
 
 pub(crate) fn set_profile_database(next: String) {
-    workspace().update(|state| state.profile.draft.database = next);
+    drafts().profile_database.set(next);
 }
 
 pub(crate) fn profile_user() -> String {
-    workspace().with(|state| state.profile.draft.username.clone())
+    drafts().profile_user.get()
 }
 
 pub(crate) fn set_profile_user(next: String) {
-    workspace().update(|state| state.profile.draft.username = next);
+    drafts().profile_user.set(next);
 }
 
 pub(crate) fn profile_mongo_auth_source() -> String {
-    workspace().with(|state| state.profile.draft.mongo_auth_source.clone())
+    drafts().profile_mongo_auth_source.get()
 }
 
 pub(crate) fn set_profile_mongo_auth_source(next: String) {
-    workspace().update(|state| state.profile.draft.mongo_auth_source = next);
+    drafts().profile_mongo_auth_source.set(next);
 }
 
 pub(crate) fn profile_redis_db() -> String {
-    workspace().with(|state| state.profile.redis_db.clone())
+    drafts().profile_redis_db.get()
 }
 
 pub(crate) fn set_profile_redis_db(next: String) {
-    workspace().update(|state| state.profile.redis_db = next);
+    drafts().profile_redis_db.set(next);
 }
 
 /// Saves the profile draft. The profile never carries a credential.
@@ -2368,20 +2496,31 @@ pub(crate) fn save_profile(id: &str) {
     if operations_busy() {
         return;
     }
-    let prepared = workspace().with(|state| {
-        let mut profile = state.profile.draft.clone();
-        profile.instance_id = id.to_string();
-        if state.profile.selected == "new" {
-            profile.id.clear();
-        }
-        if instance(id).is_some_and(|instance| instance.kind == "redis") {
-            match state.profile.redis_db.trim().parse::<i64>() {
+    let selected = selected_profile();
+    let is_redis = instance(id).is_some_and(|instance| instance.kind == "redis");
+    let d = drafts();
+    let prepared = (|| {
+        let mut profile = ConnectionProfile {
+            id: if selected == "new" {
+                String::new()
+            } else {
+                selected
+            },
+            instance_id: id.to_string(),
+            name: d.profile_name.get_untracked(),
+            database: d.profile_database.get_untracked(),
+            username: d.profile_user.get_untracked(),
+            mongo_auth_source: d.profile_mongo_auth_source.get_untracked(),
+            redis_db: 0,
+        };
+        if is_redis {
+            match d.profile_redis_db.get_untracked().trim().parse::<i64>() {
                 Ok(value) => profile.redis_db = value,
                 Err(_) => return Err("Enter a Redis database number from 0 to 15".to_string()),
             }
         }
         Ok(profile)
-    });
+    })();
     let profile = match prepared {
         Ok(profile) => profile,
         Err(message) => {
@@ -2408,18 +2547,20 @@ pub(crate) fn save_profile(id: &str) {
         });
         match answer {
             Ok(saved) => {
+                let d = drafts();
+                d.profile_name.set(saved.name);
+                d.profile_database.set(saved.database);
+                d.profile_user.set(saved.username);
+                d.profile_mongo_auth_source.set(saved.mongo_auth_source);
+                d.profile_redis_db.set(saved.redis_db.to_string());
                 show_notice("Connection profile saved");
                 workspace().update(|state| {
-                    state.profile.selected = saved.id.clone();
-                    state.profile.draft = saved;
+                    state.profile.selected = saved.id;
                 });
             }
             Err(error) => ctrl_error(error),
         }
         refresh();
-        if let Some(instance) = instance(&id_owned) {
-            let _ = instance;
-        }
         load_profile_for(&id_owned);
     });
 }
@@ -2460,9 +2601,13 @@ pub(crate) fn delete_profile(id: &str) {
     });
 }
 
-/// The profile the copy actions use: the administrator when none is chosen.
-fn copy_profile() -> String {
+/// The profile the copy actions use for `instance_id`: the administrator when
+/// none is chosen or when acting on a different instance from the rail.
+fn copy_profile_for(instance_id: &str) -> String {
     workspace().with(|state| {
+        if state.profile.instance_id != instance_id {
+            return String::new();
+        }
         let selected = state.profile.selected.clone();
         if selected == "new" {
             String::new()
@@ -2472,8 +2617,11 @@ fn copy_profile() -> String {
     })
 }
 
-fn selected_database(kind: &str) -> Option<String> {
-    let name = workspace().with(|state| state.database_name.trim().to_string());
+fn selected_database_for(instance_id: &str, kind: &str) -> Option<String> {
+    if selected_id().as_deref() != Some(instance_id) {
+        return None;
+    }
+    let name = drafts().database_name.get_untracked().trim().to_string();
     if name.is_empty() {
         return None;
     }
@@ -2492,7 +2640,7 @@ pub(crate) fn copy_uri(id: &str) {
     let Some(provider) = provider_of() else {
         return;
     };
-    let profile = copy_profile();
+    let profile = copy_profile_for(id);
     let id_owned = id.to_string();
     task(async move {
         let answer = match blocking(move || provider.connection_info(&id_owned, &profile)).await {
@@ -2515,11 +2663,11 @@ pub(crate) fn copy_env(id: &str) {
     let Some(provider) = provider_of() else {
         return;
     };
-    let profile = copy_profile();
+    let profile = copy_profile_for(id);
     let kind = instance(id)
         .map(|instance| instance.kind)
         .unwrap_or_default();
-    let database = selected_database(&kind);
+    let database = selected_database_for(id, &kind);
     let id_owned = id.to_string();
     let profile_for_call = profile.clone();
     task(async move {
@@ -2547,11 +2695,11 @@ pub(crate) fn copy_jdbc(id: &str) {
     let Some(provider) = provider_of() else {
         return;
     };
-    let profile = copy_profile();
+    let profile = copy_profile_for(id);
     let kind = instance(id)
         .map(|instance| instance.kind)
         .unwrap_or_default();
-    let database = selected_database(&kind);
+    let database = selected_database_for(id, &kind);
     let id_owned = id.to_string();
     let profile_for_call = profile.clone();
     task(async move {
@@ -2604,7 +2752,7 @@ pub(crate) fn open_client(id: &str) {
     let Some(provider) = provider_of() else {
         return;
     };
-    let profile = copy_profile();
+    let profile = copy_profile_for(id);
     let id_owned = id.to_string();
     let call_provider = Arc::clone(&provider);
     task(async move {
@@ -2627,11 +2775,11 @@ pub(crate) fn open_cli(id: &str) {
     let Some(provider) = provider_of() else {
         return;
     };
-    let profile = copy_profile();
+    let profile = copy_profile_for(id);
     let kind = instance(id)
         .map(|instance| instance.kind)
         .unwrap_or_default();
-    let database = selected_database(&kind);
+    let database = selected_database_for(id, &kind);
     let id_owned = id.to_string();
     task(async move {
         let cancel: CancelToken = Arc::new(AtomicBool::new(false));
@@ -2761,15 +2909,16 @@ pub(crate) fn request_upgrade(id: &str) {
 // --- Permanent deletion ------------------------------------------------------
 
 pub(crate) fn confirmation() -> String {
-    workspace().with(|state| state.confirmation.clone())
+    drafts().confirmation.get()
 }
 
 pub(crate) fn set_confirmation(next: String) {
-    workspace().update(|state| state.confirmation = next);
+    drafts().confirmation.set(next);
 }
 
 /// Opens the permanent-deletion review of an instance.
 pub(crate) fn open_deletion_preview(id: &str) {
+    drafts().confirmation.set(String::new());
     workspace().update(|state| {
         state.mode = Mode::DeletionPreview;
         state.selected = Some(id.to_string());
@@ -2780,7 +2929,6 @@ pub(crate) fn open_deletion_preview(id: &str) {
             error: None,
             sequence: state.sequence,
         });
-        state.confirmation.clear();
         state.action_error = None;
         state.notice = None;
     });
@@ -2863,9 +3011,9 @@ pub(crate) fn deletion_preview_error() -> Option<String> {
 /// Leaves the review without changing anything.
 pub(crate) fn cancel_deletion_preview() {
     let id = selected_id();
+    drafts().confirmation.set(String::new());
     workspace().update(|state| {
         state.preview = None;
-        state.confirmation.clear();
         state.mode = if id.is_some() {
             Mode::Instance
         } else {
@@ -2877,6 +3025,7 @@ pub(crate) fn cancel_deletion_preview() {
 /// The typed ID still has to match, the review still has to allow it, and no
 /// other operation may be running.
 pub(crate) fn can_delete() -> bool {
+    let typed = drafts().confirmation.get();
     workspace().with(|state| {
         let Some(preview) = state
             .preview
@@ -2886,7 +3035,7 @@ pub(crate) fn can_delete() -> bool {
             return false;
         };
         preview.can_delete
-            && state.confirmation.trim() == preview.instance_id
+            && typed.trim() == preview.instance_id
             && !state.tasks.values().any(|task| task.running)
             && state.aux_busy.is_empty()
     })
@@ -2926,7 +3075,7 @@ pub(crate) fn delete_instance_data() {
             )),
         };
         finish_task(&id, "delete", result);
-        workspace().update(|state| state.confirmation.clear());
+        drafts().confirmation.set(String::new());
         refresh();
         load_pending_deletions();
         later(Duration::from_millis(300), move || {
@@ -2954,10 +3103,10 @@ pub(crate) fn delete_instance_data() {
 
 /// Opens the staged-deletion list.
 pub(crate) fn open_deletions() {
+    drafts().confirmation.set(String::new());
     workspace().update(|state| {
         state.mode = Mode::Deletions;
         state.preview = None;
-        state.confirmation.clear();
         state.action_error = None;
         state.notice = None;
     });
@@ -3064,9 +3213,9 @@ pub(crate) fn finish_deletion(id: &str, revision: &str) {
             Ok(answer) => answer,
             Err(error) => Err(format!("the deletion did not finish: {error}")),
         };
+        drafts().confirmation.set(String::new());
         workspace().update(|state| {
             state.aux_busy.remove(&key);
-            state.confirmation.clear();
         });
         match answer {
             Ok(()) => {
@@ -3082,10 +3231,10 @@ pub(crate) fn finish_deletion(id: &str, revision: &str) {
 // --- Unfinished preparations and tasks ---------------------------------------
 
 pub(crate) fn open_initializations() {
+    drafts().confirmation.set(String::new());
     workspace().update(|state| {
         state.mode = Mode::Initializations;
         state.preview = None;
-        state.confirmation.clear();
         state.action_error = None;
         state.notice = None;
     });
@@ -3173,10 +3322,10 @@ pub(crate) fn resolve_initialization(id: &str, revision: &str) {
 }
 
 pub(crate) fn open_work() {
+    drafts().confirmation.set(String::new());
     workspace().update(|state| {
         state.mode = Mode::Work;
         state.preview = None;
-        state.confirmation.clear();
         state.action_error = None;
         state.notice = None;
     });
@@ -3260,9 +3409,9 @@ pub(crate) fn resolve_work(id: &str, revision: &str) {
 /// Returns from a settings list to the instance or the form.
 pub(crate) fn back_to_settings() {
     let selected = selected_id();
+    drafts().confirmation.set(String::new());
     workspace().update(|state| {
         state.preview = None;
-        state.confirmation.clear();
         state.mode = if selected.is_some() {
             Mode::Instance
         } else {

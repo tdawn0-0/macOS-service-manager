@@ -37,13 +37,15 @@ fn preview_body() -> AnyElement {
         .flex_1()
         .child(
             view()
-                .h(px(60.0))
+                .h(px(52.0))
                 .flex_none()
                 .flex_row()
                 .items_center()
                 .gap(tokens::space(2.0))
                 .px(tokens::space(5.0))
-                .pt(tokens::space(2.0))
+                .border_b_1()
+                .border_color(tokens::hairline)
+                .window_drag(true)
                 .child(
                     view()
                         .flex_col()
@@ -94,6 +96,7 @@ fn preview_body() -> AnyElement {
                     .flex_col()
                     .gap(tokens::space(3.0))
                     .px(tokens::space(5.0))
+                    .pt(tokens::space(4.0))
                     .pb(tokens::space(5.0))
                     .child(dynamic(move || {
                         db::deletion_preview_error()
@@ -150,6 +153,7 @@ fn preview_card() -> Option<impl IntoElement> {
                         "{entries} entries · {mebibytes:.2} MiB logical file size"
                     ))
                     .text_size(px(tokens::TEXT_SMALL))
+                    .tabular_nums()
                     .text_color(move || theme().muted_foreground),
                 )
                 .child(
@@ -175,6 +179,7 @@ fn preview_card() -> Option<impl IntoElement> {
 }
 
 pub(crate) fn pending_deletions() -> impl IntoElement {
+    let rows = computed(db::pending_deletions);
     view()
         .test_id("db-pending-deletions")
         .flex_1()
@@ -182,13 +187,15 @@ pub(crate) fn pending_deletions() -> impl IntoElement {
         .flex_col()
         .child(
             view()
-                .h(px(60.0))
+                .h(px(52.0))
                 .flex_none()
                 .flex_row()
                 .items_center()
                 .gap(tokens::space(2.0))
                 .px(tokens::space(5.0))
-                .pt(tokens::space(2.0))
+                .border_b_1()
+                .border_color(tokens::hairline)
+                .window_drag(true)
                 .child(
                     text("Pending data deletions")
                         .flex_1()
@@ -230,17 +237,17 @@ pub(crate) fn pending_deletions() -> impl IntoElement {
             scroll()
                 .flex_1()
                 .min_h(px(0.0))
-                .child(dynamic(|| Some(deletions_list()))),
+                .child(dynamic(move || Some(deletions_list(rows.get())))),
         )
 }
 
-fn deletions_list() -> impl IntoElement {
-    let rows = db::pending_deletions();
+fn deletions_list(rows: Vec<InstanceDeletionInfo>) -> impl IntoElement {
     let empty = rows.is_empty();
     view()
         .flex_col()
         .gap(tokens::space(4.0))
         .px(tokens::space(5.0))
+        .pt(tokens::space(4.0))
         .pb(tokens::space(5.0))
         .child(when(empty, || {
             text("None")
@@ -311,6 +318,7 @@ fn deletion_row(row: InstanceDeletionInfo) -> impl IntoElement {
                             bytes as f64 / (1u64 << 20) as f64
                         ))
                         .text_size(px(tokens::TEXT_CAPTION))
+                        .tabular_nums()
                         .text_color(move || theme().muted_foreground),
                     )
             }

@@ -1,9 +1,12 @@
 //! The database rail: every registered instance with its engine, port and
-//! state, then the new-instance form and the unfinished-work lists, in the
-//! Go development tab's order.
+//! state, then the new-instance form and the unfinished-work lists.
 
 use nsh_base::theme;
-use nsh_core::prelude::*;
+use nsh_core::{
+    ContextMenuEvent,
+    element::desktop::{MenuItem, popup_menu_at},
+    prelude::*,
+};
 
 use crate::{
     components::icons as app_icons,
@@ -21,17 +24,20 @@ pub(crate) fn rail() -> impl IntoElement {
         .bg(move || theme().background)
         .border_r_1()
         .border_color(tokens::hairline)
-        .px(tokens::space(2.0))
-        .py(tokens::space(3.0))
         .child(
             view()
+                .h(px(52.0))
+                .flex_none()
                 .flex_col()
+                .justify_center()
                 .gap(tokens::space(0.5))
-                .px(tokens::space(2.0))
-                .pb(tokens::space(3.0))
+                .px(tokens::space(5.0))
+                .border_b_1()
+                .border_color(tokens::hairline)
+                .window_drag(true)
                 .child(
                     text("Databases")
-                        .text_base()
+                        .text_size(px(15.0))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(move || theme().foreground),
                 )
@@ -39,67 +45,68 @@ pub(crate) fn rail() -> impl IntoElement {
                     text(Section::Databases.summary())
                         .text_size(px(tokens::TEXT_CAPTION))
                         .text_color(move || theme().muted_foreground)
-                        .number_of_lines(2),
+                        .truncate(),
                 ),
         )
         .child(
-            text("Instances")
+            view()
+                .flex_1()
+                .min_h(px(0.0))
+                .flex_col()
                 .px(tokens::space(2.0))
-                .pb(tokens::space(1.0))
-                .text_size(px(tokens::TEXT_CAPTION))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(move || theme().muted_foreground),
-        )
-        .child(dynamic(|| Some(rows())))
-        .child(
-            view()
-                .flex_col()
-                .gap(tokens::space(1.0))
-                .pt(tokens::space(2.0))
-                .child(nav_row(
-                    "New instance",
-                    "db-new",
-                    None,
-                    db::mode() == db::Mode::New,
-                    db::open_new,
-                )),
-        )
-        .child(view().flex_1())
-        .child(
-            view()
-                .flex_col()
-                .gap(tokens::space(1.0))
-                .pt(tokens::space(3.0))
-                .child(section_label("Unfinished"))
-                .child(nav_row(
-                    "Database tasks",
-                    "db-work",
-                    Some(format!("{}", db::database_work().len())),
-                    db::mode() == db::Mode::Work,
-                    db::open_work,
-                ))
-                .child(nav_row(
-                    "Initializations",
-                    "db-initializations",
-                    Some(format!("{}", db::pending_initializations().len())),
-                    db::mode() == db::Mode::Initializations,
-                    db::open_initializations,
-                ))
-                .child(nav_row(
-                    "Pending deletions",
-                    "db-deletions",
-                    Some(format!("{}", db::pending_deletions().len())),
-                    db::mode() == db::Mode::Deletions,
-                    db::open_deletions,
-                )),
-        )
-        .child(
-            view().px(tokens::space(2.0)).pt(tokens::space(3.0)).child(
-                text("Removing an instance keeps its data files")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground)
-                    .number_of_lines(2),
-            ),
+                .py(tokens::space(3.0))
+                .child(section_label("Instances"))
+                .child(dynamic(|| Some(rows())))
+                .child(
+                    view()
+                        .flex_col()
+                        .gap(tokens::space(1.0))
+                        .pt(tokens::space(2.0))
+                        .child(nav_row(
+                            "New instance",
+                            "db-new",
+                            None::<fn() -> String>,
+                            || db::mode() == db::Mode::New,
+                            db::open_new,
+                        )),
+                )
+                .child(view().flex_1())
+                .child(
+                    view()
+                        .flex_col()
+                        .gap(tokens::space(1.0))
+                        .pt(tokens::space(3.0))
+                        .child(section_label("Unfinished"))
+                        .child(nav_row(
+                            "Database tasks",
+                            "db-work",
+                            Some(|| db::database_work().len().to_string()),
+                            || db::mode() == db::Mode::Work,
+                            db::open_work,
+                        ))
+                        .child(nav_row(
+                            "Initializations",
+                            "db-initializations",
+                            Some(|| db::pending_initializations().len().to_string()),
+                            || db::mode() == db::Mode::Initializations,
+                            db::open_initializations,
+                        ))
+                        .child(nav_row(
+                            "Pending deletions",
+                            "db-deletions",
+                            Some(|| db::pending_deletions().len().to_string()),
+                            || db::mode() == db::Mode::Deletions,
+                            db::open_deletions,
+                        )),
+                )
+                .child(
+                    view().px(tokens::space(2.0)).pt(tokens::space(3.0)).child(
+                        text("Removing an instance keeps its data files")
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().muted_foreground)
+                            .number_of_lines(2),
+                    ),
+                ),
         )
 }
 
@@ -131,77 +138,138 @@ fn rows() -> impl IntoElement {
 
 fn instance_row(instance: devcore::model::Instance) -> impl IntoElement {
     let id = instance.id.clone();
+    let kind = instance.kind.clone();
     let selected = db::mode() == db::Mode::Instance && db::selected_id().as_deref() == Some(&id);
     let press_id = id.clone();
-    let title = instance_title(&instance.kind);
+    let ctx_id = id.clone();
+    let ctx_kind = kind.clone();
+    let title = instance_title(&kind);
     let meta = format!("{}:{}", title, instance.port);
     let working = db::status(&id);
     let running = matches!(working.as_str(), "Running" | "Healthy");
     let active = matches!(working.as_str(), "Starting" | "Restarting" | "Stopping");
-    nsh_base::button()
-        .test_id(&format!("db-instance-{id}"))
+    view()
         .w_full()
-        .flex_row()
-        .items_center()
-        .justify_start()
-        .gap(tokens::space(2.0))
-        .px(tokens::space(2.0))
-        .py(tokens::space(1.5))
-        .rounded(move || theme().radius)
-        .bg(move || {
-            if selected {
-                tokens::row_selected()
-            } else {
-                AdaptiveColor::TRANSPARENT
-            }
+        .on_context_menu(move |event: &ContextMenuEvent| {
+            let items = instance_context_menu(&ctx_id, &ctx_kind);
+            drop(popup_menu_at(items, event.page_position));
         })
-        .hover(move |style| style.bg(tokens::row_hover()))
-        .on_press(move || db::open_instance(&press_id))
         .child(
-            icons::engine(&instance.kind)
-                .size(px(14.0))
-                .flex_none()
-                .text_color(move || {
+            nsh_base::button()
+                .test_id(&format!("db-instance-{id}"))
+                .w_full()
+                .flex_row()
+                .items_center()
+                .justify_start()
+                .gap(tokens::space(2.0))
+                .px(tokens::space(2.0))
+                .py(tokens::space(1.5))
+                .rounded(move || theme().radius)
+                .selected(selected)
+                .bg(move || {
                     if selected {
-                        theme().foreground
+                        tokens::row_selected()
                     } else {
-                        theme().muted_foreground
+                        AdaptiveColor::TRANSPARENT
                     }
-                }),
-        )
-        .child(
-            view()
-                .flex_col()
-                .flex_1()
-                .min_w(px(0.0))
+                })
+                .hover(move |style| style.bg(tokens::row_hover()))
+                .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
+                .on_press(move || db::open_instance(&press_id))
                 .child(
-                    text(id.clone())
-                        .text_sm()
-                        .text_color(move || theme().sidebar_foreground)
-                        .truncate(),
+                    icons::engine(&kind)
+                        .size(px(14.0))
+                        .flex_none()
+                        .text_color(move || {
+                            if selected {
+                                theme().foreground
+                            } else {
+                                theme().muted_foreground
+                            }
+                        }),
                 )
                 .child(
-                    text(meta)
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground)
-                        .truncate(),
+                    view()
+                        .flex_col()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .child(
+                            text(id)
+                                .text_sm()
+                                .text_color(move || theme().sidebar_foreground)
+                                .truncate(),
+                        )
+                        .child(
+                            text(meta)
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .tabular_nums()
+                                .text_color(move || theme().muted_foreground)
+                                .truncate(),
+                        ),
+                )
+                .child(
+                    view()
+                        .size(px(8.0))
+                        .flex_none()
+                        .rounded(px(4.0))
+                        .bg(move || {
+                            if running {
+                                tokens::success()
+                            } else if active {
+                                tokens::warning()
+                            } else {
+                                tokens::hairline()
+                            }
+                        }),
                 ),
         )
-        .child(
-            view()
-                .size(px(8.0))
-                .flex_none()
-                .rounded(px(4.0))
-                .bg(move || {
-                    if running {
-                        tokens::success()
-                    } else if active {
-                        tokens::warning()
-                    } else {
-                        tokens::hairline()
-                    }
-                }),
-        )
+}
+
+fn instance_context_menu(id: &str, kind: &str) -> Vec<MenuItem> {
+    let busy = db::operations_busy();
+    let running = db::is_running(id);
+    let start_id = id.to_string();
+    let stop_id = id.to_string();
+    let restart_id = id.to_string();
+    let copy_id = id.to_string();
+    let cli_id = id.to_string();
+    let log_job = format!("db-{id}");
+    let remove_id = id.to_string();
+
+    let mut items = vec![
+        MenuItem::new("Start")
+            .disabled(busy || running)
+            .on_select(move || db::start_instance(&start_id)),
+        MenuItem::new("Stop")
+            .disabled(busy || !running)
+            .on_select(move || db::stop_instance(&stop_id)),
+        MenuItem::new("Restart")
+            .disabled(busy)
+            .on_select(move || db::restart_instance(&restart_id)),
+        MenuItem::separator(),
+        MenuItem::new("Copy URI")
+            .disabled(busy)
+            .on_select(move || db::copy_uri(&copy_id)),
+    ];
+
+    if kind != "mongodb" {
+        items.push(
+            MenuItem::new("Open CLI in Terminal")
+                .disabled(busy)
+                .on_select(move || db::open_cli(&cli_id)),
+        );
+    }
+
+    items.push(MenuItem::new("View Logs").on_select(move || crate::dev_logs::open(&log_job)));
+    items.push(MenuItem::separator());
+    items.push(
+        MenuItem::new("Remove…")
+            .destructive(true)
+            .disabled(busy)
+            .on_select(move || db::request_remove_instance(&remove_id)),
+    );
+
+    items
 }
 
 pub(crate) fn instance_title(kind: &str) -> &'static str {
@@ -217,11 +285,13 @@ pub(crate) fn instance_title(kind: &str) -> &'static str {
 fn nav_row(
     label: &'static str,
     test_id: &'static str,
-    trailing: Option<String>,
-    selected: bool,
+    trailing: Option<impl Fn() -> String + 'static>,
+    selected: impl IntoReactive<bool> + 'static,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
-    let has_trailing = trailing.is_some();
+    let selected = selected.into_reactive();
+    let selected_bg = selected.clone();
+    let selected_icon = selected.clone();
     nsh_base::button()
         .test_id(test_id)
         .w_full()
@@ -232,20 +302,28 @@ fn nav_row(
         .px(tokens::space(2.0))
         .py(tokens::space(1.5))
         .rounded(move || theme().radius)
+        .selected(move || selected.get())
         .bg(move || {
-            if selected {
+            if selected_bg.get() {
                 tokens::row_selected()
             } else {
                 AdaptiveColor::TRANSPARENT
             }
         })
         .hover(move |style| style.bg(tokens::row_hover()))
+        .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
         .on_press(on_press)
         .child(
             app_icons::external()
                 .size(px(13.0))
                 .flex_none()
-                .text_color(move || theme().muted_foreground),
+                .text_color(move || {
+                    if selected_icon.get() {
+                        theme().foreground
+                    } else {
+                        theme().muted_foreground
+                    }
+                }),
         )
         .child(
             text(label)
@@ -255,9 +333,10 @@ fn nav_row(
                 .text_color(move || theme().sidebar_foreground)
                 .truncate(),
         )
-        .child(when(has_trailing, move || {
-            text(trailing.clone().unwrap_or_default())
+        .child(trailing.map(|count| {
+            text(count)
                 .text_size(px(tokens::TEXT_CAPTION))
+                .tabular_nums()
                 .text_color(move || theme().muted_foreground)
         }))
 }

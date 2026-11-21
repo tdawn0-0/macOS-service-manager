@@ -536,13 +536,14 @@
                         <input type="search" id="demo-svc-search" class="svc-search" placeholder="Search Brew, Login Items, launchd…" aria-label="Filter simulated macOS services">
                         <button type="button" class="svc-pill active" data-svc-source="all">All (5)</button>
                         <button type="button" class="svc-pill" data-svc-source="user-agent">User Agents</button>
+                        <button type="button" class="svc-pill" data-svc-source="system-agent">System Agents</button>
                         <button type="button" class="svc-pill" data-svc-source="daemon">Daemons</button>
                         <button type="button" class="svc-pill" data-svc-source="brew">Brew</button>
                         <button type="button" class="svc-pill" data-svc-source="login-item">Login Items</button>
                       </div>
 
                       <div id="demo-svc-list" style="display:flex;flex-direction:column;gap:8px">
-                        <div class="ws-card" data-svc-item data-source="user-agent" data-name="xyz.jyeu.devbase.proxy local https">
+                        <div class="ws-card" data-svc-item data-source="user-agent" data-name="xyz.jyeu.devbase.proxy local https user agent">
                           <div class="ws-row">
                             <div class="ws-row-main">
                               <div class="ws-row-title">
@@ -556,7 +557,21 @@
                           </div>
                         </div>
 
-                        <div class="ws-card" data-svc-item data-source="daemon" data-name="xyz.jyeu.devbase.helper privileged helper">
+                        <div class="ws-card" data-svc-item data-source="system-agent" data-name="org.macosforge.xquartz.startx system agent launchagents">
+                          <div class="ws-row">
+                            <div class="ws-row-main">
+                              <div class="ws-row-title">
+                                <span class="mono">org.macosforge.xquartz.startx</span>
+                                <span class="status-chip status-chip-muted">Loaded</span>
+                                <span class="status-chip status-chip-muted">System Agent</span>
+                              </div>
+                              <div class="ws-row-sub">/Library/LaunchAgents/org.macosforge.xquartz.startx.plist</div>
+                            </div>
+                            <button type="button" class="ws-mini-btn" data-copy-toast="Opened read-only Plist preview for org.macosforge.xquartz.startx">Plist</button>
+                          </div>
+                        </div>
+
+                        <div class="ws-card" data-svc-item data-source="daemon" data-name="xyz.jyeu.devbase.helper privileged helper daemon">
                           <div class="ws-row">
                             <div class="ws-row-main">
                               <div class="ws-row-title">
@@ -731,7 +746,7 @@
               </div>
               <div class="stage-code-bar">
                 <span class="hl-muted"># Reversible shell hook (zsh / bash / fish)</span><br>
-                <span class="hl-blue">export</span> NODE_EXTRA_CA_CERTS=<span class="hl-green">"$HOME/Library/Application Support/Devbase/ca/root.pem"</span>
+                <span class="hl-blue">export</span> NODE_EXTRA_CA_CERTS=<span class="hl-green">"$HOME/Library/Application Support/Devbase/Development/proxy/ca.pem"</span>
               </div>
             </div>
           </div>
@@ -1270,12 +1285,12 @@
             </div>
 
             <div class="split-mode" id="install-cli" role="tabpanel">
-              <div class="install-snippet" id="install-snippet-code"># 1. Install ~/.local/bin/devbase wrapper
+              <pre class="install-snippet" id="install-snippet-code"><code># 1. Install ~/.local/bin/devbase wrapper
 /Applications/Devbase.app/Contents/MacOS/Devbase cli install
 
 # 2. Verify JSON status or start read-only MCP
 devbase status --json
-devbase mcp</div>
+devbase mcp</code></pre>
               <button type="button" class="btn-ghost" id="copy-install-snippet" style="height:40px;font-size:13.5px">
                 Copy setup commands
               </button>

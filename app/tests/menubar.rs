@@ -938,6 +938,86 @@ fn the_first_run_guide_leads_through_its_pages_and_remembers_completion() {
     assert!(persistence.completed.load(Ordering::Relaxed));
 }
 
+#[component]
+fn PopoverHarness() -> impl IntoElement {
+    nsh_app_devbase::testing::menubar_load();
+    view()
+        .size_full()
+        .flex_col()
+        .child(when(nsh_app_devbase::testing::quit_open, || {
+            text("quit pending").test_id("quit-open")
+        }))
+        .child(
+            view()
+                .flex_1()
+                .min_h(px(0.0))
+                .child(nsh_app_devbase::testing::menubar_popover()),
+        )
+}
+
+#[test]
+fn the_popover_ui_renders_status_and_toggles_switches() {
+    let databases = FakeDatabases::new(database_fixture(&[
+        ("app", "Stopped"),
+        ("cache", "Running"),
+    ]));
+    let mut snapshot = proxy_snapshot(vec![rule("app.test.devbase.localhost", true)], "Stopped");
+    snapshot.token_configured = true;
+    snapshot
+        .workers
+        .insert("app-test", "https://app-test.example.workers.dev");
+    snapshot
+        .statuses
+        .insert("tunnel".to_string(), "Stopped".to_string());
+    let proxy = FakeProxy::new(snapshot);
+    let settings = FakeSettings::new(settings_snapshot());
+
+    let turn = serial();
+    use_fake_databases();
+    install_databases_provider(databases.clone() as Arc<dyn DatabasesProvider>);
+    use_fake_proxy();
+    install_proxy_provider(proxy.clone() as Arc<dyn ProxyProvider>);
+    use_fake_system();
+    install_system_settings_provider(settings.clone() as Arc<dyn SystemSettingsProvider>);
+
+    let mut app = Headless::start(EngineConfig::new(Root::of::<PopoverHarness>())).unwrap();
+    app.set_viewport(Size::new(px(340.0), px(520.0))).unwrap();
+    app.wait_for("id:menubar-popover").unwrap();
+    app.wait_for("id:popover-switch-instance-app").unwrap();
+    app.wait_for("id:popover-switch-proxy").unwrap();
+    app.wait_for("id:popover-switch-tunnel").unwrap();
+
+    assert!(contains(&app, "1 running"));
+    assert!(contains(&app, "PostgreSQL · :5432 · Stopped"));
+    assert!(contains(&app, "Redis · :6379 · Running"));
+
+    // Toggle database instance switch on.
+    app.press("id:popover-switch-instance-app").unwrap();
+    wait_contains(&mut app, "2 running", Duration::from_secs(5)).unwrap();
+    assert!(databases.calls().iter().any(|call| call == "start app"));
+
+    // Toggle proxy switch on.
+    app.press("id:popover-switch-proxy").unwrap();
+    wait_contains(&mut app, "Proxy · Running", Duration::from_secs(5)).unwrap();
+    assert!(proxy.calls().iter().any(|call| call == "apply proxy"));
+
+    // Toggle tunnel switch on.
+    app.press("id:popover-switch-tunnel").unwrap();
+    wait_contains(&mut app, "Tunnel · Running", Duration::from_secs(5)).unwrap();
+    assert!(proxy.calls().iter().any(|call| call == "start tunnel"));
+
+    // Footer Quit button triggers quit flow.
+    app.press("id:popover-quit").unwrap();
+    app.wait_for("id:quit-open").unwrap();
+    assert!(
+        settings
+            .calls()
+            .iter()
+            .any(|call| call == "preview shutdown")
+    );
+    drop(turn);
+}
+
 #[test]
 fn a_completed_guide_does_not_open_again() {
     let persistence = FakePersistence::new(true);

@@ -26,7 +26,15 @@ use std::{
 
 use nsh_base::theme;
 use nsh_core::{
-    element::{ImageSrc, Svg, svg},
+    desktop::{
+        TitleBarOptions, TitleBarStyle, WindowAttributes, WindowKind, WindowLevel, WindowPosition,
+    },
+    element::{
+        ImageSrc, Svg,
+        desktop::{title_bar, window},
+        svg,
+    },
+    geometry::size,
     prelude::*,
 };
 
@@ -383,8 +391,71 @@ fn guide_button(
         .child(text(label).text_size(px(tokens::TEXT_SMALL)))
 }
 
-/// The overlay the app root shows while [`visible`]. It fills the window, so
-/// a click behind it cannot reach the workspace while the guide is open.
+/// The floating native `WindowKind::Panel` guide window used on desktop.
+/// Stays above System Settings while non-resizable with a hidden title bar.
+pub(crate) fn guide_window() -> impl IntoElement {
+    let mut bar = TitleBarOptions::default();
+    bar.style = TitleBarStyle::Hidden;
+    bar.height = Some(px(40.0));
+
+    let mut attrs = WindowAttributes::default();
+    attrs.title_bar = Some(bar);
+    attrs.resizable = Some(false);
+    attrs.minimizable = Some(false);
+    attrs.maximizable = Some(false);
+    attrs.level = Some(WindowLevel::Floating);
+    attrs.activate = Some(true);
+    attrs.close_on_escape = Some(true);
+
+    window()
+        .id("guide")
+        .kind(WindowKind::Panel)
+        .title("Full Disk Access")
+        .default_size(size(px(420.0), px(340.0)))
+        .default_position(WindowPosition::Center)
+        .attributes(attrs)
+        .open(visible)
+        .on_open_change(|change| {
+            if !change.open {
+                close();
+            }
+        })
+        .content(window_content)
+}
+
+fn window_content() -> impl IntoElement {
+    view()
+        .test_id("guide-window")
+        .size_full()
+        .flex_col()
+        .bg(tokens::panel)
+        .text_color(move || theme().foreground)
+        .child(
+            view()
+                .w_full()
+                .flex_none()
+                .h(move || {
+                    let top = title_bar().top;
+                    if top.0 > 0.0 { top } else { px(20.0) }
+                })
+                .window_drag(true),
+        )
+        .child(
+            view()
+                .test_id("guide-card")
+                .flex_1()
+                .w_full()
+                .flex_col()
+                .items_center()
+                .px(px(28.0))
+                .pb(px(24.0))
+                .child(dynamic(|| Some(page_body().into_element()))),
+        )
+}
+
+/// The overlay the app root shows while [`visible`] off desktop (and what
+/// headless guide tests mount directly). It fills the window, so a click
+/// behind it cannot reach the workspace while the guide is open.
 pub fn overlay() -> impl IntoElement {
     view()
         .test_id("guide-overlay")
@@ -398,8 +469,16 @@ pub fn overlay() -> impl IntoElement {
         .child(dynamic(|| Some(card().into_element())))
 }
 
-fn card() -> impl IntoElement {
+fn page_body() -> impl IntoElement {
     let page = guide().with(|state| state.page);
+    match page {
+        Page::Welcome => welcome().into_element(),
+        Page::Sidecar => sidecar().into_element(),
+        Page::Done => done().into_element(),
+    }
+}
+
+fn card() -> impl IntoElement {
     view()
         .test_id("guide-card")
         .w(px(420.0))
@@ -413,11 +492,7 @@ fn card() -> impl IntoElement {
         .border_1()
         .border_color(tokens::hairline)
         .shadow_xl()
-        .child(match page {
-            Page::Welcome => welcome().into_element(),
-            Page::Sidecar => sidecar().into_element(),
-            Page::Done => done().into_element(),
-        })
+        .child(page_body())
 }
 
 fn welcome() -> impl IntoElement {

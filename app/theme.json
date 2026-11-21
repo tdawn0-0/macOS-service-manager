@@ -38,6 +38,7 @@
       "sidebar-ring": "#1677ff",
       "sheet": "#fafafa",
       "panel": "#ffffff",
+      "inset": "rgba(0, 0, 0, 0.035)",
       "control": "rgba(255, 255, 255, 0.92)",
       "row-hover": "rgba(0, 0, 0, 0.045)",
       "row-selected": "rgba(0, 0, 0, 0.075)"
@@ -73,6 +74,7 @@
       "sidebar-ring": "#4096ff",
       "sheet": "#0e0e10",
       "panel": "#18181b",
+      "inset": "rgba(255, 255, 255, 0.045)",
       "control": "rgba(255, 255, 255, 0.07)",
       "row-hover": "rgba(255, 255, 255, 0.06)",
       "row-selected": "rgba(255, 255, 255, 0.11)"

@@ -28,7 +28,9 @@ pub mod testing {
     pub use crate::menubar::{
         Action as MenubarAction, InstanceRow as MenubarInstance, Panel as MenubarPanel,
         PanelInput as MenubarInput, Row as MenubarRow, RowKind as MenubarRowKind,
-        dispatch as menubar_dispatch, load as menubar_load, panel as menubar_panel,
+        close_popover as menubar_close_popover, dispatch as menubar_dispatch, load as menubar_load,
+        panel as menubar_panel, popover_content as menubar_popover,
+        popover_open as menubar_popover_open,
     };
     pub use crate::store::databases::{
         CancelToken, Provider as DatabasesProvider, Snapshot as DatabasesSnapshot,
@@ -53,7 +55,6 @@ pub mod testing {
         Provider as SoftwareProvider, Snapshot as SoftwareSnapshot, SoftwareKind,
         install_provider as install_software_provider, use_fake_provider as use_fake_software,
     };
-    pub use crate::store::system::quit_open;
     pub use crate::store::system::{
         CacheClear as SystemCacheClear, CacheInfo as SystemCacheInfo, CliChange as SystemCliChange,
         CliStatus as SystemCliStatus, DiagnosticsProvider as SystemDiagnosticsProvider,
@@ -67,6 +68,7 @@ pub mod testing {
         install_settings_provider as install_system_settings_provider,
         use_fake_provider as use_fake_system,
     };
+    pub use crate::store::system::{quit_open, request_quit as system_request_quit};
     pub use devcore::databases::ListeningPort as ProxyListeningPort;
     pub use devcore::model::ProxyRule;
     pub use devcore::service::Source;
@@ -76,7 +78,12 @@ pub mod testing {
 }
 
 use nsh_base::theme;
-use nsh_core::prelude::*;
+use nsh_core::{
+    desktop::{TitleBarOptions, TitleBarStyle, WindowAttributes},
+    element::desktop::main_window,
+    platform::Os,
+    prelude::*,
+};
 
 /// The app's UI set (`nsh.json` `"rust"`).
 #[native_module("devbase/native")]
@@ -84,22 +91,62 @@ fn native(registry: &mut Registry) {
     registry.register::<App>();
 }
 
+/// Configures the main desktop window's native chrome: hidden title bar with
+/// 52pt traffic-light strip, hide-to-menubar on close, and macOS 26 Liquid
+/// Glass transparency that falls back to opaque in full screen.
+fn configure_main_window() {
+    let mut bar = TitleBarOptions::default();
+    bar.style = TitleBarStyle::Hidden;
+    bar.height = Some(px(theme::TITLE_BAR_HEIGHT));
+
+    let mut attrs = WindowAttributes::default();
+    attrs.title_bar = Some(bar);
+    attrs.close_on_press = Some(false);
+    if os() == Os::MacOs {
+        attrs.transparent = Some(shell::sidebar_glass_active());
+    }
+    let main = main_window();
+    main.set(attrs);
+    main.on_close_press(|_| {
+        main_window().hide();
+    });
+
+    if os() == Os::MacOs {
+        effect(|| {
+            let mut update = WindowAttributes::default();
+            update.transparent = Some(shell::sidebar_glass_active());
+            main_window().set(update);
+        });
+    }
+}
+
 /// The app's root: the whole surface, on the theme's background. The runner
 /// mounts it in the app's main window, whose title, size and minimum size come
 /// from `nsh.json`'s `"window"`.
 #[component]
 pub fn App() -> impl IntoElement {
+    let desktop = os().is_desktop();
     store::system::install_quit_handler();
-    if os().is_desktop() {
+    if desktop {
+        configure_main_window();
+        shell::install_application_menu();
         menubar::install();
         guide::start();
     }
     view()
         .flex_1()
         .relative()
-        .bg(move || theme().background)
+        .bg(move || {
+            if shell::sidebar_glass_active() {
+                AdaptiveColor::TRANSPARENT
+            } else {
+                theme().background
+            }
+        })
         .text_color(move || theme().foreground)
         .child(shell::shell())
         .child(when(store::system::quit_open, store::system::quit_dialog))
-        .child(when(guide::visible, guide::overlay))
+        .child(when(desktop, menubar::popover_window))
+        .child(when(desktop, guide::guide_window))
+        .child(when(move || !desktop && guide::visible(), guide::overlay))
 }

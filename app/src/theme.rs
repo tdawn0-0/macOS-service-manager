@@ -31,6 +31,10 @@ pub(crate) const TEXT_SMALL: f32 = 12.0;
 /// Captions and metadata (Go's `textCaption`).
 pub(crate) const TEXT_CAPTION: f32 = 11.0;
 
+/// Hidden title bar height in points, matching Go's `barHeight` (traffic lights
+/// sit centered in this strip).
+pub(crate) const TITLE_BAR_HEIGHT: f32 = 52.0;
+
 /// The Go app's spacing step, used when a theme does not set `spacing`.
 const DEFAULT_SPACING: f32 = 3.5;
 

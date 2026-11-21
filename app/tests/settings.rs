@@ -19,7 +19,9 @@ use nsh_app_devbase::{
     testing::{
         SystemCacheClear, SystemCacheInfo, SystemCliChange, SystemCliStatus, SystemHelperChange,
         SystemHelperStatus, SystemLoginChange, SystemSettingsProvider, SystemSettingsSnapshot,
-        install_system_settings_provider, use_fake_system,
+        install_system_settings_provider, system_request_quit, use_fake_databases,
+        use_fake_development, use_fake_guide, use_fake_providers, use_fake_proxy,
+        use_fake_software, use_fake_system,
     },
 };
 use nsh_core::prelude::*;
@@ -47,6 +49,8 @@ struct FakeSettings {
     calls: Mutex<Vec<String>>,
     helper: HelperBehaviour,
     cli_install_ok: AtomicBool,
+    shutdown_plan: Mutex<devcore::shutdown::ShutdownPlan>,
+    shutdown_delay: Mutex<Duration>,
 }
 
 impl FakeSettings {
@@ -77,6 +81,8 @@ impl FakeSettings {
             calls: Mutex::new(Vec::new()),
             helper,
             cli_install_ok: AtomicBool::new(false),
+            shutdown_plan: Mutex::new(devcore::shutdown::ShutdownPlan::default()),
+            shutdown_delay: Mutex::new(Duration::ZERO),
         })
     }
 
@@ -240,16 +246,35 @@ impl SystemSettingsProvider for FakeSettings {
     }
 
     fn preview_shutdown(&self) -> Result<devcore::shutdown::ShutdownPlan, String> {
-        Ok(devcore::shutdown::ShutdownPlan::default())
+        self.record("preview shutdown");
+        let delay = *self
+            .shutdown_delay
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !delay.is_zero() {
+            thread::sleep(delay);
+        }
+        Ok(self
+            .shutdown_plan
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone())
     }
 
     fn shutdown(&self, _plan: &devcore::shutdown::ShutdownPlan) -> Result<(), String> {
+        self.record("shutdown");
         Ok(())
     }
 }
 
 fn start(fake: Arc<FakeSettings>) -> (MutexGuard<'static, ()>, Headless) {
     let turn = serial();
+    use_fake_providers();
+    use_fake_software();
+    use_fake_development();
+    use_fake_databases();
+    use_fake_proxy();
+    use_fake_guide();
     use_fake_system();
     install_system_settings_provider(fake);
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
@@ -258,6 +283,78 @@ fn start(fake: Arc<FakeSettings>) -> (MutexGuard<'static, ()>, Headless) {
     app.press("role:button[Settings]").unwrap();
     app.wait_for("id:settings-page").unwrap();
     (turn, app)
+}
+
+#[component]
+fn QuitDialogHarness() -> impl IntoElement {
+    view()
+        .size_full()
+        .flex_col()
+        .child(
+            nsh_base::button()
+                .test_id("trigger-quit")
+                .on_press(system_request_quit)
+                .child(text("Trigger Quit")),
+        )
+        .child(nsh_app_devbase::app())
+}
+
+#[test]
+fn quit_dialog_updates_reactively_from_loading_to_loaded_scope() {
+    let fake = FakeSettings::new(HelperBehaviour::Normal);
+    *fake
+        .shutdown_delay
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Duration::from_millis(250);
+    *fake
+        .shutdown_plan
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = devcore::shutdown::ShutdownPlan {
+        instances: vec![
+            devcore::shutdown::ShutdownResource {
+                id: "app".to_string(),
+                name: "app".to_string(),
+            },
+            devcore::shutdown::ShutdownResource {
+                id: "cache".to_string(),
+                name: "cache".to_string(),
+            },
+        ],
+        fingerprint: "fp-2".to_string(),
+    };
+
+    let turn = serial();
+    use_fake_providers();
+    use_fake_software();
+    use_fake_development();
+    use_fake_databases();
+    use_fake_proxy();
+    use_fake_guide();
+    use_fake_system();
+    install_system_settings_provider(fake.clone());
+
+    let mut app = Headless::start(EngineConfig::new(Root::of::<QuitDialogHarness>())).unwrap();
+    app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    app.wait_for("id:trigger-quit").unwrap();
+
+    // Open quit dialog: initially shows loading text while preview_shutdown runs.
+    app.press("id:trigger-quit").unwrap();
+    app.wait_for("id:quit-dialog").unwrap();
+    app.wait_for("Reading managed service scope…").unwrap();
+
+    // Once preview_shutdown resolves, dialog updates reactively to show scope and enabled actions.
+    app.wait_for_within("Stop scope: 2 managed databases", Duration::from_secs(5))
+        .unwrap();
+    app.wait_for("Keep services and quit").unwrap();
+    app.wait_for("Stop managed databases and quit").unwrap();
+
+    // Pressing "Stop managed databases and quit" executes provider.shutdown(&plan).
+    app.press("id:quit-stop").unwrap();
+    app.wait_for_gone("id:quit-dialog", Duration::from_secs(5))
+        .unwrap();
+    assert!(fake.calls().iter().any(|call| call == "preview shutdown"));
+    assert!(fake.calls().iter().any(|call| call == "shutdown"));
+    drop(turn);
 }
 
 #[test]

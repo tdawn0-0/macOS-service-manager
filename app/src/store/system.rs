@@ -1718,14 +1718,20 @@ fn quit_state() -> Signal<QuitState> {
     global::<QuitState>()
 }
 
-static QUIT_HANDLER: AtomicBool = AtomicBool::new(false);
+#[derive(Debug, Clone, Default)]
+struct QuitHandlerInstalled(bool);
 
 /// Registers the quit-request listener once per surface.
 pub(crate) fn install_quit_handler() {
-    if QUIT_HANDLER.swap(true, Ordering::Relaxed) {
+    let installed = global::<QuitHandlerInstalled>();
+    if installed.with_untracked(|flag| flag.0) {
         return;
     }
+    installed.set(QuitHandlerInstalled(true));
     nsh_core::element::desktop::on_quit_request(request_quit);
+    nsh_core::element::desktop::set_quit_request_options(
+        nsh_core::desktop::QuitRequestOptions::default().system(true),
+    );
 }
 
 pub fn quit_open() -> bool {
@@ -1733,8 +1739,11 @@ pub fn quit_open() -> bool {
 }
 
 /// `requestQuit`: read the managed-database scope, then ask.
-pub(crate) fn request_quit() {
+pub fn request_quit() {
     if quit_open() {
+        let window = nsh_core::element::desktop::main_window();
+        window.show();
+        window.focus();
         return;
     }
     let sequence = quit_state().with(|state| state.sequence + 1);
@@ -1746,6 +1755,9 @@ pub(crate) fn request_quit() {
         state.error = None;
         state.sequence = sequence;
     });
+    let window = nsh_core::element::desktop::main_window();
+    window.show();
+    window.focus();
     let Some(provider) = settings_provider_of() else {
         quit_state().update(|state| {
             state.error = Some(
@@ -1798,6 +1810,7 @@ fn cancel_quit() {
         state.sequence += 1;
         state.stopping = false;
     });
+    nsh_core::element::desktop::cancel_quit_request();
 }
 
 fn stop_for_quit() {
@@ -1845,91 +1858,119 @@ fn stop_for_quit() {
 pub(crate) fn quit_dialog() -> impl IntoElement {
     use nsh_base::theme;
 
-    let state = quit_state().with(|state| state.clone());
-    let instances = state
-        .plan
-        .as_ref()
-        .map(|plan| plan.instances.len())
-        .unwrap_or(0);
-    let loading = state.loading;
-    let stopping = state.stopping;
-    let can_stop = instances > 0 && !stopping;
-    let stop_disabled = loading || state.plan.is_none();
-    let body = view()
-        .flex_col()
-        .gap(px(12.0))
-        .child(
-            text("Quit Devbase?")
-                .text_size(px(18.0))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(move || theme().foreground),
-        )
-        .child(
-            view().flex_col().gap(px(6.0)).children(
-                [
-                    state
-                        .loading
-                        .then(|| dialog_line("Reading managed service scope…".to_string(), false)),
-                    state.error.clone().map(|error| dialog_line(error, true)),
-                    (!state.loading && state.error.is_none()).then(|| {
-                        dialog_line(
-                            if instances == 0 {
-                                "No managed databases are running.".to_string()
-                            } else {
-                                format!("Stop scope: {instances} managed databases")
-                            },
-                            false,
-                        )
-                    }),
-                    state
-                        .stopping
-                        .then(|| dialog_line("Stopping managed databases…".to_string(), false)),
-                ]
-                .into_iter()
-                .flatten(),
-            ),
-        )
-        .child(
-            view()
-                .flex_row()
-                .items_center()
-                .gap(px(8.0))
-                .child(action("Cancel quit", false, stopping, cancel_quit))
-                .child(view().flex_1())
-                .child(when(can_stop, move || {
-                    view()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(8.0))
-                        .child(action(
-                            "Keep services and quit",
-                            false,
-                            loading,
-                            finish_quit,
-                        ))
-                        .child(action(
-                            "Stop managed databases and quit",
-                            true,
-                            stop_disabled,
-                            stop_for_quit,
-                        ))
-                }))
-                .child(when(!can_stop, move || {
-                    action("Quit", true, loading, finish_quit)
-                })),
-        );
     nsh_base::dialog()
         .label("Quit Devbase?")
         .on_cancel(cancel_quit)
         .child(
             view()
+                .test_id("quit-dialog")
                 .w(px(520.0))
                 .p(px(20.0))
+                .flex_col()
+                .gap(px(12.0))
                 .rounded(move || theme().radius)
                 .bg(move || theme().card)
                 .border_1()
                 .border_color(move || theme().border)
-                .child(body),
+                .child(
+                    text("Quit Devbase?")
+                        .text_size(px(18.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(move || theme().foreground),
+                )
+                .child(dynamic(|| {
+                    let state = quit_state().with(|state| state.clone());
+                    let instances = state
+                        .plan
+                        .as_ref()
+                        .map(|plan| plan.instances.len())
+                        .unwrap_or(0);
+                    let loading = state.loading;
+                    let stopping = state.stopping;
+                    let has_instances = instances > 0;
+                    let stop_disabled = loading || stopping || state.plan.is_none();
+                    let body = view()
+                        .flex_col()
+                        .gap(px(12.0))
+                        .child(
+                            view().flex_col().gap(px(6.0)).children(
+                                [
+                                    loading.then(|| {
+                                        dialog_line(
+                                            "Reading managed service scope…".to_string(),
+                                            false,
+                                        )
+                                    }),
+                                    state.error.clone().map(|error| dialog_line(error, true)),
+                                    (!loading && state.error.is_none()).then(|| {
+                                        dialog_line(
+                                            if instances == 0 {
+                                                "No managed databases are running.".to_string()
+                                            } else {
+                                                format!(
+                                                    "Stop scope: {}",
+                                                    plural(instances, "managed database")
+                                                )
+                                            },
+                                            false,
+                                        )
+                                    }),
+                                    stopping.then(|| {
+                                        dialog_line(
+                                            "Stopping managed databases…".to_string(),
+                                            false,
+                                        )
+                                    }),
+                                ]
+                                .into_iter()
+                                .flatten(),
+                            ),
+                        )
+                        .child(
+                            view()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(8.0))
+                                .child(action(
+                                    "Cancel quit",
+                                    "quit-cancel",
+                                    false,
+                                    stopping,
+                                    cancel_quit,
+                                ))
+                                .child(view().flex_1())
+                                .child(when(has_instances, move || {
+                                    view()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap(px(8.0))
+                                        .child(action(
+                                            "Keep services and quit",
+                                            "quit-keep",
+                                            false,
+                                            loading || stopping,
+                                            finish_quit,
+                                        ))
+                                        .child(action(
+                                            "Stop managed databases and quit",
+                                            "quit-stop",
+                                            true,
+                                            stop_disabled,
+                                            stop_for_quit,
+                                        ))
+                                }))
+                                .child(when(!has_instances, move || {
+                                    action(
+                                        "Quit",
+                                        "quit-confirm",
+                                        true,
+                                        loading || stopping,
+                                        finish_quit,
+                                    )
+                                })),
+                        );
+                    Some(body.into_element())
+                })),
         )
 }
 
@@ -1946,12 +1987,14 @@ fn dialog_line(message: String, error: bool) -> impl IntoElement {
 
 fn action(
     label: &'static str,
+    test_id: &'static str,
     primary: bool,
     disabled: bool,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
     use nsh_base::theme;
     nsh_base::button()
+        .test_id(test_id)
         .h(px(26.0))
         .px(px(10.0))
         .rounded(move || theme().radius)
@@ -1963,9 +2006,22 @@ fn action(
             }
         })
         .border_1()
-        .border_color(move || theme().border)
+        .border_color(move || {
+            if primary {
+                theme().primary
+            } else {
+                theme().border
+            }
+        })
         .disabled(disabled)
         .opacity(if disabled { 0.45 } else { 1.0 })
+        .text_color(move || {
+            if primary {
+                theme().primary_foreground
+            } else {
+                theme().foreground
+            }
+        })
         .on_press(on_press)
         .child(text(label).text_size(px(12.0)))
 }

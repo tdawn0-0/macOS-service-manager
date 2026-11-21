@@ -1,32 +1,43 @@
 //! The menu bar panel, ported from `menubar.go`.
 //!
-//! The Go app opened a flyout window under its status item. NSH's tray API
-//! opens the system menu instead (`nsh/desktop`'s [`Tray::menu`]), so the
-//! panel is a [`MenuItem`] tree: the same glance at the workspace, built from
-//! the stores every time one of them changes.
+//! Left-clicking the menu bar status item toggles a native floating `NSPanel`
+//! popover ([`WindowKind::Popup`]) anchored beneath the status item with
+//! macOS 26 Liquid Glass (`NSGlassEffectView`), status dots, `nsh_base::switch()`
+//! controls for managed databases, the HTTPS proxy and Cloudflare tunnel, a
+//! scrollable body, and an Open / Refresh / Quit footer. Right-clicking (or
+//! Control-clicking) opens a sleek native `NSMenu` with SF Symbols, monochrome
+//! template icons, and inline section groupings.
 //!
-//! The rows are a plain model ([`Panel`]) built by [`panel`]. Two things read
-//! it: [`tray_for`] turns it into system menu items whose handlers call
-//! [`dispatch`], and tests read it to pin the labels and switches without a
-//! platform. Nothing in a menu handler blocks: every switch calls the store,
-//! which runs its provider call on a blocking thread and writes its signals.
-//!
-//! The Go panel also listed the Homebrew and login-agent sources under folding
-//! headings. Those stores have no panel rows yet; this port shows the
-//! workspace's own resources (database instances, the HTTPS proxy and its
-//! tunnel), which is what the tray acts on. System agents and daemons stay
-//! out, as in Go: their changes affect the whole machine.
+//! The rows are a plain model ([`Panel`]) built by [`panel`]. Both the popover
+//! UI ([`popover_content`]) and the right-click menu ([`menu`]) read it, and
+//! tests can inspect [`Panel`] or mount [`popover_content`] headlessly without
+//! a platform. Nothing in a handler blocks: every switch calls the store, which
+//! runs its provider call on a blocking thread and writes its signals.
 
+use nsh_base::{button, switch, theme};
 use nsh_core::{
-    desktop::TrayTitleRun,
+    GlassEffect, PointerEvents,
+    desktop::{TrayTitleRun, WindowAttributes, WindowKind, WindowPosition},
     element::{
-        ImageSrc,
-        desktop::{MenuItem, main_window, set_tray, tray},
+        ImageSrc, Svg,
+        desktop::{MenuItem, TrayClickEvent, displays, main_window, set_tray, tray, window},
+        svg,
     },
+    geometry::{Bounds, Point, point, size},
+    platform::Os,
     prelude::*,
 };
 
-use crate::store::{self, Section, databases, proxy, software::SoftwareKind, system};
+use crate::{
+    store::{self, Section, databases, proxy, software::SoftwareKind, system},
+    theme as tokens,
+};
+
+/// The popover's width and maximum height in points (matching `menubar.go`).
+const POPOVER_WIDTH: f32 = 340.0;
+const POPOVER_MIN_HEIGHT: f32 = 240.0;
+const POPOVER_MAX_HEIGHT: f32 = 560.0;
+const POPOVER_MARGIN: f32 = 8.0;
 
 /// The icon `assets/icons/menubar.svg` draws, inline so a cargo run and a
 /// bundled app show the same template.
@@ -35,6 +46,27 @@ const MENUBAR_ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="36
   <rect x="4.2" y="21.2" width="27.6" height="10.6" rx="5.3" fill="none" stroke="#000" stroke-width="2.4"/>
   <circle cx="9.5" cy="26.5" r="2.7"/>
 </svg>"##;
+
+const ICON_OPEN: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">"#;
+const ICON_CLOSE: &str = "</svg>";
+
+const PACKAGE_BODY: &str = r#"<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/>"#;
+const DATABASE_BODY: &str = r#"<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/>"#;
+const SHIELD_BODY: &str = r#"<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>"#;
+const CLOUD_BODY: &str = r#"<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>"#;
+const WINDOW_BODY: &str = r#"<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>"#;
+const REFRESH_BODY: &str =
+    r#"<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>"#;
+const QUIT_BODY: &str = r#"<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>"#;
+const PLUS_BODY: &str = r#"<path d="M5 12h14"/><path d="M12 5v14"/>"#;
+
+fn icon_src(body: &str) -> ImageSrc {
+    ImageSrc::svg_markup(&format!("{ICON_OPEN}{body}{ICON_CLOSE}"))
+}
+
+fn icon_svg(body: &str) -> Svg {
+    svg(icon_src(body))
+}
 
 /// One kind of row, so a test can tell a heading from a switch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -485,15 +517,18 @@ fn show_window() {
     window.focus();
 }
 
-/// Runs a row's action. Menu handlers call this; every call returns at once.
+/// Runs a row's action. Menu and popover handlers call this; every call
+/// returns at once.
 pub fn dispatch(action: Action) {
     match action {
         Action::OpenInstance(id) => {
+            close_popover();
             store::select_section(Section::Databases);
             databases::open_instance(&id);
             show_window();
         }
         Action::OpenNewInstance => {
+            close_popover();
             store::select_section(Section::Databases);
             databases::open_new();
             show_window();
@@ -507,14 +542,19 @@ pub fn dispatch(action: Action) {
         }
         Action::ToggleProxy(on) => proxy::set_proxy_enabled(on),
         Action::ToggleTunnel(on) => proxy::set_tunnel_enabled(on),
-        Action::OpenWindow => show_window(),
+        Action::OpenWindow => {
+            close_popover();
+            show_window();
+        }
         Action::Refresh => refresh(),
-        Action::Quit => system::request_quit(),
+        Action::Quit => {
+            close_popover();
+            system::request_quit();
+        }
     }
 }
 
-/// Reads the workspace, proxy and settings again. Go's panel refreshed the
-/// development state and the sources it listed.
+/// Reads the workspace, proxy and settings again.
 pub fn refresh() {
     databases::refresh();
     proxy::refresh();
@@ -528,7 +568,647 @@ pub fn load() {
     system::load_settings();
 }
 
-fn menu_item(row: &Row) -> MenuItem {
+// --- Native NSPanel popover --------------------------------------------------
+
+#[derive(Debug, Clone, Default)]
+struct PopoverState {
+    open: bool,
+    anchor: Option<Bounds<Points>>,
+}
+
+fn popover_state() -> Signal<PopoverState> {
+    global::<PopoverState>()
+}
+
+/// Whether the native tray popover is currently open.
+pub fn popover_open() -> bool {
+    popover_state().with(|state| state.open)
+}
+
+/// Closes the tray popover if open.
+pub fn close_popover() {
+    popover_state().update(|state| {
+        state.open = false;
+    });
+}
+
+/// Toggles the tray popover on a primary tray click, anchoring it to the
+/// clicked status item's screen bounds.
+fn toggle_popover(event: &TrayClickEvent) {
+    let mut opened = false;
+    popover_state().update(|state| {
+        if state.open {
+            state.open = false;
+        } else {
+            state.anchor = event.bounds;
+            state.open = true;
+            opened = true;
+        }
+    });
+    if opened {
+        refresh();
+    }
+}
+
+/// Computes the popover's top-left screen point beneath the status item,
+/// clamped horizontally inside the display that owns the status item.
+fn anchor_position(anchor: Option<Bounds<Points>>) -> Option<Point<Points>> {
+    let bounds = anchor?;
+    let center_x = bounds.origin.x.0 + bounds.size.width.0 / 2.0;
+    let mut x = (center_x - POPOVER_WIDTH / 2.0).round();
+    let y = (bounds.origin.y.0 + bounds.size.height.0 + 6.0).round();
+
+    let screens = displays();
+    let target = screens
+        .iter()
+        .find(|d| {
+            let left = d.bounds.origin.x.0;
+            let right = left + d.bounds.size.width.0;
+            let top = d.bounds.origin.y.0;
+            let bottom = top + d.bounds.size.height.0;
+            center_x >= left
+                && center_x <= right
+                && bounds.origin.y.0 >= top
+                && bounds.origin.y.0 <= bottom
+        })
+        .or_else(|| screens.iter().find(|d| d.primary))
+        .or_else(|| screens.first());
+
+    if let Some(display) = target {
+        let min_x = display.visible_bounds.origin.x.0 + POPOVER_MARGIN;
+        let max_x = (display.visible_bounds.origin.x.0 + display.visible_bounds.size.width.0
+            - POPOVER_WIDTH
+            - POPOVER_MARGIN)
+            .max(min_x);
+        x = x.clamp(min_x, max_x);
+    }
+
+    Some(point(px(x), px(y)))
+}
+
+fn estimated_popover_height(panel: &Panel) -> f32 {
+    let instance_count = panel
+        .rows
+        .iter()
+        .filter(|row| row.kind == RowKind::Instance && row.checked.is_some())
+        .count()
+        .max(1);
+    let has_tunnel = panel.rows.iter().any(|row| row.kind == RowKind::Tunnel);
+    let height =
+        164.0 + (instance_count as f32 * 44.0) + if has_tunnel { 96.0 } else { 52.0 } + 76.0;
+    height.clamp(POPOVER_MIN_HEIGHT, POPOVER_MAX_HEIGHT)
+}
+
+/// The floating `WindowKind::Popup` `NSPanel` anchored beneath the tray icon.
+/// Mounted by [`crate::App`] on desktop platforms.
+pub(crate) fn popover_window() -> impl IntoElement {
+    when(popover_open, move || {
+        let anchor = popover_state().with_untracked(|state| state.anchor);
+        let initial_height = untracked(|| estimated_popover_height(&panel()));
+
+        let mut attrs = WindowAttributes::default();
+        attrs.close_on_blur = Some(true);
+        attrs.close_on_escape = Some(true);
+        attrs.transparent = Some(true);
+        attrs.shadow = Some(true);
+        attrs.resizable = Some(false);
+        attrs.min_size = Some(Some(size(px(POPOVER_WIDTH), px(POPOVER_MIN_HEIGHT))));
+        attrs.max_size = Some(Some(size(px(POPOVER_WIDTH), px(POPOVER_MAX_HEIGHT))));
+
+        let mut popup = window()
+            .id("menubar-panel")
+            .kind(WindowKind::Popup)
+            .default_size(size(px(POPOVER_WIDTH), px(initial_height)))
+            .attributes(attrs)
+            .open(true)
+            .on_open_change(|change| {
+                if !change.open {
+                    close_popover();
+                }
+            })
+            .content(popover_content);
+
+        if let Some(pos) = anchor_position(anchor) {
+            popup = popup.default_position(WindowPosition::At(pos));
+        }
+
+        popup
+    })
+}
+
+fn status_dot_color(state: &str) -> AdaptiveColor {
+    match state {
+        "Running" | "Healthy" => tokens::success(),
+        "Failed" => theme().destructive,
+        "Starting" | "Stopping" | "Restarting" => tokens::warning(),
+        _ => theme().muted_foreground.opacity(0.55),
+    }
+}
+
+fn status_dot(state: String) -> impl IntoElement {
+    view()
+        .w(px(7.0))
+        .h(px(7.0))
+        .flex_none()
+        .rounded(px(4.0))
+        .bg(move || status_dot_color(&state))
+}
+
+fn popover_switch(
+    checked: bool,
+    disabled: bool,
+    label: String,
+    test_id: String,
+    on_change: impl Fn(bool) + 'static,
+) -> impl IntoElement {
+    let track_bg = if checked {
+        theme().primary
+    } else {
+        theme().foreground.opacity(0.18)
+    };
+    let thumb_offset = if checked { px(14.0) } else { px(0.0) };
+    switch()
+        .checked(checked)
+        .disabled(disabled)
+        .accessibility_label(label)
+        .test_id(&test_id)
+        .flex_none()
+        .opacity(if disabled { 0.45 } else { 1.0 })
+        .track_style(move |s| {
+            s.w(px(32.0))
+                .h(px(18.0))
+                .p(px(2.0))
+                .rounded(px(9.0))
+                .flex_row()
+                .items_center()
+                .bg(track_bg)
+        })
+        .thumb_style(move |s| {
+            s.w(px(14.0))
+                .h(px(14.0))
+                .rounded(px(7.0))
+                .bg(AdaptiveColor::rgb(0xffffff, 0xffffff))
+                .ml(thumb_offset)
+        })
+        .on_change(move |value: &bool| on_change(*value))
+}
+
+fn section_heading(title: String, detail: String) -> impl IntoElement {
+    view()
+        .w_full()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .px(px(6.0))
+        .pt(px(6.0))
+        .pb(px(4.0))
+        .child(
+            text(title)
+                .text_size(px(tokens::TEXT_CAPTION))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(move || theme().muted_foreground),
+        )
+        .child(
+            text(detail)
+                .text_size(px(tokens::TEXT_CAPTION))
+                .text_color(move || theme().muted_foreground),
+        )
+}
+
+/// The native tray popover's interior UI. Rendered inside the `WindowKind::Popup`
+/// `NSPanel` on desktop and mountable directly in headless tests.
+pub fn popover_content() -> impl IntoElement {
+    view()
+        .test_id("menubar-popover")
+        .relative()
+        .size_full()
+        .flex_col()
+        .rounded(px(12.0))
+        .overflow_hidden()
+        .border_1()
+        .border_color(tokens::hairline)
+        .bg(move || {
+            if os() == Os::MacOs {
+                AdaptiveColor::TRANSPARENT
+            } else {
+                tokens::panel()
+            }
+        })
+        .text_color(move || theme().foreground)
+        .child(when(
+            || os() == Os::MacOs,
+            || {
+                view()
+                    .test_id("menubar-popover-glass")
+                    .absolute()
+                    .top(px(0.0))
+                    .left(px(0.0))
+                    .size_full()
+                    .rounded(px(12.0))
+                    .pointer_events(PointerEvents::None)
+                    .glass_effect(GlassEffect::Regular)
+            },
+        ))
+        .child(popover_header())
+        .child(view().h(px(1.0)).w_full().flex_none().bg(tokens::hairline))
+        .child(
+            scroll()
+                .test_id("menubar-popover-body")
+                .flex_1()
+                .min_h(px(0.0))
+                .px(px(8.0))
+                .py(px(6.0))
+                .child(dynamic(|| Some(popover_body().into_element()))),
+        )
+        .child(view().h(px(1.0)).w_full().flex_none().bg(tokens::hairline))
+        .child(popover_footer())
+}
+
+fn popover_header() -> impl IntoElement {
+    view()
+        .test_id("menubar-popover-header")
+        .w_full()
+        .flex_none()
+        .flex_row()
+        .items_center()
+        .gap(px(10.0))
+        .px(px(12.0))
+        .py(px(10.0))
+        .child(
+            view()
+                .size(px(30.0))
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .rounded(px(8.0))
+                .bg(move || theme().primary)
+                .child(
+                    icon_svg(PACKAGE_BODY)
+                        .size(px(16.0))
+                        .text_color(move || theme().primary_foreground),
+                ),
+        )
+        .child(dynamic(|| {
+            let current = panel();
+            Some(
+                view()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .flex_col()
+                    .gap(px(2.0))
+                    .child(
+                        text("Devbase")
+                            .text_size(px(14.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(move || theme().foreground),
+                    )
+                    .child(
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(status_dot(current.state))
+                            .child(
+                                text(current.summary)
+                                    .test_id("popover-summary")
+                                    .text_size(px(tokens::TEXT_CAPTION))
+                                    .text_color(move || theme().muted_foreground),
+                            ),
+                    )
+                    .into_element(),
+            )
+        }))
+}
+
+fn popover_body() -> impl IntoElement {
+    let current = panel();
+    let mut column = view().w_full().flex_col().gap(px(2.0));
+
+    let db_header = current
+        .rows
+        .iter()
+        .find(|row| row.key == "databases")
+        .map(|row| row.detail.clone())
+        .unwrap_or_default();
+    column = column.child(section_heading("Databases".to_string(), db_header));
+
+    let mut had_instances = false;
+    let mut i = 0;
+    while i < current.rows.len() {
+        let row = &current.rows[i];
+        if row.key == "no-instances" {
+            column = column.child(
+                button()
+                    .test_id("popover-no-instances")
+                    .w_full()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .px(px(8.0))
+                    .py(px(7.0))
+                    .rounded(move || theme().radius)
+                    .hover(|s| s.bg(tokens::row_hover()))
+                    .on_press(|| dispatch(Action::OpenNewInstance))
+                    .child(
+                        view()
+                            .flex_col()
+                            .gap(px(1.0))
+                            .child(
+                                text("No instances")
+                                    .text_size(px(tokens::TEXT_BODY))
+                                    .text_color(move || theme().foreground),
+                            )
+                            .child(
+                                text("New database instance")
+                                    .text_size(px(tokens::TEXT_CAPTION))
+                                    .text_color(move || theme().muted_foreground),
+                            ),
+                    )
+                    .child(
+                        icon_svg(PLUS_BODY)
+                            .size(px(14.0))
+                            .text_color(move || theme().muted_foreground),
+                    ),
+            );
+        } else if row.kind == RowKind::Instance && row.checked.is_none() {
+            had_instances = true;
+            let toggle = current
+                .rows
+                .get(i + 1)
+                .filter(|next| next.key == format!("{}:toggle", row.key));
+            let id = row.label.clone();
+            let detail = row.detail.clone();
+            let state = row.state.clone();
+            let open_id = id.clone();
+            let toggle_id = id.clone();
+            let checked = toggle.and_then(|t| t.checked).unwrap_or(false);
+            let enabled = toggle.is_some_and(|t| t.enabled);
+
+            column = column.child(
+                view()
+                    .test_id(&format!("popover-instance-{id}"))
+                    .w_full()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.0))
+                    .px(px(6.0))
+                    .py(px(5.0))
+                    .rounded(move || theme().radius)
+                    .hover(|s| s.bg(tokens::row_hover()))
+                    .child(
+                        button()
+                            .test_id(&format!("popover-open-instance-{id}"))
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .flex_row()
+                            .items_center()
+                            .justify_start()
+                            .gap(px(8.0))
+                            .on_press(move || dispatch(Action::OpenInstance(open_id.clone())))
+                            .child(status_dot(state))
+                            .child(
+                                view()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .flex_col()
+                                    .gap(px(1.0))
+                                    .child(
+                                        text(id.clone())
+                                            .text_size(px(tokens::TEXT_BODY))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(move || theme().foreground),
+                                    )
+                                    .child(
+                                        text(detail)
+                                            .text_size(px(tokens::TEXT_CAPTION))
+                                            .text_color(move || theme().muted_foreground),
+                                    ),
+                            ),
+                    )
+                    .child(popover_switch(
+                        checked,
+                        !enabled,
+                        format!("Toggle {id}"),
+                        format!("popover-switch-instance-{id}"),
+                        move |start| {
+                            dispatch(Action::ToggleInstance {
+                                id: toggle_id.clone(),
+                                start,
+                            });
+                        },
+                    )),
+            );
+            if toggle.is_some() {
+                i += 1;
+            }
+        }
+        i += 1;
+    }
+    let _ = had_instances;
+
+    column = column.child(section_heading("HTTPS".to_string(), String::new()));
+
+    if let Some(proxy_row) = current.rows.iter().find(|row| row.kind == RowKind::Proxy) {
+        let checked = proxy_row.checked.unwrap_or(false);
+        let enabled = proxy_row.enabled;
+        column = column.child(
+            view()
+                .test_id("popover-proxy")
+                .w_full()
+                .flex_row()
+                .items_center()
+                .gap(px(8.0))
+                .px(px(6.0))
+                .py(px(5.0))
+                .rounded(move || theme().radius)
+                .hover(|s| s.bg(tokens::row_hover()))
+                .child(status_dot(proxy_row.state.clone()))
+                .child(
+                    view()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .flex_col()
+                        .gap(px(1.0))
+                        .child(
+                            text(proxy_row.label.clone())
+                                .text_size(px(tokens::TEXT_BODY))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(move || theme().foreground),
+                        )
+                        .child(
+                            text(proxy_row.detail.clone())
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .text_color(move || theme().muted_foreground),
+                        ),
+                )
+                .child(popover_switch(
+                    checked,
+                    !enabled,
+                    "Toggle HTTPS proxy".to_string(),
+                    "popover-switch-proxy".to_string(),
+                    |on| dispatch(Action::ToggleProxy(on)),
+                )),
+        );
+    }
+
+    if let Some(tunnel_row) = current.rows.iter().find(|row| row.kind == RowKind::Tunnel) {
+        let checked = tunnel_row.checked.unwrap_or(false);
+        let enabled = tunnel_row.enabled;
+        column = column.child(
+            view()
+                .test_id("popover-tunnel")
+                .w_full()
+                .flex_row()
+                .items_center()
+                .gap(px(8.0))
+                .px(px(6.0))
+                .py(px(5.0))
+                .rounded(move || theme().radius)
+                .hover(|s| s.bg(tokens::row_hover()))
+                .child(status_dot(tunnel_row.state.clone()))
+                .child(
+                    view()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .flex_col()
+                        .gap(px(1.0))
+                        .child(
+                            text(tunnel_row.label.clone())
+                                .text_size(px(tokens::TEXT_BODY))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(move || theme().foreground),
+                        )
+                        .child(
+                            text(tunnel_row.detail.clone())
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .text_color(move || theme().muted_foreground),
+                        ),
+                )
+                .child(popover_switch(
+                    checked,
+                    !enabled,
+                    "Toggle Cloudflare tunnel".to_string(),
+                    "popover-switch-tunnel".to_string(),
+                    |on| dispatch(Action::ToggleTunnel(on)),
+                )),
+        );
+    }
+
+    let status_rows: Vec<&Row> = current
+        .rows
+        .iter()
+        .filter(|row| row.kind == RowKind::Status)
+        .collect();
+    if !status_rows.is_empty() {
+        let mut status_box = view()
+            .w_full()
+            .flex_col()
+            .gap(px(3.0))
+            .mt(px(6.0))
+            .px(px(8.0))
+            .py(px(6.0))
+            .rounded(move || theme().radius)
+            .bg(tokens::inset);
+        for row in status_rows {
+            status_box = status_box.child(
+                view()
+                    .w_full()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(8.0))
+                    .child(
+                        text(row.label.clone())
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().muted_foreground),
+                    )
+                    .child(
+                        text(row.detail.clone())
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().foreground),
+                    ),
+            );
+        }
+        column = column.child(status_box);
+    }
+
+    column
+}
+
+fn footer_button(
+    label: &'static str,
+    test_id: &'static str,
+    icon_body: &'static str,
+    grow: bool,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
+    let mut btn = button()
+        .test_id(test_id)
+        .accessibility_label(label)
+        .h(px(28.0))
+        .px(px(10.0))
+        .flex_row()
+        .items_center()
+        .justify_center()
+        .gap(px(6.0))
+        .rounded(move || theme().radius)
+        .bg(tokens::control)
+        .border_1()
+        .border_color(tokens::hairline)
+        .hover(|s| s.bg(tokens::row_hover()))
+        .on_press(on_press)
+        .child(
+            icon_svg(icon_body)
+                .size(px(13.0))
+                .flex_none()
+                .text_color(move || theme().foreground),
+        );
+    if grow {
+        btn = btn.flex_1().child(
+            text(label)
+                .text_size(px(tokens::TEXT_SMALL))
+                .text_color(move || theme().foreground),
+        );
+    }
+    btn
+}
+
+fn popover_footer() -> impl IntoElement {
+    view()
+        .test_id("menubar-popover-footer")
+        .w_full()
+        .flex_none()
+        .flex_row()
+        .items_center()
+        .gap(px(6.0))
+        .px(px(10.0))
+        .py(px(8.0))
+        .child(footer_button(
+            "Open Devbase",
+            "popover-open",
+            WINDOW_BODY,
+            true,
+            || dispatch(Action::OpenWindow),
+        ))
+        .child(footer_button(
+            "Refresh",
+            "popover-refresh",
+            REFRESH_BODY,
+            false,
+            || dispatch(Action::Refresh),
+        ))
+        .child(footer_button(
+            "Quit Devbase",
+            "popover-quit",
+            QUIT_BODY,
+            false,
+            || dispatch(Action::Quit),
+        ))
+}
+
+// --- Right-click native NSMenu -----------------------------------------------
+
+fn menu_item_for(row: &Row) -> MenuItem {
     if row.kind == RowKind::Separator {
         return MenuItem::separator();
     }
@@ -538,6 +1218,43 @@ fn menu_item(row: &Row) -> MenuItem {
         format!("{} · {}", row.label, row.detail)
     };
     let mut item = MenuItem::new(label);
+    match row.kind {
+        RowKind::Instance if row.key == "no-instances" => {
+            item = item.symbol("plus.circle").icon(icon_src(PLUS_BODY));
+        }
+        RowKind::Instance if row.checked.is_some() => {
+            let symbol = if row.checked == Some(true) {
+                "stop.circle"
+            } else {
+                "play.circle"
+            };
+            item = item.symbol(symbol);
+        }
+        RowKind::Instance => {
+            item = item
+                .symbol("cylinder.split.1x2")
+                .icon(icon_src(DATABASE_BODY));
+        }
+        RowKind::Proxy => {
+            item = item.symbol("lock.shield").icon(icon_src(SHIELD_BODY));
+        }
+        RowKind::Tunnel => {
+            item = item.symbol("cloud").icon(icon_src(CLOUD_BODY));
+        }
+        RowKind::Action => match row.action {
+            Some(Action::OpenWindow) => {
+                item = item.symbol("macwindow").icon(icon_src(WINDOW_BODY));
+            }
+            Some(Action::Refresh) => {
+                item = item.symbol("arrow.clockwise").icon(icon_src(REFRESH_BODY));
+            }
+            Some(Action::Quit) => {
+                item = item.symbol("power").icon(icon_src(QUIT_BODY));
+            }
+            _ => {}
+        },
+        _ => {}
+    }
     if let Some(checked) = row.checked {
         item = item.checked(checked);
     }
@@ -550,16 +1267,60 @@ fn menu_item(row: &Row) -> MenuItem {
     item
 }
 
-/// The system menu the tray opens.
+/// The right-click system menu of the tray item, organized with inline section
+/// headers and SF Symbols + template SVG icons.
 fn menu(panel: &Panel) -> Vec<MenuItem> {
-    panel.rows.iter().map(menu_item).collect()
+    let mut items = Vec::new();
+    items.push(
+        MenuItem::new(format!("Devbase · {}", panel.summary))
+            .symbol("shippingbox")
+            .disabled(true),
+    );
+    items.push(MenuItem::separator());
+
+    let db_items: Vec<MenuItem> = panel
+        .rows
+        .iter()
+        .filter(|row| row.kind == RowKind::Instance)
+        .map(menu_item_for)
+        .collect();
+    if !db_items.is_empty() {
+        items.push(
+            MenuItem::submenu("Databases", db_items)
+                .inline(true)
+                .symbol("cylinder.split.1x2")
+                .icon(icon_src(DATABASE_BODY)),
+        );
+    }
+
+    let https_items: Vec<MenuItem> = panel
+        .rows
+        .iter()
+        .filter(|row| matches!(row.kind, RowKind::Proxy | RowKind::Tunnel))
+        .map(menu_item_for)
+        .collect();
+    if !https_items.is_empty() {
+        items.push(
+            MenuItem::submenu("HTTPS", https_items)
+                .inline(true)
+                .symbol("lock.shield")
+                .icon(icon_src(SHIELD_BODY)),
+        );
+    }
+
+    items.push(MenuItem::separator());
+    for row in panel.rows.iter().filter(|row| row.kind == RowKind::Action) {
+        items.push(menu_item_for(row));
+    }
+    items
 }
 
 fn tray_for(panel: Panel) -> nsh_core::element::desktop::Tray {
     let mut icon = tray()
         .icon(ImageSrc::svg_markup(MENUBAR_ICON))
         .tooltip(panel.tooltip.clone())
-        .menu(menu(&panel));
+        .menu(menu(&panel))
+        .on_click(toggle_popover);
     if !panel.title.is_empty() {
         icon = icon.title([TrayTitleRun::new(panel.title.clone())]);
     }
@@ -567,7 +1328,8 @@ fn tray_for(panel: Panel) -> nsh_core::element::desktop::Tray {
 }
 
 /// Installs the status item on a desktop. The effect reads the stores, so
-/// the title and every row follow them; off desktops `set_tray` does nothing.
+/// the title, popover and right-click menu follow them; off desktops
+/// `set_tray` does nothing.
 pub(crate) fn install() {
     if os().is_desktop() {
         load();

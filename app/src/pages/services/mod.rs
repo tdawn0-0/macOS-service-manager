@@ -1,5 +1,5 @@
 //! System-service inspector: the launchd sources, their jobs, and the
-//! inspector of the job chosen (Phase 1).
+//! inspector of the job chosen.
 //!
 //! The page reads [`crate::store::services`] and never calls the provider
 //! itself: a list, a detail or an action is a task that writes the store when
@@ -76,13 +76,21 @@ fn source_rail() -> impl IntoElement {
                 .gap(tokens::space(0.5))
                 .child(SOURCES.iter().map(|source| source_row(*source))),
         )
-        .child(view().flex_1())
+}
+
+/// A subtle tooltip bubble for icon-only actions in the Services screen.
+pub(super) fn hint_tooltip(label: impl Into<String>) -> nsh_base::TooltipElement {
+    nsh_base::tooltip()
+        .px(tokens::space(2.0))
+        .py(tokens::space(1.0))
+        .rounded(move || theme().radius)
+        .bg(tokens::panel)
+        .border_1()
+        .border_color(tokens::hairline)
         .child(
-            view().px(tokens::space(2.0)).pt(tokens::space(3.0)).child(
-                text("Phase 1 · three launchd sources")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground),
-            ),
+            text(label.into())
+                .text_size(px(tokens::TEXT_CAPTION))
+                .text_color(move || theme().foreground),
         )
 }
 

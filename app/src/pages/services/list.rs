@@ -93,7 +93,7 @@ fn search_row() -> impl IntoElement {
                 ),
         )
         .child(
-            view()
+            nsh_base::toggle_group()
                 .flex_none()
                 .flex_row()
                 .items_center()
@@ -105,12 +105,13 @@ fn search_row() -> impl IntoElement {
 }
 
 fn filter_button(filter: Filter) -> impl IntoElement {
-    nsh_base::button()
+    nsh_base::toggle()
         .test_id(match filter {
             Filter::All => "filter-all",
             Filter::Running => "filter-running",
             Filter::Stopped => "filter-stopped",
         })
+        .pressed(move || svc::filter() == filter)
         .h(px(26.0))
         .items_center()
         .justify_center()
@@ -123,7 +124,7 @@ fn filter_button(filter: Filter) -> impl IntoElement {
             }
         })
         .hover(move |style| style.bg(tokens::row_hover()))
-        .on_press(move || svc::set_filter(filter))
+        .on_change(move |_: &bool| svc::set_filter(filter))
         .child(
             text(filter.label())
                 .text_size(px(tokens::TEXT_SMALL))
@@ -149,7 +150,10 @@ fn when_some_note() -> impl IntoElement {
             svc::action_error().map(|message| note(icons::warn(), message, true))
         }))
         .child(when(
-            move || matches!(svc::active_source(), Source::SystemAgent | Source::Daemon),
+            move || {
+                matches!(svc::active_source(), Source::SystemAgent | Source::Daemon)
+                    && !svc::helper_installed()
+            },
             || {
                 note(
                     icons::lock(),

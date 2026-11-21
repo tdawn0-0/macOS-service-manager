@@ -897,3 +897,102 @@ fn the_rule_draft_helpers_match_the_go_derivations() {
     custom.tunnel_domain = "  WWW.Example.com ".to_string();
     assert_eq!(custom.effective_tunnel_domain(), "www.example.com");
 }
+
+#[test]
+fn rule_inputs_and_menus_stay_mounted_across_notices_and_port_scans() {
+    let mut initial = snapshot(vec![rule("app.devbase.localhost", 3000, true)], 443);
+    initial.zones = vec!["example.com".to_string()];
+    initial.dns_names = vec!["www.example.com".to_string(), "api.example.com".to_string()];
+    let fake = Fake::new(initial).slow(250);
+    let (_turn, mut app) = start(fake);
+
+    app.wait_for("id:proxy-rule-0").unwrap();
+    app.wait_for("id:proxy-ports-0").unwrap();
+    app.wait_for("id:proxy-dns-suggestion-0").unwrap();
+
+    let header_id = app.screen().id("id:proxy-rules").unwrap();
+    let domain_id = app.screen().id("id:proxy-domain-0").unwrap();
+    let upstream_id = app.screen().id("id:proxy-upstream-0").unwrap();
+    let port_id = app.screen().id("id:proxy-port-0").unwrap();
+    let ports_menu_id = app.screen().id("id:proxy-ports-0").unwrap();
+    let tunnel_domain_id = app.screen().id("id:proxy-tunnel-domain-0").unwrap();
+    let host_menu_id = app.screen().id("id:proxy-dns-suggestion-0").unwrap();
+
+    // Start an async apply, then open ports_menu while it is in flight. When the
+    // notice arrives and refresh() completes, the open menu and every rule node
+    // must remain mounted without collapsing.
+    let notice = "Proxy configuration published. Check DNS, TLS and upstream separately.";
+    app.press("id:proxy-apply").unwrap();
+    app.press("id:proxy-ports-0").unwrap();
+    app.wait_for("3000 · node").unwrap();
+    app.wait_for("5173 · vite").unwrap();
+    app.wait_for(notice).unwrap();
+    assert!(
+        app.screen().shows("3000 · node"),
+        "an async notice must not collapse an open ports_menu"
+    );
+    assert_eq!(app.screen().id("id:proxy-rules").unwrap(), header_id);
+    assert_eq!(app.screen().id("id:proxy-domain-0").unwrap(), domain_id);
+    assert_eq!(app.screen().id("id:proxy-upstream-0").unwrap(), upstream_id);
+    assert_eq!(app.screen().id("id:proxy-port-0").unwrap(), port_id);
+    assert_eq!(app.screen().id("id:proxy-ports-0").unwrap(), ports_menu_id);
+    assert_eq!(
+        app.screen().id("id:proxy-tunnel-domain-0").unwrap(),
+        tunnel_domain_id
+    );
+    assert_eq!(
+        app.screen().id("id:proxy-dns-suggestion-0").unwrap(),
+        host_menu_id
+    );
+
+    // Refreshing listening ports updates PortsState without tearing down the menu trigger.
+    app.press("text:Refresh listening ports").unwrap();
+    app.wait(Duration::from_millis(150)).unwrap();
+    assert_eq!(app.screen().id("id:proxy-ports-0").unwrap(), ports_menu_id);
+
+    // Clearing the notice via an unrelated Cloudflare draft edit must keep every rule node mounted.
+    app.type_text("id:tunnel-account", "acct-1").unwrap();
+    app.wait_for_gone(notice, Duration::from_secs(2)).unwrap();
+    assert_eq!(app.screen().id("id:proxy-rules").unwrap(), header_id);
+    assert_eq!(app.screen().id("id:proxy-domain-0").unwrap(), domain_id);
+    assert_eq!(app.screen().id("id:proxy-upstream-0").unwrap(), upstream_id);
+    assert_eq!(app.screen().id("id:proxy-port-0").unwrap(), port_id);
+    assert_eq!(app.screen().id("id:proxy-ports-0").unwrap(), ports_menu_id);
+    assert_eq!(
+        app.screen().id("id:proxy-tunnel-domain-0").unwrap(),
+        tunnel_domain_id
+    );
+    assert_eq!(
+        app.screen().id("id:proxy-dns-suggestion-0").unwrap(),
+        host_menu_id
+    );
+
+    // Selecting a DNS suggestion from host_menu updates the field while keeping triggers stable.
+    app.press("id:proxy-dns-suggestion-0").unwrap();
+    app.wait_for("api.example.com").unwrap();
+    app.press("text:api.example.com").unwrap();
+    app.wait(Duration::from_millis(100)).unwrap();
+    assert_eq!(
+        app.screen().input_text("id:proxy-tunnel-domain-0").unwrap(),
+        Some("api.example.com")
+    );
+    assert_eq!(
+        app.screen().id("id:proxy-dns-suggestion-0").unwrap(),
+        host_menu_id
+    );
+    assert_eq!(app.screen().id("id:proxy-ports-0").unwrap(), ports_menu_id);
+}
+
+#[test]
+fn authority_header_integrates_back_button_and_returns_to_rules() {
+    let fake = Fake::new(snapshot(Vec::new(), 443));
+    let (_turn, mut app) = start(fake);
+
+    app.press("id:ca-open").unwrap();
+    app.wait_for("id:ca-header").unwrap();
+    app.wait_for("id:ca-back").unwrap();
+    assert!(app.screen().shows("← HTTPS Proxy"));
+
+    app.press("id:ca-back").unwrap();
+    app.wait_for("id:proxy-rules").unwrap();
+}

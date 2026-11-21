@@ -364,7 +364,7 @@ impl Facade {
     }
 }
 
-/// The Go `requireProxyStopped` gate: the user proxy job and the Phase-4
+/// The Go `requireProxyStopped` gate: the user proxy job and the privileged
 /// socket daemon must both be verifiably gone before a certificate swaps.
 struct StoppedProxy {
     engine: Engine,
@@ -398,15 +398,16 @@ impl ProxyStopCheck for StoppedProxy {
     }
 }
 
-/// A current-thread runtime for the two asynchronous devproxy sequences. The
-/// store calls it from a blocking thread, so waiting here holds no engine
-/// thread.
+/// A compact multi-threaded runtime shared by asynchronous devproxy operations
+/// invoked from blocking worker threads, so concurrent probes and Cloudflare
+/// calls do not serialize on a single current-thread driver.
 fn runtime() -> &'static tokio::runtime::Runtime {
     static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
-        tokio::runtime::Builder::new_current_thread()
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
             .enable_all()
             .build()
-            .expect("a current-thread runtime")
+            .expect("a multi-thread runtime")
     });
     &RUNTIME
 }
@@ -782,6 +783,41 @@ pub fn install_provider(provider: Arc<dyn Provider>) {
 
 // --- State -------------------------------------------------------------------
 
+/// The saved snapshot and workspace loading state.
+#[derive(Debug, Clone, Default)]
+struct Workspace {
+    snapshot: Snapshot,
+    loading: bool,
+    loaded: bool,
+    load_error: Option<String>,
+    /// Bumped for every read, so an older answer never replaces a newer one.
+    sequence: u64,
+}
+
+/// The editable proxy rules table, kept separate from transient notices,
+/// port scans, and tunnel inputs so unrelated updates never thrash rule rows.
+#[derive(Debug, Clone, Default)]
+struct RulesDraft {
+    rules: Vec<RuleDraft>,
+    next_rule_id: u64,
+    revision: u64,
+    loaded: bool,
+}
+
+/// The editable HTTPS listener port field.
+#[derive(Debug, Clone)]
+struct ListenerDraft {
+    port: String,
+}
+
+impl Default for ListenerDraft {
+    fn default() -> Self {
+        ListenerDraft {
+            port: "443".to_string(),
+        }
+    }
+}
+
 /// The tunnel card's unsaved fields. The token is only ever a file path.
 #[derive(Debug, Clone, Default)]
 struct TunnelDraft {
@@ -791,74 +827,82 @@ struct TunnelDraft {
     loaded: bool,
 }
 
-#[derive(Debug, Clone)]
-struct Workspace {
-    snapshot: Snapshot,
-    rules: Vec<RuleDraft>,
-    next_rule_id: u64,
-    listener_port: String,
-    draft_revision: u64,
-    draft_loaded: bool,
-    tunnel: TunnelDraft,
-    authority: Option<AuthorityStatus>,
-    authority_open: bool,
+/// Listening local port discovery state, isolated from notices and rule inputs
+/// so background scans never collapse open menus or disturb form focus.
+#[derive(Debug, Clone, Default)]
+struct PortsState {
+    ports: Vec<ListeningPort>,
+    loaded: bool,
+    loading: bool,
+    error: Option<String>,
+}
+
+/// Per-rule activation HTTP and tunnel probe state.
+#[derive(Debug, Clone, Default)]
+struct ChecksState {
     proxy_checks: BTreeMap<String, ProxyHttpResult>,
     proxy_checking: BTreeSet<String>,
     proxy_generation: u64,
     tunnel_checks: BTreeMap<String, ProxyHttpResult>,
     tunnel_checking: BTreeSet<String>,
     tunnel_generation: u64,
-    ports: Vec<ListeningPort>,
-    ports_loaded: bool,
-    ports_loading: bool,
-    ports_error: Option<String>,
-    loading: bool,
-    loaded: bool,
-    load_error: Option<String>,
-    /// Bumped for every read, so an older answer never replaces a newer one.
-    sequence: u64,
+}
+
+/// Local certificate authority page state.
+#[derive(Debug, Clone, Default)]
+struct AuthorityState {
+    authority: Option<AuthorityStatus>,
+    open: bool,
+}
+
+/// In-flight operation keys.
+#[derive(Debug, Clone, Default)]
+struct BusyState {
     busy: BTreeSet<String>,
+}
+
+/// Transient notices, action errors, and inline log snapshots.
+#[derive(Debug, Clone, Default)]
+struct NoticesState {
     action_error: Option<String>,
     notice: Option<String>,
     logs: Option<(String, String)>,
 }
 
-impl Default for Workspace {
-    fn default() -> Self {
-        Workspace {
-            snapshot: Snapshot::default(),
-            rules: Vec::new(),
-            next_rule_id: 0,
-            listener_port: "443".to_string(),
-            draft_revision: 0,
-            draft_loaded: false,
-            tunnel: TunnelDraft::default(),
-            authority: None,
-            authority_open: false,
-            proxy_checks: BTreeMap::new(),
-            proxy_checking: BTreeSet::new(),
-            proxy_generation: 0,
-            tunnel_checks: BTreeMap::new(),
-            tunnel_checking: BTreeSet::new(),
-            tunnel_generation: 0,
-            ports: Vec::new(),
-            ports_loaded: false,
-            ports_loading: false,
-            ports_error: None,
-            loading: false,
-            loaded: false,
-            load_error: None,
-            sequence: 0,
-            busy: BTreeSet::new(),
-            action_error: None,
-            notice: None,
-            logs: None,
-        }
-    }
-}
-
 fn workspace() -> Signal<Workspace> {
     global::<Workspace>()
+}
+
+fn rules_draft() -> Signal<RulesDraft> {
+    global::<RulesDraft>()
+}
+
+fn listener_draft() -> Signal<ListenerDraft> {
+    global::<ListenerDraft>()
+}
+
+fn tunnel_draft() -> Signal<TunnelDraft> {
+    global::<TunnelDraft>()
+}
+
+fn ports_state() -> Signal<PortsState> {
+    global::<PortsState>()
+}
+
+fn checks_state() -> Signal<ChecksState> {
+    global::<ChecksState>()
+}
+
+fn authority_state() -> Signal<AuthorityState> {
+    global::<AuthorityState>()
+}
+
+fn busy_state() -> Signal<BusyState> {
+    global::<BusyState>()
+}
+
+fn notices_state() -> Signal<NoticesState> {
+    global::<NoticesState>()
 }
 
 /// Runs store work outside the view that asked for it: a row or pane the
@@ -882,53 +926,67 @@ async fn fetch<T: Send + 'static>(
 
 // --- Drafts ------------------------------------------------------------------
 
-fn load_draft(state: &mut Workspace) {
-    state.rules = state
-        .snapshot
+fn load_rules_draft(snapshot: &Snapshot) {
+    let rules: Vec<RuleDraft> = snapshot
         .rules
         .iter()
         .enumerate()
         .map(|(index, rule)| RuleDraft::from_rule(index as u64, rule))
         .collect();
-    state.next_rule_id = state.rules.len() as u64;
-    let port = if state.snapshot.listener_port == 0 {
+    let next_rule_id = rules.len() as u64;
+    let port = if snapshot.listener_port == 0 {
         443
     } else {
-        state.snapshot.listener_port
-    };
-    state.listener_port = port.to_string();
-    state.draft_revision = state.snapshot.revision;
-    state.draft_loaded = true;
+        snapshot.listener_port
+    }
+    .to_string();
+    rules_draft().set(RulesDraft {
+        rules,
+        next_rule_id,
+        revision: snapshot.revision,
+        loaded: true,
+    });
+    if untracked(|| listener_draft().with(|state| state.port != port)) {
+        listener_draft().set(ListenerDraft { port });
+    }
 }
 
-fn load_tunnel_draft(state: &mut Workspace) {
-    state.tunnel = TunnelDraft {
-        account_id: state.snapshot.account_id.clone(),
-        client_id: state.snapshot.client_id.clone(),
-        token_file: None,
-        loaded: true,
-    };
+fn load_tunnel_draft(snapshot: &Snapshot) {
+    let already_matches = untracked(|| {
+        tunnel_draft().with(|tunnel| {
+            tunnel.loaded
+                && tunnel.account_id == snapshot.account_id
+                && tunnel.client_id == snapshot.client_id
+                && tunnel.token_file.is_none()
+        })
+    });
+    if !already_matches {
+        tunnel_draft().set(TunnelDraft {
+            account_id: snapshot.account_id.clone(),
+            client_id: snapshot.client_id.clone(),
+            token_file: None,
+            loaded: true,
+        });
+    }
 }
 
 /// Whether the rule draft differs from the saved table.
-fn draft_dirty(state: &Workspace) -> bool {
-    if !state.draft_loaded {
+fn is_rules_draft_dirty(draft: &RulesDraft, listener_port: &str, snapshot: &Snapshot) -> bool {
+    if !draft.loaded {
         return false;
     }
-    let saved_port = if state.snapshot.listener_port == 0 {
+    let saved_port = if snapshot.listener_port == 0 {
         443
     } else {
-        state.snapshot.listener_port
+        snapshot.listener_port
     };
-    if state.listener_port.trim() != saved_port.to_string()
-        || state.rules.len() != state.snapshot.rules.len()
-    {
+    if listener_port.trim() != saved_port.to_string() || draft.rules.len() != snapshot.rules.len() {
         return true;
     }
-    state
+    draft
         .rules
         .iter()
-        .zip(state.snapshot.rules.iter())
+        .zip(snapshot.rules.iter())
         .any(|(row, rule)| {
             local_domain(&row.domain) != rule.domain
                 || row.local_port.trim() != rule.local_port.to_string()
@@ -940,24 +998,48 @@ fn draft_dirty(state: &Workspace) -> bool {
         })
 }
 
-fn tunnel_draft_dirty(state: &Workspace) -> bool {
-    if !state.tunnel.loaded {
+fn is_tunnel_draft_dirty(tunnel: &TunnelDraft, snapshot: &Snapshot) -> bool {
+    if !tunnel.loaded {
         return false;
     }
-    state.tunnel.account_id != state.snapshot.account_id
-        || state.tunnel.client_id != state.snapshot.client_id
-        || state.tunnel.token_file.is_some()
+    tunnel.account_id != snapshot.account_id
+        || tunnel.client_id != snapshot.client_id
+        || tunnel.token_file.is_some()
 }
 
-fn apply_snapshot(state: &mut Workspace, snapshot: Snapshot) {
-    state.snapshot = snapshot;
-    if !state.draft_loaded
-        || (state.draft_revision != state.snapshot.revision && !draft_dirty(state))
-    {
-        load_draft(state);
+fn sync_drafts_with_snapshot(snapshot: &Snapshot) {
+    let should_load_rules = untracked(|| {
+        rules_draft().with(|draft| {
+            if !draft.loaded {
+                return true;
+            }
+            if draft.revision == snapshot.revision {
+                return false;
+            }
+            listener_draft().with(|listener| !is_rules_draft_dirty(draft, &listener.port, snapshot))
+        })
+    });
+    if should_load_rules {
+        load_rules_draft(snapshot);
     }
-    if !state.tunnel.loaded || !tunnel_draft_dirty(state) {
-        load_tunnel_draft(state);
+
+    let should_load_tunnel = untracked(|| {
+        tunnel_draft().with(|tunnel| !tunnel.loaded || !is_tunnel_draft_dirty(tunnel, snapshot))
+    });
+    if should_load_tunnel {
+        load_tunnel_draft(snapshot);
+    }
+}
+
+fn clear_feedback() {
+    let has_any = untracked(|| {
+        notices_state().with(|state| state.action_error.is_some() || state.notice.is_some())
+    });
+    if has_any {
+        notices_state().update(|state| {
+            state.action_error = None;
+            state.notice = None;
+        });
     }
 }
 
@@ -969,7 +1051,7 @@ pub(crate) fn load() {
     if !loaded && !loading {
         refresh();
     }
-    if workspace().with(|state| !state.ports_loaded && !state.ports_loading) {
+    if ports_state().with(|state| !state.loaded && !state.loading) {
         refresh_ports();
     }
 }
@@ -983,7 +1065,7 @@ pub(crate) fn refresh() {
         });
         return;
     };
-    let sequence = workspace().with(|state| state.sequence + 1);
+    let sequence = untracked(|| workspace().with(|state| state.sequence + 1));
     workspace().update(|state| {
         state.sequence = sequence;
         state.loading = true;
@@ -998,8 +1080,11 @@ pub(crate) fn refresh() {
                 Err(String::new()),
             ),
         };
+        let mut stale = false;
+        let mut next_snapshot = None;
         workspace().update(|state| {
             if state.sequence != sequence {
+                stale = true;
                 return;
             }
             state.loading = false;
@@ -1007,14 +1092,21 @@ pub(crate) fn refresh() {
             match snapshot {
                 Ok(snapshot) => {
                     state.load_error = None;
-                    apply_snapshot(state, snapshot);
+                    state.snapshot = snapshot.clone();
+                    next_snapshot = Some(snapshot);
                 }
                 Err(error) => state.load_error = Some(error),
             }
-            if let Ok(status) = authority {
-                state.authority = Some(status);
-            }
         });
+        if stale {
+            return;
+        }
+        if let Some(snapshot) = next_snapshot {
+            sync_drafts_with_snapshot(&snapshot);
+        }
+        if let Ok(status) = authority {
+            store_authority(status);
+        }
     });
 }
 
@@ -1105,41 +1197,36 @@ pub(crate) fn tunnel_detail() -> String {
 // --- Draft accessors ---------------------------------------------------------
 
 pub(crate) fn rules() -> Vec<RuleDraft> {
-    workspace().with(|state| state.rules.clone())
+    rules_draft().with(|state| state.rules.clone())
 }
 
 pub(crate) fn listener_port_field() -> String {
-    workspace().with(|state| state.listener_port.clone())
+    listener_draft().with(|state| state.port.clone())
 }
 
 pub(crate) fn set_listener_port(next: String) {
-    workspace().update(|state| {
-        state.listener_port = next;
-        state.action_error = None;
-        state.notice = None;
-    });
+    listener_draft().update(|state| state.port = next);
+    clear_feedback();
 }
 
 pub(crate) fn add_rule() {
-    workspace().update(|state| {
+    rules_draft().update(|state| {
         let id = state.next_rule_id;
         state.next_rule_id += 1;
         let mut row = RuleDraft::new();
         row.id = id;
         state.rules.push(row);
-        state.action_error = None;
-        state.notice = None;
     });
+    clear_feedback();
 }
 
 pub(crate) fn remove_rule(index: usize) {
-    workspace().update(|state| {
+    rules_draft().update(|state| {
         if index < state.rules.len() {
             state.rules.remove(index);
         }
-        state.action_error = None;
-        state.notice = None;
     });
+    clear_feedback();
 }
 
 pub(crate) fn set_domain(index: usize, next: String) {
@@ -1177,45 +1264,45 @@ pub(crate) fn set_tunnel_domain(index: usize, next: String) {
 }
 
 fn update_rule(index: usize, change: impl FnOnce(&mut RuleDraft)) {
-    workspace().update(|state| {
+    rules_draft().update(|state| {
         if let Some(row) = state.rules.get_mut(index) {
             change(row);
         }
-        state.action_error = None;
-        state.notice = None;
     });
+    clear_feedback();
 }
 
 pub(crate) fn dirty() -> bool {
-    workspace().with(draft_dirty)
+    workspace().with(|ws| {
+        rules_draft().with(|draft| {
+            listener_draft()
+                .with(|listener| is_rules_draft_dirty(draft, &listener.port, &ws.snapshot))
+        })
+    })
 }
 
 pub(crate) fn tunnel_dirty() -> bool {
-    workspace().with(tunnel_draft_dirty)
+    workspace().with(|ws| tunnel_draft().with(|tunnel| is_tunnel_draft_dirty(tunnel, &ws.snapshot)))
 }
 
 /// Throw the rule edits away and show the saved table.
 pub(crate) fn discard() {
-    workspace().update(|state| {
-        load_draft(state);
-        state.action_error = None;
-        state.notice = None;
-    });
+    let snapshot = untracked(|| workspace().with(|state| state.snapshot.clone()));
+    load_rules_draft(&snapshot);
+    clear_feedback();
 }
 
 /// The review URL of a rule that is clean enough to open, exactly as the Go
 /// card builds it.
 pub(crate) fn rule_url(index: usize) -> String {
-    let (port, domain) = workspace().with(|state| {
-        (
-            state.snapshot.listener_port,
-            state
-                .rules
-                .get(index)
-                .map(RuleDraft::to_rule)
-                .map(|rule| rule.domain)
-                .unwrap_or_default(),
-        )
+    let port = workspace().with(|state| state.snapshot.listener_port);
+    let domain = rules_draft().with(|state| {
+        state
+            .rules
+            .get(index)
+            .map(RuleDraft::to_rule)
+            .map(|rule| rule.domain)
+            .unwrap_or_default()
     });
     let mut url = format!("https://{domain}");
     if port != 0 && port != 443 {
@@ -1226,20 +1313,22 @@ pub(crate) fn rule_url(index: usize) -> String {
 
 /// The preview of a draft rule's public tunnel URL.
 pub(crate) fn tunnel_preview(index: usize) -> String {
-    workspace().with(|state| {
-        let Some(row) = state.rules.get(index) else {
-            return String::new();
-        };
+    let rule = rules_draft().with(|state| {
+        let row = state.rules.get(index)?;
         if !row.tunnel {
-            return String::new();
+            return None;
         }
-        preview_tunnel_url(&row.to_rule(), &state.snapshot.subdomain)
-    })
+        Some(row.to_rule())
+    });
+    let Some(rule) = rule else {
+        return String::new();
+    };
+    workspace().with(|state| preview_tunnel_url(&rule, &state.snapshot.subdomain))
 }
 
 /// The Worker name a draft rule resolves to.
 pub(crate) fn tunnel_worker(index: usize) -> String {
-    workspace().with(|state| {
+    rules_draft().with(|state| {
         state
             .rules
             .get(index)
@@ -1260,20 +1349,20 @@ pub(crate) fn zones() -> Vec<String> {
 /// The Go `cloudflareHostSuggestions`: existing DNS names plus each zone and
 /// the rule's default Worker name under it, deduplicated and sorted.
 pub(crate) fn host_suggestions(index: usize) -> Vec<String> {
-    let (local, dns, zones, subdomain) = workspace().with(|state| {
+    let local = rules_draft().with(|state| {
+        state
+            .rules
+            .get(index)
+            .map(RuleDraft::to_rule)
+            .map(|rule| rule.domain)
+            .unwrap_or_default()
+    });
+    let (dns, zones) = workspace().with(|state| {
         (
-            state
-                .rules
-                .get(index)
-                .map(RuleDraft::to_rule)
-                .map(|rule| rule.domain)
-                .unwrap_or_default(),
             state.snapshot.dns_names.clone(),
             state.snapshot.zones.clone(),
-            state.snapshot.subdomain.clone(),
         )
     });
-    let _ = subdomain;
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
     let mut add = |host: &str| {
@@ -1303,39 +1392,39 @@ pub(crate) fn host_suggestions(index: usize) -> Vec<String> {
 // --- Listening ports ---------------------------------------------------------
 
 pub(crate) fn ports() -> Vec<ListeningPort> {
-    workspace().with(|state| state.ports.clone())
+    ports_state().with(|state| state.ports.clone())
 }
 
 pub(crate) fn ports_loading() -> bool {
-    workspace().with(|state| state.ports_loading)
+    ports_state().with(|state| state.loading)
 }
 
 pub(crate) fn ports_error() -> Option<String> {
-    workspace().with(|state| state.ports_error.clone())
+    ports_state().with(|state| state.error.clone())
 }
 
 pub(crate) fn refresh_ports() {
-    if workspace().with(|state| state.ports_loading) {
+    if untracked(|| ports_state().with(|state| state.loading)) {
         return;
     }
     let Some(provider) = provider_of() else {
         return;
     };
-    workspace().update(|state| {
-        state.ports_loading = true;
-        state.ports_error = None;
+    ports_state().update(|state| {
+        state.loading = true;
+        state.error = None;
     });
     task(async move {
         let answer = fetch(move || provider.listening_ports()).await;
-        workspace().update(|state| {
-            state.ports_loading = false;
-            state.ports_loaded = true;
+        ports_state().update(|state| {
+            state.loading = false;
+            state.loaded = true;
             match answer {
                 Ok(ports) => {
                     state.ports = ports;
-                    state.ports_error = None;
+                    state.error = None;
                 }
-                Err(error) => state.ports_error = Some(error),
+                Err(error) => state.error = Some(error),
             }
         });
     });
@@ -1344,78 +1433,88 @@ pub(crate) fn refresh_ports() {
 // --- Errors and busy ---------------------------------------------------------
 
 pub(crate) fn busy() -> bool {
-    workspace().with(|state| !state.busy.is_empty())
+    busy_state().with(|state| !state.busy.is_empty())
 }
 
 pub(crate) fn action_error() -> Option<String> {
-    workspace().with(|state| state.action_error.clone())
+    notices_state().with(|state| state.action_error.clone())
 }
 
 pub(crate) fn notice() -> Option<String> {
-    workspace().with(|state| state.notice.clone())
+    notices_state().with(|state| state.notice.clone())
 }
 
 pub(crate) fn logs() -> Option<(String, String)> {
-    workspace().with(|state| state.logs.clone())
+    notices_state().with(|state| state.logs.clone())
 }
 
 pub(crate) fn dismiss_logs() {
-    workspace().update(|state| state.logs = None);
+    notices_state().update(|state| state.logs = None);
 }
 
 fn begin(key: &str) -> bool {
-    if busy() {
+    if untracked(busy) {
         return false;
     }
-    workspace().update(|state| {
+    busy_state().update(|state| {
         state.busy.insert(key.to_string());
-        state.action_error = None;
-        state.notice = None;
-        state.logs = None;
     });
+    let has_transient = untracked(|| {
+        notices_state().with(|state| {
+            state.action_error.is_some() || state.notice.is_some() || state.logs.is_some()
+        })
+    });
+    if has_transient {
+        notices_state().update(|state| {
+            state.action_error = None;
+            state.notice = None;
+            state.logs = None;
+        });
+    }
     true
 }
 
 fn finish(key: &str) {
-    workspace().update(|state| {
+    busy_state().update(|state| {
         state.busy.remove(key);
     });
 }
 
 fn fail(message: impl Into<String>) {
-    workspace().update(|state| state.action_error = Some(message.into()));
+    notices_state().update(|state| state.action_error = Some(message.into()));
 }
 
 fn succeed(message: impl Into<String>) {
-    workspace().update(|state| state.notice = Some(message.into()));
+    notices_state().update(|state| state.notice = Some(message.into()));
 }
 
 /// The rule table as the screen would save it; the exact Go error when a port
 /// field is not a number.
 fn build_rules() -> Result<(i64, Vec<ProxyRule>), String> {
-    workspace().with(|state| {
-        let listener: i64 = state
-            .listener_port
-            .trim()
-            .parse()
-            .map_err(|_| "Enter valid numeric ports".to_string())?;
-        let mut rules = Vec::with_capacity(state.rules.len());
-        for row in &state.rules {
-            let port: i64 = row
-                .local_port
-                .trim()
-                .parse()
-                .map_err(|_| "Enter valid numeric ports".to_string())?;
-            let mut rule = row.to_rule();
-            rule.local_port = port;
-            rules.push(rule);
-        }
-        Ok((listener, rules))
+    let listener: i64 = untracked(|| listener_draft().with(|state| state.port.clone()))
+        .trim()
+        .parse()
+        .map_err(|_| "Enter valid numeric ports".to_string())?;
+    untracked(|| {
+        rules_draft().with(|state| {
+            let mut rules = Vec::with_capacity(state.rules.len());
+            for row in &state.rules {
+                let port: i64 = row
+                    .local_port
+                    .trim()
+                    .parse()
+                    .map_err(|_| "Enter valid numeric ports".to_string())?;
+                let mut rule = row.to_rule();
+                rule.local_port = port;
+                rules.push(rule);
+            }
+            Ok((listener, rules))
+        })
     })
 }
 
 fn revision() -> u64 {
-    workspace().with(|state| state.draft_revision)
+    untracked(|| rules_draft().with(|state| state.revision))
 }
 
 // --- Saving and applying -----------------------------------------------------
@@ -1679,7 +1778,7 @@ pub(crate) fn read_logs(job: &str) {
         let answer = fetch(move || provider.logs(&job)).await;
         finish("logs");
         match answer {
-            Ok(text) => workspace().update(|state| {
+            Ok(text) => notices_state().update(|state| {
                 state.logs = Some((title.to_string(), text));
             }),
             Err(error) => fail(error),
@@ -1690,37 +1789,28 @@ pub(crate) fn read_logs(job: &str) {
 // --- The Cloudflare tunnel ---------------------------------------------------
 
 pub(crate) fn account_id_field() -> String {
-    workspace().with(|state| state.tunnel.account_id.clone())
+    tunnel_draft().with(|state| state.account_id.clone())
 }
 
 pub(crate) fn client_id_field() -> String {
-    workspace().with(|state| state.tunnel.client_id.clone())
+    tunnel_draft().with(|state| state.client_id.clone())
 }
 
 pub(crate) fn set_account_id(next: String) {
-    workspace().update(|state| {
-        state.tunnel.account_id = next;
-        state.action_error = None;
-        state.notice = None;
-    });
+    tunnel_draft().update(|state| state.account_id = next);
+    clear_feedback();
 }
 
 pub(crate) fn set_client_id(next: String) {
-    workspace().update(|state| {
-        state.tunnel.client_id = next;
-        state.action_error = None;
-        state.notice = None;
-    });
+    tunnel_draft().update(|state| state.client_id = next);
+    clear_feedback();
 }
 
 /// `Choose token file…`: remember only the path. The provider reads the token
 /// into its 0600 file; the store never sees the text.
 pub(crate) fn choose_token_file(path: PathBuf) {
-    workspace().update(|state| {
-        state.tunnel.token_file = Some(path);
-        state.action_error = None;
-        state.notice = None;
-    });
+    tunnel_draft().update(|state| state.token_file = Some(path));
+    clear_feedback();
 }
 
 pub(crate) fn choose_token_file_dialog() {
@@ -1742,11 +1832,9 @@ pub(crate) fn choose_token_file_dialog() {
 }
 
 pub(crate) fn discard_tunnel() {
-    workspace().update(|state| {
-        load_tunnel_draft(state);
-        state.action_error = None;
-        state.notice = None;
-    });
+    let snapshot = untracked(|| workspace().with(|state| state.snapshot.clone()));
+    load_tunnel_draft(&snapshot);
+    clear_feedback();
 }
 
 /// `Save Cloudflare settings`: write the token file, account and client, then
@@ -1755,12 +1843,14 @@ pub(crate) fn save_cloudflare() {
     if !begin("tunnel") {
         return;
     }
-    let (token_file, account, client) = workspace().with(|state| {
-        (
-            state.tunnel.token_file.clone(),
-            state.tunnel.account_id.clone(),
-            state.tunnel.client_id.clone(),
-        )
+    let (token_file, account, client) = untracked(|| {
+        tunnel_draft().with(|state| {
+            (
+                state.token_file.clone(),
+                state.account_id.clone(),
+                state.client_id.clone(),
+            )
+        })
     });
     let supplied_token = token_file.is_some();
     let Some(provider) = provider_of() else {
@@ -1771,6 +1861,8 @@ pub(crate) fn save_cloudflare() {
     task(async move {
         let saved = fetch({
             let provider = Arc::clone(&provider);
+            let token_file = token_file.clone();
+            let account = account.clone();
             move || provider.save_cloudflare(token_file.as_deref(), &account, &client)
         })
         .await;
@@ -1782,6 +1874,14 @@ pub(crate) fn save_cloudflare() {
                 return;
             }
         };
+        tunnel_draft().update(|state| {
+            if state.token_file == token_file {
+                state.token_file = None;
+            }
+            if state.account_id == account {
+                state.account_id = saved.account_id.clone();
+            }
+        });
         let discover = supplied_token || (saved.token_configured && saved.account_id.is_empty());
         if discover {
             let answer = fetch({
@@ -1979,19 +2079,19 @@ pub(crate) fn rotate_tunnel_token(domain: String) {
 // --- Activation --------------------------------------------------------------
 
 pub(crate) fn proxy_check(domain: &str) -> Option<ProxyHttpResult> {
-    workspace().with(|state| state.proxy_checks.get(domain).cloned())
+    checks_state().with(|state| state.proxy_checks.get(domain).cloned())
 }
 
 pub(crate) fn tunnel_check(domain: &str) -> Option<ProxyHttpResult> {
-    workspace().with(|state| state.tunnel_checks.get(domain).cloned())
+    checks_state().with(|state| state.tunnel_checks.get(domain).cloned())
 }
 
 pub(crate) fn checking_proxy(domain: &str) -> bool {
-    workspace().with(|state| state.proxy_checking.contains(domain))
+    checks_state().with(|state| state.proxy_checking.contains(domain))
 }
 
 pub(crate) fn checking_tunnel(domain: &str) -> bool {
-    workspace().with(|state| state.tunnel_checking.contains(domain))
+    checks_state().with(|state| state.tunnel_checking.contains(domain))
 }
 
 /// The Go `Current` test: same proxy revision and at most 30 seconds old.
@@ -2006,30 +2106,35 @@ pub(crate) fn check_age(result: &ProxyHttpResult) -> i64 {
 }
 
 pub(crate) fn check_proxy(domain: String) {
-    if dirty() {
+    if untracked(dirty) {
         return;
     }
-    let Some(generation) = workspace().with(|state| {
-        if state.proxy_checking.contains(&domain) {
-            return None;
-        }
-        Some(state.proxy_generation + 1)
+    let Some(generation) = untracked(|| {
+        checks_state().with(|state| {
+            if state.proxy_checking.contains(&domain) {
+                return None;
+            }
+            Some(state.proxy_generation + 1)
+        })
     }) else {
         return;
     };
     let Some(provider) = provider_of() else {
         return;
     };
-    workspace().update(|state| {
+    checks_state().update(|state| {
         state.proxy_generation = generation;
         state.proxy_checking.insert(domain.clone());
         state.proxy_checks.remove(&domain);
-        state.action_error = None;
     });
+    if untracked(|| notices_state().with(|state| state.action_error.is_some())) {
+        notices_state().update(|state| state.action_error = None);
+    }
     task(async move {
         let request = domain.clone();
         let answer = fetch(move || provider.proxy_result(&request)).await;
-        workspace().update(|state| {
+        let mut error_out = None;
+        checks_state().update(|state| {
             if state.proxy_generation != generation {
                 return;
             }
@@ -2038,37 +2143,45 @@ pub(crate) fn check_proxy(domain: String) {
                 Ok(result) => {
                     state.proxy_checks.insert(domain, result);
                 }
-                Err(error) => state.action_error = Some(error),
+                Err(error) => error_out = Some(error),
             }
         });
+        if let Some(error) = error_out {
+            fail(error);
+        }
     });
 }
 
 pub(crate) fn check_tunnel(domain: String) {
-    if dirty() {
+    if untracked(dirty) {
         return;
     }
-    let Some(generation) = workspace().with(|state| {
-        if state.tunnel_checking.contains(&domain) {
-            return None;
-        }
-        Some(state.tunnel_generation + 1)
+    let Some(generation) = untracked(|| {
+        checks_state().with(|state| {
+            if state.tunnel_checking.contains(&domain) {
+                return None;
+            }
+            Some(state.tunnel_generation + 1)
+        })
     }) else {
         return;
     };
     let Some(provider) = provider_of() else {
         return;
     };
-    workspace().update(|state| {
+    checks_state().update(|state| {
         state.tunnel_generation = generation;
         state.tunnel_checking.insert(domain.clone());
         state.tunnel_checks.remove(&domain);
-        state.action_error = None;
     });
+    if untracked(|| notices_state().with(|state| state.action_error.is_some())) {
+        notices_state().update(|state| state.action_error = None);
+    }
     task(async move {
         let request = domain.clone();
         let answer = fetch(move || provider.tunnel_result(&request)).await;
-        workspace().update(|state| {
+        let mut error_out = None;
+        checks_state().update(|state| {
             if state.tunnel_generation != generation {
                 return;
             }
@@ -2077,9 +2190,12 @@ pub(crate) fn check_tunnel(domain: String) {
                 Ok(result) => {
                     state.tunnel_checks.insert(domain, result);
                 }
-                Err(error) => state.action_error = Some(error),
+                Err(error) => error_out = Some(error),
             }
         });
+        if let Some(error) = error_out {
+            fail(error);
+        }
     });
 }
 
@@ -2131,49 +2247,41 @@ pub(crate) fn tunnel_url_available(domain: &str) -> bool {
 // --- Authority ---------------------------------------------------------------
 
 pub(crate) fn authority_open() -> bool {
-    workspace().with(|state| state.authority_open)
+    authority_state().with(|state| state.open)
 }
 
 pub(crate) fn open_authority() {
-    workspace().update(|state| {
-        state.authority_open = true;
-        state.action_error = None;
-        state.notice = None;
-    });
+    authority_state().update(|state| state.open = true);
+    clear_feedback();
     refresh_authority();
 }
 
 pub(crate) fn close_authority() {
-    workspace().update(|state| {
-        state.authority_open = false;
-        state.action_error = None;
-        state.notice = None;
-    });
+    authority_state().update(|state| state.open = false);
+    clear_feedback();
 }
 
 pub(crate) fn authority() -> Option<AuthorityStatus> {
-    workspace().with(|state| state.authority.clone())
+    authority_state().with(|state| state.authority.clone())
 }
 
 fn store_authority(status: AuthorityStatus) {
-    workspace().update(|state| state.authority = Some(status));
+    authority_state().update(|state| state.authority = Some(status));
 }
 
 pub(crate) fn refresh_authority() {
     let Some(provider) = provider_of() else {
         return;
     };
-    let sequence = workspace().with(|state| state.sequence);
+    let sequence = untracked(|| workspace().with(|state| state.sequence));
     task(async move {
         let answer = fetch(move || provider.authority_status()).await;
-        workspace().update(|state| {
-            if state.sequence != sequence {
-                return;
-            }
-            if let Ok(status) = answer {
-                state.authority = Some(status);
-            }
-        });
+        if untracked(|| workspace().with(|state| state.sequence)) != sequence {
+            return;
+        }
+        if let Ok(status) = answer {
+            store_authority(status);
+        }
     });
 }
 

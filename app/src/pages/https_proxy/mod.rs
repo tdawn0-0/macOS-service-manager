@@ -1,5 +1,4 @@
-//! HTTPS reverse proxy, local CA and Cloudflare tunnel (Phase 3), ported from
-//! `view_https_proxy.go`, `view_proxy_activation.go` and `view_authority.go`.
+//! HTTPS reverse proxy, local CA and Cloudflare tunnel screens.
 //!
 //! The page reads [`crate::store::proxy`] and never calls devproxy itself:
 //! saving rules, applying the proxy, Cloudflare settings, trust actions and

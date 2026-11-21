@@ -25,18 +25,6 @@ pub(crate) fn authority_page() -> impl IntoElement {
         .flex_1()
         .min_w(px(0.0))
         .flex_col()
-        .child(
-            view()
-                .px(tokens::space(5.0))
-                .pt(tokens::space(2.0))
-                .child(ui::action_button(
-                    "Back to HTTPS rules",
-                    Tone::Default,
-                    "ca-back",
-                    false,
-                    back_to_rules,
-                )),
-        )
         .child(header())
         .child(notes())
         .child(
@@ -45,6 +33,7 @@ pub(crate) fn authority_page() -> impl IntoElement {
                     .flex_col()
                     .gap(tokens::space(4.0))
                     .px(tokens::space(5.0))
+                    .pt(tokens::space(4.0))
                     .pb(tokens::space(5.0))
                     .child(dynamic(|| Some(cards()))),
             ),
@@ -53,13 +42,23 @@ pub(crate) fn authority_page() -> impl IntoElement {
 
 fn header() -> impl IntoElement {
     view()
-        .h(px(60.0))
+        .test_id("ca-header")
+        .h(px(52.0))
         .flex_none()
         .flex_row()
         .items_center()
         .gap(tokens::space(2.0))
         .px(tokens::space(5.0))
-        .pt(tokens::space(2.0))
+        .border_b_1()
+        .border_color(tokens::hairline)
+        .window_drag(true)
+        .child(ui::action_button(
+            "← HTTPS Proxy",
+            Tone::Default,
+            "ca-back",
+            false,
+            back_to_rules,
+        ))
         .child(
             icons::shield()
                 .size(px(16.0))
@@ -305,6 +304,7 @@ fn info_card(
                     .child(
                         text(validity.clone())
                             .text_size(px(tokens::TEXT_CAPTION))
+                            .tabular_nums()
                             .text_color(move || theme().muted_foreground),
                     )
             }))
@@ -372,6 +372,7 @@ fn archive_card(info: &AuthorityInfo, previous_id: &str, prepared: bool) -> AnyE
             .child(
                 text(proxy::validity(info))
                     .text_size(px(tokens::TEXT_CAPTION))
+                    .tabular_nums()
                     .text_color(move || theme().muted_foreground),
             )
             .child(

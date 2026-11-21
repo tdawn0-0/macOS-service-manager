@@ -5,7 +5,14 @@
 
 use devproxy::ca::material::TrustState;
 use nsh_base::{menu, menu_item, menu_separator, theme};
-use nsh_core::prelude::*;
+use nsh_core::{
+    ContextMenuEvent,
+    element::{
+        Svg,
+        desktop::{MenuItem as DesktopMenuItem, popup_menu_at},
+    },
+    prelude::*,
+};
 
 use crate::{
     components::{
@@ -23,7 +30,7 @@ pub(crate) fn rules_page() -> impl IntoElement {
         .flex_1()
         .min_w(px(0.0))
         .flex_col()
-        .child(dynamic(|| Some(header())))
+        .child(header())
         .child(notes())
         .child(
             scroll().flex_1().min_h(px(0.0)).child(
@@ -31,6 +38,7 @@ pub(crate) fn rules_page() -> impl IntoElement {
                     .flex_col()
                     .gap(tokens::space(4.0))
                     .px(tokens::space(5.0))
+                    .pt(tokens::space(4.0))
                     .pb(tokens::space(5.0))
                     .child(rules_card())
                     .child(proxy_card())
@@ -42,22 +50,17 @@ pub(crate) fn rules_page() -> impl IntoElement {
 }
 
 fn header() -> impl IntoElement {
-    let listener = proxy::listener_port();
-    let meta = format!(
-        "{} · listener :{}",
-        proxy::plural(proxy::saved_rules().len(), "rule"),
-        listener
-    );
-    let publication = proxy::publication();
     view()
         .test_id("proxy-rules")
-        .h(px(60.0))
+        .h(px(52.0))
         .flex_none()
         .flex_row()
         .items_center()
         .gap(tokens::space(2.0))
         .px(tokens::space(5.0))
-        .pt(tokens::space(2.0))
+        .border_b_1()
+        .border_color(tokens::hairline)
+        .window_drag(true)
         .child(
             icons::shield()
                 .size(px(16.0))
@@ -77,15 +80,22 @@ fn header() -> impl IntoElement {
                         .text_color(move || theme().foreground),
                 )
                 .child(
-                    text(meta)
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground),
+                    text(move || {
+                        format!(
+                            "{} · listener :{}",
+                            proxy::plural(proxy::saved_rules().len(), "rule"),
+                            proxy::listener_port()
+                        )
+                    })
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .tabular_nums()
+                    .text_color(move || theme().muted_foreground),
                 ),
         )
         .child(
             view()
                 .test_id("proxy-publication")
-                .child(ui::status_tag(publication.clone())),
+                .child(dynamic(|| Some(ui::status_tag(proxy::publication())))),
         )
 }
 
@@ -151,6 +161,10 @@ fn rule_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoEl
         .bg(tokens::inset)
         .border_1()
         .border_color(tokens::hairline)
+        .on_context_menu(move |event: &ContextMenuEvent| {
+            let items = rule_context_menu_items(row, index);
+            drop(popup_menu_at(items, event.page_position));
+        })
         .child(top_row(row, index))
         .child(when(move || row.get().tunnel, {
             move || tunnel_row(index, row)
@@ -162,6 +176,52 @@ fn rule_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoEl
                 })
             }
         }))
+}
+
+fn rule_context_menu_items(
+    row: ReadSignal<RuleDraft>,
+    index: ReadSignal<usize>,
+) -> Vec<DesktopMenuItem> {
+    let idx = index.get_untracked();
+    let draft = row.get_untracked();
+    let dirty = untracked(proxy::dirty);
+    let busy = untracked(proxy::busy);
+    let domain = devcore::model::local_domain(&draft.domain);
+    let has_domain = !domain.is_empty();
+    let url = untracked(|| proxy::rule_url(idx));
+    let copy_url = url.clone();
+    let open_target = url;
+    let tunnel_on = draft.tunnel;
+    let checking = untracked(|| proxy::checking_proxy(&domain));
+    let check_domain = domain;
+
+    vec![
+        DesktopMenuItem::new("Copy HTTPS URL")
+            .icon(icons::copy_src())
+            .disabled(dirty || !has_domain)
+            .on_select(move || copy(&copy_url)),
+        DesktopMenuItem::new("Open HTTPS URL")
+            .icon(icons::link_src())
+            .disabled(dirty || !has_domain)
+            .on_select(move || open_url_async(open_target.clone())),
+        DesktopMenuItem::separator(),
+        DesktopMenuItem::new("Toggle Tunnel")
+            .checked(tunnel_on)
+            .disabled(busy)
+            .on_select(move || proxy::set_tunnel(index.get_untracked(), !tunnel_on)),
+        DesktopMenuItem::new("Check HTTPS")
+            .icon(icons::shield_src())
+            .disabled(busy || dirty || checking || !has_domain)
+            .on_select(move || proxy::check_proxy(check_domain.clone())),
+        DesktopMenuItem::new("View Proxy Logs")
+            .icon(icons::logs_src())
+            .on_select(|| crate::dev_logs::open("proxy")),
+        DesktopMenuItem::separator(),
+        DesktopMenuItem::new("Remove")
+            .icon(icons::trash_src())
+            .destructive(true)
+            .on_select(move || proxy::remove_rule(index.get_untracked())),
+    ]
 }
 
 fn top_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoElement {
@@ -222,7 +282,7 @@ fn top_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoEle
                     move || row.get().local_port,
                     move |value| proxy::set_local_port(index.get(), value),
                 ))
-                .child(dynamic(move || Some(ports_menu(index, id)))),
+                .child(ports_menu(index, id)),
         )
         .child(
             view()
@@ -260,18 +320,16 @@ fn top_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoEle
                                 .flex_row()
                                 .items_center()
                                 .gap(tokens::space(1.0))
-                                .child(ui::row_icon_button(
+                                .child(link_icon_button(
                                     icons::copy(),
                                     "Copy HTTPS URL",
                                     format!("proxy-copy-url-{id}"),
-                                    false,
                                     move || copy(&copy_url),
                                 ))
-                                .child(ui::row_icon_button(
+                                .child(link_icon_button(
                                     icons::link(),
                                     "Open HTTPS URL",
                                     format!("proxy-open-url-{id}"),
-                                    false,
                                     move || open_url_async(url.clone()),
                                 ))
                                 .into_element(),
@@ -295,6 +353,51 @@ fn top_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoEle
 }
 
 fn ports_menu(index: ReadSignal<usize>, id: u64) -> impl IntoElement {
+    menu()
+        .popup_style(|style| {
+            style
+                .bg(tokens::panel())
+                .rounded(tokens::panel_radius())
+                .border_1()
+                .border_color(tokens::hairline())
+                .p(tokens::space(1.0))
+        })
+        .trigger(
+            nsh_base::button()
+                .test_id(&format!("proxy-ports-{id}"))
+                .size(px(24.0))
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .rounded(move || theme().radius)
+                .cursor_pointer()
+                .hover(move |style| style.bg(tokens::row_hover()))
+                .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
+                .accessibility_label("Choose a listening local port")
+                .child(
+                    icons::plug()
+                        .size(px(13.0))
+                        .text_color(move || theme().muted_foreground),
+                ),
+        )
+        .child(dynamic(move || Some(ports_menu_items(index))))
+        .child(menu_separator())
+        .child(
+            menu_item()
+                .px(tokens::space(3.0))
+                .py(tokens::space(1.5))
+                .rounded(move || theme().radius)
+                .hover(move |style| style.bg(tokens::row_hover()))
+                .on_select(proxy::refresh_ports)
+                .child(
+                    text("Refresh listening ports")
+                        .text_size(px(tokens::TEXT_SMALL))
+                        .text_color(move || theme().foreground),
+                ),
+        )
+}
+
+fn ports_menu_items(index: ReadSignal<usize>) -> impl IntoElement {
     let ports = proxy::ports();
     let loading = proxy::ports_loading();
     let error = proxy::ports_error();
@@ -321,53 +424,14 @@ fn ports_menu(index: ReadSignal<usize>, id: u64) -> impl IntoElement {
                             format!("{} · {}", port.port, port.process)
                         })
                         .text_size(px(tokens::TEXT_SMALL))
+                        .tabular_nums()
                         .text_color(move || theme().foreground),
                     )
                     .into_element(),
             );
         }
     }
-    entries.push(menu_separator().into_element());
-    entries.push(
-        menu_item()
-            .px(tokens::space(3.0))
-            .py(tokens::space(1.5))
-            .rounded(move || theme().radius)
-            .hover(move |style| style.bg(tokens::row_hover()))
-            .on_select(proxy::refresh_ports)
-            .child(
-                text("Refresh listening ports")
-                    .text_size(px(tokens::TEXT_SMALL))
-                    .text_color(move || theme().foreground),
-            )
-            .into_element(),
-    );
-    menu()
-        .popup_style(|style| {
-            style
-                .bg(tokens::panel())
-                .rounded(tokens::panel_radius())
-                .border_1()
-                .border_color(tokens::hairline())
-                .p(tokens::space(1.0))
-        })
-        .trigger(
-            nsh_base::button()
-                .test_id(&format!("proxy-ports-{id}"))
-                .size(px(24.0))
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .rounded(move || theme().radius)
-                .hover(move |style| style.bg(tokens::row_hover()))
-                .accessibility_label("Choose a listening local port")
-                .child(
-                    icons::plug()
-                        .size(px(13.0))
-                        .text_color(move || theme().muted_foreground),
-                ),
-        )
-        .children(entries)
+    view().flex_col().children(entries)
 }
 
 fn disabled_item(label: &'static str) -> AnyElement {
@@ -436,7 +500,7 @@ fn tunnel_row(index: ReadSignal<usize>, row: ReadSignal<RuleDraft>) -> impl Into
                                     move || row.get().tunnel_domain,
                                     move |value| proxy::set_tunnel_domain(index.get(), value),
                                 ))
-                                .child(dynamic(move || Some(host_menu(index.get(), id))))
+                                .child(host_menu(index, id))
                         }
                     },
                 ))
@@ -502,18 +566,16 @@ fn tunnel_row(index: ReadSignal<usize>, row: ReadSignal<RuleDraft>) -> impl Into
                                 .flex_row()
                                 .items_center()
                                 .gap(tokens::space(1.0))
-                                .child(ui::row_icon_button(
+                                .child(link_icon_button(
                                     icons::copy(),
                                     "Copy tunnel URL",
                                     format!("proxy-copy-tunnel-{id}"),
-                                    false,
                                     move || copy(&copy_url),
                                 ))
-                                .child(ui::row_icon_button(
+                                .child(link_icon_button(
                                     icons::link(),
                                     "Open tunnel URL",
                                     format!("proxy-open-tunnel-{id}"),
-                                    false,
                                     move || open_url_async(preview.clone()),
                                 ))
                                 .into_element(),
@@ -558,27 +620,8 @@ fn tunnel_row(index: ReadSignal<usize>, row: ReadSignal<RuleDraft>) -> impl Into
         )
 }
 
-fn host_menu(index: usize, id: u64) -> impl IntoElement {
-    let suggestions = proxy::host_suggestions(index);
-    let enabled = !suggestions.is_empty();
-    let mut entries: Vec<AnyElement> = Vec::new();
-    for host in suggestions {
-        let chosen = host.clone();
-        entries.push(
-            menu_item()
-                .px(tokens::space(3.0))
-                .py(tokens::space(1.5))
-                .rounded(move || theme().radius)
-                .hover(move |style| style.bg(tokens::row_hover()))
-                .on_select(move || proxy::set_tunnel_domain(index, chosen.clone()))
-                .child(
-                    text(host)
-                        .text_size(px(tokens::TEXT_SMALL))
-                        .text_color(move || theme().foreground),
-                )
-                .into_element(),
-        );
-    }
+fn host_menu(index: ReadSignal<usize>, id: u64) -> impl IntoElement {
+    let has_suggestions = computed(move || !proxy::host_suggestions(index.get()).is_empty());
     menu()
         .popup_style(|style| {
             style
@@ -599,15 +642,46 @@ fn host_menu(index: usize, id: u64) -> impl IntoElement {
                 .rounded(move || theme().radius)
                 .border_1()
                 .border_color(tokens::hairline)
-                .disabled(!enabled)
-                .opacity(if enabled { 1.0 } else { 0.4 })
+                .hover(move |style| style.bg(tokens::row_hover()))
+                .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
+                .disabled(move || !has_suggestions.get())
+                .opacity(move || {
+                    if has_suggestions.get() {
+                        1.0_f32
+                    } else {
+                        0.4_f32
+                    }
+                })
                 .child(
                     text("Existing DNS…")
                         .text_size(px(tokens::TEXT_CAPTION))
                         .text_color(move || theme().foreground),
                 ),
         )
-        .children(entries)
+        .child(dynamic(move || Some(host_menu_items(index))))
+}
+
+fn host_menu_items(index: ReadSignal<usize>) -> impl IntoElement {
+    let suggestions = proxy::host_suggestions(index.get());
+    let mut entries: Vec<AnyElement> = Vec::new();
+    for host in suggestions {
+        let chosen = host.clone();
+        entries.push(
+            menu_item()
+                .px(tokens::space(3.0))
+                .py(tokens::space(1.5))
+                .rounded(move || theme().radius)
+                .hover(move |style| style.bg(tokens::row_hover()))
+                .on_select(move || proxy::set_tunnel_domain(index.get(), chosen.clone()))
+                .child(
+                    text(host)
+                        .text_size(px(tokens::TEXT_SMALL))
+                        .text_color(move || theme().foreground),
+                )
+                .into_element(),
+        );
+    }
+    view().flex_col().children(entries)
 }
 
 /// `devProxyActivation`: tags from the explicit observations only. The Go
@@ -1029,9 +1103,13 @@ fn token_block() -> impl IntoElement {
 fn tunnel_meta() -> impl IntoElement {
     let subdomain = proxy::subdomain();
     let zones = proxy::zones();
+    let workers = proxy::worker_count();
     let mut meta: Vec<String> = Vec::new();
     if !subdomain.is_empty() {
         meta.push(format!("*.{subdomain}.workers.dev"));
+    }
+    if workers > 0 {
+        meta.push(proxy::plural(workers, "worker"));
     }
     if !zones.is_empty() {
         meta.push(format!("Zones: {}", zones.join(", ")));
@@ -1041,6 +1119,7 @@ fn tunnel_meta() -> impl IntoElement {
         text(meta)
             .font_family("monospace")
             .text_size(px(tokens::TEXT_CAPTION))
+            .tabular_nums()
             .text_color(move || theme().muted_foreground),
     )
 }
@@ -1247,6 +1326,39 @@ fn logs_card() -> Option<AnyElement> {
 }
 
 // --- Small actions -----------------------------------------------------------
+
+/// A compact 24px icon-only URL link button with a pointer cursor and native tooltip.
+fn link_icon_button(
+    icon: Svg,
+    label: impl Into<String>,
+    test_id: impl Into<String>,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
+    let label = label.into();
+    let tip = label.clone();
+    let test_id = test_id.into();
+    view().flex_none().tooltip(ui::tooltip(tip)).child(
+        nsh_base::button()
+            .test_id(&test_id)
+            .h(px(24.0))
+            .flex_none()
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .gap(tokens::space(1.0))
+            .px(tokens::space(1.5))
+            .rounded(move || theme().radius)
+            .cursor_pointer()
+            .hover(move |style| style.bg(tokens::row_hover()))
+            .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
+            .accessibility_label(label)
+            .on_press(on_press)
+            .child(
+                icon.size(px(13.0))
+                    .text_color(move || theme().muted_foreground),
+            ),
+    )
+}
 
 fn copy(value: &str) {
     set_clipboard(value.to_string());

@@ -4,6 +4,7 @@
 //! current only while the revision and fingerprint still match and it is at
 //! most 30 seconds old. Failures are fixed strings, never raw errors.
 
+use std::io;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -12,10 +13,26 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::secrets::SecretStore;
+use crate::tunnel::config::read_status as read_tunnel_status;
 
 use super::rules::{
     proxy_rule_fingerprint, resolve_tunnel_public_url, rule_auth_digest, tunnel_rule_fingerprint,
 };
+
+/// Actionable diagnosis category for a failed local HTTPS or tunnel probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProbeDiagnosis {
+    UpstreamNotListening,
+    CaUntrusted,
+    TunnelDisconnected,
+    TunnelConflict,
+    ProxyStopped,
+    Timeout,
+    NotDeployed,
+    Stale,
+    Unavailable,
+}
 
 /// A single, explicit observation; it contains no response body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,6 +47,10 @@ pub struct ProxyHttpResult {
     pub checked_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnosis: Option<ProbeDiagnosis>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 mod duration_millis {
@@ -54,6 +75,140 @@ impl ProxyHttpResult {
             && (now - self.checked_at).num_seconds() >= 0
             && (now - self.checked_at) <= chrono::TimeDelta::seconds(30)
     }
+
+    /// Return the human-readable actionable hint for a failed probe, falling
+    /// back to the diagnosis category or failure label when older fixtures only
+    /// populate `failure`.
+    pub fn diagnostic_hint(
+        &self,
+        local_port: Option<i64>,
+        live_tunnel_status: Option<&str>,
+    ) -> Option<String> {
+        if let Some(hint) = self.hint.as_deref()
+            && !hint.trim().is_empty()
+        {
+            return Some(hint.to_string());
+        }
+        if let Some(diagnosis) = self.diagnosis {
+            return Some(default_hint_for_diagnosis(diagnosis, local_port));
+        }
+        let failure = self.failure.as_deref()?;
+        default_hint_for_failure(failure, local_port, live_tunnel_status)
+    }
+}
+
+/// Default actionable hint text for a structured [`ProbeDiagnosis`].
+pub fn default_hint_for_diagnosis(diagnosis: ProbeDiagnosis, local_port: Option<i64>) -> String {
+    match diagnosis {
+        ProbeDiagnosis::UpstreamNotListening => match local_port {
+            Some(port) if port > 0 => format!(
+                "Upstream port :{port} is not listening. Start your app server in a terminal first."
+            ),
+            _ => "Upstream port is not listening. Start your app server in a terminal first."
+                .to_string(),
+        },
+        ProbeDiagnosis::CaUntrusted => {
+            "Local CA is not trusted yet. Trust the CA in Certificate Authority settings."
+                .to_string()
+        }
+        ProbeDiagnosis::TunnelDisconnected => {
+            "Cloudflare tunnel is not connected for this rule.".to_string()
+        }
+        ProbeDiagnosis::TunnelConflict => {
+            "Cloudflare tunnel is not connected for this rule (another client is connected to this Worker)."
+                .to_string()
+        }
+        ProbeDiagnosis::ProxyStopped => {
+            "HTTPS proxy listener is not running. Start or apply the proxy first.".to_string()
+        }
+        ProbeDiagnosis::Timeout => {
+            "The probe timed out waiting for a response. Check that the proxy and upstream server are responsive."
+                .to_string()
+        }
+        ProbeDiagnosis::NotDeployed => {
+            "Deploy Cloudflare Workers before checking the tunnel response.".to_string()
+        }
+        ProbeDiagnosis::Stale => {
+            "The proxy rule changed while checking. Run the probe again.".to_string()
+        }
+        ProbeDiagnosis::Unavailable => {
+            "The endpoint could not be reached. Check that the service is running.".to_string()
+        }
+    }
+}
+
+fn default_hint_for_failure(
+    failure: &str,
+    local_port: Option<i64>,
+    live_tunnel_status: Option<&str>,
+) -> Option<String> {
+    let lower = failure.trim().to_lowercase();
+    if lower.is_empty() {
+        return None;
+    }
+    if lower == "tls" || lower.contains("certificate") || lower.contains("ca ") {
+        return Some(default_hint_for_diagnosis(
+            ProbeDiagnosis::CaUntrusted,
+            local_port,
+        ));
+    }
+    if lower.contains("connection refused") || lower.contains("upstream") {
+        return Some(default_hint_for_diagnosis(
+            ProbeDiagnosis::UpstreamNotListening,
+            local_port,
+        ));
+    }
+    if lower.contains("conflict") {
+        return Some(default_hint_for_diagnosis(
+            ProbeDiagnosis::TunnelConflict,
+            local_port,
+        ));
+    }
+    if lower.contains("disconnected") || lower.contains("offline") {
+        return Some(default_hint_for_diagnosis(
+            ProbeDiagnosis::TunnelDisconnected,
+            local_port,
+        ));
+    }
+    if lower.contains("proxy stopped") {
+        return Some(default_hint_for_diagnosis(
+            ProbeDiagnosis::ProxyStopped,
+            local_port,
+        ));
+    }
+    if lower.contains("timeout") {
+        return Some(default_hint_for_diagnosis(
+            ProbeDiagnosis::Timeout,
+            local_port,
+        ));
+    }
+    if lower.contains("not deployed") {
+        return Some(default_hint_for_diagnosis(
+            ProbeDiagnosis::NotDeployed,
+            local_port,
+        ));
+    }
+    if lower == "stale" {
+        return Some(default_hint_for_diagnosis(
+            ProbeDiagnosis::Stale,
+            local_port,
+        ));
+    }
+    if let Some(status) = live_tunnel_status {
+        if status.eq_ignore_ascii_case("Conflict") {
+            return Some(default_hint_for_diagnosis(
+                ProbeDiagnosis::TunnelConflict,
+                local_port,
+            ));
+        }
+        if !status.eq_ignore_ascii_case("Connected") {
+            return Some(default_hint_for_diagnosis(
+                ProbeDiagnosis::TunnelDisconnected,
+                local_port,
+            ));
+        }
+    }
+    None
 }
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(5);
@@ -118,6 +273,8 @@ pub async fn check_proxy_rule_http(
         duration: Duration::ZERO,
         checked_at: Utc::now(),
         failure: None,
+        diagnosis: None,
+        hint: None,
     };
     let state = store.read()?;
     let Some(rule) = state
@@ -125,19 +282,30 @@ pub async fn check_proxy_rule_http(
         .iter()
         .find(|rule| rule.domain == result.domain)
     else {
-        result.failure = Some("Stale".into());
+        apply_failure(
+            &mut result,
+            "Stale",
+            ProbeDiagnosis::Stale,
+            default_hint_for_diagnosis(ProbeDiagnosis::Stale, None),
+        );
         return Err(StateError::invalid("proxy rule changed; check again"));
     };
     if state.proxy_rules_revision != revision
         || proxy_rule_fingerprint(state.proxy_listener_port, rule) != fingerprint
     {
-        result.failure = Some("Stale".into());
+        apply_failure(
+            &mut result,
+            "Stale",
+            ProbeDiagnosis::Stale,
+            default_hint_for_diagnosis(ProbeDiagnosis::Stale, Some(rule.local_port)),
+        );
         return Err(StateError::invalid("proxy rule changed; check again"));
     }
 
     crate::ensure_crypto_provider();
-    let port = state.proxy_listener_port;
-    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port as u16));
+    let listener_port = state.proxy_listener_port;
+    let local_port = rule.local_port;
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], listener_port as u16));
     let client = match reqwest::Client::builder()
         .timeout(CHECK_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
@@ -149,7 +317,9 @@ pub async fn check_proxy_rule_http(
     {
         Ok(client) => client,
         Err(error) => {
-            result.failure = Some(classify_error(&error));
+            let (failure, diagnosis, hint) =
+                classify_reqwest_error(&error, false, listener_port, local_port, None);
+            apply_failure(&mut result, failure, diagnosis, hint);
             result.checked_at = Utc::now();
             return Ok(result);
         }
@@ -164,19 +334,36 @@ pub async fn check_proxy_rule_http(
     let response = match response {
         Ok(response) => response,
         Err(error) => {
-            result.failure = Some(classify_error(&error));
+            let (failure, diagnosis, hint) =
+                classify_reqwest_error(&error, false, listener_port, local_port, None);
+            apply_failure(&mut result, failure, diagnosis, hint);
             return Ok(result);
         }
     };
     result.status_code = response.status().as_u16();
-    // Drain a bounded amount so the listener sees a complete request.
-    if let Ok(bytes) = response.bytes().await {
-        let _ = &bytes[..bytes.len().min(BODY_LIMIT)];
+    // Drain a bounded amount so the listener sees a complete request and inspect
+    // Devbase's fixed error pages without retaining any response body.
+    let body_snippet = match response.bytes().await {
+        Ok(bytes) => {
+            let slice = &bytes[..bytes.len().min(BODY_LIMIT)];
+            String::from_utf8_lossy(slice).into_owned()
+        }
+        Err(_) => String::new(),
+    };
+    if let Some((failure, diagnosis, hint)) =
+        diagnose_proxy_response(result.status_code, &body_snippet, local_port)
+    {
+        apply_failure(&mut result, failure, diagnosis, hint);
     }
 
     let latest = store.read()?;
     if latest.proxy_rules_revision != revision {
-        result.failure = Some("Stale".into());
+        apply_failure(
+            &mut result,
+            "Stale",
+            ProbeDiagnosis::Stale,
+            default_hint_for_diagnosis(ProbeDiagnosis::Stale, Some(local_port)),
+        );
         result.status_code = 0;
         return Ok(result);
     }
@@ -185,7 +372,12 @@ pub async fn check_proxy_rule_http(
             && proxy_rule_fingerprint(latest.proxy_listener_port, next) == fingerprint
     });
     if !same {
-        result.failure = Some("Stale".into());
+        apply_failure(
+            &mut result,
+            "Stale",
+            ProbeDiagnosis::Stale,
+            default_hint_for_diagnosis(ProbeDiagnosis::Stale, Some(local_port)),
+        );
         result.status_code = 0;
     }
     Ok(result)
@@ -206,6 +398,8 @@ pub async fn check_tunnel_rule_http(
         duration: Duration::ZERO,
         checked_at: Utc::now(),
         failure: None,
+        diagnosis: None,
+        hint: None,
     };
     let state = store.read()?;
     let secrets = SecretStore::new(store.root());
@@ -214,17 +408,32 @@ pub async fn check_tunnel_rule_http(
         .iter()
         .find(|rule| rule.domain == result.domain)
     else {
-        result.failure = Some("Stale".into());
+        apply_failure(
+            &mut result,
+            "Stale",
+            ProbeDiagnosis::Stale,
+            default_hint_for_diagnosis(ProbeDiagnosis::Stale, None),
+        );
         return Err(StateError::invalid("tunnel rule changed; check again"));
     };
     if !rule.tunnel || state.proxy_rules_revision != revision {
-        result.failure = Some("Stale".into());
+        apply_failure(
+            &mut result,
+            "Stale",
+            ProbeDiagnosis::Stale,
+            default_hint_for_diagnosis(ProbeDiagnosis::Stale, Some(rule.local_port)),
+        );
         return Err(StateError::invalid("tunnel rule changed; check again"));
     }
+    let worker_name = rule.resolved_tunnel_worker();
+    let local_port = rule.local_port;
+    let listener_port = state.proxy_listener_port;
+    let worker_state = read_tunnel_status(store.root())
+        .and_then(|status| status.worker_states.get(&worker_name).cloned());
     let public_url = resolve_tunnel_public_url(&state, rule);
     let mut access_token = String::new();
     if rule.tunnel_auth
-        && let Ok(token) = secrets.tunnel_access_token(&rule.resolved_tunnel_worker())
+        && let Ok(token) = secrets.tunnel_access_token(&worker_name)
         && !token.is_empty()
     {
         access_token = token;
@@ -235,22 +444,42 @@ pub async fn check_tunnel_rule_http(
         rule_auth_digest(&access_token)
     };
     if tunnel_rule_fingerprint(rule, &public_url, &auth_digest) != fingerprint {
-        result.failure = Some("Stale".into());
+        apply_failure(
+            &mut result,
+            "Stale",
+            ProbeDiagnosis::Stale,
+            default_hint_for_diagnosis(ProbeDiagnosis::Stale, Some(local_port)),
+        );
         return Err(StateError::invalid("tunnel rule changed; check again"));
     }
     if public_url.is_empty() {
         result.checked_at = Utc::now();
-        result.failure = Some("Not deployed".into());
+        apply_failure(
+            &mut result,
+            "Not deployed",
+            ProbeDiagnosis::NotDeployed,
+            default_hint_for_diagnosis(ProbeDiagnosis::NotDeployed, Some(local_port)),
+        );
         return Ok(result);
     }
     let Ok(mut url) = Url::parse(&public_url) else {
         result.checked_at = Utc::now();
-        result.failure = Some("Unavailable".into());
+        apply_failure(
+            &mut result,
+            "Unavailable",
+            ProbeDiagnosis::Unavailable,
+            "Tunnel public URL is invalid. Re-deploy Cloudflare Workers.".to_string(),
+        );
         return Ok(result);
     };
     if url.host_str().is_none() {
         result.checked_at = Utc::now();
-        result.failure = Some("Unavailable".into());
+        apply_failure(
+            &mut result,
+            "Unavailable",
+            ProbeDiagnosis::Unavailable,
+            "Tunnel public URL is missing a host. Re-deploy Cloudflare Workers.".to_string(),
+        );
         return Ok(result);
     }
     url.set_path("/");
@@ -268,7 +497,14 @@ pub async fn check_tunnel_rule_http(
     {
         Ok(client) => client,
         Err(error) => {
-            result.failure = Some(classify_error(&error));
+            let (failure, diagnosis, hint) = classify_reqwest_error(
+                &error,
+                true,
+                listener_port,
+                local_port,
+                worker_state.as_deref(),
+            );
+            apply_failure(&mut result, failure, diagnosis, hint);
             result.checked_at = Utc::now();
             return Ok(result);
         }
@@ -284,18 +520,42 @@ pub async fn check_tunnel_rule_http(
     let response = match response {
         Ok(response) => response,
         Err(error) => {
-            result.failure = Some(classify_error(&error));
+            let (failure, diagnosis, hint) = classify_reqwest_error(
+                &error,
+                true,
+                listener_port,
+                local_port,
+                worker_state.as_deref(),
+            );
+            apply_failure(&mut result, failure, diagnosis, hint);
             return Ok(result);
         }
     };
     result.status_code = response.status().as_u16();
-    if let Ok(bytes) = response.bytes().await {
-        let _ = &bytes[..bytes.len().min(BODY_LIMIT)];
+    let body_snippet = match response.bytes().await {
+        Ok(bytes) => {
+            let slice = &bytes[..bytes.len().min(BODY_LIMIT)];
+            String::from_utf8_lossy(slice).into_owned()
+        }
+        Err(_) => String::new(),
+    };
+    if let Some((failure, diagnosis, hint)) = diagnose_tunnel_response(
+        result.status_code,
+        &body_snippet,
+        local_port,
+        worker_state.as_deref(),
+    ) {
+        apply_failure(&mut result, failure, diagnosis, hint);
     }
 
     let latest = store.read()?;
     if latest.proxy_rules_revision != revision {
-        result.failure = Some("Stale".into());
+        apply_failure(
+            &mut result,
+            "Stale",
+            ProbeDiagnosis::Stale,
+            default_hint_for_diagnosis(ProbeDiagnosis::Stale, Some(local_port)),
+        );
         result.status_code = 0;
         return Ok(result);
     }
@@ -316,30 +576,238 @@ pub async fn check_tunnel_rule_http(
         tunnel_rule_fingerprint(next, &next_url, &next_digest) == fingerprint
     });
     if !same {
-        result.failure = Some("Stale".into());
+        apply_failure(
+            &mut result,
+            "Stale",
+            ProbeDiagnosis::Stale,
+            default_hint_for_diagnosis(ProbeDiagnosis::Stale, Some(local_port)),
+        );
         result.status_code = 0;
     }
     Ok(result)
 }
 
-fn classify_error(error: &reqwest::Error) -> String {
-    if error.is_timeout() {
-        return "Timeout".into();
-    }
-    if has_tls_error(error) {
-        return "TLS".into();
-    }
-    "Unavailable".into()
+fn apply_failure(
+    result: &mut ProxyHttpResult,
+    failure: impl Into<String>,
+    diagnosis: ProbeDiagnosis,
+    hint: String,
+) {
+    result.failure = Some(failure.into());
+    result.diagnosis = Some(diagnosis);
+    result.hint = Some(hint);
 }
 
-fn has_tls_error(error: &reqwest::Error) -> bool {
+/// Classify a Devbase local proxy HTTP error response (502/504 failure pages).
+pub fn diagnose_proxy_response(
+    status_code: u16,
+    body: &str,
+    local_port: i64,
+) -> Option<(String, ProbeDiagnosis, String)> {
+    if status_code == 502 && body.contains("Local service is unavailable") {
+        return Some((
+            "Connection refused".into(),
+            ProbeDiagnosis::UpstreamNotListening,
+            default_hint_for_diagnosis(ProbeDiagnosis::UpstreamNotListening, Some(local_port)),
+        ));
+    }
+    if status_code == 502 && body.contains("Upstream certificate is not trusted") {
+        return Some((
+            "TLS".into(),
+            ProbeDiagnosis::CaUntrusted,
+            "Upstream HTTPS certificate is not trusted. Check the upstream server's certificate."
+                .into(),
+        ));
+    }
+    if status_code == 504 && body.contains("Local service timed out") {
+        return Some((
+            "Timeout".into(),
+            ProbeDiagnosis::Timeout,
+            format!(
+                "Upstream port :{local_port} did not respond before the proxy timeout. Check your app server logs."
+            ),
+        ));
+    }
+    None
+}
+
+/// Classify a Cloudflare tunnel HTTP error response (502/504 worker or agent failure pages).
+pub fn diagnose_tunnel_response(
+    status_code: u16,
+    body: &str,
+    local_port: i64,
+    worker_state: Option<&str>,
+) -> Option<(String, ProbeDiagnosis, String)> {
+    if worker_state == Some("Conflict") && status_code >= 500 {
+        return Some((
+            "Tunnel conflict".into(),
+            ProbeDiagnosis::TunnelConflict,
+            default_hint_for_diagnosis(ProbeDiagnosis::TunnelConflict, Some(local_port)),
+        ));
+    }
+    if status_code == 502
+        && (body.contains("Devbase tunnel offline") || body.contains("Tunnel client disconnected"))
+    {
+        return Some((
+            "Tunnel disconnected".into(),
+            ProbeDiagnosis::TunnelDisconnected,
+            default_hint_for_diagnosis(ProbeDiagnosis::TunnelDisconnected, Some(local_port)),
+        ));
+    }
+    if status_code == 502 && body.contains("Local service is unavailable") {
+        return Some((
+            "Connection refused".into(),
+            ProbeDiagnosis::UpstreamNotListening,
+            default_hint_for_diagnosis(ProbeDiagnosis::UpstreamNotListening, Some(local_port)),
+        ));
+    }
+    if status_code == 504
+        && (body.contains("Local service timed out")
+            || body.contains("Gateway timeout waiting for local upstream"))
+    {
+        return Some((
+            "Timeout".into(),
+            ProbeDiagnosis::Timeout,
+            format!(
+                "Tunnel timed out waiting for upstream port :{local_port}. Check your app server logs."
+            ),
+        ));
+    }
+    None
+}
+
+/// Classify a transport/TLS/connection error into a fixed failure label, structured
+/// [`ProbeDiagnosis`], and actionable human-readable hint.
+pub fn diagnose_transport_error(
+    error_text: &str,
+    is_timeout: bool,
+    is_connection_refused: bool,
+    is_tunnel: bool,
+    listener_port: i64,
+    local_port: i64,
+    worker_state: Option<&str>,
+) -> (String, ProbeDiagnosis, String) {
+    if is_timeout {
+        let hint = if is_tunnel {
+            "Cloudflare tunnel probe timed out. Check that the tunnel is running and your app server is responsive."
+                .to_string()
+        } else {
+            format!(
+                "HTTPS proxy listener on :{listener_port} timed out. Check that the proxy and upstream port :{local_port} are responsive."
+            )
+        };
+        return ("Timeout".into(), ProbeDiagnosis::Timeout, hint);
+    }
+    if has_tls_text(error_text) {
+        let hint = if is_tunnel {
+            "TLS handshake failed while reaching the Cloudflare tunnel URL.".to_string()
+        } else {
+            default_hint_for_diagnosis(ProbeDiagnosis::CaUntrusted, Some(local_port))
+        };
+        return ("TLS".into(), ProbeDiagnosis::CaUntrusted, hint);
+    }
+    if is_connection_refused {
+        if is_tunnel {
+            if worker_state == Some("Conflict") {
+                return (
+                    "Tunnel conflict".into(),
+                    ProbeDiagnosis::TunnelConflict,
+                    default_hint_for_diagnosis(ProbeDiagnosis::TunnelConflict, Some(local_port)),
+                );
+            }
+            return (
+                "Tunnel disconnected".into(),
+                ProbeDiagnosis::TunnelDisconnected,
+                default_hint_for_diagnosis(ProbeDiagnosis::TunnelDisconnected, Some(local_port)),
+            );
+        }
+        return (
+            "Proxy stopped".into(),
+            ProbeDiagnosis::ProxyStopped,
+            format!(
+                "HTTPS proxy listener on :{listener_port} is not running. Start or apply the proxy first."
+            ),
+        );
+    }
+    if is_tunnel {
+        if worker_state == Some("Conflict") {
+            return (
+                "Tunnel conflict".into(),
+                ProbeDiagnosis::TunnelConflict,
+                default_hint_for_diagnosis(ProbeDiagnosis::TunnelConflict, Some(local_port)),
+            );
+        }
+        if worker_state.is_some_and(|status| !status.eq_ignore_ascii_case("Connected")) {
+            return (
+                "Tunnel disconnected".into(),
+                ProbeDiagnosis::TunnelDisconnected,
+                default_hint_for_diagnosis(ProbeDiagnosis::TunnelDisconnected, Some(local_port)),
+            );
+        }
+        return (
+            "Unavailable".into(),
+            ProbeDiagnosis::Unavailable,
+            "Could not reach the Cloudflare tunnel URL. Check your network and tunnel status."
+                .to_string(),
+        );
+    }
+    (
+        "Unavailable".into(),
+        ProbeDiagnosis::Unavailable,
+        format!(
+            "Could not reach the local HTTPS proxy on :{listener_port}. Start or apply the proxy first."
+        ),
+    )
+}
+
+fn classify_reqwest_error(
+    error: &reqwest::Error,
+    is_tunnel: bool,
+    listener_port: i64,
+    local_port: i64,
+    worker_state: Option<&str>,
+) -> (String, ProbeDiagnosis, String) {
+    let combined = collect_error_chain(error);
+    let refused =
+        is_connection_refused(error) || combined.to_lowercase().contains("connection refused");
+    diagnose_transport_error(
+        &combined,
+        error.is_timeout(),
+        refused,
+        is_tunnel,
+        listener_port,
+        local_port,
+        worker_state,
+    )
+}
+
+fn collect_error_chain(error: &reqwest::Error) -> String {
+    let mut out = String::new();
     let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error);
     while let Some(current) = source {
-        let text = current.to_string().to_lowercase();
-        if text.contains("certificate")
-            || text.contains("unknownissuer")
-            || text.contains("notvalidforname")
-            || text.contains("invalid peer certificate")
+        if !out.is_empty() {
+            out.push_str(": ");
+        }
+        out.push_str(&current.to_string());
+        source = current.source();
+    }
+    out
+}
+
+fn has_tls_text(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    lower.contains("certificate")
+        || lower.contains("unknownissuer")
+        || lower.contains("notvalidforname")
+        || lower.contains("invalid peer certificate")
+        || lower.contains("tls handshake")
+}
+
+fn is_connection_refused(error: &reqwest::Error) -> bool {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(current) = source {
+        if let Some(io_error) = current.downcast_ref::<io::Error>()
+            && io_error.kind() == io::ErrorKind::ConnectionRefused
         {
             return true;
         }
@@ -405,6 +873,8 @@ mod tests {
             duration: Duration::from_millis(4),
             checked_at: now - chrono::TimeDelta::seconds(29),
             failure: None,
+            diagnosis: None,
+            hint: None,
         };
         assert!(result.is_current(now, 1, "abc"));
         assert!(!result.is_current(now, 2, "abc"));
@@ -414,6 +884,139 @@ mod tests {
             ..result
         };
         assert!(!old.is_current(now, 1, "abc"));
+    }
+
+    #[test]
+    fn serde_preserves_backwards_compatibility_with_legacy_payloads() {
+        let legacy_json = r#"{
+            "domain": "app.devbase.localhost",
+            "fingerprint": "abc",
+            "revision": 7,
+            "statusCode": 200,
+            "duration": 15,
+            "checkedAt": "2026-01-01T00:00:00Z"
+        }"#;
+        let parsed: ProxyHttpResult = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(parsed.status_code, 200);
+        assert_eq!(parsed.failure, None);
+        assert_eq!(parsed.diagnosis, None);
+        assert_eq!(parsed.hint, None);
+
+        let reencoded = serde_json::to_string(&parsed).unwrap();
+        assert!(!reencoded.contains("diagnosis"));
+        assert!(!reencoded.contains("hint"));
+    }
+
+    #[test]
+    fn probe_diagnostics_categorize_upstream_ca_tunnel_stopped_and_timeout() {
+        // Upstream port not listening (502 failure page from local proxy or tunnel).
+        let (failure, diag, hint) =
+            diagnose_proxy_response(502, "<h1>Local service is unavailable</h1>", 3000).unwrap();
+        assert_eq!(failure, "Connection refused");
+        assert_eq!(diag, ProbeDiagnosis::UpstreamNotListening);
+        assert_eq!(
+            hint,
+            "Upstream port :3000 is not listening. Start your app server in a terminal first."
+        );
+
+        // Local CA untrusted / TLS handshake error.
+        let (failure, diag, hint) = diagnose_transport_error(
+            "invalid peer certificate: UnknownIssuer",
+            false,
+            false,
+            false,
+            443,
+            3000,
+            None,
+        );
+        assert_eq!(failure, "TLS");
+        assert_eq!(diag, ProbeDiagnosis::CaUntrusted);
+        assert_eq!(
+            hint,
+            "Local CA is not trusted yet. Trust the CA in Certificate Authority settings."
+        );
+
+        // Tunnel offline / disconnected.
+        let (failure, diag, hint) =
+            diagnose_tunnel_response(502, "Devbase tunnel offline", 3000, Some("Connecting"))
+                .unwrap();
+        assert_eq!(failure, "Tunnel disconnected");
+        assert_eq!(diag, ProbeDiagnosis::TunnelDisconnected);
+        assert_eq!(hint, "Cloudflare tunnel is not connected for this rule.");
+
+        // Tunnel conflict.
+        let (failure, diag, hint) =
+            diagnose_tunnel_response(502, "Devbase tunnel offline", 3000, Some("Conflict"))
+                .unwrap();
+        assert_eq!(failure, "Tunnel conflict");
+        assert_eq!(diag, ProbeDiagnosis::TunnelConflict);
+        assert!(hint.contains("Cloudflare tunnel is not connected for this rule"));
+
+        // Local proxy listener stopped.
+        let (failure, diag, hint) = diagnose_transport_error(
+            "tcp connect error: Connection refused",
+            false,
+            true,
+            false,
+            8443,
+            3000,
+            None,
+        );
+        assert_eq!(failure, "Proxy stopped");
+        assert_eq!(diag, ProbeDiagnosis::ProxyStopped);
+        assert!(hint.contains(":8443"));
+
+        // Timeout.
+        let (failure, diag, hint) =
+            diagnose_transport_error("operation timed out", true, false, false, 443, 3000, None);
+        assert_eq!(failure, "Timeout");
+        assert_eq!(diag, ProbeDiagnosis::Timeout);
+        assert!(hint.contains("timed out"));
+
+        // User app's own 500/404 is not misclassified as a Devbase infrastructure error.
+        assert!(diagnose_proxy_response(500, "Internal Server Error", 3000).is_none());
+        assert!(diagnose_proxy_response(404, "Not Found", 3000).is_none());
+    }
+
+    #[test]
+    fn diagnostic_hint_falls_back_from_legacy_failure_strings() {
+        let tls = ProxyHttpResult {
+            domain: "app.devbase.localhost".into(),
+            fingerprint: "fp".into(),
+            revision: 1,
+            status_code: 0,
+            duration: Duration::from_millis(5),
+            checked_at: Utc::now(),
+            failure: Some("TLS".into()),
+            diagnosis: None,
+            hint: None,
+        };
+        assert_eq!(
+            tls.diagnostic_hint(Some(3000), None).as_deref(),
+            Some("Local CA is not trusted yet. Trust the CA in Certificate Authority settings.")
+        );
+
+        let refused = ProxyHttpResult {
+            failure: Some("Connection refused".into()),
+            ..tls.clone()
+        };
+        assert_eq!(
+            refused.diagnostic_hint(Some(5173), None).as_deref(),
+            Some(
+                "Upstream port :5173 is not listening. Start your app server in a terminal first."
+            )
+        );
+
+        let tunnel_disconnected = ProxyHttpResult {
+            failure: Some("Unavailable".into()),
+            ..tls
+        };
+        assert_eq!(
+            tunnel_disconnected
+                .diagnostic_hint(Some(3000), Some("Connecting"))
+                .as_deref(),
+            Some("Cloudflare tunnel is not connected for this rule.")
+        );
     }
 
     #[test]

@@ -203,14 +203,90 @@ fn cards() -> impl IntoElement {
         .map(|info| archive_card(info, &previous_id, has_prepared))
         .collect();
 
+    let runtime_trust = runtime_trust_card(&status.active);
+
     view()
         .flex_col()
         .gap(tokens::space(4.0))
         .child(active)
+        .child(runtime_trust)
         .child(repair)
         .child(prepared_card)
         .child(archives)
         .into_element()
+}
+
+fn runtime_trust_card(active: &AuthorityInfo) -> impl IntoElement {
+    let cert_path = proxy::runtime_ca_cert_path(active);
+    let dotenv_lines = proxy::ca_dotenv_lines(&cert_path);
+    let shell_cert_path = cert_path.clone();
+    let dotenv_cert_path = cert_path.clone();
+    let not_created = active.status == "Not created";
+
+    ui::card(
+        "CLI & Runtime Trust",
+        view()
+            .test_id("ca-runtime-trust")
+            .flex_col()
+            .gap(tokens::space(2.0))
+            .child(
+                text(
+                    "Node.js, Python, and curl do not read the macOS keychain automatically. Export the active Devbase CA certificate path in your shell or project .env file.",
+                )
+                .text_size(px(tokens::TEXT_SMALL))
+                .text_color(move || theme().muted_foreground),
+            )
+            .child(when(not_created, || {
+                text("Create or trust the local CA above to generate the certificate file at this path.")
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .text_color(move || theme().muted_foreground)
+            }))
+            .child(
+                view()
+                    .flex_col()
+                    .gap(tokens::space(0.5))
+                    .child(
+                        text("CA certificate path")
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(move || theme().muted_foreground),
+                    )
+                    .child(ui::mono_value("ca-runtime-cert-path", cert_path)),
+            )
+            .child(
+                view()
+                    .flex_col()
+                    .gap(tokens::space(0.5))
+                    .child(
+                        text("Environment exports")
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(move || theme().muted_foreground),
+                    )
+                    .child(ui::mono_value("ca-runtime-exports", dotenv_lines)),
+            )
+            .child(
+                view()
+                    .flex_row()
+                    .items_center()
+                    .flex_wrap()
+                    .gap(tokens::space(1.5))
+                    .child(ui::action_button(
+                        "Copy shell exports",
+                        Tone::Default,
+                        "ca-copy-shell-exports",
+                        false,
+                        move || proxy::copy_ca_shell_exports(&shell_cert_path),
+                    ))
+                    .child(ui::action_button(
+                        "Copy .env lines",
+                        Tone::Default,
+                        "ca-copy-dotenv",
+                        false,
+                        move || proxy::copy_ca_dotenv(&dotenv_cert_path),
+                    )),
+            ),
+    )
 }
 
 fn info_card(

@@ -19,6 +19,7 @@
 pub mod ca;
 pub mod helpers;
 pub mod proxy;
+pub mod qr;
 pub mod secrets;
 pub mod tunnel;
 

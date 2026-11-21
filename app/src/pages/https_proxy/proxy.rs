@@ -4,12 +4,13 @@
 //! `authority.rs`.
 
 use devproxy::ca::material::TrustState;
-use nsh_base::{menu, menu_item, menu_separator, theme};
+use nsh_base::{dialog, menu, menu_item, menu_separator, theme};
 use nsh_core::{
     ContextMenuEvent,
     element::{
-        Svg,
+        ImageSrc, Svg,
         desktop::{MenuItem as DesktopMenuItem, popup_menu_at},
+        svg,
     },
     prelude::*,
 };
@@ -46,6 +47,7 @@ pub(crate) fn rules_page() -> impl IntoElement {
                     .child(dynamic(logs_card)),
             ),
         )
+        .child(when(|| proxy::qr_dialog().is_some(), tunnel_qr_dialog))
 }
 
 fn header() -> impl IntoElement {
@@ -527,11 +529,17 @@ fn tunnel_row(index: ReadSignal<usize>, row: ReadSignal<RuleDraft>) -> impl Into
                         if proxy::dirty() {
                             return None;
                         }
-                        let preview = proxy::tunnel_preview(index.get());
+                        let idx = index.get();
+                        let draft = row.get();
+                        let preview = proxy::tunnel_preview(idx);
                         if preview.is_empty() {
                             return None;
                         }
                         let copy_url = preview.clone();
+                        let open_url_target = preview.clone();
+                        let qr_url = preview;
+                        let qr_domain = devcore::model::local_domain(&draft.domain);
+                        let qr_protected = draft.tunnel_auth;
                         Some(
                             view()
                                 .flex_row()
@@ -547,8 +555,15 @@ fn tunnel_row(index: ReadSignal<usize>, row: ReadSignal<RuleDraft>) -> impl Into
                                     icons::link(),
                                     "Open tunnel URL",
                                     format!("proxy-open-tunnel-{id}"),
-                                    move || open_url_async(preview.clone()),
+                                    move || open_url_async(open_url_target.clone()),
                                 ))
+                                .child(qr_trigger_button(format!("rule-qr-{idx}"), move || {
+                                    proxy::open_qr_dialog(
+                                        qr_domain.clone(),
+                                        qr_url.clone(),
+                                        qr_protected,
+                                    )
+                                }))
                                 .into_element(),
                         )
                     }
@@ -661,8 +676,11 @@ fn host_menu_items(index: ReadSignal<usize>) -> impl IntoElement {
 fn activation(domain: String) -> impl IntoElement {
     let busy = proxy::busy();
     let dirty = proxy::dirty();
+    let local_port = proxy::saved_rule_port(&domain);
+    let live_tunnel = proxy::live_tunnel(&domain);
     let mut tags: Vec<AnyElement> = Vec::new();
-    let mut problems: Vec<String> = Vec::new();
+    let mut problems: Vec<(String, String, Option<String>)> = Vec::new();
+    let key = domain.replace('.', "-");
 
     let proxy_checking = proxy::checking_proxy(&domain);
     if proxy_checking {
@@ -672,7 +690,12 @@ fn activation(domain: String) -> impl IntoElement {
             tags.push(ui::tag("HTTP result expired", TagTone::Warning).into_element());
         } else if let Some(failure) = &result.failure {
             tags.push(ui::tag("HTTP failed", TagTone::Error).into_element());
-            problems.push(format!("HTTP · {failure}"));
+            let hint = result.diagnostic_hint(local_port, None);
+            problems.push((
+                format!("proxy-probe-hint-{key}"),
+                format!("HTTP · {failure}"),
+                hint,
+            ));
         } else {
             tags.push(
                 ui::tag(
@@ -688,8 +711,8 @@ fn activation(domain: String) -> impl IntoElement {
         }
     }
 
-    if let Some(status) = proxy::live_tunnel(&domain) {
-        let (label, tone) = match status.as_str() {
+    if let Some(status) = live_tunnel.as_deref() {
+        let (label, tone) = match status {
             "Connected" => ("Tunnel connected", TagTone::Success),
             "Conflict" => ("Tunnel conflict", TagTone::Error),
             _ => ("Tunnel connecting", TagTone::Warning),
@@ -705,7 +728,12 @@ fn activation(domain: String) -> impl IntoElement {
             tags.push(ui::tag("Tunnel result expired", TagTone::Warning).into_element());
         } else if let Some(failure) = &result.failure {
             tags.push(ui::tag("Tunnel failed", TagTone::Error).into_element());
-            problems.push(format!("Tunnel · {failure}"));
+            let hint = result.diagnostic_hint(local_port, live_tunnel.as_deref());
+            problems.push((
+                format!("tunnel-probe-hint-{key}"),
+                format!("Tunnel · {failure}"),
+                hint,
+            ));
         } else {
             tags.push(
                 ui::tag(
@@ -722,7 +750,6 @@ fn activation(domain: String) -> impl IntoElement {
     }
 
     let has_tunnel_url = proxy::tunnel_url_available(&domain);
-    let key = domain.replace('.', "-");
     let activation_id = format!("proxy-activation-{key}");
     let tunnel_check_id = format!("proxy-check-tunnel-{key}");
     let https_check_id = format!("proxy-check-https-{key}");
@@ -763,10 +790,34 @@ fn activation(domain: String) -> impl IntoElement {
                     },
                 )),
         )
-        .child(problems.into_iter().map(|problem| {
-            text(problem)
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground)
+        .child(problems.into_iter().map(|(hint_id, problem, hint)| {
+            view()
+                .flex_col()
+                .gap(px(2.0))
+                .child(
+                    text(problem)
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .text_color(move || theme().muted_foreground),
+                )
+                .child(hint.map(move |diagnosis_hint| {
+                    view()
+                        .test_id(&hint_id)
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(1.0))
+                        .child(
+                            icons::warn()
+                                .size(px(12.0))
+                                .flex_none()
+                                .text_color(move || theme().destructive),
+                        )
+                        .child(
+                            text(diagnosis_hint)
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .text_color(move || theme().foreground)
+                                .selectable(true),
+                        )
+                }))
         }))
 }
 
@@ -937,6 +988,13 @@ fn proxy_card() -> impl IntoElement {
                     "proxy-logs",
                     proxy::busy,
                     || proxy::read_logs("proxy"),
+                ))
+                .child(ui::action_button(
+                    "Logs",
+                    Tone::Default,
+                    "proxy-open-logs",
+                    false,
+                    || crate::dev_logs::open("proxy"),
                 )),
         )
 }
@@ -1169,6 +1227,13 @@ fn tunnel_actions() -> impl IntoElement {
             busy,
             || proxy::read_logs("tunnel"),
         ))
+        .child(ui::action_button(
+            "Logs",
+            Tone::Default,
+            "tunnel-open-logs",
+            false,
+            || crate::dev_logs::open("tunnel"),
+        ))
 }
 
 fn trust_card() -> impl IntoElement {
@@ -1294,6 +1359,188 @@ fn logs_card() -> Option<AnyElement> {
         )
         .into_element(),
     )
+}
+
+// --- Tunnel QR dialog --------------------------------------------------------
+
+fn qr_icon() -> Svg {
+    const QR_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></svg>"#;
+    svg(ImageSrc::svg_markup(QR_SVG))
+}
+
+fn qr_trigger_button(test_id: String, on_press: impl Fn() + 'static) -> impl IntoElement {
+    view()
+        .flex_none()
+        .tooltip(ui::tooltip("Show tunnel QR code"))
+        .child(
+            nsh_base::button()
+                .test_id(&test_id)
+                .h(px(24.0))
+                .flex_none()
+                .flex_row()
+                .items_center()
+                .justify_center()
+                .gap(tokens::space(1.0))
+                .px(tokens::space(1.5))
+                .rounded(move || theme().radius)
+                .cursor_pointer()
+                .hover(move |style| style.bg(tokens::row_hover()))
+                .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
+                .accessibility_label("Show tunnel QR code")
+                .on_press(on_press)
+                .child(
+                    qr_icon()
+                        .size(px(13.0))
+                        .text_color(move || theme().muted_foreground),
+                )
+                .child(
+                    text("QR")
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .text_color(move || theme().muted_foreground),
+                ),
+        )
+}
+
+fn tunnel_qr_dialog() -> impl IntoElement {
+    dialog()
+        .label("Tunnel QR code")
+        .on_cancel(proxy::close_qr_dialog)
+        .child(
+            view()
+                .size_full()
+                .relative()
+                .items_center()
+                .justify_center()
+                .bg(AdaptiveColor::rgb(0x000000, 0x000000).opacity(0.35))
+                .child(
+                    view()
+                        .test_id("tunnel-qr-backdrop")
+                        .absolute()
+                        .top(px(0.0))
+                        .right(px(0.0))
+                        .bottom(px(0.0))
+                        .left(px(0.0))
+                        .on_press(|_: &()| proxy::close_qr_dialog()),
+                )
+                .child(dynamic(|| proxy::qr_dialog().map(tunnel_qr_card))),
+        )
+}
+
+fn tunnel_qr_card(target: proxy::TunnelQrTarget) -> AnyElement {
+    let qr_markup = devproxy::qr::svg_for_text(&target.url);
+    let copy_url = target.url.clone();
+    let curl_domain = target.domain.clone();
+    let curl_url = target.url.clone();
+    let protected = target.protected;
+
+    view()
+        .test_id("tunnel-qr-dialog")
+        .w(px(420.0))
+        .p(tokens::space(5.0))
+        .flex_col()
+        .gap(tokens::space(3.0))
+        .rounded(tokens::panel_radius)
+        .bg(tokens::panel)
+        .border_1()
+        .border_color(tokens::hairline)
+        .shadow_xl()
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(2.0))
+                .child(
+                    qr_icon()
+                        .size(px(16.0))
+                        .flex_none()
+                        .text_color(move || theme().muted_foreground),
+                )
+                .child(
+                    text("Tunnel QR code")
+                        .text_size(px(16.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(move || theme().foreground),
+                )
+                .child(view().flex_1())
+                .child(when(protected, || {
+                    ui::tag("Token protected", TagTone::Warning)
+                })),
+        )
+        .child(
+            view()
+                .items_center()
+                .justify_center()
+                .py(tokens::space(2.0))
+                .child(match qr_markup {
+                    Ok(markup) => view()
+                        .p(tokens::space(3.0))
+                        .rounded(tokens::panel_radius)
+                        .bg(AdaptiveColor::rgb(0xffffff, 0xffffff))
+                        .border_1()
+                        .border_color(tokens::hairline)
+                        .child(
+                            svg(ImageSrc::svg_markup(&markup))
+                                .test_id("tunnel-qr-svg")
+                                .size(px(216.0)),
+                        )
+                        .into_element(),
+                    Err(error) => note(icons::warn(), error, true).into_element(),
+                }),
+        )
+        .child(
+            view()
+                .flex_col()
+                .gap(tokens::space(0.5))
+                .child(
+                    text("Tunnel URL")
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(move || theme().muted_foreground),
+                )
+                .child(ui::mono_value("tunnel-qr-url", target.url)),
+        )
+        .child(when(protected, || {
+            text("Worker access-token protection is enabled. Copy a curl command with the Bearer token without exposing the secret in logs.")
+                .text_size(px(tokens::TEXT_CAPTION))
+                .text_color(move || theme().muted_foreground)
+        }))
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .flex_wrap()
+                .gap(tokens::space(1.5))
+                .child(ui::action_button(
+                    "Copy URL",
+                    Tone::Primary,
+                    "tunnel-qr-copy-url",
+                    false,
+                    move || {
+                        set_clipboard(copy_url.clone());
+                        crate::toast::success("Copied tunnel URL");
+                    },
+                ))
+                .child(when(protected, move || {
+                    let domain = curl_domain.clone();
+                    let url = curl_url.clone();
+                    ui::action_button(
+                        "Copy curl with token",
+                        Tone::Default,
+                        "tunnel-qr-copy-curl",
+                        proxy::busy,
+                        move || proxy::copy_tunnel_curl_with_token(domain.clone(), url.clone()),
+                    )
+                }))
+                .child(view().flex_1())
+                .child(ui::action_button(
+                    "Close",
+                    Tone::Default,
+                    "tunnel-qr-close",
+                    false,
+                    proxy::close_qr_dialog,
+                )),
+        )
+        .into_element()
 }
 
 // --- Small actions -----------------------------------------------------------

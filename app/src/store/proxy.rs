@@ -869,6 +869,22 @@ struct NoticesState {
     logs: Option<(String, String)>,
 }
 
+/// Target rule currently displayed in the local tunnel QR code dialog.
+/// Never stores any access token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TunnelQrTarget {
+    pub domain: String,
+    pub url: String,
+    pub protected: bool,
+}
+
+/// Isolated signal state for the tunnel QR code modal so opening or closing it
+/// never disturbs rule inputs or open menus.
+#[derive(Debug, Clone, Default)]
+struct QrDialogState {
+    target: Option<TunnelQrTarget>,
+}
+
 fn workspace() -> Signal<Workspace> {
     global::<Workspace>()
 }
@@ -903,6 +919,10 @@ fn busy_state() -> Signal<BusyState> {
 
 fn notices_state() -> Signal<NoticesState> {
     global::<NoticesState>()
+}
+
+fn qr_dialog_state() -> Signal<QrDialogState> {
+    global::<QrDialogState>()
 }
 
 /// Runs store work outside the view that asked for it: a row or pane the
@@ -1333,7 +1353,31 @@ pub(crate) fn tunnel_preview(index: usize) -> String {
     let Some(rule) = rule else {
         return String::new();
     };
-    workspace().with(|state| preview_tunnel_url(&rule, &state.snapshot.subdomain))
+    workspace().with(|state| {
+        if rule.effective_tunnel_domain().is_empty()
+            && let Some(url) = state
+                .snapshot
+                .workers
+                .public_url(&rule.resolved_tunnel_worker())
+            && !url.is_empty()
+        {
+            return url.to_string();
+        }
+        preview_tunnel_url(&rule, &state.snapshot.subdomain)
+    })
+}
+
+/// The saved rule's upstream local port, when present.
+pub(crate) fn saved_rule_port(domain: &str) -> Option<i64> {
+    let normalized = domain.trim().to_lowercase();
+    workspace().with(|state| {
+        state
+            .snapshot
+            .rules
+            .iter()
+            .find(|rule| rule.domain == normalized)
+            .map(|rule| rule.local_port)
+    })
 }
 
 /// The Worker name a draft rule resolves to.
@@ -2065,6 +2109,61 @@ pub(crate) fn copy_tunnel_token(domain: String) {
     });
 }
 
+/// Copies a `curl` command carrying the rule's access token as a Bearer header.
+/// The token is read from `proxy/tunnel-access.json` only in memory on explicit
+/// click and copied directly to the clipboard — never stored in a signal,
+/// logged, or passed in process `argv`.
+pub(crate) fn copy_tunnel_curl_with_token(domain: String, url: String) {
+    if !begin("token") {
+        return;
+    }
+    let Some(provider) = provider_of() else {
+        finish("token");
+        fail("no Cloudflare provider is available");
+        return;
+    };
+    task(async move {
+        let request = domain.clone();
+        let answer = fetch(move || provider.ensure_tunnel_token(&request)).await;
+        finish("token");
+        match answer {
+            Ok(token) => {
+                let header = format!("Authorization: Bearer {token}");
+                let command = format!(
+                    "curl -H {} {}",
+                    shell_single_quote(&header),
+                    shell_single_quote(&url)
+                );
+                set_clipboard(command);
+                succeed(format!("Copied curl command with token for {domain}"));
+            }
+            Err(error) => fail(error),
+        }
+    });
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+pub(crate) fn qr_dialog() -> Option<TunnelQrTarget> {
+    qr_dialog_state().with(|state| state.target.clone())
+}
+
+pub(crate) fn open_qr_dialog(domain: String, url: String, protected: bool) {
+    qr_dialog_state().set(QrDialogState {
+        target: Some(TunnelQrTarget {
+            domain,
+            url,
+            protected,
+        }),
+    });
+}
+
+pub(crate) fn close_qr_dialog() {
+    qr_dialog_state().set(QrDialogState { target: None });
+}
+
 pub(crate) fn rotate_tunnel_token(domain: String) {
     if !begin("token") {
         return;
@@ -2485,4 +2584,73 @@ pub(crate) fn validity(info: &AuthorityInfo) -> String {
 /// The short id an archive card titles itself with.
 pub(crate) fn short_id(id: &str) -> String {
     id.chars().take(8).collect()
+}
+
+/// The active CA certificate path exported for Node.js, Python, and curl.
+/// Prefers the stable `proxy/ca.pem` alias when the certificate resides under
+/// `proxy/ca-generations/<id>/ca.pem` so runtime exports survive CA rotation.
+pub(crate) fn runtime_ca_cert_path(info: &AuthorityInfo) -> String {
+    let path = &info.certificate_path;
+    if path.as_os_str().is_empty() {
+        return devcore::state::default_root()
+            .join("proxy")
+            .join("ca.pem")
+            .display()
+            .to_string();
+    }
+    if path.file_name().and_then(|name| name.to_str()) == Some("ca.pem")
+        && let Some(generation_dir) = path.parent()
+        && let Some(generations_dir) = generation_dir.parent()
+        && generations_dir.file_name().and_then(|name| name.to_str()) == Some("ca-generations")
+        && let Some(proxy_dir) = generations_dir.parent()
+    {
+        return proxy_dir.join("ca.pem").display().to_string();
+    }
+    path.display().to_string()
+}
+
+fn escape_double_quoted(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' | '"' | '$' | '`' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// `.env` lines configuring Node.js, Python, and curl to trust the local CA.
+pub(crate) fn ca_dotenv_lines(cert_path: &str) -> String {
+    let cert = escape_double_quoted(cert_path);
+    format!(
+        "NODE_EXTRA_CA_CERTS=\"{cert}\"\n\
+         SSL_CERT_FILE=\"{cert}\"\n\
+         REQUESTS_CA_BUNDLE=\"{cert}\"\n\
+         CURL_CA_BUNDLE=\"{cert}\""
+    )
+}
+
+/// POSIX shell `export` lines configuring Node.js, Python, and curl to trust the local CA.
+pub(crate) fn ca_shell_exports(cert_path: &str) -> String {
+    let cert = escape_double_quoted(cert_path);
+    format!(
+        "export NODE_EXTRA_CA_CERTS=\"{cert}\"\n\
+         export SSL_CERT_FILE=\"{cert}\"\n\
+         export REQUESTS_CA_BUNDLE=\"{cert}\"\n\
+         export CURL_CA_BUNDLE=\"{cert}\""
+    )
+}
+
+pub(crate) fn copy_ca_shell_exports(cert_path: &str) {
+    set_clipboard(ca_shell_exports(cert_path));
+    crate::toast::success("Copied CA shell exports");
+}
+
+pub(crate) fn copy_ca_dotenv(cert_path: &str) {
+    set_clipboard(ca_dotenv_lines(cert_path));
+    crate::toast::success("Copied CA .env lines");
 }

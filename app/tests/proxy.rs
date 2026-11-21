@@ -18,9 +18,10 @@ use std::{
 use chrono::Utc;
 use devcore::model::{ProxyRule, normalize_proxy_rules};
 use nsh_app_devbase::testing::{
-    AuthorityAction, AuthorityInfo, AuthorityStatus, ProxyHttpResult, ProxyListeningPort,
+    AuthorityAction, AuthorityInfo, AuthorityStatus, DevLogsKnownFile, DevLogsProvider,
+    DevLogsRead, DevLogsSnapshot, DevLogsStream, ProxyHttpResult, ProxyListeningPort,
     ProxyProvider, ProxyRuleDraft, ProxySavedCloudflare, ProxySnapshot, ProxyWorkers, TrustState,
-    install_proxy_provider, use_fake_proxy,
+    install_dev_logs_provider, install_proxy_provider, use_fake_dev_logs, use_fake_proxy,
 };
 use nsh_core::prelude::*;
 use nsh_engine::{EngineConfig, Root};
@@ -292,6 +293,8 @@ impl ProxyProvider for Fake {
             duration: Duration::from_millis(12),
             checked_at: Utc::now(),
             failure: self.proxy_failure.clone(),
+            diagnosis: None,
+            hint: None,
         })
     }
 
@@ -305,6 +308,8 @@ impl ProxyProvider for Fake {
             duration: Duration::from_millis(20),
             checked_at: Utc::now(),
             failure: self.tunnel_failure.clone(),
+            diagnosis: None,
+            hint: None,
         })
     }
 
@@ -995,4 +1000,243 @@ fn authority_header_integrates_back_button_and_returns_to_rules() {
 
     app.press("id:ca-back").unwrap();
     app.wait_for("id:proxy-rules").unwrap();
+}
+
+#[test]
+fn ca_runtime_trust_card_shows_exports_and_copies_shell_and_dotenv() {
+    let mut status = not_created();
+    status.active = info("active-1", "Ready", TrustState::Trusted, true, 'a');
+    let fake = Fake::new(snapshot(Vec::new(), 443)).with_authority(status);
+    let (_turn, mut app) = start(fake);
+
+    app.press("id:ca-open").unwrap();
+    app.wait_for("id:ca-runtime-trust").unwrap();
+    assert!(app.screen().shows("CLI & Runtime Trust"));
+    assert!(
+        app.screen()
+            .matches("text:/Node\\.js, Python, and curl/")
+            .unwrap()
+    );
+    assert!(app.screen().shows("/tmp/devbase-ca/active-1.pem"));
+    assert!(app.screen().matches("text:/NODE_EXTRA_CA_CERTS=/").unwrap());
+    assert!(app.screen().matches("text:/SSL_CERT_FILE=/").unwrap());
+    assert!(app.screen().matches("text:/REQUESTS_CA_BUNDLE=/").unwrap());
+    assert!(app.screen().matches("text:/CURL_CA_BUNDLE=/").unwrap());
+
+    app.press("id:ca-copy-shell-exports").unwrap();
+    app.wait_for("Copied CA shell exports").unwrap();
+    let expected_shell = concat!(
+        "export NODE_EXTRA_CA_CERTS=\"/tmp/devbase-ca/active-1.pem\"\n",
+        "export SSL_CERT_FILE=\"/tmp/devbase-ca/active-1.pem\"\n",
+        "export REQUESTS_CA_BUNDLE=\"/tmp/devbase-ca/active-1.pem\"\n",
+        "export CURL_CA_BUNDLE=\"/tmp/devbase-ca/active-1.pem\""
+    );
+    assert_eq!(app.screen().clipboard(), Some(expected_shell));
+
+    app.press("id:ca-copy-dotenv").unwrap();
+    app.wait_for("Copied CA .env lines").unwrap();
+    let expected_dotenv = concat!(
+        "NODE_EXTRA_CA_CERTS=\"/tmp/devbase-ca/active-1.pem\"\n",
+        "SSL_CERT_FILE=\"/tmp/devbase-ca/active-1.pem\"\n",
+        "REQUESTS_CA_BUNDLE=\"/tmp/devbase-ca/active-1.pem\"\n",
+        "CURL_CA_BUNDLE=\"/tmp/devbase-ca/active-1.pem\""
+    );
+    assert_eq!(app.screen().clipboard(), Some(expected_dotenv));
+}
+
+#[test]
+fn tunnel_qr_dialog_renders_svg_copies_url_and_protected_curl_without_leaking_token() {
+    let mut protected_rule = rule("api.devbase.localhost", 4000, true);
+    protected_rule.tunnel_auth = true;
+    let public_tunnel_rule = rule("web.devbase.localhost", 5173, true);
+    let fake = Fake::new(snapshot(
+        vec![
+            rule("local.devbase.localhost", 3000, false),
+            protected_rule,
+            public_tunnel_rule,
+        ],
+        443,
+    ));
+    let (_turn, mut app) = start(fake.clone());
+
+    app.wait_for("id:proxy-rule-0").unwrap();
+    app.wait_for("id:rule-qr-1").unwrap();
+    app.wait_for("id:rule-qr-2").unwrap();
+    assert!(!app.screen().matches("id:rule-qr-0").unwrap());
+
+    // Open QR dialog for protected tunnel rule.
+    app.press("id:rule-qr-1").unwrap();
+    app.wait_for("id:tunnel-qr-dialog").unwrap();
+    app.wait_for("id:tunnel-qr-svg").unwrap();
+    assert!(app.screen().shows("https://www.example.com"));
+    assert!(app.screen().matches("id:tunnel-qr-copy-curl").unwrap());
+
+    app.press("id:tunnel-qr-copy-url").unwrap();
+    app.wait_for("Copied tunnel URL").unwrap();
+    assert_eq!(app.screen().clipboard(), Some("https://www.example.com"));
+
+    app.press("id:tunnel-qr-copy-curl").unwrap();
+    app.wait_for("Copied curl command with token for api.devbase.localhost")
+        .unwrap();
+    assert_eq!(
+        app.screen().clipboard(),
+        Some("curl -H 'Authorization: Bearer secret-access-token' 'https://www.example.com'")
+    );
+    assert!(
+        !app.screen().shows("secret-access-token"),
+        "the tunnel access token must never be rendered on screen"
+    );
+    assert!(
+        fake.calls()
+            .iter()
+            .any(|call| call == "ensure token api.devbase.localhost")
+    );
+
+    app.press("id:tunnel-qr-close").unwrap();
+    app.wait_for_gone("id:tunnel-qr-dialog", Duration::from_secs(2))
+        .unwrap();
+
+    // Open QR dialog for an unprotected tunnel rule: curl-with-token button must not appear.
+    app.press("id:rule-qr-2").unwrap();
+    app.wait_for("id:tunnel-qr-dialog").unwrap();
+    assert!(!app.screen().matches("id:tunnel-qr-copy-curl").unwrap());
+    app.press("id:tunnel-qr-close").unwrap();
+    app.wait_for_gone("id:tunnel-qr-dialog", Duration::from_secs(2))
+        .unwrap();
+}
+
+#[test]
+fn failed_probes_surface_categorized_diagnosis_hints() {
+    let mut initial = snapshot(vec![rule("app.devbase.localhost", 3000, true)], 443);
+    let mut workers = BTreeMap::new();
+    workers.insert(
+        "devbase-app".to_string(),
+        "https://devbase-app.devbase.workers.dev".to_string(),
+    );
+    initial.workers = ProxyWorkers::new(workers);
+    initial
+        .statuses
+        .insert("tunnel".to_string(), "Running".to_string());
+    initial.statuses.insert(
+        "tunnel:worker:devbase-app".to_string(),
+        "Connecting".to_string(),
+    );
+
+    // 1. Upstream port not listening + Tunnel disconnected.
+    let fake = Fake::new(initial)
+        .with_proxy_failure("Connection refused")
+        .with_tunnel_failure("Tunnel disconnected");
+    let (_turn, mut app) = start(fake);
+
+    app.press("id:proxy-check-https-app-devbase-localhost")
+        .unwrap();
+    app.wait_for("id:proxy-probe-hint-app-devbase-localhost")
+        .unwrap();
+    assert!(
+        app.screen().shows(
+            "Upstream port :3000 is not listening. Start your app server in a terminal first."
+        )
+    );
+
+    app.press("id:proxy-check-tunnel-app-devbase-localhost")
+        .unwrap();
+    app.wait_for("id:tunnel-probe-hint-app-devbase-localhost")
+        .unwrap();
+    assert!(
+        app.screen()
+            .shows("Cloudflare tunnel is not connected for this rule.")
+    );
+    drop((_turn, app));
+
+    // 2. Local CA untrusted / TLS failure.
+    let fake_tls = Fake::new(snapshot(
+        vec![rule("app.devbase.localhost", 3000, false)],
+        443,
+    ))
+    .with_proxy_failure("TLS");
+    let (_turn2, mut app2) = start(fake_tls);
+    app2.press("id:proxy-check-https-app-devbase-localhost")
+        .unwrap();
+    app2.wait_for("id:proxy-probe-hint-app-devbase-localhost")
+        .unwrap();
+    assert!(
+        app2.screen()
+            .shows("Local CA is not trusted yet. Trust the CA in Certificate Authority settings.")
+    );
+}
+
+struct FakeDevLogs {
+    requested: Mutex<Vec<String>>,
+}
+
+impl FakeDevLogs {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            requested: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn requested(&self) -> Vec<String> {
+        self.requested
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
+impl DevLogsProvider for FakeDevLogs {
+    fn logs_root(&self) -> PathBuf {
+        PathBuf::from("/tmp/devbase-fake-logs")
+    }
+
+    fn database_ids(&self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    fn read_log(
+        &self,
+        job_id: &str,
+        _stream: DevLogsStream,
+        _known: Option<DevLogsKnownFile>,
+    ) -> Result<DevLogsRead, String> {
+        self.requested
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(job_id.to_string());
+        Ok(DevLogsRead::Snapshot(DevLogsSnapshot {
+            lines: vec![format!("{job_id} live log line")],
+            truncated: false,
+            size: 24,
+            modified: None,
+        }))
+    }
+
+    fn open_in_console(&self, _path: &std::path::Path) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn explicit_logs_buttons_open_live_log_drawer_for_proxy_and_tunnel() {
+    let logs_provider = FakeDevLogs::new();
+    use_fake_dev_logs();
+    install_dev_logs_provider(logs_provider.clone() as Arc<dyn DevLogsProvider>);
+
+    let fake = Fake::new(snapshot(
+        vec![rule("app.devbase.localhost", 3000, true)],
+        443,
+    ));
+    let (_turn, mut app) = start(fake);
+
+    app.wait_for("id:proxy-open-logs").unwrap();
+    app.wait_for("id:tunnel-open-logs").unwrap();
+
+    app.press("id:proxy-open-logs").unwrap();
+    app.wait_for("id:dev-log-drawer").unwrap();
+    app.wait_for("proxy live log line").unwrap();
+    assert!(logs_provider.requested().iter().any(|job| job == "proxy"));
+
+    app.press("id:tunnel-open-logs").unwrap();
+    app.wait_for("tunnel live log line").unwrap();
+    assert!(logs_provider.requested().iter().any(|job| job == "tunnel"));
 }

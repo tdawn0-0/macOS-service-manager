@@ -21,7 +21,6 @@ use std::{
         Arc, LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
 };
 
 use devcore::{
@@ -602,7 +601,6 @@ struct ReportState {
     error: Option<String>,
     exporting: bool,
     sequence: u64,
-    notice: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -625,7 +623,6 @@ struct PortsState {
     loading: bool,
     loaded: bool,
     error: Option<String>,
-    notice: Option<String>,
     sequence: u64,
 }
 
@@ -659,7 +656,6 @@ struct SettingsState {
     log_rotation_busy: bool,
     login_busy: bool,
     action_error: Option<String>,
-    notice: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -681,44 +677,9 @@ fn task(future: impl Future<Output = ()> + 'static) {
     });
 }
 
-fn later(delay: Duration, f: impl FnOnce() + 'static) {
-    Owner::detached().run(move || {
-        set_timeout(delay, f);
-    });
-}
-
-fn show_settings_notice(message: String) {
-    workspace().update(|state| {
-        state.settings.notice = Some(message.clone());
-        state.settings.action_error = None;
-    });
-    later(Duration::from_secs(3), move || {
-        workspace().update(|state| {
-            if state.settings.notice.as_deref() == Some(message.as_str()) {
-                state.settings.notice = None;
-            }
-        });
-    });
-}
-
 fn set_settings_error(message: String) {
     workspace().update(|state| {
         state.settings.action_error = Some(message);
-        state.settings.notice = None;
-    });
-}
-
-fn show_report_notice(message: String) {
-    workspace().update(|state| {
-        state.report.notice = Some(message.clone());
-        state.report.error = None;
-    });
-    later(Duration::from_secs(3), move || {
-        workspace().update(|state| {
-            if state.report.notice.as_deref() == Some(message.as_str()) {
-                state.report.notice = None;
-            }
-        });
     });
 }
 
@@ -816,7 +777,6 @@ pub(crate) fn run_diagnostics() {
         state.report.sequence = sequence;
         state.report.loading = true;
         state.report.error = None;
-        state.report.notice = None;
     });
     task(async move {
         let answer = match blocking(move || provider.diagnose()).await {
@@ -892,18 +852,17 @@ pub(crate) fn report_error() -> Option<String> {
     workspace().with(|state| state.report.error.clone())
 }
 
-pub(crate) fn report_notice() -> Option<String> {
-    workspace().with(|state| state.report.notice.clone())
-}
-
-/// Copies the redacted JSON; the page says so for a moment.
+/// Copies the redacted JSON and notifies with a toast.
 pub(crate) fn copy_redacted_report() {
     let json = report_json();
     if json.is_empty() {
         return;
     }
     set_clipboard(json);
-    show_report_notice("Copied redacted report".to_string());
+    workspace().update(|state| {
+        state.report.error = None;
+    });
+    crate::toast::info("Copied redacted report");
 }
 
 /// `Export redacted report`: devcore writes the private, redacted file.
@@ -923,27 +882,28 @@ pub(crate) fn export_report() {
     workspace().update(|state| {
         state.report.exporting = true;
         state.report.error = None;
-        state.report.notice = None;
     });
     task(async move {
         let answer = match blocking(move || provider.export(&report)).await {
             Ok(answer) => answer,
             Err(error) => Err(format!("the report was not exported: {error}")),
         };
+        let mut toast_message = None;
         workspace().update(|state| {
             state.report.exporting = false;
             match answer {
                 Ok(path) => {
-                    state.report.notice =
-                        Some(format!("Redacted report saved: {}", path.display()));
+                    toast_message = Some(format!("Redacted report saved: {}", path.display()));
                     state.report.error = None;
                 }
                 Err(error) => {
                     state.report.error = Some(error);
-                    state.report.notice = None;
                 }
             }
         });
+        if let Some(message) = toast_message {
+            crate::toast::success(message);
+        }
     });
 }
 
@@ -1097,10 +1057,6 @@ pub(crate) fn suggesting_port() -> bool {
     workspace().with(|state| state.ports.suggesting)
 }
 
-pub(crate) fn port_notice() -> Option<String> {
-    workspace().with(|state| state.ports.notice.clone())
-}
-
 pub(crate) fn port_error() -> Option<String> {
     workspace().with(|state| state.ports.error.clone())
 }
@@ -1132,7 +1088,6 @@ pub(crate) fn check_port() {
     workspace().update(|state| {
         state.ports.checking = true;
         state.ports.error = None;
-        state.ports.notice = None;
     });
     task(async move {
         let answer = match blocking(move || provider.inspect(port)).await {
@@ -1166,7 +1121,6 @@ pub(crate) fn find_free_port() {
     workspace().update(|state| {
         state.ports.suggesting = true;
         state.ports.error = None;
-        state.ports.notice = None;
     });
     task(async move {
         let answer = match blocking(move || provider.available_local_port()).await {
@@ -1179,9 +1133,6 @@ pub(crate) fn find_free_port() {
             match answer {
                 Ok(port) => {
                     suggested_port = Some(port);
-                    state.ports.notice = Some(format!(
-                        "Suggested port: {port}. An unchanged form is filled automatically. Review, save and retry; this does not reserve the port."
-                    ));
                     state.ports.error = None;
                 }
                 Err(error) => state.ports.error = Some(error),
@@ -1189,6 +1140,9 @@ pub(crate) fn find_free_port() {
         });
         if let Some(port) = suggested_port {
             set_port_input(port.to_string());
+            crate::toast::info(format!(
+                "Suggested port: {port}. An unchanged form is filled automatically. Review, save and retry; this does not reserve the port."
+            ));
         }
     });
 }
@@ -1299,10 +1253,6 @@ pub(crate) fn settings_action_error() -> Option<String> {
     workspace().with(|state| state.settings.action_error.clone())
 }
 
-pub(crate) fn settings_notice() -> Option<String> {
-    workspace().with(|state| state.settings.notice.clone())
-}
-
 pub(crate) fn helper_status() -> HelperStatus {
     workspace().with(|state| state.settings.snapshot.helper.clone())
 }
@@ -1385,7 +1335,6 @@ pub(crate) fn install_helper() {
         state.settings.helper_busy = true;
         state.settings.helper_activity = Some("Installing helper…".to_string());
         state.settings.action_error = None;
-        state.settings.notice = None;
     });
     task(async move {
         let change = match blocking(move || provider.install_helper()).await {
@@ -1395,6 +1344,7 @@ pub(crate) fn install_helper() {
                 error: Some(format!("the helper install did not finish: {error}")),
             },
         };
+        let mut succeeded = false;
         workspace().update(|state| {
             state.settings.helper_busy = false;
             state.settings.helper_activity = None;
@@ -1403,14 +1353,16 @@ pub(crate) fn install_helper() {
                 Some(error) => {
                     state.settings.action_error =
                         Some(format!("Could not install privileged helper: {error}"));
-                    state.settings.notice = None;
                 }
                 None => {
                     state.settings.action_error = None;
-                    state.settings.notice = Some("Privileged helper installed".to_string());
+                    succeeded = true;
                 }
             }
         });
+        if succeeded {
+            crate::toast::success("Privileged helper installed");
+        }
     });
 }
 
@@ -1427,7 +1379,6 @@ pub(crate) fn uninstall_helper() {
         state.settings.helper_busy = true;
         state.settings.helper_activity = Some("Removing helper…".to_string());
         state.settings.action_error = None;
-        state.settings.notice = None;
     });
     task(async move {
         let change = match blocking(move || provider.uninstall_helper()).await {
@@ -1437,6 +1388,7 @@ pub(crate) fn uninstall_helper() {
                 error: Some(format!("the helper removal did not finish: {error}")),
             },
         };
+        let mut succeeded = false;
         workspace().update(|state| {
             state.settings.helper_busy = false;
             state.settings.helper_activity = None;
@@ -1445,14 +1397,16 @@ pub(crate) fn uninstall_helper() {
                 Some(error) => {
                     state.settings.action_error =
                         Some(format!("Could not remove privileged helper: {error}"));
-                    state.settings.notice = None;
                 }
                 None => {
                     state.settings.action_error = None;
-                    state.settings.notice = Some("Privileged helper removed".to_string());
+                    succeeded = true;
                 }
             }
         });
+        if succeeded {
+            crate::toast::success("Privileged helper removed");
+        }
     });
 }
 
@@ -1469,7 +1423,6 @@ pub(crate) fn install_cli() {
         state.settings.cli_busy = true;
         state.settings.cli_activity = Some("Installing devbase CLI…".to_string());
         state.settings.action_error = None;
-        state.settings.notice = None;
     });
     task(async move {
         let change = match blocking(move || provider.install_cli()).await {
@@ -1479,6 +1432,7 @@ pub(crate) fn install_cli() {
                 error: Some(format!("the CLI install did not finish: {error}")),
             },
         };
+        let mut toast_message = None;
         workspace().update(|state| {
             state.settings.cli_busy = false;
             state.settings.cli_activity = None;
@@ -1488,14 +1442,16 @@ pub(crate) fn install_cli() {
                 Some(error) => {
                     state.settings.action_error =
                         Some(format!("Could not install devbase CLI: {error}"));
-                    state.settings.notice = None;
                 }
                 None => {
                     state.settings.action_error = None;
-                    state.settings.notice = Some(format!("Installed devbase CLI at {wrapper}"));
+                    toast_message = Some(format!("Installed devbase CLI at {wrapper}"));
                 }
             }
         });
+        if let Some(message) = toast_message {
+            crate::toast::success(message);
+        }
     });
 }
 
@@ -1512,7 +1468,6 @@ pub(crate) fn uninstall_cli() {
         state.settings.cli_busy = true;
         state.settings.cli_activity = Some("Removing devbase CLI…".to_string());
         state.settings.action_error = None;
-        state.settings.notice = None;
     });
     task(async move {
         let change = match blocking(move || provider.uninstall_cli()).await {
@@ -1522,6 +1477,7 @@ pub(crate) fn uninstall_cli() {
                 error: Some(format!("the CLI removal did not finish: {error}")),
             },
         };
+        let mut succeeded = false;
         workspace().update(|state| {
             state.settings.cli_busy = false;
             state.settings.cli_activity = None;
@@ -1530,14 +1486,16 @@ pub(crate) fn uninstall_cli() {
                 Some(error) => {
                     state.settings.action_error =
                         Some(format!("Could not remove devbase CLI: {error}"));
-                    state.settings.notice = None;
                 }
                 None => {
                     state.settings.action_error = None;
-                    state.settings.notice = Some("Removed devbase CLI".to_string());
+                    succeeded = true;
                 }
             }
         });
+        if succeeded {
+            crate::toast::success("Removed devbase CLI");
+        }
     });
 }
 
@@ -1553,34 +1511,33 @@ pub(crate) fn set_log_rotation(enabled: bool) {
     workspace().update(|state| {
         state.settings.log_rotation_busy = true;
         state.settings.action_error = None;
-        state.settings.notice = None;
     });
     task(async move {
         let answer = match blocking(move || provider.set_log_rotation(enabled)).await {
             Ok(answer) => answer,
             Err(error) => Err(format!("log rotation was not updated: {error}")),
         };
+        let mut succeeded = false;
         workspace().update(|state| {
             state.settings.log_rotation_busy = false;
             match answer {
                 Ok(()) => {
                     state.settings.snapshot.log_rotation_enabled = enabled;
                     state.settings.action_error = None;
-                    state.settings.notice = Some(
-                        if enabled {
-                            "Automatic log rotation enabled."
-                        } else {
-                            "Automatic log rotation disabled."
-                        }
-                        .to_string(),
-                    );
+                    succeeded = true;
                 }
                 Err(error) => {
                     state.settings.action_error = Some(error);
-                    state.settings.notice = None;
                 }
             }
         });
+        if succeeded {
+            crate::toast::success(if enabled {
+                "Automatic log rotation enabled."
+            } else {
+                "Automatic log rotation disabled."
+            });
+        }
     });
 }
 
@@ -1596,7 +1553,6 @@ pub(crate) fn set_login_item(enabled: bool) {
     workspace().update(|state| {
         state.settings.login_busy = true;
         state.settings.action_error = None;
-        state.settings.notice = None;
     });
     task(async move {
         let change = match blocking(move || provider.set_login_item(enabled)).await {
@@ -1606,6 +1562,7 @@ pub(crate) fn set_login_item(enabled: bool) {
                 error: Some(format!("the login item did not update: {error}")),
             },
         };
+        let mut succeeded = false;
         workspace().update(|state| {
             state.settings.login_busy = false;
             state.settings.snapshot.login_at_login = change.enabled;
@@ -1613,18 +1570,20 @@ pub(crate) fn set_login_item(enabled: bool) {
                 Some(error) => {
                     state.settings.action_error =
                         Some(format!("Could not update login item: {error}"));
-                    state.settings.notice = None;
                 }
                 None => {
                     state.settings.action_error = None;
-                    state.settings.notice = Some(if enabled {
-                        "Devbase will start at login in the menu bar".to_string()
-                    } else {
-                        "Start at login disabled".to_string()
-                    });
+                    succeeded = true;
                 }
             }
         });
+        if succeeded {
+            crate::toast::success(if enabled {
+                "Devbase will start at login in the menu bar"
+            } else {
+                "Start at login disabled"
+            });
+        }
     });
 }
 
@@ -1660,13 +1619,13 @@ fn perform_clear_cache() {
     workspace().update(|state| {
         state.settings.cache_busy = true;
         state.settings.action_error = None;
-        state.settings.notice = None;
     });
     task(async move {
         let answer = match blocking(move || provider.clear_cache()).await {
             Ok(answer) => answer,
             Err(error) => Err(format!("the cache was not cleared: {error}")),
         };
+        let mut toast_message: Option<(bool, String)> = None;
         workspace().update(|state| {
             state.settings.cache_busy = false;
             match answer {
@@ -1675,22 +1634,31 @@ fn perform_clear_cache() {
                     state.settings.snapshot.cache = cleared.current;
                     state.settings.action_error = None;
                     if removed.files == 0 {
-                        state.settings.notice =
-                            Some("Download cache is already empty.".to_string());
+                        toast_message =
+                            Some((false, "Download cache is already empty.".to_string()));
                     } else {
-                        state.settings.notice = Some(format!(
-                            "Cleared {} ({}) from the download cache.",
-                            plural(removed.files as usize, "archive"),
-                            format_bytes(removed.bytes)
+                        toast_message = Some((
+                            true,
+                            format!(
+                                "Cleared {} ({}) from the download cache.",
+                                plural(removed.files as usize, "archive"),
+                                format_bytes(removed.bytes)
+                            ),
                         ));
                     }
                 }
                 Err(error) => {
                     state.settings.action_error = Some(error);
-                    state.settings.notice = None;
                 }
             }
         });
+        if let Some((is_success, message)) = toast_message {
+            if is_success {
+                crate::toast::success(message);
+            } else {
+                crate::toast::info(message);
+            }
+        }
     });
 }
 
@@ -1738,7 +1706,10 @@ fn run_settings_action(
 /// Copies `devbase schema`, the AI contract command.
 pub(crate) fn copy_schema_command() {
     set_clipboard("devbase schema".to_string());
-    show_settings_notice("Copied devbase schema".to_string());
+    workspace().update(|state| {
+        state.settings.action_error = None;
+    });
+    crate::toast::info("Copied devbase schema");
 }
 
 // --- Quit confirmation -------------------------------------------------------

@@ -10,13 +10,13 @@ use nsh_core::prelude::*;
 use crate::{
     components::{
         controls::{self as ui, Tone},
-        icons as app_icons, note,
+        icons, note,
     },
     store::databases as db,
     theme as tokens,
 };
 
-use super::{icons, rail};
+use super::rail;
 
 pub(crate) fn deletion_preview() -> impl IntoElement {
     view()
@@ -35,35 +35,13 @@ fn preview_body() -> AnyElement {
     view()
         .flex_col()
         .flex_1()
-        .child(
+        .child(ui::page_header(
+            format!("Delete {id}"),
+            Some(title),
             view()
-                .h(px(52.0))
-                .flex_none()
                 .flex_row()
                 .items_center()
                 .gap(tokens::space(2.0))
-                .px(tokens::space(5.0))
-                .border_b_1()
-                .border_color(tokens::hairline)
-                .window_drag(true)
-                .child(
-                    view()
-                        .flex_col()
-                        .gap(tokens::space(0.5))
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .child(
-                            text(format!("Delete {id}"))
-                                .text_size(px(15.0))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(move || theme().foreground),
-                        )
-                        .child(
-                            text(title)
-                                .text_size(px(tokens::TEXT_CAPTION))
-                                .text_color(move || theme().muted_foreground),
-                        ),
-                )
                 .child(ui::action_button(
                     "Refresh deletion preview",
                     Tone::Default,
@@ -78,18 +56,10 @@ fn preview_body() -> AnyElement {
                     db::operations_busy,
                     db::cancel_deletion_preview,
                 )),
-        )
-        .child(
-            view()
-                .flex_col()
-                .flex_none()
-                .child(dynamic(move || {
-                    db::action_error().map(|message| note(app_icons::warn(), message, true))
-                }))
-                .child(dynamic(move || {
-                    db::notice().map(|message| note(icons::check(), message, false))
-                })),
-        )
+        ))
+        .child(view().flex_col().flex_none().child(dynamic(move || {
+            db::action_error().map(|message| note(icons::warn(), message, true))
+        })))
         .child(
             scroll().flex_1().min_h(px(0.0)).child(
                 view()
@@ -100,7 +70,7 @@ fn preview_body() -> AnyElement {
                     .pb(tokens::space(5.0))
                     .child(dynamic(move || {
                         db::deletion_preview_error()
-                            .map(|message| note(app_icons::warn(), message, true))
+                            .map(|message| note(icons::warn(), message, true))
                     }))
                     .child(dynamic(|| {
                         db::deletion_preview_loading().then(|| {
@@ -185,24 +155,13 @@ pub(crate) fn pending_deletions() -> impl IntoElement {
         .flex_1()
         .min_w(px(0.0))
         .flex_col()
-        .child(
+        .child(ui::page_header(
+            "Pending data deletions",
+            None::<&str>,
             view()
-                .h(px(52.0))
-                .flex_none()
                 .flex_row()
                 .items_center()
                 .gap(tokens::space(2.0))
-                .px(tokens::space(5.0))
-                .border_b_1()
-                .border_color(tokens::hairline)
-                .window_drag(true)
-                .child(
-                    text("Pending data deletions")
-                        .flex_1()
-                        .text_size(px(15.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().foreground),
-                )
                 .child(ui::action_button(
                     "Refresh pending deletions",
                     Tone::Default,
@@ -217,20 +176,16 @@ pub(crate) fn pending_deletions() -> impl IntoElement {
                     db::operations_busy,
                     db::back_to_settings,
                 )),
-        )
+        ))
         .child(
             view()
                 .flex_col()
                 .flex_none()
                 .child(dynamic(move || {
-                    db::action_error().map(|message| note(app_icons::warn(), message, true))
+                    db::action_error().map(|message| note(icons::warn(), message, true))
                 }))
                 .child(dynamic(move || {
-                    db::pending_deletions_error()
-                        .map(|message| note(app_icons::warn(), message, true))
-                }))
-                .child(dynamic(move || {
-                    db::notice().map(|message| note(icons::check(), message, false))
+                    db::pending_deletions_error().map(|message| note(icons::warn(), message, true))
                 })),
         )
         .child(

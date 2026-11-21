@@ -17,13 +17,12 @@ use nsh_core::{
 use crate::{
     components::{
         controls::{self as ui, TagTone, Tone},
-        icons as app_icons, note,
+        icons::{self, Icon},
+        note,
     },
     store::proxy::{self, RuleDraft, TUNNEL_MODE_CUSTOM_DOMAIN, TUNNEL_MODE_WORKERS_DEV},
     theme as tokens,
 };
-
-use super::icons;
 
 pub(crate) fn rules_page() -> impl IntoElement {
     view()
@@ -50,53 +49,28 @@ pub(crate) fn rules_page() -> impl IntoElement {
 }
 
 fn header() -> impl IntoElement {
-    view()
-        .test_id("proxy-rules")
-        .h(px(52.0))
-        .flex_none()
-        .flex_row()
-        .items_center()
-        .gap(tokens::space(2.0))
-        .px(tokens::space(5.0))
-        .border_b_1()
-        .border_color(tokens::hairline)
-        .window_drag(true)
-        .child(
+    ui::page_header_with_leading(
+        Some(
             icons::shield()
                 .size(px(16.0))
                 .flex_none()
                 .text_color(move || theme().muted_foreground),
-        )
-        .child(
-            view()
-                .flex_col()
-                .gap(tokens::space(0.5))
-                .flex_1()
-                .min_w(px(0.0))
-                .child(
-                    text("HTTPS proxy rules")
-                        .text_size(px(15.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().foreground),
-                )
-                .child(
-                    text(move || {
-                        format!(
-                            "{} · listener :{}",
-                            proxy::plural(proxy::saved_rules().len(), "rule"),
-                            proxy::listener_port()
-                        )
-                    })
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .tabular_nums()
-                    .text_color(move || theme().muted_foreground),
-                ),
-        )
-        .child(
+        ),
+        "HTTPS proxy rules",
+        Some(move || {
+            format!(
+                "{} · listener :{}",
+                proxy::plural(proxy::saved_rules().len(), "rule"),
+                proxy::listener_port()
+            )
+        }),
+        Some(
             view()
                 .test_id("proxy-publication")
                 .child(dynamic(|| Some(ui::status_tag(proxy::publication())))),
-        )
+        ),
+    )
+    .test_id("proxy-rules")
 }
 
 fn notes() -> impl IntoElement {
@@ -104,13 +78,10 @@ fn notes() -> impl IntoElement {
         .flex_col()
         .flex_none()
         .child(dynamic(move || {
-            proxy::action_error().map(|message| note(app_icons::warn(), message, true))
+            proxy::action_error().map(|message| note(icons::warn(), message, true))
         }))
         .child(dynamic(move || {
-            proxy::notice().map(|message| note(icons::check(), message, false))
-        }))
-        .child(dynamic(move || {
-            proxy::load_error().map(|message| note(app_icons::warn(), message, true))
+            proxy::load_error().map(|message| note(icons::warn(), message, true))
         }))
 }
 
@@ -197,11 +168,11 @@ fn rule_context_menu_items(
 
     vec![
         DesktopMenuItem::new("Copy HTTPS URL")
-            .icon(icons::copy_src())
+            .icon(icons::image_src(Icon::Copy))
             .disabled(dirty || !has_domain)
             .on_select(move || copy(&copy_url)),
         DesktopMenuItem::new("Open HTTPS URL")
-            .icon(icons::link_src())
+            .icon(icons::image_src(Icon::Link))
             .disabled(dirty || !has_domain)
             .on_select(move || open_url_async(open_target.clone())),
         DesktopMenuItem::separator(),
@@ -210,15 +181,15 @@ fn rule_context_menu_items(
             .disabled(busy)
             .on_select(move || proxy::set_tunnel(index.get_untracked(), !tunnel_on)),
         DesktopMenuItem::new("Check HTTPS")
-            .icon(icons::shield_src())
+            .icon(icons::image_src(Icon::Shield))
             .disabled(busy || dirty || checking || !has_domain)
             .on_select(move || proxy::check_proxy(check_domain.clone())),
         DesktopMenuItem::new("View Proxy Logs")
-            .icon(icons::logs_src())
+            .icon(icons::image_src(Icon::FileText))
             .on_select(|| crate::dev_logs::open("proxy")),
         DesktopMenuItem::separator(),
         DesktopMenuItem::new("Remove")
-            .icon(icons::trash_src())
+            .icon(icons::image_src(Icon::Trash))
             .destructive(true)
             .on_select(move || proxy::remove_rule(index.get_untracked())),
     ]
@@ -259,7 +230,7 @@ fn top_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoEle
                 .items_center()
                 .gap(tokens::space(1.5))
                 .child(
-                    icons::arrow()
+                    icons::arrow_right()
                         .size(px(14.0))
                         .flex_none()
                         .text_color(move || theme().muted_foreground),
@@ -604,7 +575,7 @@ fn tunnel_row(index: ReadSignal<usize>, row: ReadSignal<RuleDraft>) -> impl Into
                                     )
                                 })
                                 .child(ui::row_icon_button(
-                                    icons::rotate(),
+                                    icons::rotate_ccw(),
                                     "Rotate tunnel token",
                                     format!("proxy-rotate-token-{id}"),
                                     proxy::busy,
@@ -1264,7 +1235,7 @@ fn trust_card() -> impl IntoElement {
         )
         .child(when(warning, || {
             note(
-                app_icons::warn(),
+                icons::warn(),
                 "Proxy is running, but the local CA is not trusted yet.",
                 false,
             )
@@ -1362,6 +1333,7 @@ fn link_icon_button(
 
 fn copy(value: &str) {
     set_clipboard(value.to_string());
+    crate::toast::info("Copied URL");
 }
 
 fn open_url_async(url: String) {

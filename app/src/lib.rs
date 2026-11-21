@@ -101,6 +101,10 @@ pub mod testing {
     pub fn refresh_services(source: Source) {
         crate::store::services::refresh(source);
     }
+    /// Invokes `Edit -> Find…` during headless shell tests.
+    pub fn shell_trigger_find() {
+        crate::shell::trigger_find();
+    }
     pub use crate::store::software::{
         Provider as SoftwareProvider, Snapshot as SoftwareSnapshot, SoftwareKind,
         install_provider as install_software_provider, use_fake_provider as use_fake_software,
@@ -147,7 +151,11 @@ struct NotificationRoutes(BTreeMap<String, store::Section>);
 /// and macOS Notification Center alerts) should be emitted. Always `false` off
 /// desktops or when fake-mode test providers are installed.
 fn desktop_effects_enabled() -> bool {
-    os().is_desktop() && !store::system::is_fake_mode() && !menubar::is_fake_mode()
+    os().is_desktop()
+        && !store::system::is_fake_mode()
+        && !store::software::is_fake_mode()
+        && !store::databases::is_fake_mode()
+        && !menubar::is_fake_mode()
 }
 
 /// Records a task notification and, on desktop outside fake/headless test mode,

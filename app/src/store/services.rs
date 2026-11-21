@@ -137,7 +137,6 @@ struct Services {
     detail: Option<DetailState>,
     busy: BTreeSet<String>,
     action_error: Option<String>,
-    notice: Option<String>,
 }
 
 impl Default for Services {
@@ -151,7 +150,6 @@ impl Default for Services {
             detail: None,
             busy: BTreeSet::new(),
             action_error: None,
-            notice: None,
         }
     }
 }
@@ -393,7 +391,6 @@ pub(crate) fn select_source(source: Source) {
         state.selected = None;
         state.detail = None;
         state.action_error = None;
-        state.notice = None;
     });
     clear_hover();
     reset_log_tail(None, None);
@@ -533,18 +530,10 @@ pub(crate) fn handle_editor_saved(saved: crate::editor::SavedEvent) {
     } else {
         format!("{label} saved")
     };
-    let clear = message.clone();
     services().update(|state| {
         state.action_error = None;
-        state.notice = Some(message);
     });
-    later(Duration::from_secs(3), move || {
-        services().update(|state| {
-            if state.notice.as_deref() == Some(clear.as_str()) {
-                state.notice = None;
-            }
-        });
-    });
+    crate::toast::success(message);
     refresh(source);
     if let Some(selected) = selected_id()
         && let Some(item) = item_by_id(&selected)
@@ -737,19 +726,10 @@ pub(crate) fn add_login_item_path(path: PathBuf) {
         };
         match answer {
             Ok(()) => {
-                let message = format!("{display_name} added");
-                let clear = message.clone();
                 services().update(|state| {
                     state.action_error = None;
-                    state.notice = Some(message);
                 });
-                later(Duration::from_secs(3), move || {
-                    services().update(|state| {
-                        if state.notice.as_deref() == Some(clear.as_str()) {
-                            state.notice = None;
-                        }
-                    });
-                });
+                crate::toast::success(format!("{display_name} added"));
                 refresh(Source::LoginItem);
             }
             Err(error) => set_action_error(&error),
@@ -790,7 +770,6 @@ pub(crate) fn select_item(id: &str) {
         state.selected = Some(item.id.clone());
         state.detail = Some(DetailState::loading(item.id.clone()));
         state.action_error = None;
-        state.notice = None;
     });
     set_hovered_row(None);
     reset_log_tail(Some(item.id.clone()), None);
@@ -1141,10 +1120,6 @@ pub(crate) fn action_error() -> Option<String> {
     services().with(|state| state.action_error.clone())
 }
 
-pub(crate) fn notice() -> Option<String> {
-    services().with(|state| state.notice.clone())
-}
-
 /// Asks first when the provider says an action needs a question; otherwise
 /// runs it at once.
 pub(crate) fn request_action(item: Item, action: Action) {
@@ -1181,7 +1156,6 @@ pub(crate) fn request_action(item: Item, action: Action) {
 fn set_action_error(message: &str) {
     services().update(|state| {
         state.action_error = Some(message.to_string());
-        state.notice = None;
     });
 }
 
@@ -1199,7 +1173,6 @@ fn perform_action(item: Item, action: Action) {
     services().update(|state| {
         state.busy.insert(id.clone());
         state.action_error = None;
-        state.notice = None;
     });
     let again = item.clone();
     task(async move {
@@ -1219,7 +1192,6 @@ fn perform_action(item: Item, action: Action) {
             match &answer {
                 Ok(()) => {
                     state.action_error = None;
-                    state.notice = Some(format!("{} {}", name, action.past()));
                     if action == Action::Remove && state.selected.as_deref() == Some(id.as_str()) {
                         state.selected = None;
                         state.detail = None;
@@ -1228,7 +1200,6 @@ fn perform_action(item: Item, action: Action) {
                 }
                 Err(error) => {
                     state.action_error = Some(format!("{name}: {error}"));
-                    state.notice = None;
                 }
             }
         });
@@ -1236,14 +1207,9 @@ fn perform_action(item: Item, action: Action) {
             set_hovered_row(None);
             reset_log_tail(None, None);
         }
-        let text = format!("{} {}", name, action.past());
-        later(Duration::from_secs(3), move || {
-            services().update(|state| {
-                if state.notice.as_deref() == Some(text.as_str()) {
-                    state.notice = None;
-                }
-            });
-        });
+        if answer.is_ok() {
+            crate::toast::success(format!("{} {}", name, action.past()));
+        }
         // A process takes a moment to go, and launchd a moment to notice.
         refresh(source);
         if answer.is_ok() && action != Action::Remove {
@@ -1294,18 +1260,10 @@ pub(crate) fn set_hovered_row(key: Option<String>) {
 
 // --- Copy --------------------------------------------------------------------
 
-/// Copies a value and says so in the inspector for a moment.
+/// Copies a value and notifies the user with a toast.
 pub(crate) fn copy(value: &str) {
     set_clipboard(value.to_string());
-    let message = "Copied";
-    services().update(|state| state.notice = Some(message.to_string()));
-    later(Duration::from_secs(2), || {
-        services().update(|state| {
-            if state.notice.as_deref() == Some(message) {
-                state.notice = None;
-            }
-        });
-    });
+    crate::toast::info("Copied");
 }
 
 #[cfg(test)]

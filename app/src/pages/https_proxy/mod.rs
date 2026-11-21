@@ -5,7 +5,6 @@
 //! activation checks are all tasks that write the store when they answer.
 
 mod authority;
-mod icons;
 mod proxy;
 
 use nsh_core::prelude::*;

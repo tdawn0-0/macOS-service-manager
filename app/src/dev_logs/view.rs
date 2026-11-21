@@ -45,6 +45,18 @@ fn drawer_panel() -> impl IntoElement {
             filter_ref.focus();
         }
     });
+    {
+        let seen_find = std::cell::Cell::new(untracked(crate::shell::find_revision));
+        effect(move || {
+            let rev = crate::shell::find_revision();
+            if rev != seen_find.get() {
+                seen_find.set(rev);
+                if !crate::editor::is_open() {
+                    filter_ref.focus();
+                }
+            }
+        });
+    }
 
     view()
         .test_id("dev-log-drawer")

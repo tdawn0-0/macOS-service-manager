@@ -26,7 +26,6 @@ use std::{
         Arc, LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
 };
 
 use devcore::{
@@ -641,7 +640,6 @@ struct TerminalDirDraft(String);
 #[derive(Debug, Clone, Default)]
 struct Feedback {
     action_error: Option<String>,
-    notice: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -683,23 +681,15 @@ fn task(future: impl Future<Output = ()> + 'static) {
     });
 }
 
-/// Runs a store change later, outside the view that asked for it.
-fn later(delay: Duration, f: impl FnOnce() + 'static) {
-    Owner::detached().run(move || {
-        set_timeout(delay, f);
-    });
-}
-
 fn next_sequence() -> u64 {
     workspace().update(|state| state.load.sequence += 1);
     workspace().with(|state| state.load.sequence)
 }
 
 fn clear_feedback() {
-    if feedback().with_untracked(|fb| fb.action_error.is_some() || fb.notice.is_some()) {
+    if feedback().with_untracked(|fb| fb.action_error.is_some()) {
         feedback().update(|fb| {
             fb.action_error = None;
-            fb.notice = None;
         });
     }
 }
@@ -707,23 +697,17 @@ fn clear_feedback() {
 fn ctrl_error(message: String) {
     feedback().update(|fb| {
         fb.action_error = Some(message);
-        fb.notice = None;
     });
 }
 
 fn show_notice(message: impl Into<String>) {
-    let message = message.into();
-    feedback().update(|fb| {
-        fb.notice = Some(message.clone());
-        fb.action_error = None;
-    });
-    later(Duration::from_secs(4), move || {
-        feedback().update(|fb| {
-            if fb.notice.as_deref() == Some(message.as_str()) {
-                fb.notice = None;
-            }
-        });
-    });
+    clear_feedback();
+    crate::toast::success(message);
+}
+
+fn show_info_notice(message: impl Into<String>) {
+    clear_feedback();
+    crate::toast::info(message);
 }
 
 fn start_busy(key: &str) {
@@ -932,10 +916,6 @@ pub(crate) fn load_error() -> Option<String> {
 
 pub(crate) fn action_error() -> Option<String> {
     feedback().with(|fb| fb.action_error.clone())
-}
-
-pub(crate) fn notice() -> Option<String> {
-    feedback().with(|fb| fb.notice.clone())
 }
 
 pub(crate) fn busy() -> bool {
@@ -1301,7 +1281,7 @@ pub(crate) fn copy_python_path(path: &str) {
         return;
     }
     set_clipboard(path.to_string());
-    show_notice("Copied Python executable path.");
+    show_info_notice("Copied Python executable path.");
 }
 
 // --- Shell integration -------------------------------------------------------
@@ -1420,7 +1400,7 @@ pub(crate) fn copy_node_binary(id: &str) {
         match answer {
             Ok(path) => {
                 set_clipboard(path);
-                show_notice("Copied Node.js executable path.");
+                show_info_notice("Copied Node.js executable path.");
             }
             Err(error) => {
                 ctrl_error(if error.is_empty() {
@@ -1452,7 +1432,7 @@ pub(crate) fn copy_bash(name: &str) {
         return;
     }
     set_clipboard(command);
-    show_notice("Copied Bash command. Replace YOUR_COMMAND with the AI task's command.");
+    show_info_notice("Copied Bash command. Replace YOUR_COMMAND with the AI task's command.");
 }
 
 // --- Runtime terminal --------------------------------------------------------
@@ -1559,7 +1539,7 @@ pub(crate) fn launch_terminal() {
             .map_err(|error| error.to_string())
             .and_then(|answer| answer);
         match answer {
-            Ok(()) => show_notice(format!("Opened Terminal with Node.js {version}.")),
+            Ok(()) => show_info_notice(format!("Opened Terminal with Node.js {version}.")),
             Err(error) => ctrl_error(if error.is_empty() {
                 "Terminal could not be opened".to_string()
             } else {

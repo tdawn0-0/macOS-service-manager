@@ -55,7 +55,6 @@ fn bar() -> impl IntoElement {
 fn item_pane(id: String) -> impl IntoElement {
     let busy_id = id.clone();
     let busy = computed(move || svc::is_busy(&busy_id));
-    let notice = computed(svc::notice);
     let active_tab = computed(svc::detail_tab);
     let info_id = id.clone();
     let log_id = id.clone();
@@ -88,14 +87,7 @@ fn item_pane(id: String) -> impl IntoElement {
                         )),
                 )
                 .child(action_row(id.clone()))
-                .child(autostart_card(id.clone()))
-                .child(dynamic(move || {
-                    notice.get().map(|message| {
-                        text(message)
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .text_color(tokens::success)
-                    })
-                })),
+                .child(autostart_card(id.clone())),
         )
         .child(tabs(id))
         .child(

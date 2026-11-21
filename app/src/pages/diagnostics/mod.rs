@@ -40,9 +40,6 @@ pub(crate) fn diagnostics() -> impl IntoElement {
                     .gap(tokens::space(4.0))
                     .px(tokens::space(6.0))
                     .py(tokens::space(5.0))
-                    .child(dynamic(|| {
-                        system::report_notice().map(|notice| ui::plain_note(notice, false))
-                    }))
                     .child(checks::runtime_card())
                     .child(checks::checks_card())
                     .child(ports::ports_card())

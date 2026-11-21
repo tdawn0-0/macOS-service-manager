@@ -34,12 +34,12 @@ use nsh_core::{
         WindowPosition,
     },
     element::{
-        ImageSrc, ReadSignal, Svg, animate_layout,
+        ImageSrc, ReadSignal, animate_layout,
         desktop::{
             MenuItem, TrayClickEvent, displays, main_window, register_global_shortcut, set_tray,
             tray, window,
         },
-        haptic, reduce_motion, svg,
+        haptic, reduce_motion,
     },
     geometry::{Bounds, Point, deg, point, size},
     platform::Os,
@@ -47,7 +47,10 @@ use nsh_core::{
 };
 
 use crate::{
-    components::controls,
+    components::{
+        controls,
+        icons::{self, Icon},
+    },
     store::{self, Section, databases, proxy, services, software::SoftwareKind, system},
     theme as tokens,
 };
@@ -107,33 +110,6 @@ const MENUBAR_ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="36
   <rect x="4.2" y="21.2" width="27.6" height="10.6" rx="5.3" fill="none" stroke="#000" stroke-width="2.4"/>
   <circle cx="9.5" cy="26.5" r="2.7"/>
 </svg>"##;
-
-const ICON_OPEN: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">"#;
-const ICON_CLOSE: &str = "</svg>";
-
-const PACKAGE_BODY: &str = r#"<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/>"#;
-const DATABASE_BODY: &str = r#"<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/>"#;
-const SHIELD_BODY: &str = r#"<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>"#;
-const CLOUD_BODY: &str = r#"<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>"#;
-const WINDOW_BODY: &str = r#"<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>"#;
-const REFRESH_BODY: &str =
-    r#"<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>"#;
-const QUIT_BODY: &str = r#"<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>"#;
-const PLUS_BODY: &str = r#"<path d="M5 12h14"/><path d="M12 5v14"/>"#;
-const LAYERS_BODY: &str = r#"<path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/>"#;
-const PLAY_BODY: &str = r#"<polygon points="6 3 20 12 6 21 6 3"/>"#;
-const STOP_BODY: &str = r#"<rect x="5" y="5" width="14" height="14" rx="2"/>"#;
-const CHEVRON_RIGHT_BODY: &str = r#"<path d="m9 18 6-6-6-6"/>"#;
-const TERMINAL_BODY: &str =
-    r#"<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>"#;
-
-fn icon_src(body: &str) -> ImageSrc {
-    ImageSrc::svg_markup(&format!("{ICON_OPEN}{body}{ICON_CLOSE}"))
-}
-
-fn icon_svg(body: &str) -> Svg {
-    svg(icon_src(body))
-}
 
 /// One kind of row, so a test can tell a heading from a switch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -643,11 +619,11 @@ fn service_group_title(source: Source) -> &'static str {
 }
 
 fn service_group_icon(source: Source) -> &'static str {
-    match source {
-        Source::Brew => LAYERS_BODY,
-        Source::UserAgent => TERMINAL_BODY,
-        _ => LAYERS_BODY,
-    }
+    icons::markup(match source {
+        Source::Brew => Icon::Layers,
+        Source::UserAgent => Icon::Terminal,
+        _ => Icon::Layers,
+    })
 }
 
 fn loaded_services_for(source: Source) -> Vec<ServiceRow> {
@@ -1337,7 +1313,7 @@ fn popover_header() -> impl IntoElement {
                 .rounded(px(8.0))
                 .bg(move || theme().primary)
                 .child(
-                    icon_svg(PACKAGE_BODY)
+                    icons::package()
                         .size(px(16.0))
                         .text_color(move || theme().primary_foreground),
                 ),
@@ -1418,7 +1394,7 @@ fn popover_no_instances_row() -> impl IntoElement {
                 ),
         )
         .child(
-            icon_svg(PLUS_BODY)
+            icons::plus()
                 .size(px(14.0))
                 .text_color(move || theme().muted_foreground),
         )
@@ -1730,7 +1706,7 @@ fn collapsible_service_section(source: Source, section_key: &'static str) -> imp
                         .items_center()
                         .gap(px(4.0))
                         .child(
-                            icon_svg(CHEVRON_RIGHT_BODY)
+                            icons::chevron_right()
                                 .size(px(12.0))
                                 .flex_none()
                                 .text_color(move || theme().muted_foreground)
@@ -1867,7 +1843,7 @@ fn popover_body() -> impl IntoElement {
 fn footer_button(
     label: &'static str,
     test_id: &'static str,
-    icon_body: &'static str,
+    icon: Icon,
     grow: bool,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
@@ -1887,7 +1863,7 @@ fn footer_button(
         .hover(|s| s.bg(tokens::row_hover()))
         .on_press(on_press)
         .child(
-            icon_svg(icon_body)
+            icons::render(icon)
                 .size(px(13.0))
                 .flex_none()
                 .text_color(move || theme().foreground),
@@ -1921,21 +1897,21 @@ fn popover_footer() -> impl IntoElement {
         .child(footer_button(
             "Open Devbase",
             "popover-open",
-            WINDOW_BODY,
+            Icon::Window,
             true,
             || dispatch(Action::OpenWindow),
         ))
         .child(footer_button(
             "Refresh",
             "popover-refresh",
-            REFRESH_BODY,
+            Icon::Refresh,
             false,
             || dispatch(Action::Refresh),
         ))
         .child(footer_button(
             "Quit Devbase",
             "popover-quit",
-            QUIT_BODY,
+            Icon::Power,
             false,
             || dispatch(Action::Quit),
         ))
@@ -1965,28 +1941,28 @@ pub enum MenuEntry {
 
 fn row_menu_icon(row: &Row) -> &'static str {
     match row.kind {
-        RowKind::Instance if row.key == "no-instances" => PLUS_BODY,
+        RowKind::Instance if row.key == "no-instances" => icons::markup(Icon::Plus),
         RowKind::Instance | RowKind::Service if row.checked.is_some() => {
             if row.checked == Some(true) {
-                STOP_BODY
+                icons::markup(Icon::Stop)
             } else {
-                PLAY_BODY
+                icons::markup(Icon::Play)
             }
         }
-        RowKind::Instance => DATABASE_BODY,
-        RowKind::Proxy => SHIELD_BODY,
-        RowKind::Tunnel => CLOUD_BODY,
+        RowKind::Instance => icons::markup(Icon::Database),
+        RowKind::Proxy => icons::markup(Icon::ShieldCheck),
+        RowKind::Tunnel => icons::markup(Icon::Cloud),
         RowKind::Service => match row.action {
             Some(Action::OpenService { source, .. }) => service_group_icon(source),
-            _ => LAYERS_BODY,
+            _ => icons::markup(Icon::Layers),
         },
         RowKind::Action => match row.action {
-            Some(Action::OpenWindow) => WINDOW_BODY,
-            Some(Action::Refresh) => REFRESH_BODY,
-            Some(Action::Quit) => QUIT_BODY,
-            _ => PACKAGE_BODY,
+            Some(Action::OpenWindow) => icons::markup(Icon::Window),
+            Some(Action::Refresh) => icons::markup(Icon::Refresh),
+            Some(Action::Quit) => icons::markup(Icon::Power),
+            _ => icons::markup(Icon::Package),
         },
-        RowKind::Header | RowKind::Status | RowKind::Separator => PACKAGE_BODY,
+        RowKind::Header | RowKind::Status | RowKind::Separator => icons::markup(Icon::Package),
     }
 }
 
@@ -2048,7 +2024,7 @@ pub fn menu_entries(panel: &Panel) -> Vec<MenuEntry> {
     let mut entries = Vec::new();
     entries.push(MenuEntry::Item {
         label: format!("Devbase · {}", panel.summary),
-        icon: PACKAGE_BODY,
+        icon: icons::markup(Icon::Package),
         enabled: false,
         checked: None,
         action: None,
@@ -2075,7 +2051,7 @@ pub fn menu_entries(panel: &Panel) -> Vec<MenuEntry> {
         };
         entries.push(MenuEntry::Item {
             label: db_heading,
-            icon: DATABASE_BODY,
+            icon: icons::markup(Icon::Database),
             enabled: false,
             checked: None,
             action: None,
@@ -2093,7 +2069,7 @@ pub fn menu_entries(panel: &Panel) -> Vec<MenuEntry> {
         entries.push(MenuEntry::Separator);
         entries.push(MenuEntry::Item {
             label: "HTTPS".to_string(),
-            icon: SHIELD_BODY,
+            icon: icons::markup(Icon::ShieldCheck),
             enabled: false,
             checked: None,
             action: None,
@@ -2144,7 +2120,9 @@ fn build_menu_item(entry: MenuEntry) -> MenuItem {
             checked,
             action,
         } => {
-            let mut item = MenuItem::new(label).icon(icon_src(icon)).disabled(!enabled);
+            let mut item = MenuItem::new(label)
+                .icon(ImageSrc::svg_markup(icon))
+                .disabled(!enabled);
             if let Some(checked) = checked {
                 item = item.checked(checked);
             }
@@ -2154,7 +2132,8 @@ fn build_menu_item(entry: MenuEntry) -> MenuItem {
             item
         }
         MenuEntry::Submenu { label, icon, items } => {
-            MenuItem::submenu(label, items.into_iter().map(build_menu_item)).icon(icon_src(icon))
+            MenuItem::submenu(label, items.into_iter().map(build_menu_item))
+                .icon(ImageSrc::svg_markup(icon))
         }
     }
 }

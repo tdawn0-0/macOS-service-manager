@@ -10,13 +10,13 @@ use nsh_core::prelude::*;
 use crate::{
     components::{
         controls::{self as ui, Tone},
-        icons as app_icons, note,
+        icons, note,
     },
     store::databases as db,
     theme as tokens,
 };
 
-use super::{icons, rail};
+use super::rail;
 
 /// The running and finished operations, as the Go `devDatabaseTasks` drew
 /// them above the instance.
@@ -315,37 +315,28 @@ fn heading(
     refresh_id: &'static str,
     on_refresh: impl Fn() + 'static,
 ) -> impl IntoElement {
-    view()
-        .h(px(52.0))
-        .flex_none()
-        .flex_row()
-        .items_center()
-        .gap(tokens::space(2.0))
-        .px(tokens::space(5.0))
-        .border_b_1()
-        .border_color(tokens::hairline)
-        .window_drag(true)
-        .child(
-            text(title)
-                .flex_1()
-                .text_size(px(15.0))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(move || theme().foreground),
-        )
-        .child(ui::action_button(
-            refresh,
-            Tone::Default,
-            refresh_id,
-            db::operations_busy,
-            on_refresh,
-        ))
-        .child(ui::action_button(
-            "Back to database settings",
-            Tone::Default,
-            "list-back",
-            db::operations_busy,
-            db::back_to_settings,
-        ))
+    ui::page_header(
+        title,
+        None::<&str>,
+        view()
+            .flex_row()
+            .items_center()
+            .gap(tokens::space(2.0))
+            .child(ui::action_button(
+                refresh,
+                Tone::Default,
+                refresh_id,
+                db::operations_busy,
+                on_refresh,
+            ))
+            .child(ui::action_button(
+                "Back to database settings",
+                Tone::Default,
+                "list-back",
+                db::operations_busy,
+                db::back_to_settings,
+            )),
+    )
 }
 
 fn notes(
@@ -356,16 +347,13 @@ fn notes(
         .flex_col()
         .flex_none()
         .child(dynamic(move || {
-            db::action_error().map(|message| note(app_icons::warn(), message, true))
+            db::action_error().map(|message| note(icons::warn(), message, true))
         }))
         .child(dynamic(move || {
-            error().map(|message| note(app_icons::warn(), message, true))
+            error().map(|message| note(icons::warn(), message, true))
         }))
         .child(dynamic(move || {
-            second().map(|message| note(app_icons::warn(), message, true))
-        }))
-        .child(dynamic(move || {
-            db::notice().map(|message| note(icons::check(), message, false))
+            second().map(|message| note(icons::warn(), message, true))
         }))
 }
 

@@ -82,6 +82,14 @@ pub(crate) fn list_pane() -> impl IntoElement {
 
 fn search_shortcut(search_ref: ElementRef) -> impl IntoElement {
     on_key("mod+f", move |_| search_ref.focus());
+    let seen_find = std::cell::Cell::new(untracked(crate::shell::find_revision));
+    effect(move || {
+        let rev = crate::shell::find_revision();
+        if rev != seen_find.get() {
+            seen_find.set(rev);
+            search_ref.focus();
+        }
+    });
     view().w(px(0.0)).h(px(0.0)).flex_none()
 }
 

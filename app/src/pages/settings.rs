@@ -43,9 +43,6 @@ pub(crate) fn settings() -> impl IntoElement {
                     .child(dynamic(|| {
                         system::settings_action_error().map(|error| ui::plain_note(error, true))
                     }))
-                    .child(dynamic(|| {
-                        system::settings_notice().map(|notice| ui::plain_note(notice, false))
-                    }))
                     .child(ui::card(
                         "Privileged helper",
                         dynamic(|| Some(helper_body().into_element())),

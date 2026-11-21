@@ -49,7 +49,6 @@ pub(crate) fn trigger_find() {
 }
 
 /// Monotonic revision bumped whenever `Edit -> Find…` is invoked.
-#[allow(dead_code)]
 pub(crate) fn find_revision() -> u64 {
     global::<FindTrigger>().with(|trigger| trigger.0)
 }

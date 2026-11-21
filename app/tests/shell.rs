@@ -26,10 +26,10 @@ use nsh_app_devbase::testing::{
     AuthorityAction, AuthorityInfo, AuthorityStatus, CancelToken, DatabasesProvider,
     DatabasesSnapshot, ProxyHttpResult, ProxyListeningPort, ProxyProvider, ProxySavedCloudflare,
     ProxySnapshot, ProxyWorkers, Source, command_palette_is_open, install_databases_provider,
-    install_provider, install_proxy_provider, menubar_load, refresh_services, toast_dismiss_all,
-    toast_error, toast_info, toast_success, use_fake_databases, use_fake_dev_logs,
-    use_fake_development, use_fake_editor, use_fake_guide, use_fake_menubar, use_fake_providers,
-    use_fake_proxy, use_fake_software, use_fake_system,
+    install_provider, install_proxy_provider, menubar_load, refresh_services, shell_trigger_find,
+    toast_dismiss_all, toast_error, toast_info, toast_success, use_fake_databases,
+    use_fake_dev_logs, use_fake_development, use_fake_editor, use_fake_guide, use_fake_menubar,
+    use_fake_providers, use_fake_proxy, use_fake_software, use_fake_system,
 };
 use nsh_core::{
     desktop::{WindowMode, WindowState},
@@ -693,4 +693,63 @@ fn sidebar_displays_live_running_counts_for_services_databases_and_proxy() {
     app.wait_for("id:sidebar-badge-databases").unwrap();
     app.wait_for("id:sidebar-badge-https-proxy").unwrap();
     assert!(app.screen().shows("1/2"));
+}
+
+#[component]
+fn FindHarness() -> impl IntoElement {
+    view()
+        .size_full()
+        .flex_col()
+        .child(
+            nsh_base::button()
+                .test_id("trigger-edit-find")
+                .on_press(shell_trigger_find)
+                .child(text("Find")),
+        )
+        .child(nsh_app_devbase::app())
+}
+
+#[test]
+fn edit_find_routes_focus_to_services_logs_or_command_palette() {
+    let _turn = serial();
+    install_all_fakes();
+    let mut app = Headless::start(EngineConfig::new(Root::of::<FindHarness>())).unwrap();
+    app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    app.wait_for("id:services-search").unwrap();
+
+    // On Services with the log drawer closed, Edit -> Find… focuses services-search.
+    let search_id = app.screen().id("id:services-search").unwrap();
+    app.press("id:trigger-edit-find").unwrap();
+    assert!(
+        app.screen()
+            .commands()
+            .iter()
+            .any(|(id, cmd)| *id == search_id && matches!(cmd, nsh_core::Command::Focus)),
+        "Edit -> Find… on Services should focus services-search"
+    );
+    assert!(!app.screen().matches("id:command-palette").unwrap());
+
+    // When the live log drawer is open, Edit -> Find… focuses dev-log-filter instead.
+    app.press("id:sidebar-logs-toggle").unwrap();
+    app.wait_for("id:dev-log-filter").unwrap();
+    let filter_id = app.screen().id("id:dev-log-filter").unwrap();
+    app.press("id:trigger-edit-find").unwrap();
+    assert!(
+        app.screen()
+            .commands()
+            .iter()
+            .any(|(id, cmd)| *id == filter_id && matches!(cmd, nsh_core::Command::Focus)),
+        "Edit -> Find… with live log drawer open should focus dev-log-filter"
+    );
+    assert!(!app.screen().matches("id:command-palette").unwrap());
+
+    // On a section without a local search bar (Settings) and logs closed,
+    // Edit -> Find… opens the Command Palette.
+    app.press("id:sidebar-logs-toggle").unwrap();
+    app.wait_for_gone("id:dev-log-filter", Duration::from_secs(2))
+        .unwrap();
+    app.press("text:Settings").unwrap();
+    app.wait_for("id:settings-page").unwrap();
+    app.press("id:trigger-edit-find").unwrap();
+    app.wait_for("id:command-palette").unwrap();
 }

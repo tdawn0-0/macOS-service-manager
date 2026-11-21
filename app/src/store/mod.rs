@@ -14,18 +14,18 @@ pub(crate) mod system;
 /// A top-level section, in sidebar order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Section {
-    /// launchd jobs and their lifecycle (Phase 1).
+    /// launchd jobs and their lifecycle.
     #[default]
     Services,
-    /// Software, runtimes and the development workspace (Phase 2).
+    /// Software, runtimes and the development workspace.
     Development,
-    /// Database instances, connections and backups (Phase 2).
+    /// Database instances, connections and backups.
     Databases,
-    /// Local HTTPS rules, the CA and the Cloudflare tunnel (Phase 3).
+    /// Local HTTPS rules, the CA and the Cloudflare tunnel.
     HttpsProxy,
     /// Environment checks, ports, logs and operations.
     Diagnostics,
-    /// Helper, CLI, login items and preferences (Phase 4).
+    /// Helper, CLI, login items and preferences.
     Settings,
 }
 

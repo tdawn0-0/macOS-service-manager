@@ -7,7 +7,6 @@
 
 mod deletion;
 mod detail;
-mod icons;
 mod new;
 mod rail;
 mod tasks;

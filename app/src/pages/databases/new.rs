@@ -9,13 +9,13 @@ use nsh_core::prelude::*;
 use crate::{
     components::{
         controls::{self as ui, TagTone, Tone},
-        icons as app_icons, note,
+        icons, note,
     },
     store::{databases as db, software::SoftwareKind},
     theme as tokens,
 };
 
-use super::{icons, rail, tasks::tasks_section};
+use super::{rail, tasks::tasks_section};
 
 pub(crate) fn new_pane() -> impl IntoElement {
     view()
@@ -44,52 +44,23 @@ pub(crate) fn new_pane() -> impl IntoElement {
 fn header() -> impl IntoElement {
     let kind = db::draft_kind();
     let title = rail::instance_title(kind);
-    view()
-        .h(px(52.0))
-        .flex_none()
-        .flex_row()
-        .items_center()
-        .gap(tokens::space(2.0))
-        .px(tokens::space(5.0))
-        .border_b_1()
-        .border_color(tokens::hairline)
-        .window_drag(true)
-        .child(
+    ui::page_header_with_leading(
+        Some(
             icons::engine(kind)
                 .size(px(16.0))
                 .flex_none()
                 .text_color(move || theme().muted_foreground),
-        )
-        .child(
-            view()
-                .flex_col()
-                .gap(tokens::space(0.5))
-                .flex_1()
-                .min_w(px(0.0))
-                .child(
-                    text("New instance")
-                        .text_size(px(15.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().foreground),
-                )
-                .child(
-                    text(title)
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground),
-                ),
-        )
+        ),
+        "New instance",
+        Some(title),
+        None::<AnyElement>,
+    )
 }
 
 fn notes() -> impl IntoElement {
-    view()
-        .flex_col()
-        .flex_none()
-        .child(dynamic(move || {
-            db::action_error().map(|message| note(app_icons::warn(), message, true))
-        }))
-        .child(dynamic(move || {
-            db::notice().map(|message| note(icons::check(), message, false))
-        }))
+    view().flex_col().flex_none().child(dynamic(move || {
+        db::action_error().map(|message| note(icons::warn(), message, true))
+    }))
 }
 
 fn instance_card() -> impl IntoElement {

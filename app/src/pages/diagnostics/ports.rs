@@ -28,9 +28,6 @@ pub(crate) fn ports_card() -> impl IntoElement {
             .child(dynamic(|| {
                 system::port_error().map(|error| ui::plain_note(error, true))
             }))
-            .child(dynamic(|| {
-                system::port_notice().map(|notice| ui::plain_note(notice, false))
-            }))
             .child(
                 view()
                     .flex_row()

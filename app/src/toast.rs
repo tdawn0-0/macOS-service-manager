@@ -44,6 +44,7 @@ struct Entry {
 struct ToastInner {
     next_id: u64,
     manager: ToastManager<u64, Entry>,
+    mounted: bool,
 }
 
 #[derive(Clone)]
@@ -58,6 +59,7 @@ impl Default for ToastHub {
             inner: Rc::new(RefCell::new(ToastInner {
                 next_id: 1,
                 manager: ToastManager::new(ToastMotion::sonner()),
+                mounted: false,
             })),
             revision: 0,
         }
@@ -68,21 +70,26 @@ fn hub() -> Signal<ToastHub> {
     global::<ToastHub>()
 }
 
+/// Whether [`stack`] is mounted on the active surface. Standalone component
+/// harnesses without [`crate::App`] see `false` and can keep a local fallback.
+pub(crate) fn is_mounted() -> bool {
+    try_global::<ToastHub>()
+        .is_some_and(|state| state.with_untracked(|hub| hub.inner.borrow().mounted))
+}
+
 fn bump(state: Signal<ToastHub>) {
     state.update(|hub| {
         hub.revision = hub.revision.wrapping_add(1);
     });
 }
 
-fn push(tone: Tone, message: impl Into<String>, timeout: Option<Duration>) {
+fn push_with_id(tone: Tone, message: impl Into<String>, timeout: Option<Duration>) -> Option<u64> {
     let message = message.into();
     if message.trim().is_empty() {
-        return;
+        return None;
     }
-    let Some(state) = try_global::<ToastHub>() else {
-        return;
-    };
-    state.with_untracked(|hub| {
+    let state = try_global::<ToastHub>()?;
+    let id = state.with_untracked(|hub| {
         let mut inner = hub.inner.borrow_mut();
         let id = inner.next_id;
         inner.next_id = inner.next_id.wrapping_add(1).max(1);
@@ -92,23 +99,34 @@ fn push(tone: Tone, message: impl Into<String>, timeout: Option<Duration>) {
             ToastOptions::timeout(timeout),
             now(),
         );
+        id
     });
     bump(state);
+    Some(id)
+}
+
+/// Shows a toast and returns its id so a caller can dismiss it early.
+pub(crate) fn push_tracked(tone: Tone, message: impl Into<String>) -> Option<u64> {
+    let timeout = match tone {
+        Tone::Error => Some(ERROR_TIMEOUT),
+        Tone::Info | Tone::Success => Some(DEFAULT_TIMEOUT),
+    };
+    push_with_id(tone, message, timeout)
 }
 
 /// Shows an informational toast at the bottom-right corner.
 pub fn info(message: impl Into<String>) {
-    push(Tone::Info, message, Some(DEFAULT_TIMEOUT));
+    let _ = push_with_id(Tone::Info, message, Some(DEFAULT_TIMEOUT));
 }
 
 /// Shows a success toast at the bottom-right corner.
 pub fn success(message: impl Into<String>) {
-    push(Tone::Success, message, Some(DEFAULT_TIMEOUT));
+    let _ = push_with_id(Tone::Success, message, Some(DEFAULT_TIMEOUT));
 }
 
 /// Shows an error toast at the bottom-right corner.
 pub fn error(message: impl Into<String>) {
-    push(Tone::Error, message, Some(ERROR_TIMEOUT));
+    let _ = push_with_id(Tone::Error, message, Some(ERROR_TIMEOUT));
 }
 
 /// Dismisses a single toast by id, starting its exit transition.
@@ -224,6 +242,9 @@ fn tone_border(tone: Tone) -> AdaptiveColor {
 
 /// The bottom-right global toast stack, mounted once in [`crate::App`].
 pub fn stack() -> impl IntoElement {
+    hub().with_untracked(|hub| {
+        hub.inner.borrow_mut().mounted = true;
+    });
     let stack_state = ToastStackState::new();
     view()
         .test_id("toast-viewport")

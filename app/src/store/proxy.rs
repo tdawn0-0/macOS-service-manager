@@ -861,11 +861,11 @@ struct BusyState {
     busy: BTreeSet<String>,
 }
 
-/// Transient notices, action errors, and inline log snapshots.
+/// Action errors, tracked transient toast id, and inline log snapshots.
 #[derive(Debug, Clone, Default)]
 struct NoticesState {
     action_error: Option<String>,
-    notice: Option<String>,
+    notice_toast: Option<u64>,
     logs: Option<(String, String)>,
 }
 
@@ -1031,14 +1031,24 @@ fn sync_drafts_with_snapshot(snapshot: &Snapshot) {
     }
 }
 
+fn dismiss_notice_toast() {
+    let id = untracked(|| notices_state().with(|state| state.notice_toast));
+    if let Some(id) = id {
+        notices_state().update(|state| {
+            if state.notice_toast == Some(id) {
+                state.notice_toast = None;
+            }
+        });
+        crate::toast::dismiss(id);
+    }
+}
+
 fn clear_feedback() {
-    let has_any = untracked(|| {
-        notices_state().with(|state| state.action_error.is_some() || state.notice.is_some())
-    });
-    if has_any {
+    dismiss_notice_toast();
+    let has_error = untracked(|| notices_state().with(|state| state.action_error.is_some()));
+    if has_error {
         notices_state().update(|state| {
             state.action_error = None;
-            state.notice = None;
         });
     }
 }
@@ -1440,10 +1450,6 @@ pub(crate) fn action_error() -> Option<String> {
     notices_state().with(|state| state.action_error.clone())
 }
 
-pub(crate) fn notice() -> Option<String> {
-    notices_state().with(|state| state.notice.clone())
-}
-
 pub(crate) fn logs() -> Option<(String, String)> {
     notices_state().with(|state| state.logs.clone())
 }
@@ -1459,15 +1465,13 @@ fn begin(key: &str) -> bool {
     busy_state().update(|state| {
         state.busy.insert(key.to_string());
     });
+    dismiss_notice_toast();
     let has_transient = untracked(|| {
-        notices_state().with(|state| {
-            state.action_error.is_some() || state.notice.is_some() || state.logs.is_some()
-        })
+        notices_state().with(|state| state.action_error.is_some() || state.logs.is_some())
     });
     if has_transient {
         notices_state().update(|state| {
             state.action_error = None;
-            state.notice = None;
             state.logs = None;
         });
     }
@@ -1481,11 +1485,17 @@ fn finish(key: &str) {
 }
 
 fn fail(message: impl Into<String>) {
+    dismiss_notice_toast();
     notices_state().update(|state| state.action_error = Some(message.into()));
 }
 
 fn succeed(message: impl Into<String>) {
-    notices_state().update(|state| state.notice = Some(message.into()));
+    dismiss_notice_toast();
+    let id = crate::toast::push_tracked(crate::toast::Tone::Success, message);
+    notices_state().update(|state| {
+        state.action_error = None;
+        state.notice_toast = id;
+    });
 }
 
 /// The rule table as the screen would save it; the exact Go error when a port

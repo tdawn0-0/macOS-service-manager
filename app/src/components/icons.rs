@@ -74,6 +74,7 @@ pub(crate) enum Icon {
     Key,
     Link,
     Plug,
+    FileText,
 }
 
 /// Returns the complete static SVG document for `icon`.
@@ -198,6 +199,9 @@ pub(crate) fn markup(icon: Icon) -> &'static str {
         ),
         Icon::Plug => svg_doc!(
             r#"<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>"#
+        ),
+        Icon::FileText => svg_doc!(
+            r#"<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>"#
         ),
     }
 }
@@ -400,4 +404,8 @@ pub(crate) fn link() -> Svg {
 
 pub(crate) fn plug() -> Svg {
     render(Icon::Plug)
+}
+
+pub(crate) fn file_text() -> Svg {
+    render(Icon::FileText)
 }

@@ -13,13 +13,13 @@ use nsh_core::prelude::*;
 use crate::{
     components::{
         controls::{self as ui, Tone},
-        icons as app_icons, note,
+        icons, note,
     },
     store::databases as db,
     theme as tokens,
 };
 
-use super::{icons, rail, tasks::tasks_section};
+use super::{rail, tasks::tasks_section};
 
 pub(crate) fn detail_pane() -> impl IntoElement {
     view()
@@ -148,76 +148,55 @@ fn header() -> AnyElement {
     let restart_id = id.clone();
     let stop_id = id.clone();
 
-    view()
-        .h(px(52.0))
-        .flex_none()
-        .flex_row()
-        .items_center()
-        .gap(tokens::space(2.0))
-        .px(tokens::space(5.0))
-        .border_b_1()
-        .border_color(tokens::hairline)
-        .window_drag(true)
-        .child(
+    ui::page_header_with_leading(
+        Some(
             icons::engine(&instance.kind)
                 .size(px(16.0))
                 .flex_none()
                 .text_color(move || theme().muted_foreground),
-        )
-        .child(
+        ),
+        id,
+        Some(meta),
+        Some(
             view()
-                .flex_col()
-                .gap(tokens::space(0.5))
-                .flex_1()
-                .min_w(px(0.0))
-                .child(
-                    text(id.clone())
-                        .text_size(px(15.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().foreground)
-                        .truncate(),
-                )
-                .child(
-                    text(meta)
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .tabular_nums()
-                        .text_color(move || theme().muted_foreground)
-                        .truncate(),
-                ),
-        )
-        .child(ui::status_tag(&status))
-        .child(ui::action_button(
-            "Start",
-            if running {
-                Tone::Default
-            } else {
-                Tone::Primary
-            },
-            "db-start",
-            db::operations_busy,
-            move || db::start_instance(&start_id),
-        ))
-        .child(ui::action_button(
-            "Restart",
-            Tone::Default,
-            "db-restart",
-            db::operations_busy,
-            move || db::restart_instance(&restart_id),
-        ))
-        .child(ui::action_button(
-            "Stop",
-            Tone::Default,
-            "db-stop",
-            db::operations_busy,
-            move || db::stop_instance(&stop_id),
-        ))
-        .child(ui::toolbar_icon_button(
-            icons::rotate(),
-            "Refresh databases",
-            "db-refresh",
-            db::refresh,
-        ))
-        .into_element()
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(2.0))
+                .child(ui::status_tag(&status))
+                .child(ui::action_button(
+                    "Start",
+                    if running {
+                        Tone::Default
+                    } else {
+                        Tone::Primary
+                    },
+                    "db-start",
+                    db::operations_busy,
+                    move || db::start_instance(&start_id),
+                ))
+                .child(ui::action_button(
+                    "Restart",
+                    Tone::Default,
+                    "db-restart",
+                    db::operations_busy,
+                    move || db::restart_instance(&restart_id),
+                ))
+                .child(ui::action_button(
+                    "Stop",
+                    Tone::Default,
+                    "db-stop",
+                    db::operations_busy,
+                    move || db::stop_instance(&stop_id),
+                ))
+                .child(ui::toolbar_icon_button(
+                    icons::refresh(),
+                    "Refresh databases",
+                    "db-refresh",
+                    db::refresh,
+                )),
+        ),
+    )
+    .into_element()
 }
 
 fn notes() -> impl IntoElement {
@@ -225,13 +204,10 @@ fn notes() -> impl IntoElement {
         .flex_col()
         .flex_none()
         .child(dynamic(move || {
-            db::load_error().map(|message| note(app_icons::warn(), message, true))
+            db::load_error().map(|message| note(icons::warn(), message, true))
         }))
         .child(dynamic(move || {
-            db::action_error().map(|message| note(app_icons::warn(), message, true))
-        }))
-        .child(dynamic(move || {
-            db::notice().map(|message| note(icons::check(), message, false))
+            db::action_error().map(|message| note(icons::warn(), message, true))
         }))
 }
 
@@ -715,7 +691,7 @@ fn databases_body(id: String, kind: String) -> impl IntoElement {
         .child(dynamic(move || {
             catalog_error
                 .get()
-                .map(|message| note(app_icons::warn(), message, true))
+                .map(|message| note(icons::warn(), message, true))
         }))
         .child(dynamic(move || {
             let names = catalog_databases.get();
@@ -944,7 +920,7 @@ fn backups_body(id: String, kind: String) -> impl IntoElement {
         .child(dynamic(move || {
             backups_error
                 .get()
-                .map(|message| note(app_icons::warn(), message, true))
+                .map(|message| note(icons::warn(), message, true))
         }))
         .child(dynamic(move || Some(backups_list(&id_rows).into_element())))
         .child(ui::hairline())

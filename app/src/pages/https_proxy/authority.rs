@@ -11,13 +11,13 @@ use nsh_core::prelude::*;
 use crate::{
     components::{
         controls::{self as ui, TagTone, Tone},
-        icons as app_icons, note,
+        icons, note,
     },
     store::proxy,
     theme as tokens,
 };
 
-use super::{icons, proxy::back_to_rules};
+use super::proxy::back_to_rules;
 
 pub(crate) fn authority_page() -> impl IntoElement {
     view()
@@ -41,67 +41,43 @@ pub(crate) fn authority_page() -> impl IntoElement {
 }
 
 fn header() -> impl IntoElement {
-    view()
-        .test_id("ca-header")
-        .h(px(52.0))
-        .flex_none()
-        .flex_row()
-        .items_center()
-        .gap(tokens::space(2.0))
-        .px(tokens::space(5.0))
-        .border_b_1()
-        .border_color(tokens::hairline)
-        .window_drag(true)
-        .child(ui::action_button(
-            "← HTTPS Proxy",
-            Tone::Default,
-            "ca-back",
-            false,
-            back_to_rules,
-        ))
-        .child(
-            icons::shield()
-                .size(px(16.0))
-                .flex_none()
-                .text_color(move || theme().muted_foreground),
-        )
-        .child(
+    ui::page_header_with_leading(
+        Some(
             view()
-                .flex_col()
-                .gap(tokens::space(0.5))
-                .flex_1()
-                .min_w(px(0.0))
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(2.0))
+                .child(ui::action_button(
+                    "← HTTPS Proxy",
+                    Tone::Default,
+                    "ca-back",
+                    false,
+                    back_to_rules,
+                ))
                 .child(
-                    text("Local certificates")
-                        .text_size(px(15.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().foreground),
-                )
-                .child(
-                    text("The authority the HTTPS proxy signs with")
-                        .text_size(px(tokens::TEXT_CAPTION))
+                    icons::shield()
+                        .size(px(16.0))
+                        .flex_none()
                         .text_color(move || theme().muted_foreground),
                 ),
-        )
-        .child(ui::action_button(
+        ),
+        "Local certificates",
+        Some("The authority the HTTPS proxy signs with"),
+        Some(ui::action_button(
             "Refresh certificate status",
             Tone::Default,
             "ca-refresh",
             proxy::busy,
             proxy::refresh_authority,
-        ))
+        )),
+    )
+    .test_id("ca-header")
 }
 
 fn notes() -> impl IntoElement {
-    view()
-        .flex_col()
-        .flex_none()
-        .child(dynamic(move || {
-            proxy::action_error().map(|message| note(app_icons::warn(), message, true))
-        }))
-        .child(dynamic(move || {
-            proxy::notice().map(|message| note(icons::check(), message, false))
-        }))
+    view().flex_col().flex_none().child(dynamic(move || {
+        proxy::action_error().map(|message| note(icons::warn(), message, true))
+    }))
 }
 
 fn cards() -> impl IntoElement {

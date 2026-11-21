@@ -75,7 +75,7 @@ fn meta(kind: SoftwareKind) -> String {
     text
 }
 
-/// The read error, an operation's error, and a short notice.
+/// The read error and an operation's error.
 fn notes() -> impl IntoElement {
     view()
         .flex_col()
@@ -85,9 +85,6 @@ fn notes() -> impl IntoElement {
         }))
         .child(dynamic(move || {
             sw::action_error().map(|message| note(icons::warn(), message, true))
-        }))
-        .child(dynamic(move || {
-            sw::notice().map(|message| note(icons::check(), message, false))
         }))
 }
 

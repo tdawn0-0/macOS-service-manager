@@ -249,6 +249,10 @@ pub fn use_fake_provider() {
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
 }
 
+pub(crate) fn is_fake_mode() -> bool {
+    FAKE_MODE.load(Ordering::Relaxed)
+}
+
 /// Gives the surface a provider of the test's own. Tests only.
 pub fn install_provider(provider: Arc<dyn Provider>) {
     FAKE_MODE.store(true, Ordering::Relaxed);
@@ -327,7 +331,6 @@ struct PreviewSlot {
 #[derive(Debug, Clone, Default)]
 struct Feedback {
     action_error: Option<String>,
-    notice: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -399,10 +402,9 @@ fn clear_preview() {
 }
 
 fn clear_feedback() {
-    if feedback().with_untracked(|fb| fb.action_error.is_some() || fb.notice.is_some()) {
+    if feedback().with_untracked(|fb| fb.action_error.is_some()) {
         feedback().update(|fb| {
             fb.action_error = None;
-            fb.notice = None;
         });
     }
 }
@@ -862,29 +864,20 @@ pub(crate) fn action_error() -> Option<String> {
     feedback().with(|fb| fb.action_error.clone())
 }
 
-pub(crate) fn notice() -> Option<String> {
-    feedback().with(|fb| fb.notice.clone())
-}
-
 fn set_action_error(message: String) {
     feedback().update(|fb| {
         fb.action_error = Some(message);
-        fb.notice = None;
     });
 }
 
 fn show_notice(message: String) {
-    feedback().update(|fb| {
-        fb.notice = Some(message.clone());
-        fb.action_error = None;
-    });
-    later(Duration::from_secs(3), move || {
-        feedback().update(|fb| {
-            if fb.notice.as_deref() == Some(message.as_str()) {
-                fb.notice = None;
-            }
-        });
-    });
+    clear_feedback();
+    crate::toast::success(message);
+}
+
+fn show_info_notice(message: impl Into<String>) {
+    clear_feedback();
+    crate::toast::info(message);
 }
 
 /// Installs the previewed version after the review found it compatible.
@@ -941,10 +934,24 @@ fn perform_install(provider: Arc<dyn Provider>, package: Package, title: String,
         match &answer {
             Ok(()) => {
                 clear_preview();
+                crate::notify_task(
+                    &format!("software-install-{install_id}"),
+                    &format!("Installed {title} {version}"),
+                    &message,
+                    crate::store::Section::Development,
+                    false,
+                );
                 show_notice(message);
                 refresh();
             }
             Err(error) => {
+                crate::notify_task(
+                    &format!("software-install-{install_id}"),
+                    &format!("Install failed: {title} {version}"),
+                    error,
+                    crate::store::Section::Development,
+                    true,
+                );
                 set_action_error(error.clone());
             }
         }
@@ -1021,11 +1028,26 @@ fn perform_uninstall(package: Package) {
         match &answer {
             Ok(()) => {
                 clear_preview();
+                crate::notify_task(
+                    &format!("software-uninstall-{remove_id}"),
+                    &format!("Removed {label}"),
+                    &message,
+                    crate::store::Section::Development,
+                    false,
+                );
                 show_notice(message);
                 refresh();
             }
             Err(error) => {
-                set_action_error(format!("{label}: {error}"));
+                let err_message = format!("{label}: {error}");
+                crate::notify_task(
+                    &format!("software-uninstall-{remove_id}"),
+                    &format!("Remove failed: {label}"),
+                    &err_message,
+                    crate::store::Section::Development,
+                    true,
+                );
+                set_action_error(err_message);
             }
         }
     });
@@ -1131,11 +1153,26 @@ pub(crate) fn repair(id: &str) {
         match repaired {
             Ok(()) => {
                 clear_preview();
+                crate::notify_task(
+                    &format!("software-repair-{repair_id}"),
+                    &format!("Repaired {label}"),
+                    "Restored the same exact version.",
+                    crate::store::Section::Development,
+                    false,
+                );
                 show_notice("Restored the same exact version.".to_string());
                 refresh();
             }
             Err(error) => {
-                set_action_error(format!("{label}: Repair did not complete: {error}"));
+                let err_message = format!("{label}: Repair did not complete: {error}");
+                crate::notify_task(
+                    &format!("software-repair-{repair_id}"),
+                    &format!("Repair failed: {label}"),
+                    &err_message,
+                    crate::store::Section::Development,
+                    true,
+                );
+                set_action_error(err_message);
             }
         }
     });
@@ -1213,7 +1250,7 @@ fn perform_clear_cache() {
 /// Copies a value and says so for a moment.
 pub(crate) fn copy(value: &str) {
     set_clipboard(value.to_string());
-    show_notice("Copied".to_string());
+    show_info_notice("Copied");
 }
 
 // --- Formatting --------------------------------------------------------------

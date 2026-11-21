@@ -9,12 +9,10 @@ use nsh_core::{
 };
 
 use crate::{
-    components::icons as app_icons,
+    components::{controls as ui, icons},
     store::{self, Section, databases as db},
     theme as tokens,
 };
-
-use super::icons;
 
 pub(crate) fn rail() -> impl IntoElement {
     view()
@@ -24,30 +22,12 @@ pub(crate) fn rail() -> impl IntoElement {
         .bg(move || theme().background)
         .border_r_1()
         .border_color(tokens::hairline)
-        .child(
-            view()
-                .h(px(52.0))
-                .flex_none()
-                .flex_col()
-                .justify_center()
-                .gap(tokens::space(0.5))
-                .px(tokens::space(5.0))
-                .border_b_1()
-                .border_color(tokens::hairline)
-                .window_drag(true)
-                .child(
-                    text("Databases")
-                        .text_size(px(15.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().foreground),
-                )
-                .child(
-                    text(Section::Databases.summary())
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground)
-                        .truncate(),
-                ),
-        )
+        .child(ui::page_header_with_leading(
+            None::<AnyElement>,
+            "Databases",
+            Some(Section::Databases.summary()),
+            None::<AnyElement>,
+        ))
         .child(
             view()
                 .flex_1()
@@ -314,7 +294,7 @@ fn nav_row(
         .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
         .on_press(on_press)
         .child(
-            app_icons::external()
+            icons::external()
                 .size(px(13.0))
                 .flex_none()
                 .text_color(move || {

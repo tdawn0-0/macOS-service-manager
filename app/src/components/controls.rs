@@ -3,7 +3,10 @@
 //! fields, and notes.
 
 use nsh_base::theme;
-use nsh_core::{element::Svg, prelude::*};
+use nsh_core::{
+    element::{Svg, View},
+    prelude::*,
+};
 
 use crate::theme as tokens;
 
@@ -140,7 +143,7 @@ pub(crate) fn page_header(
     title: impl IntoReactive<SharedString>,
     subtitle: Option<impl IntoReactive<SharedString>>,
     trailing: impl IntoElement,
-) -> impl IntoElement {
+) -> View {
     page_header_with_leading(None::<AnyElement>, title, subtitle, Some(trailing))
 }
 
@@ -151,7 +154,7 @@ pub(crate) fn page_header_with_leading(
     title: impl IntoReactive<SharedString>,
     subtitle: Option<impl IntoReactive<SharedString>>,
     trailing: Option<impl IntoElement>,
-) -> impl IntoElement {
+) -> View {
     view()
         .h(px(tokens::TITLE_BAR_HEIGHT))
         .flex_none()

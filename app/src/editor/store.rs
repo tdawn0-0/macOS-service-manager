@@ -1045,9 +1045,10 @@ pub fn save() {
             }
         };
         if changes.is_empty() {
+            let message = format!("{} has no changes to save", spec.label);
             s.open.set(false);
-            s.notice
-                .set(Some(format!("{} has no changes to save", spec.label)));
+            s.notice.set(Some(message.clone()));
+            crate::toast::info(message);
             return;
         }
 

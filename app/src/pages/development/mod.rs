@@ -87,7 +87,7 @@ fn header() -> impl IntoElement {
     )
 }
 
-/// The read error, an action's error and a short notice.
+/// The read error and an action's error.
 fn notes() -> impl IntoElement {
     view()
         .flex_col()
@@ -97,9 +97,6 @@ fn notes() -> impl IntoElement {
         }))
         .child(dynamic(move || {
             dev::action_error().map(|message| note(icons::warn(), message, true))
-        }))
-        .child(dynamic(move || {
-            dev::notice().map(|message| note(icons::check(), message, false))
         }))
 }
 

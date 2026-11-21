@@ -543,6 +543,10 @@ pub fn use_fake_provider() {
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
 }
 
+pub(crate) fn is_fake_mode() -> bool {
+    FAKE_MODE.load(Ordering::Relaxed)
+}
+
 /// Gives the surface a provider of the test's own. Tests only.
 pub fn install_provider(provider: Arc<dyn Provider>) {
     FAKE_MODE.store(true, Ordering::Relaxed);
@@ -777,7 +781,6 @@ struct Workspace {
     profile: ProfileState,
     connection_details: Option<String>,
     action_error: Option<String>,
-    notice: Option<String>,
     sequence: u64,
 }
 
@@ -812,23 +815,21 @@ fn next_sequence() -> u64 {
 fn ctrl_error(message: String) {
     workspace().update(|state| {
         state.action_error = Some(message);
-        state.notice = None;
     });
 }
 
 fn show_notice(message: impl Into<String>) {
-    let message = message.into();
     workspace().update(|state| {
-        state.notice = Some(message.clone());
         state.action_error = None;
     });
-    later(Duration::from_secs(3), move || {
-        workspace().update(|state| {
-            if state.notice.as_deref() == Some(message.as_str()) {
-                state.notice = None;
-            }
-        });
+    crate::toast::success(message);
+}
+
+fn show_info_notice(message: impl Into<String>) {
+    workspace().update(|state| {
+        state.action_error = None;
     });
+    crate::toast::info(message);
 }
 
 /// Task progress text, queued by the operation's thread and applied on the
@@ -995,10 +996,6 @@ pub(crate) fn action_error() -> Option<String> {
     workspace().with(|state| state.action_error.clone())
 }
 
-pub(crate) fn notice() -> Option<String> {
-    workspace().with(|state| state.notice.clone())
-}
-
 pub(crate) fn mode() -> Mode {
     workspace().with(|state| state.mode)
 }
@@ -1131,7 +1128,6 @@ fn show_instance(id: &str) {
         state.selected = Some(id.to_string());
         state.preview = None;
         state.action_error = None;
-        state.notice = None;
         state.connection_details = None;
     });
     load_profile_for(id);
@@ -1169,7 +1165,6 @@ fn show_new() {
         state.selected = None;
         state.preview = None;
         state.action_error = None;
-        state.notice = None;
         state.profile = ProfileState::default();
         state.port = PortState::default();
         state.connection_details = None;
@@ -1344,9 +1339,6 @@ pub(crate) fn find_free_port() {
                     state.port.suggestion = Some(port);
                     suggested = Some(port);
                     state.action_error = None;
-                    state.notice = Some(format!(
-                        "Suggested port: {port}. An unchanged form is filled automatically. Review, save and retry; this does not reserve the port."
-                    ));
                 }
                 Err(error) => state.port.error = Some(error),
             }
@@ -1355,6 +1347,9 @@ pub(crate) fn find_free_port() {
             let d = drafts();
             d.draft_port.set(port.to_string());
             d.draft_auto_port.set(true);
+            show_info_notice(format!(
+                "Suggested port: {port}. An unchanged form is filled automatically. Review, save and retry; this does not reserve the port."
+            ));
         }
     });
 }
@@ -1539,7 +1534,6 @@ fn start_task(id: &str, kind: &str, progress: String) {
             },
         );
         state.action_error = None;
-        state.notice = None;
     });
     pump_progress();
 }
@@ -1561,6 +1555,38 @@ fn task_label(kind: &str) -> &'static str {
 }
 
 fn finish_task(id: &str, kind: &str, answer: Result<String, String>) {
+    let notification = if matches!(kind, "initialize" | "backup" | "restore" | "upgrade") {
+        let (title, body, failed) = match &answer {
+            Ok(msg) => {
+                let title = match kind {
+                    "initialize" => format!("Database {id} created"),
+                    "backup" => format!("Backup completed for {id}"),
+                    "restore" => format!("Restore completed for {id}"),
+                    "upgrade" => format!("Database {id} upgraded"),
+                    _ => format!("Database task completed for {id}"),
+                };
+                let body = if msg.is_empty() {
+                    title.clone()
+                } else {
+                    msg.clone()
+                };
+                (title, body, false)
+            }
+            Err(error) => {
+                let title = match kind {
+                    "initialize" => format!("Database {id} creation failed"),
+                    "backup" => format!("Backup failed for {id}"),
+                    "restore" => format!("Restore failed for {id}"),
+                    "upgrade" => format!("Upgrade failed for {id}"),
+                    _ => format!("Database task failed for {id}"),
+                };
+                (title, error.clone(), true)
+            }
+        };
+        Some((format!("database-{kind}-{id}"), title, body, failed))
+    } else {
+        None
+    };
     workspace().update(|state| {
         let Some(task) = state.tasks.get_mut(id) else {
             return;
@@ -1575,7 +1601,15 @@ fn finish_task(id: &str, kind: &str, answer: Result<String, String>) {
             ),
         });
     });
-    let _ = kind;
+    if let Some((notif_id, title, body, failed)) = notification {
+        crate::notify_task(
+            &notif_id,
+            &title,
+            &body,
+            crate::store::Section::Databases,
+            failed,
+        );
+    }
 }
 
 /// Cancels the running operation of an instance, as the Go task's context
@@ -2237,7 +2271,6 @@ pub(crate) fn request_delete_backup(id: &str, row: BackupFile) {
         workspace().update(|state| {
             state.aux_busy.insert(key.clone());
             state.action_error = None;
-            state.notice = None;
         });
         let request = id_owned.clone();
         let file = name.clone();
@@ -2250,21 +2283,22 @@ pub(crate) fn request_delete_backup(id: &str, row: BackupFile) {
             Ok(answer) => answer,
             Err(error) => Err(format!("the delete did not finish: {error}")),
         };
+        let succeeded = answer.is_ok();
         workspace().update(|state| {
             state.aux_busy.remove(&key);
             match answer {
                 Ok(()) => {
                     state.action_error = None;
-                    state.notice = Some("Deleted backup".to_string());
                 }
                 Err(error) => {
                     state.action_error = Some(error);
-                    state.notice = None;
                 }
             }
         });
         refresh_backups(&id_owned);
-        show_notice("Deleted backup");
+        if succeeded {
+            show_notice("Deleted backup");
+        }
     });
 }
 
@@ -2650,7 +2684,7 @@ pub(crate) fn copy_uri(id: &str) {
         match answer {
             Ok(info) => {
                 set_clipboard(info.uri);
-                show_notice("Connection URI copied");
+                show_info_notice("Connection URI copied");
             }
             Err(error) => ctrl_error(error),
         }
@@ -2683,7 +2717,7 @@ pub(crate) fn copy_env(id: &str) {
                     _ => info,
                 };
                 set_clipboard(info.env_assignment_for_kind(&kind));
-                show_notice(".env connection copied");
+                show_info_notice(".env connection copied");
             }
             Err(error) => ctrl_error(error),
         }
@@ -2718,7 +2752,7 @@ pub(crate) fn copy_jdbc(id: &str) {
         match answer {
             Ok(jdbc) => {
                 set_clipboard(jdbc);
-                show_notice("JDBC URL copied");
+                show_info_notice("JDBC URL copied");
             }
             Err(error) => ctrl_error(error),
         }
@@ -2740,7 +2774,7 @@ pub(crate) fn copy_password(id: &str) {
         match answer {
             Ok(password) => {
                 set_clipboard(password);
-                show_notice("Database password copied");
+                show_info_notice("Database password copied");
             }
             Err(error) => ctrl_error(error),
         }
@@ -2763,7 +2797,7 @@ pub(crate) fn open_client(id: &str) {
             };
         let answer = answer.and_then(|info| provider.open_client(&info.uri));
         match answer {
-            Ok(()) => show_notice("Opening the default client"),
+            Ok(()) => show_info_notice("Opening the default client"),
             Err(error) => ctrl_error(error),
         }
     });
@@ -2792,7 +2826,7 @@ pub(crate) fn open_cli(id: &str) {
             Err(error) => Err(format!("the Terminal launch did not finish: {error}")),
         };
         match answer {
-            Ok(()) => show_notice("Opening CLI in Terminal"),
+            Ok(()) => show_info_notice("Opening CLI in Terminal"),
             Err(error) => ctrl_error(error),
         }
     });
@@ -2930,7 +2964,6 @@ pub(crate) fn open_deletion_preview(id: &str) {
             sequence: state.sequence,
         });
         state.action_error = None;
-        state.notice = None;
     });
     refresh_deletion_preview();
 }
@@ -3108,7 +3141,6 @@ pub(crate) fn open_deletions() {
         state.mode = Mode::Deletions;
         state.preview = None;
         state.action_error = None;
-        state.notice = None;
     });
     load_pending_deletions();
 }
@@ -3236,7 +3268,6 @@ pub(crate) fn open_initializations() {
         state.mode = Mode::Initializations;
         state.preview = None;
         state.action_error = None;
-        state.notice = None;
     });
     load_initializations();
 }
@@ -3327,7 +3358,6 @@ pub(crate) fn open_work() {
         state.mode = Mode::Work;
         state.preview = None;
         state.action_error = None;
-        state.notice = None;
     });
     load_work();
 }

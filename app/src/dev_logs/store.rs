@@ -420,8 +420,12 @@ fn later(delay: Duration, f: impl FnOnce() + 'static) {
 }
 
 fn set_transient_notice(message: impl Into<String>) {
-    let s = store();
     let msg = message.into();
+    if crate::toast::is_mounted() {
+        crate::toast::info(msg);
+        return;
+    }
+    let s = store();
     let seq = {
         let mut coord = s.coord.borrow_mut();
         coord.notice_sequence += 1;
@@ -732,7 +736,11 @@ pub fn open_in_console() {
             Err(error) => Err(format!("open in Console failed: {error}")),
         };
         if let Err(error) = result {
-            set_transient_notice(error);
+            if crate::toast::is_mounted() {
+                crate::toast::error(error);
+            } else {
+                set_transient_notice(error);
+            }
         }
     });
 }

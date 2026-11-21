@@ -5,6 +5,7 @@
 
 mod components;
 pub mod dev_logs;
+pub mod editor;
 mod guide;
 pub mod launch;
 mod logs;
@@ -25,6 +26,17 @@ pub mod testing {
         LogRead as DevLogsRead, LogSnapshot as DevLogsSnapshot, Stream as DevLogsStream,
         Target as DevLogsTarget, drawer as dev_logs_drawer,
         install_provider as install_dev_logs_provider, use_fake_provider as use_fake_dev_logs,
+    };
+    pub use crate::editor::{
+        CommandMode as EditorCommandMode, EditorProvider, RestartPolicy as EditorRestartPolicy,
+        SaveResult as EditorSaveResult, SavedEvent as EditorSavedEvent,
+        ScheduleMode as EditorScheduleMode, clear_saved_callbacks as clear_editor_saved_callbacks,
+        close as editor_close, editor_panel, editor_window,
+        install_provider as install_editor_provider, is_open as editor_is_open,
+        last_saved as editor_last_saved, notice as editor_notice, on_saved as editor_on_saved,
+        open_edit as editor_open_edit, open_edit_with_apply as editor_open_edit_with_apply,
+        open_new as editor_open_new, revision as editor_revision,
+        use_fake_provider as use_fake_editor,
     };
     pub use crate::guide::{
         Access as GuideAccess, Page as GuidePage, Persistence as GuidePersistence,

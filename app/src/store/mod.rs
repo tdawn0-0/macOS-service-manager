@@ -24,15 +24,7 @@ impl SectionGroup {
     /// Sidebar groups in display order.
     pub(crate) const ALL: [SectionGroup; 2] = [SectionGroup::Workspace, SectionGroup::System];
 
-    /// Subtle uppercase heading shown above the group's items in the sidebar.
-    pub(crate) fn heading(self) -> &'static str {
-        match self {
-            SectionGroup::Workspace => "WORKSPACE",
-            SectionGroup::System => "SYSTEM",
-        }
-    }
-
-    /// Stable `test_id` for the group heading in the sidebar.
+    /// Stable `test_id` for the group container in the sidebar.
     pub(crate) fn test_id(self) -> &'static str {
         match self {
             SectionGroup::Workspace => "sidebar-group-workspace",
@@ -105,16 +97,11 @@ impl Section {
         }
     }
 
-    /// One line saying what the section is for.
+    /// Kept empty so top-level page headers stay clean single-row toolbars
+    /// without subtitle taglines.
+    #[allow(dead_code)]
     pub(crate) fn summary(self) -> &'static str {
-        match self {
-            Section::Development => "Runtimes and software the development workspace manages.",
-            Section::Databases => "Database instances, ports, connection profiles and backups.",
-            Section::HttpsProxy => "Local HTTPS rules, the local CA and the Cloudflare tunnel.",
-            Section::Services => "launchd jobs, their status and lifecycle controls.",
-            Section::Diagnostics => "Environment checks, listening ports, logs and operations.",
-            Section::Settings => "Helper installation, CLI, login items and workspace preferences.",
-        }
+        ""
     }
 }
 

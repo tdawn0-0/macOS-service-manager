@@ -242,22 +242,16 @@ pub(crate) fn sidebar() -> impl IntoElement {
                 .px(tokens::space(2.0))
                 .pt(move || {
                     if title_bar().top.0 > 0.0 {
-                        px(4.0)
+                        px(2.0)
                     } else {
                         tokens::space(3.0)
                     }
                 })
-                .pb(tokens::space(3.0))
+                .pb(tokens::space(2.5))
                 .child(identity())
-                .child(
-                    view()
-                        .flex_col()
-                        .gap(tokens::space(3.0))
-                        .child(SectionGroup::ALL.iter().map(|group| nav_group(*group))),
-                )
+                .child(nav_sections())
                 .child(view().flex_1().window_drag(true))
-                .child(logs_toggle())
-                .child(footer()),
+                .child(logs_toggle()),
         )
 }
 
@@ -272,41 +266,46 @@ fn title_bar_strip() -> impl IntoElement {
         .window_drag(true)
 }
 
-/// The app's name and what it is, above the sections.
+/// Clean app identity above the navigation list.
 fn identity() -> impl IntoElement {
     view()
-        .flex_col()
-        .gap(tokens::space(0.5))
-        .px(tokens::space(3.0))
-        .pb(tokens::space(4.0))
+        .px(tokens::space(2.5))
+        .pb(tokens::space(3.0))
         .window_drag(true)
         .child(
             text(meta::NAME)
-                .text_base()
+                .text_size(px(15.0))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(move || theme().foreground),
         )
-        .child(
-            text("macOS developer services")
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground),
-        )
 }
 
-/// One semantic group of navigation items with a subtle uppercase heading.
+/// Primary Workspace sections and secondary System sections, separated by a
+/// quiet 12pt spacer and subtle 1px hairline divider.
+fn nav_sections() -> impl IntoElement {
+    let mut stack = view().flex_col();
+    for (index, group) in SectionGroup::ALL.iter().copied().enumerate() {
+        if index > 0 {
+            stack = stack.child(
+                view()
+                    .test_id("sidebar-group-divider")
+                    .w_full()
+                    .py(px(6.0))
+                    .px(tokens::space(2.5))
+                    .child(view().h(px(1.0)).w_full().bg(tokens::hairline)),
+            );
+        }
+        stack = stack.child(nav_group(group));
+    }
+    stack
+}
+
+/// One semantic group of navigation items.
 fn nav_group(group: SectionGroup) -> impl IntoElement {
     view()
+        .test_id(group.test_id())
         .flex_col()
         .gap(tokens::space(0.5))
-        .child(
-            text(group.heading())
-                .test_id(group.test_id())
-                .px(tokens::space(2.5))
-                .pb(tokens::space(0.5))
-                .text_size(px(10.0))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(move || theme().muted_foreground.opacity(0.8)),
-        )
         .child(group.sections().iter().map(|section| nav_item(*section)))
 }
 
@@ -411,49 +410,13 @@ fn logs_toggle() -> impl IntoElement {
                 .text_color(move || theme().sidebar_foreground)
                 .truncate(),
         )
-        .child(
+        .child(when(crate::dev_logs::is_open, || {
             view()
+                .test_id("sidebar-logs-active-dot")
+                .w(px(6.0))
+                .h(px(6.0))
                 .flex_none()
-                .flex_row()
-                .items_center()
-                .gap(px(5.0))
-                .child(when(crate::dev_logs::is_open, || {
-                    view()
-                        .test_id("sidebar-logs-active-dot")
-                        .w(px(6.0))
-                        .h(px(6.0))
-                        .flex_none()
-                        .rounded_full()
-                        .bg(move || theme().sidebar_primary)
-                }))
-                .child(
-                    text("⌘L")
-                        .text_size(px(10.0))
-                        .text_color(move || theme().muted_foreground),
-                ),
-        )
-}
-
-/// The build's identity, at the bottom of the rail.
-fn footer() -> impl IntoElement {
-    view()
-        .flex_col()
-        .gap(tokens::space(0.5))
-        .px(tokens::space(3.0))
-        .pt(tokens::space(4.0))
-        .child(
-            text(format!("Version {}", meta::VERSION))
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground),
-        )
-        .child(
-            text(meta::IDENTIFIER)
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground),
-        )
-        .child(
-            text(format!("macOS {}+", meta::MINIMUM_MACOS))
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground),
-        )
+                .rounded_full()
+                .bg(move || theme().sidebar_primary)
+        }))
 }

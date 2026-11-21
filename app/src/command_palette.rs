@@ -322,20 +322,11 @@ fn render_command_entry(entry: &CommandEntry) -> AnyElement {
         )
         .child(when(shortcut.is_some(), move || {
             let hint = shortcut.clone().unwrap_or_default();
-            view()
+            text(hint)
                 .flex_none()
-                .px(px(5.0))
-                .py(px(1.0))
-                .rounded(px(4.0))
-                .bg(tokens::inset)
-                .border_1()
-                .border_color(tokens::hairline)
-                .child(
-                    text(hint)
-                        .text_size(px(10.0))
-                        .tabular_nums()
-                        .text_color(move || theme().muted_foreground),
-                )
+                .text_size(px(tokens::TEXT_CAPTION))
+                .tabular_nums()
+                .text_color(move || theme().muted_foreground)
         }))
         .into_element()
 }
@@ -343,7 +334,7 @@ fn render_command_entry(entry: &CommandEntry) -> AnyElement {
 fn palette_card() -> impl IntoElement {
     view()
         .test_id("command-palette")
-        .w(px(560.0))
+        .w(px(540.0))
         .flex_col()
         .rounded(tokens::panel_radius)
         .bg(tokens::panel)
@@ -354,7 +345,7 @@ fn palette_card() -> impl IntoElement {
         .child(
             command()
                 .items(build_items)
-                .placeholder("Type a command or search…")
+                .placeholder("Type a command…")
                 .auto_focus(true)
                 .separator(true)
                 .accessibility_label("Command Palette")
@@ -364,21 +355,6 @@ fn palette_card() -> impl IntoElement {
                         .size(px(14.0))
                         .flex_none()
                         .text_color(move || theme().muted_foreground),
-                )
-                .search_suffix(
-                    view()
-                        .flex_none()
-                        .px(px(5.0))
-                        .py(px(1.5))
-                        .rounded(px(4.0))
-                        .bg(tokens::inset)
-                        .border_1()
-                        .border_color(tokens::hairline)
-                        .child(
-                            text("ESC")
-                                .text_size(px(10.0))
-                                .text_color(move || theme().muted_foreground),
-                        ),
                 )
                 .search_bar_style(|s| {
                     s.w_full()
@@ -427,31 +403,8 @@ fn palette_card() -> impl IntoElement {
                         .items_center()
                         .justify_center()
                         .child(
-                            text("No matching commands.")
+                            text("No matching commands")
                                 .text_size(px(tokens::TEXT_SMALL))
-                                .text_color(move || theme().muted_foreground),
-                        ),
-                )
-                .footer(
-                    view()
-                        .w_full()
-                        .flex_row()
-                        .items_center()
-                        .justify_between()
-                        .px(tokens::space(3.5))
-                        .py(tokens::space(2.0))
-                        .border_t_1()
-                        .border_color(tokens::hairline)
-                        .bg(tokens::inset)
-                        .child(
-                            text("↑↓ Navigate · ↵ Run · Esc Close")
-                                .text_size(px(tokens::TEXT_CAPTION))
-                                .text_color(move || theme().muted_foreground),
-                        )
-                        .child(
-                            text("⌘K")
-                                .text_size(px(tokens::TEXT_CAPTION))
-                                .tabular_nums()
                                 .text_color(move || theme().muted_foreground),
                         ),
                 )

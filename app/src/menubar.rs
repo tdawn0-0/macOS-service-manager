@@ -59,9 +59,9 @@ use crate::{
     theme as tokens,
 };
 
-/// The popover's width and height bounds in points (matching `menubar.go`).
+/// The popover's width and height bounds in points.
 const POPOVER_WIDTH: f32 = 340.0;
-const POPOVER_MIN_HEIGHT: f32 = 240.0;
+const POPOVER_MIN_HEIGHT: f32 = 200.0;
 const POPOVER_MAX_HEIGHT: f32 = 560.0;
 const POPOVER_MARGIN: f32 = 8.0;
 
@@ -1291,13 +1291,12 @@ fn estimated_popover_height(panel: &Panel) -> f32 {
     } else {
         0.0
     };
-    let height = 164.0
+    let height = 132.0
         + (instance_count as f32 * 44.0)
         + if has_tunnel { 96.0 } else { 52.0 }
         + rules_height
         + brew_height
-        + agent_height
-        + 76.0;
+        + agent_height;
     height.clamp(POPOVER_MIN_HEIGHT, POPOVER_MAX_HEIGHT)
 }
 
@@ -1609,12 +1608,6 @@ fn popover_header() -> impl IntoElement {
                 .tooltip(controls::tooltip(format!(
                     "Toggle panel ({GLOBAL_SHORTCUT_LABEL})"
                 )))
-                .px(px(5.0))
-                .py(px(2.0))
-                .rounded(px(4.0))
-                .bg(tokens::inset)
-                .border_1()
-                .border_color(tokens::hairline)
                 .child(
                     text(GLOBAL_SHORTCUT_LABEL)
                         .test_id("popover-shortcut-hint")
@@ -1637,19 +1630,9 @@ fn popover_no_instances_row() -> impl IntoElement {
         .hover(|s| s.bg(tokens::row_hover()))
         .on_press(|| dispatch(Action::OpenNewInstance))
         .child(
-            view()
-                .flex_col()
-                .gap(px(1.0))
-                .child(
-                    text("No instances")
-                        .text_size(px(tokens::TEXT_BODY))
-                        .text_color(move || theme().foreground),
-                )
-                .child(
-                    text("New database instance")
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground),
-                ),
+            text("New database instance")
+                .text_size(px(tokens::TEXT_SMALL))
+                .text_color(move || theme().muted_foreground),
         )
         .child(
             icons::plus()
@@ -2376,59 +2359,6 @@ fn collapsible_service_section(source: Source, section_key: &'static str) -> imp
         )))
 }
 
-fn popover_status_row(
-    label: &'static str,
-    value: impl IntoReactive<String> + 'static,
-) -> impl IntoElement {
-    let value = value.into_reactive();
-    view()
-        .w_full()
-        .flex_row()
-        .items_center()
-        .justify_between()
-        .gap(px(8.0))
-        .child(
-            text(label)
-                .flex_none()
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground),
-        )
-        .child(
-            text(move || value.get())
-                .min_w(px(0.0))
-                .text_size(px(tokens::TEXT_CAPTION))
-                .tabular_nums()
-                .text_color(move || theme().foreground)
-                .truncate(),
-        )
-}
-
-fn popover_status_box() -> impl IntoElement {
-    view()
-        .w_full()
-        .flex_col()
-        .gap(px(3.0))
-        .mt(px(6.0))
-        .px(px(8.0))
-        .py(px(6.0))
-        .rounded(move || theme().radius)
-        .bg(tokens::inset)
-        .child(popover_status_row("Workspace", move || {
-            let root = system::workspace_root();
-            if root.is_empty() {
-                "Unknown".to_string()
-            } else {
-                root
-            }
-        }))
-        .child(popover_status_row("Proxy port", move || {
-            format!(":{}", proxy::listener_port())
-        }))
-        .child(popover_status_row("Helper", move || {
-            helper_label(&system::helper_status())
-        }))
-}
-
 fn popover_body() -> impl IntoElement {
     view()
         .w_full()
@@ -2462,7 +2392,6 @@ fn popover_body() -> impl IntoElement {
             move || !loaded_services_for(Source::UserAgent).is_empty(),
             || collapsible_service_section(Source::UserAgent, "user-agent"),
         ))
-        .child(popover_status_box())
 }
 
 fn footer_button(

@@ -408,9 +408,12 @@ fn sample_service(id: &str, source: Source, name: &str, state: ServiceState) -> 
 fn sidebar_lists_the_six_sections() {
     let (_turn, app) = start();
     assert_eq!(app.screen().count("id:sidebar-group-workspace").unwrap(), 1);
+    assert_eq!(app.screen().count("id:sidebar-group-divider").unwrap(), 1);
     assert_eq!(app.screen().count("id:sidebar-group-system").unwrap(), 1);
-    assert!(app.screen().shows("WORKSPACE"));
-    assert!(app.screen().shows("SYSTEM"));
+    assert!(!app.screen().shows("WORKSPACE"));
+    assert!(!app.screen().shows("SYSTEM"));
+    assert!(!app.screen().shows("macOS developer services"));
+    assert!(!app.screen().shows("xyz.jyeu.devbase"));
     assert_eq!(app.screen().count("id:readiness-bar").unwrap(), 0);
     for section in [
         "Development",
@@ -431,20 +434,15 @@ fn sidebar_lists_the_six_sections() {
 fn choosing_a_section_switches_the_workspace() {
     let (_turn, mut app) = start();
     app.wait_for("id:development").unwrap();
-    app.wait_for("Runtimes and software the development workspace manages.")
-        .unwrap();
 
     app.press("role:button[Databases]").unwrap();
-    app.wait_for("Database instances, ports, connection profiles and backups.")
-        .unwrap();
+    app.wait_for("id:db-new").unwrap();
 
     app.press("role:button[Settings]").unwrap();
-    app.wait_for("Helper installation, CLI, login items and workspace preferences.")
-        .unwrap();
+    app.wait_for("id:settings-page").unwrap();
 
     app.press("role:button[Services]").unwrap();
-    app.wait_for("launchd jobs, their status and lifecycle controls.")
-        .unwrap();
+    app.wait_for("Homebrew").unwrap();
 
     app.press("role:button[Development]").unwrap();
     app.wait_for("id:development").unwrap();
@@ -604,8 +602,7 @@ fn command_palette_opens_filters_and_executes_navigation_actions_and_db_jump() {
     app.press("id:command-item-db:analytics").unwrap();
     app.wait_for_gone("id:command-palette", Duration::from_secs(2))
         .unwrap();
-    app.wait_for("Database instances, ports, connection profiles and backups.")
-        .unwrap();
+    app.wait_for("id:db-instance-analytics").unwrap();
 
     // Re-open Command Palette and toggle the Live Log Drawer.
     app.press_key("mod+k").unwrap();
@@ -1019,27 +1016,66 @@ fn readiness_checklist_surfaces_actionable_pills_navigates_and_dismisses() {
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
 
     app.wait_for("id:readiness-bar").unwrap();
-    app.wait_for("id:readiness-pill-helper").unwrap();
     app.wait_for("id:readiness-pill-ca-trust").unwrap();
-    app.wait_for("id:readiness-pill-cli").unwrap();
-    app.wait_for("id:readiness-pill-shell").unwrap();
+    // Whisper-quiet readiness: no "Setup" header, no multi-pill clutter, and
+    // optional CLI / Shell items never nag in the top strip.
+    assert!(!app.screen().shows("Setup"));
+    assert_eq!(app.screen().count("id:readiness-pill-helper").unwrap(), 0);
+    assert_eq!(app.screen().count("id:readiness-pill-cli").unwrap(), 0);
+    assert_eq!(app.screen().count("id:readiness-pill-shell").unwrap(), 0);
 
-    // Clicking Local CA Trust navigates to HTTPS Proxy and opens Authority.
+    // Clicking Trust local CA navigates to HTTPS Proxy and opens Authority.
     app.press("id:readiness-pill-ca-trust").unwrap();
     app.wait_for("id:ca-page").unwrap();
-
-    // Clicking Privileged Helper navigates to Settings.
-    app.press("id:readiness-pill-helper").unwrap();
-    app.wait_for("id:settings-page").unwrap();
-
-    // Clicking Shell Integration navigates to Development -> Shell integration tab.
-    app.press("id:readiness-pill-shell").unwrap();
-    app.wait_for("id:shell-row-zsh").unwrap();
 
     // Dismissing hides the strip for the session.
     app.press("id:readiness-dismiss").unwrap();
     app.wait_for_gone("id:readiness-bar", Duration::from_secs(2))
         .unwrap();
+}
+
+#[test]
+fn readiness_surfaces_helper_when_ca_ready_and_ignores_optional_cli_and_shell() {
+    let _turn = serial();
+    install_all_fakes();
+
+    install_system_settings_provider(Arc::new(FakeShellSettings {
+        snapshot: SystemSettingsSnapshot {
+            helper: SystemHelperStatus {
+                installed: false,
+                message: "Not installed".to_string(),
+            },
+            cli: SystemCliStatus {
+                installed: false,
+                wrapper_path: "/usr/local/bin/devbase".to_string(),
+                ..SystemCliStatus::default()
+            },
+            workspace_root: "/tmp/devbase-tests/Development".to_string(),
+            ..SystemSettingsSnapshot::default()
+        },
+    }));
+    install_proxy_provider(Arc::new(FakeShellProxy {
+        snapshot: ProxySnapshot {
+            rules: vec![ProxyRule {
+                domain: "api.devbase.localhost".to_string(),
+                local_port: 8080,
+                ..ProxyRule::default()
+            }],
+            listener_port: 8443,
+            ..ProxySnapshot::default()
+        },
+        trust: TrustState::Trusted,
+    }));
+
+    let mut app = Headless::start(EngineConfig::new(Root::of::<ReadinessHarness>())).unwrap();
+    app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+
+    app.wait_for("id:readiness-bar").unwrap();
+    app.wait_for("id:readiness-pill-helper").unwrap();
+    assert_eq!(app.screen().count("id:readiness-pill-ca-trust").unwrap(), 0);
+
+    app.press("id:readiness-pill-helper").unwrap();
+    app.wait_for("id:settings-page").unwrap();
 }
 
 #[test]

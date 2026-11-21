@@ -35,6 +35,14 @@ pub(crate) const TEXT_CAPTION: f32 = 11.0;
 /// sit centered in this strip).
 pub(crate) const TITLE_BAR_HEIGHT: f32 = 52.0;
 
+/// Comfortable maximum width for centered Apple Notes / System Settings sheets.
+#[allow(dead_code)]
+pub(crate) const CONTENT_MAX_WIDTH: f32 = 840.0;
+
+/// Standard macOS System Settings row height in points.
+#[allow(dead_code)]
+pub(crate) const ROW_HEIGHT: f32 = 40.0;
+
 /// The Go app's spacing step, used when a theme does not set `spacing`.
 const DEFAULT_SPACING: f32 = 3.5;
 

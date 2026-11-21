@@ -138,7 +138,10 @@ fn note_tint(error: bool) -> AdaptiveColor {
 
 // --- Shared page UI kit ------------------------------------------------------
 
-/// Unified 52pt draggable page header matching macOS title bar height.
+/// Unified 52pt single-row draggable page header matching macOS title bar height.
+///
+/// Kept signature-compatible with `subtitle`; any non-empty metadata renders
+/// inline on the same calm horizontal row rather than stacking a second line.
 pub(crate) fn page_header(
     title: impl IntoReactive<SharedString>,
     subtitle: Option<impl IntoReactive<SharedString>>,
@@ -147,46 +150,67 @@ pub(crate) fn page_header(
     page_header_with_leading(None::<AnyElement>, title, subtitle, Some(trailing))
 }
 
-/// Unified 52pt draggable page header with an optional leading control
-/// (for example, a back button on nested sub-pages) and optional trailing controls.
+/// Unified 52pt single-row draggable page header with an optional leading
+/// control (for example, a back button on nested sub-pages) and optional
+/// trailing controls.
 pub(crate) fn page_header_with_leading(
     leading: Option<impl IntoElement>,
     title: impl IntoReactive<SharedString>,
     subtitle: Option<impl IntoReactive<SharedString>>,
     trailing: Option<impl IntoElement>,
 ) -> View {
+    let title_row = if let Some(sub) = subtitle {
+        view()
+            .flex_1()
+            .min_w(px(0.0))
+            .flex_row()
+            .items_center()
+            .gap(tokens::space(2.5))
+            .child(
+                text(title)
+                    .min_w(px(0.0))
+                    .text_size(px(15.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(move || theme().foreground)
+                    .truncate(),
+            )
+            .child(
+                text(sub)
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .text_size(px(tokens::TEXT_SMALL))
+                    .text_color(move || theme().muted_foreground)
+                    .tabular_nums()
+                    .truncate(),
+            )
+    } else {
+        view()
+            .flex_1()
+            .min_w(px(0.0))
+            .flex_row()
+            .items_center()
+            .child(
+                text(title)
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .text_size(px(15.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(move || theme().foreground)
+                    .truncate(),
+            )
+    };
     view()
         .h(px(tokens::TITLE_BAR_HEIGHT))
         .flex_none()
         .flex_row()
         .items_center()
-        .gap(tokens::space(2.0))
+        .gap(tokens::space(2.5))
         .px(tokens::space(5.0))
         .border_b_1()
         .border_color(tokens::hairline)
         .window_drag(true)
         .children(leading)
-        .child(
-            view()
-                .flex_col()
-                .gap(tokens::space(0.5))
-                .flex_1()
-                .min_w(px(0.0))
-                .child(
-                    text(title)
-                        .text_size(px(15.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().foreground)
-                        .truncate(),
-                )
-                .children(subtitle.map(|sub| {
-                    text(sub)
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground)
-                        .tabular_nums()
-                        .truncate()
-                })),
-        )
+        .child(title_row)
         .children(trailing)
 }
 
@@ -473,6 +497,73 @@ pub(crate) fn card(title: impl Into<String>, body: impl IntoElement) -> impl Int
                 .text_color(move || theme().muted_foreground),
         )
         .child(body)
+}
+
+/// A horizontal Apple System Settings row: a clean label on the left and its
+/// control, badge, or action right-aligned.
+#[allow(dead_code)]
+pub(crate) fn setting_row(label: impl Into<String>, control: impl IntoElement) -> impl IntoElement {
+    view()
+        .w_full()
+        .min_h(px(tokens::ROW_HEIGHT))
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap(tokens::space(3.0))
+        .px(tokens::space(4.0))
+        .py(tokens::space(2.0))
+        .child(
+            text(label.into())
+                .flex_1()
+                .min_w(px(0.0))
+                .text_size(px(tokens::TEXT_BODY))
+                .text_color(move || theme().foreground)
+                .truncate(),
+        )
+        .child(
+            view()
+                .flex_none()
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(2.0))
+                .child(control),
+        )
+}
+
+/// An Apple System Settings / Apple Notes grouped card: an optional quiet
+/// section title above a rounded surface whose rows are separated by inset 1px
+/// hairlines.
+#[allow(dead_code)]
+pub(crate) fn grouped_card<E: IntoElement>(
+    title: Option<impl Into<String>>,
+    rows: impl IntoIterator<Item = E>,
+) -> impl IntoElement {
+    let mut list = view()
+        .w_full()
+        .flex_col()
+        .rounded(tokens::panel_radius)
+        .bg(tokens::panel)
+        .border_1()
+        .border_color(tokens::hairline)
+        .overflow_hidden();
+    for (index, row) in rows.into_iter().enumerate() {
+        if index > 0 {
+            list = list.child(view().w_full().px(tokens::space(4.0)).child(hairline()));
+        }
+        list = list.child(row);
+    }
+    view()
+        .w_full()
+        .flex_col()
+        .gap(tokens::space(1.5))
+        .children(title.map(|heading| {
+            text(heading.into())
+                .px(tokens::space(1.0))
+                .text_size(px(tokens::TEXT_CAPTION))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(move || theme().muted_foreground)
+        }))
+        .child(list)
 }
 
 /// A card whose actions remove or erase something.

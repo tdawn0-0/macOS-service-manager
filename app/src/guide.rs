@@ -437,7 +437,7 @@ pub(crate) fn guide_window() -> impl IntoElement {
         .id("guide")
         .kind(WindowKind::Panel)
         .title("Full Disk Access")
-        .default_size(size(px(420.0), px(380.0)))
+        .default_size(size(px(420.0), px(310.0)))
         .default_position(WindowPosition::Center)
         .attributes(attrs)
         .open(visible)
@@ -509,7 +509,7 @@ fn card() -> impl IntoElement {
     view()
         .test_id("guide-card")
         .w(px(420.0))
-        .h(px(380.0))
+        .h(px(310.0))
         .flex_none()
         .flex_col()
         .items_center()
@@ -525,29 +525,23 @@ fn card() -> impl IntoElement {
 fn welcome() -> impl IntoElement {
     view()
         .flex_col()
+        .flex_1()
         .w_full()
         .items_center()
         .child(
             icon(GUIDE_ICON)
-                .size(px(84.0))
+                .size(px(64.0))
                 .flex_none()
                 .text_color(move || theme().primary),
         )
         .child(
             text("Welcome to Devbase")
-                .text_size(px(20.0))
+                .text_size(px(19.0))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_center()
-                .mt(px(10.0)),
+                .mt(px(12.0)),
         )
-        .child(
-            text("Everything that starts on your Mac, in one place.")
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground)
-                .text_center()
-                .mt(px(2.0)),
-        )
-        .child(view().h(px(8.0)))
+        .child(view().h(px(16.0)))
         .child(
             view()
                 .w_full()
@@ -559,15 +553,15 @@ fn welcome() -> impl IntoElement {
                 .bg(move || theme().foreground.opacity(0.045))
                 .child(
                     view()
-                        .size(px(40.0))
+                        .size(px(38.0))
                         .flex_none()
                         .items_center()
                         .justify_center()
-                        .rounded(px(10.0))
+                        .rounded(px(9.0))
                         .bg(move || theme().primary)
                         .child(
                             icon(DISK_ICON)
-                                .size(px(22.0))
+                                .size(px(20.0))
                                 .text_color(move || theme().primary_foreground),
                         ),
                 )
@@ -590,35 +584,20 @@ fn welcome() -> impl IntoElement {
                 )
                 .child(guide_button("Allow…", "guide-allow", true, false, allow)),
         )
-        .child(
-            text("Without it, some login items may not show. Everything else works, and you can do this later from Login Items.")
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground)
-                .text_center()
-                .mt(px(12.0)),
-        )
         .child(view().flex_1())
-        .child(guide_button(
-            "Skip for Now",
-            "guide-skip",
-            false,
-            false,
-            close,
-        ))
+        .child(guide_button("Skip", "guide-skip", false, false, close))
 }
 
 fn sidecar() -> impl IntoElement {
-    // NSH has no way to start a drag of the app bundle into another app,
-    // so this shows Go's step for a build without a bundle: add the app
-    // with the + button. Dragging it from Finder still works.
     let settings_open = guide().with(|state| state.settings_open);
     view()
         .flex_col()
+        .flex_1()
         .w_full()
         .items_center()
         .child(
             icon(GUIDE_ICON)
-                .size(px(84.0))
+                .size(px(64.0))
                 .flex_none()
                 .text_color(move || theme().primary),
         )
@@ -627,24 +606,18 @@ fn sidecar() -> impl IntoElement {
                 .text_size(px(15.0))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_center()
-                .mt(px(14.0)),
-        )
-        .child(
-            text("With the + button under the list.")
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground)
-                .text_center(),
+                .mt(px(16.0)),
         )
         .child(view().flex_1())
         .child(if settings_open {
             text("Waiting for access")
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
-                .mb(px(10.0))
+                .mb(px(12.0))
                 .into_element()
         } else {
             view()
-                .mb(px(10.0))
+                .mb(px(12.0))
                 .child(guide_button(
                     "Open Settings",
                     "guide-open-settings",
@@ -654,13 +627,7 @@ fn sidecar() -> impl IntoElement {
                 ))
                 .into_element()
         })
-        .child(guide_button(
-            "Skip for Now",
-            "guide-skip",
-            false,
-            false,
-            close,
-        ))
+        .child(guide_button("Skip", "guide-skip", false, false, close))
 }
 
 fn done() -> impl IntoElement {

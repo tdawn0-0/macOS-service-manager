@@ -923,17 +923,21 @@ fn the_first_run_guide_leads_through_its_pages_and_remembers_completion() {
 
     app.wait_for("id:guide-overlay").unwrap();
     app.wait_for("Welcome to Devbase").unwrap();
-    assert!(contains(
+    assert!(!contains(
         &app,
         "Everything that starts on your Mac, in one place."
     ));
     assert!(contains(&app, "Full Disk Access"));
     assert!(contains(&app, "Only to read the list of login items."));
-    assert!(contains(&app, "Skip for Now"));
-    assert!(contains(&app, "Without it, some login items may not show."));
+    assert!(contains(&app, "Skip"));
+    assert!(!contains(
+        &app,
+        "Without it, some login items may not show."
+    ));
 
     app.press("id:guide-allow").unwrap();
     app.wait_for("Add this app with the + button").unwrap();
+    assert!(!contains(&app, "With the + button under the list."));
     app.wait_for("Waiting for access").unwrap();
     assert!(
         settings
@@ -1005,6 +1009,8 @@ fn the_popover_ui_renders_status_and_toggles_switches() {
     assert!(contains(&app, "1 running"));
     assert!(contains(&app, "PostgreSQL · :5432 · Stopped"));
     assert!(contains(&app, "Redis · :6379 · Running"));
+    assert!(!contains(&app, "Proxy port"));
+    assert!(!contains(&app, "/tmp/devbase-tests/Development"));
 
     // Toggle database instance switch on.
     app.press("id:popover-switch-instance-app").unwrap();
@@ -1680,8 +1686,7 @@ fn clicking_proxy_and_tunnel_rows_navigates_to_https_proxy_and_closes_popover() 
 
     // Switch back to Services, reopen popover, click Tunnel row -> navigates to HTTPS Proxy.
     app.press("role:button[Services]").unwrap();
-    app.wait_for("launchd jobs, their status and lifecycle controls.")
-        .unwrap();
+    app.wait_for("id:services-search").unwrap();
     app.press("id:open-popover-shortcut").unwrap();
     app.wait_for("id:popover-open-tunnel").unwrap();
     app.press("id:popover-open-tunnel").unwrap();

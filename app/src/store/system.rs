@@ -2131,10 +2131,10 @@ pub(crate) fn quit_dialog() -> impl IntoElement {
                 .child(
                     view()
                         .test_id("quit-dialog")
-                        .w(px(520.0))
-                        .p(px(20.0))
+                        .w(px(460.0))
+                        .p(px(22.0))
                         .flex_col()
-                        .gap(px(12.0))
+                        .gap(px(14.0))
                         .rounded(tokens::panel_radius)
                         .bg(tokens::panel)
                         .border_1()
@@ -2142,7 +2142,7 @@ pub(crate) fn quit_dialog() -> impl IntoElement {
                         .shadow_xl()
                         .child(
                             text("Quit Devbase?")
-                                .text_size(px(18.0))
+                                .text_size(px(16.0))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(move || theme().foreground),
                         )
@@ -2190,8 +2190,7 @@ pub(crate) fn quit_dialog() -> impl IntoElement {
                                             (!loading && state.error.is_none()).then(|| {
                                                 dialog_line(
                                                     if instances == 0 {
-                                                        "No managed databases are running."
-                                                            .to_string()
+                                                        "No running databases.".to_string()
                                                     } else {
                                                         format!(
                                                             "Stop scope: {}",
@@ -2263,7 +2262,7 @@ pub(crate) fn quit_dialog() -> impl IntoElement {
                                         .items_center()
                                         .gap(px(8.0))
                                         .child(action(
-                                            "Cancel quit",
+                                            "Cancel",
                                             "quit-cancel",
                                             false,
                                             stopping,

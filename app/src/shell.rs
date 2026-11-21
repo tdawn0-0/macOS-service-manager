@@ -25,6 +25,10 @@ const LOG_DRAWER_MIN_HEIGHT: f32 = 140.0;
 const LOG_DRAWER_DEFAULT_HEIGHT: f32 = 260.0;
 const LOG_DRAWER_MAX_HEIGHT: f32 = 560.0;
 
+// Keep `meta::MINIMUM_MACOS` referenced while build metadata moves from the
+// sidebar footer into Settings across parallel branches.
+const _: &str = meta::MINIMUM_MACOS;
+
 #[derive(Debug, Clone)]
 struct LogDrawerHeight(Points);
 

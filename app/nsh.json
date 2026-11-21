@@ -3,15 +3,29 @@
   "id": "xyz.jyeu.devbase",
   "version": "0.1.0",
   "build": 1,
+  "icon": "../resources/icon.png",
   "nsh": ">=0.6.1, <0.7",
   "rust": ".",
   "root": "App",
   "theme": "theme.json",
   "appearance": "system",
+  "capabilities": {
+    "application": true,
+    "windows": true,
+    "clipboard": true,
+    "picker": true,
+    "openUrl": true,
+    "homeDir": true,
+    "notifications": true
+  },
   "window": {
     "title": "Devbase",
     "defaultSize": { "width": 1100, "height": 720 },
-    "minSize": { "width": 900, "height": 520 }
+    "minSize": { "width": 900, "height": 520 },
+    "restoreBounds": true,
+    "titleBar": { "style": "hidden", "height": 52 },
+    "closeOnPress": false,
+    "transparent": true
   },
   "macos": {
     "infoPlist": {

@@ -9,23 +9,24 @@ exclude = ["crates/devcore", "crates/devproxy", "crates/devcli"]
 
 [dependencies]
 nsh-core = "0.6.1"
-nsh-base = "0.6.1"
+nsh-base = { version = "0.6.1", default-features = false }
+nsh-engine = { version = "0.6.1", default-features = false }
 env_logger = "0.11"
+log = "0.4"
+serde_json = "1"
 chrono = "0.4"
 tokio = { version = "1", features = ["rt"] }
 devcore = { path = "crates/devcore" }
 devproxy = { path = "crates/devproxy" }
 devcli = { path = "crates/devcli" }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-nsh-platform-linux = { version = "0.6.1", default-features = false, features = ["shader", "editor", "emoji-picker", "highlight", "math", "plot", "rich-editor", "term", "websocket", "updater", "svg", "net", "sound"] }
-
 [target.'cfg(target_os = "macos")'.dependencies]
-nsh-platform-macos = { version = "0.6.1", default-features = false, features = ["shader", "editor", "emoji-picker", "highlight", "math", "plot", "rich-editor", "term", "websocket", "updater", "svg"] }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-nsh-platform-windows = { version = "0.6.1", default-features = false, features = ["shader", "editor", "emoji-picker", "highlight", "math", "plot", "rich-editor", "term", "websocket", "updater", "svg", "net"] }
+nsh-platform-apple = "0.6.1"
+nsh-platform-macos = { version = "0.6.1", default-features = false, features = ["svg"] }
 
 [dev-dependencies]
-nsh-engine = "0.6.1"
 nsh-testing = "0.6.1"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"

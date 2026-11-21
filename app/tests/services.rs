@@ -1157,3 +1157,181 @@ fn services_keyboard_shortcuts_focus_search_clear_query_and_close_inspector() {
     drop(app);
     drop(turn);
 }
+
+#[test]
+fn all_items_view_aggregates_sources_badges_counts_search_and_inspector() {
+    let turn = serial();
+    use_fake_providers();
+    use_fake_dev_logs();
+    use_fake_editor();
+    use_fake_guide();
+    use_fake_system();
+
+    let brew = FakeProvider::new(
+        Source::Brew,
+        vec![item(
+            Source::Brew,
+            "redis",
+            State::Running,
+            Autostart::On,
+            false,
+        )],
+        Behaviour::Normal,
+    );
+    let login = FakeProvider::new(
+        Source::LoginItem,
+        vec![item(
+            Source::LoginItem,
+            "Raycast",
+            State::Running,
+            Autostart::On,
+            false,
+        )],
+        Behaviour::Normal,
+    );
+    install_editor_provider(Arc::new(FakeEditor {
+        saved_items: Arc::new(Mutex::new(Vec::new())),
+    }));
+    install_provider(Source::Brew, brew);
+    install_provider(Source::LoginItem, login);
+    install_provider(Source::UserAgent, user_agents(Behaviour::Normal));
+    install_provider(Source::SystemAgent, system_agents());
+    install_provider(Source::Daemon, daemons(Behaviour::Normal));
+
+    let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
+    app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    app.wait_for("com.example.alpha").unwrap();
+
+    // Single-source view does not render per-row source badges.
+    assert!(!app.screen().matches("id:source-badge-user-agent").unwrap());
+
+    // Switching to All Items loads and combines all 5 sources.
+    app.press("id:source-all").unwrap();
+    app.wait_for("redis").unwrap();
+    app.wait_for("Raycast").unwrap();
+    app.wait_for("com.example.alpha").unwrap();
+    app.wait_for("com.example.beta").unwrap();
+    app.wait_for("com.example.gamma").unwrap();
+
+    // Total running/total count appears on the All Items rail row (4 running of 7 total).
+    app.wait_for("id:source-all >> text:4/7").unwrap();
+
+    // Source pill badges identify each item's origin.
+    assert!(app.screen().matches("id:source-badge-brew").unwrap());
+    assert!(app.screen().matches("id:source-badge-login-item").unwrap());
+    assert!(app.screen().matches("id:source-badge-user-agent").unwrap());
+    assert!(
+        app.screen()
+            .matches("id:source-badge-system-agent")
+            .unwrap()
+    );
+    assert!(app.screen().matches("id:source-badge-daemon").unwrap());
+    assert!(app.screen().shows("Homebrew"));
+    assert!(app.screen().shows("Login Item"));
+    assert!(app.screen().shows("User Agent"));
+    assert!(app.screen().shows("System Agent"));
+    assert!(app.screen().shows("Daemon"));
+
+    // Cross-source search filters across all combined sources.
+    app.type_text("id:services-search", "gamma").unwrap();
+    app.wait_for_gone("redis", Duration::from_secs(2)).unwrap();
+    assert!(app.screen().shows("com.example.gamma"));
+    assert!(!app.screen().shows("com.example.alpha"));
+
+    app.clear("id:services-search").unwrap();
+    app.wait_for("redis").unwrap();
+    app.wait_for("com.example.beta").unwrap();
+
+    // Running/Stopped filter works across the aggregated list.
+    app.press("id:filter-running").unwrap();
+    app.wait_for_gone("com.example.beta", Duration::from_secs(2))
+        .unwrap();
+    assert!(app.screen().shows("redis"));
+    assert!(app.screen().shows("Raycast"));
+    assert!(app.screen().shows("com.example.alpha"));
+    assert!(app.screen().shows("com.example.gamma"));
+    app.press("id:filter-all").unwrap();
+    app.wait_for("com.example.beta").unwrap();
+
+    // Selecting a Daemon in All Items opens its normal Inspector, Edit Plist, and boot switch.
+    app.press("id:item-com.example.gamma").unwrap();
+    app.wait_for("id:inspector").unwrap();
+    app.wait_for("id:edit-job").unwrap();
+    assert!(
+        app.screen()
+            .matches("id:inspector >> role:switch[Load at boot]")
+            .unwrap()
+    );
+    app.press("id:edit-job").unwrap();
+    app.wait_for("id:plist-editor").unwrap();
+    app.press("id:editor-cancel").unwrap();
+    app.wait_for_gone("id:plist-editor", Duration::from_secs(2))
+        .unwrap();
+
+    // Selecting a Homebrew item in All Items opens its Inspector without Edit Plist.
+    app.press("id:item-redis").unwrap();
+    app.wait_for("/tmp/devbase-tests/redis.plist").unwrap();
+    assert!(!app.screen().matches("id:edit-job").unwrap());
+    assert!(
+        app.screen()
+            .matches("id:inspector >> role:button[Stop]")
+            .unwrap()
+    );
+
+    drop(app);
+    drop(turn);
+}
+
+#[test]
+fn login_items_restriction_opens_full_disk_access_guide_on_demand() {
+    let turn = serial();
+    use_fake_providers();
+    use_fake_dev_logs();
+    use_fake_editor();
+    use_fake_guide();
+    use_fake_system();
+
+    let login = Arc::new(FakeRestrictedLoginItems {
+        items: vec![item(
+            Source::LoginItem,
+            "Raycast",
+            State::Running,
+            Autostart::On,
+            false,
+        )],
+        settings_opened: AtomicU64::new(0),
+    });
+    install_provider(Source::LoginItem, login);
+    install_provider(Source::UserAgent, user_agents(Behaviour::Normal));
+    install_provider(Source::SystemAgent, system_agents());
+    install_provider(Source::Daemon, daemons(Behaviour::Normal));
+
+    let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
+    app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    app.wait_for("com.example.alpha").unwrap();
+
+    // Guide is closed initially (fake guide defaults to already welcomed).
+    assert_eq!(app.screen().count("id:guide-overlay").unwrap(), 0);
+
+    // Switch to Login Items and press "Full Disk Access Guide…".
+    app.press("id:source-login-item").unwrap();
+    app.wait_for("Raycast").unwrap();
+    app.wait_for("id:login-items-fda-guide").unwrap();
+    assert!(app.screen().shows("Full Disk Access Guide…"));
+
+    app.press("id:login-items-fda-guide").unwrap();
+    app.wait_for("id:guide-overlay").unwrap();
+    app.wait_for("Welcome to Devbase").unwrap();
+
+    // Closing the guide dismisses the overlay, and pressing the button reopens it on demand.
+    app.press("id:guide-skip").unwrap();
+    app.wait_for_gone("id:guide-overlay", Duration::from_secs(2))
+        .unwrap();
+
+    app.press("id:login-items-fda-guide").unwrap();
+    app.wait_for("id:guide-overlay").unwrap();
+    app.wait_for("Welcome to Devbase").unwrap();
+
+    drop(app);
+    drop(turn);
+}

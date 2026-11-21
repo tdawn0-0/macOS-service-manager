@@ -16,7 +16,7 @@ use nsh_core::prelude::*;
 
 use crate::{
     components::icons,
-    store::services::{self as svc, SOURCES},
+    store::services::{self as svc, SOURCES, ServiceScope},
     theme as tokens,
 };
 
@@ -135,6 +135,14 @@ fn source_rail() -> impl IntoElement {
             view()
                 .flex_col()
                 .gap(tokens::space(0.5))
+                .child(all_items_row())
+                .child(
+                    view()
+                        .h(px(1.0))
+                        .my(tokens::space(1.0))
+                        .mx(tokens::space(1.5))
+                        .bg(tokens::hairline),
+                )
                 .child(SOURCES.iter().map(|source| source_row(*source))),
         )
 }
@@ -152,6 +160,66 @@ pub(super) fn hint_tooltip(label: impl Into<String>) -> nsh_base::TooltipElement
             text(label.into())
                 .text_size(px(tokens::TEXT_CAPTION))
                 .text_color(move || theme().foreground),
+        )
+}
+
+fn format_counts((total, running): (usize, usize)) -> String {
+    if total == 0 {
+        String::new()
+    } else if running > 0 {
+        format!("{running}/{total}")
+    } else {
+        total.to_string()
+    }
+}
+
+fn all_items_row() -> impl IntoElement {
+    nsh_base::button()
+        .test_id("source-all")
+        .w_full()
+        .flex_row()
+        .items_center()
+        .justify_start()
+        .gap(tokens::space(2.0))
+        .px(tokens::space(2.5))
+        .py(tokens::space(1.5))
+        .rounded(move || theme().radius)
+        .bg(move || {
+            if svc::active_scope() == ServiceScope::All {
+                tokens::row_selected()
+            } else {
+                AdaptiveColor::TRANSPARENT
+            }
+        })
+        .hover(move |style| style.bg(tokens::row_hover()))
+        .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
+        .on_press(move || svc::select_scope(ServiceScope::All))
+        .child(
+            icons::layers()
+                .size(px(14.0))
+                .flex_none()
+                .text_color(move || {
+                    if svc::active_scope() == ServiceScope::All {
+                        theme().foreground
+                    } else {
+                        theme().muted_foreground
+                    }
+                }),
+        )
+        .child(
+            text(ServiceScope::All.title())
+                .flex_1()
+                .min_w(px(0.0))
+                .text_sm()
+                .text_color(move || theme().sidebar_foreground)
+                .truncate(),
+        )
+        .child(
+            text(move || format_counts(svc::total_counts()))
+                .text_size(px(tokens::TEXT_CAPTION))
+                .text_color(move || theme().muted_foreground)
+                .tabular_nums()
+                .flex_none(),
         )
 }
 
@@ -173,7 +241,7 @@ fn source_row(source: Source) -> impl IntoElement {
         .py(tokens::space(1.5))
         .rounded(move || theme().radius)
         .bg(move || {
-            if svc::active_source() == source {
+            if svc::active_scope() == ServiceScope::Source(source) {
                 tokens::row_selected()
             } else {
                 AdaptiveColor::TRANSPARENT
@@ -187,7 +255,7 @@ fn source_row(source: Source) -> impl IntoElement {
                 .size(px(14.0))
                 .flex_none()
                 .text_color(move || {
-                    if svc::active_source() == source {
+                    if svc::active_scope() == ServiceScope::Source(source) {
                         theme().foreground
                     } else {
                         theme().muted_foreground
@@ -203,19 +271,10 @@ fn source_row(source: Source) -> impl IntoElement {
                 .truncate(),
         )
         .child(
-            text(move || {
-                let (total, running) = svc::counts(source);
-                if total == 0 {
-                    String::new()
-                } else if running > 0 {
-                    format!("{running}/{total}")
-                } else {
-                    total.to_string()
-                }
-            })
-            .text_size(px(tokens::TEXT_CAPTION))
-            .text_color(move || theme().muted_foreground)
-            .tabular_nums()
-            .flex_none(),
+            text(move || format_counts(svc::counts(source)))
+                .text_size(px(tokens::TEXT_CAPTION))
+                .text_color(move || theme().muted_foreground)
+                .tabular_nums()
+                .flex_none(),
         )
 }

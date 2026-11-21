@@ -256,7 +256,9 @@ pub fn start() {
     });
 }
 
-/// Opens the Full Disk Access guide on demand (from Help menu or Command Palette).
+/// Opens the Full Disk Access guide on demand (from Login Items, the Help menu,
+/// or Command Palette), resetting to the welcome page regardless of whether the
+/// first-run `welcomed` marker already exists.
 pub fn open() {
     guide().update(|state| {
         state.open = true;
@@ -341,7 +343,13 @@ fn check_access() {
             });
         } else if done {
             // Go's guideDoneAfter: the page says it worked, then closes.
-            later(Duration::from_millis(1400), close);
+            later(Duration::from_millis(1400), move || {
+                if state.with(|guide| {
+                    guide.open && guide.page == Page::Done && guide.sequence == sequence
+                }) {
+                    close();
+                }
+            });
         }
     });
 }

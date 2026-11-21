@@ -15,14 +15,15 @@ use nsh_core::{
 use super::is_editable_plist;
 use crate::{
     components::{icon_button, icons, note, status_dot},
-    store::services::{self as svc, Filter},
+    store::services::{self as svc, Filter, ServiceScope},
     theme as tokens,
 };
 
 pub(crate) fn list_pane() -> impl IntoElement {
     let search_ref = element_ref();
     let drag_over = signal(false);
-    let login_drag_over = move || svc::active_source() == Source::LoginItem && drag_over.get();
+    let login_drag_over =
+        move || svc::active_source() == Some(Source::LoginItem) && drag_over.get();
 
     view()
         .test_id("services-list-pane")
@@ -38,7 +39,7 @@ pub(crate) fn list_pane() -> impl IntoElement {
             }
         })
         .on_file_drag_enter(move |e: &FileDragEvent| {
-            if svc::active_source() == Source::LoginItem
+            if svc::active_source() == Some(Source::LoginItem)
                 && (e.uris.is_empty()
                     || e.uris
                         .iter()
@@ -50,7 +51,7 @@ pub(crate) fn list_pane() -> impl IntoElement {
         .on_file_drag_leave(move |_: &()| drag_over.set(false))
         .on_file_drop(move |e: &FileDropEvent| {
             drag_over.set(false);
-            if svc::active_source() == Source::LoginItem {
+            if svc::active_source() == Some(Source::LoginItem) {
                 for uri in &e.uris {
                     if let Some(path) = app_bundle_path_from_uri(uri) {
                         svc::add_login_item_path(path);
@@ -149,7 +150,7 @@ fn header() -> impl IntoElement {
         .pt(tokens::space(2.0))
         .window_drag(true)
         .child(
-            text(move || svc::active_source().title().to_string())
+            text(move || svc::active_scope().title().to_string())
                 .text_size(px(15.0))
                 .font_weight(FontWeight::SEMIBOLD)
                 .flex_1()
@@ -164,17 +165,19 @@ fn header() -> impl IntoElement {
             move || {
                 matches!(
                     svc::active_source(),
-                    Source::UserAgent | Source::SystemAgent | Source::Daemon
+                    Some(Source::UserAgent | Source::SystemAgent | Source::Daemon)
                 )
             },
             || {
                 header_action_button("new-job", "New Job", || {
-                    crate::editor::open_new(svc::active_source())
+                    if let Some(source) = svc::active_source() {
+                        crate::editor::open_new(source);
+                    }
                 })
             },
         ))
         .child(when(
-            move || svc::active_source() == Source::LoginItem,
+            move || svc::active_source() == Some(Source::LoginItem),
             || header_action_button("add-login-item", "Add Login Item", svc::add_login_item),
         ))
         .child(icon_button(icons::refresh(), "Refresh", || {
@@ -323,8 +326,10 @@ fn when_some_note() -> impl IntoElement {
         }))
         .child(when(
             move || {
-                matches!(svc::active_source(), Source::SystemAgent | Source::Daemon)
-                    && !svc::helper_installed()
+                matches!(
+                    svc::active_source(),
+                    Some(Source::SystemAgent | Source::Daemon)
+                ) && !svc::helper_installed()
             },
             || {
                 note(
@@ -338,6 +343,7 @@ fn when_some_note() -> impl IntoElement {
 
 fn restriction_note(restriction: devcore::service::Restriction) -> impl IntoElement {
     let show_settings = restriction.settings;
+    let show_fda_guide = svc::active_source() == Some(Source::LoginItem);
     view()
         .test_id("login-item-restriction")
         .flex_col()
@@ -370,6 +376,7 @@ fn restriction_note(restriction: devcore::service::Restriction) -> impl IntoElem
         .child(
             view()
                 .flex_row()
+                .flex_wrap()
                 .items_center()
                 .gap(tokens::space(2.0))
                 .pl(px(22.0))
@@ -388,6 +395,26 @@ fn restriction_note(restriction: devcore::service::Restriction) -> impl IntoElem
                         .on_press(svc::open_restriction_settings)
                         .child(
                             text("Open Full Disk Access…")
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(move || theme().foreground),
+                        )
+                }))
+                .child(when(show_fda_guide, || {
+                    nsh_base::button()
+                        .test_id("login-items-fda-guide")
+                        .h(px(24.0))
+                        .px(tokens::space(2.5))
+                        .items_center()
+                        .justify_center()
+                        .rounded(move || theme().radius)
+                        .bg(tokens::control)
+                        .border_1()
+                        .border_color(tokens::hairline)
+                        .hover(move |style| style.bg(tokens::row_hover()))
+                        .on_press(crate::guide::open)
+                        .child(
+                            text("Full Disk Access Guide…")
                                 .text_size(px(tokens::TEXT_CAPTION))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(move || theme().foreground),
@@ -535,6 +562,13 @@ fn row(item: ReadSignal<Item>) -> impl IntoElement {
                 .truncate(),
         )
         .child(when(
+            move || svc::active_scope() == ServiceScope::All,
+            move || {
+                let source = item.with_untracked(|item| item.source);
+                source_badge(source)
+            },
+        ))
+        .child(when(
             move || item.get().admin,
             move || {
                 icons::lock()
@@ -587,6 +621,43 @@ fn row(item: ReadSignal<Item>) -> impl IntoElement {
                     },
                 )),
         )
+}
+
+/// Subtle pill identifying which source owns an item when viewing `All Items`.
+fn source_badge(source: Source) -> impl IntoElement {
+    view()
+        .test_id(match source {
+            Source::Brew => "source-badge-brew",
+            Source::LoginItem => "source-badge-login-item",
+            Source::UserAgent => "source-badge-user-agent",
+            Source::SystemAgent => "source-badge-system-agent",
+            Source::Daemon => "source-badge-daemon",
+        })
+        .flex_none()
+        .flex_row()
+        .items_center()
+        .h(px(18.0))
+        .px(tokens::space(1.5))
+        .rounded(px(99.0))
+        .bg(tokens::inset)
+        .border_1()
+        .border_color(tokens::hairline)
+        .child(
+            text(source_badge_label(source))
+                .text_size(px(tokens::TEXT_CAPTION))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(move || theme().muted_foreground),
+        )
+}
+
+fn source_badge_label(source: Source) -> &'static str {
+    match source {
+        Source::Brew => "Homebrew",
+        Source::LoginItem => "Login Item",
+        Source::UserAgent => "User Agent",
+        Source::SystemAgent => "System Agent",
+        Source::Daemon => "Daemon",
+    }
 }
 
 /// The main action of a row, revealed on hover or while the row is chosen.

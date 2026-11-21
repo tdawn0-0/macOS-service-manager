@@ -80,6 +80,37 @@ pub(crate) enum LogBodyMode {
     Lines,
 }
 
+/// Which source scope the services list displays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ServiceScope {
+    /// Aggregated view combining all five service sources.
+    All,
+    /// One individual service source.
+    Source(Source),
+}
+
+impl Default for ServiceScope {
+    fn default() -> Self {
+        ServiceScope::Source(Source::UserAgent)
+    }
+}
+
+impl ServiceScope {
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            ServiceScope::All => "All Items",
+            ServiceScope::Source(source) => source.title(),
+        }
+    }
+
+    pub(crate) fn source(self) -> Option<Source> {
+        match self {
+            ServiceScope::All => None,
+            ServiceScope::Source(source) => Some(source),
+        }
+    }
+}
+
 /// The sources the inspector shows, in order.
 pub(crate) const SOURCES: [Source; 5] = [
     Source::Brew,
@@ -129,7 +160,7 @@ impl DetailState {
 
 #[derive(Debug, Clone)]
 struct Services {
-    active: Source,
+    active: ServiceScope,
     query: String,
     filter: Filter,
     loads: BTreeMap<Source, SourceLoad>,
@@ -142,7 +173,7 @@ struct Services {
 impl Default for Services {
     fn default() -> Self {
         Services {
-            active: Source::UserAgent,
+            active: ServiceScope::default(),
             query: String::new(),
             filter: Filter::All,
             loads: BTreeMap::new(),
@@ -378,38 +409,67 @@ pub(crate) fn provider(source: Source) -> Option<Arc<dyn Provider>> {
 
 // --- Source and list ---------------------------------------------------------
 
-/// The source the list shows.
-pub(crate) fn active_source() -> Source {
+/// The scope the list shows (`All Items` or one individual source).
+pub(crate) fn active_scope() -> ServiceScope {
     services().with(|state| state.active)
 }
 
-/// Shows `source`, clearing the item chosen and reading it when it has not
-/// been read yet.
-pub(crate) fn select_source(source: Source) {
+/// The individual source the list shows, or `None` when viewing `All Items`.
+pub(crate) fn active_source() -> Option<Source> {
+    active_scope().source()
+}
+
+fn load_source_if_needed(source: Source) {
+    let load = services().with(|state| state.loads.get(&source).cloned());
+    if load.is_none_or(|load| !load.loaded && !load.loading) {
+        refresh(source);
+    }
+}
+
+fn load_all_missing() {
+    for source in SOURCES {
+        if provider_of(source).is_some() {
+            load_source_if_needed(source);
+        }
+    }
+}
+
+/// Shows `scope`, clearing the item chosen and reading any unloaded sources.
+pub(crate) fn select_scope(scope: ServiceScope) {
     services().update(|state| {
-        state.active = source;
+        state.active = scope;
         state.selected = None;
         state.detail = None;
         state.action_error = None;
     });
     clear_hover();
     reset_log_tail(None, None);
-    if matches!(source, Source::SystemAgent | Source::Daemon) {
-        refresh_helper_status();
-    }
-    let load = services().with(|state| state.loads.get(&source).cloned());
-    if load.is_none_or(|load| !load.loaded && !load.loading) {
-        refresh(source);
+    match scope {
+        ServiceScope::All => {
+            refresh_helper_status();
+            load_all_missing();
+        }
+        ServiceScope::Source(source) => {
+            if matches!(source, Source::SystemAgent | Source::Daemon) {
+                refresh_helper_status();
+            }
+            load_source_if_needed(source);
+        }
     }
 }
 
-/// Reads the shown source the first time the screen appears.
+/// Shows `source`, clearing the item chosen and reading it when it has not
+/// been read yet.
+pub(crate) fn select_source(source: Source) {
+    select_scope(ServiceScope::Source(source));
+}
+
+/// Reads the shown source(s) the first time the screen appears.
 pub(crate) fn load_active() {
     refresh_helper_status();
-    let source = active_source();
-    let load = services().with(|state| state.loads.get(&source).cloned());
-    if load.is_none_or(|load| !load.loaded && !load.loading) {
-        refresh(source);
+    match active_scope() {
+        ServiceScope::All => load_all_missing(),
+        ServiceScope::Source(source) => load_source_if_needed(source),
     }
 }
 
@@ -450,24 +510,44 @@ pub(crate) fn refresh(source: Source) {
         };
         let mut selection_cleared = false;
         services().update(|state| {
-            let load = state.loads.entry(source).or_default();
-            if load.sequence != sequence {
+            let mut outdated = false;
+            {
+                let load = state.loads.entry(source).or_default();
+                if load.sequence != sequence {
+                    outdated = true;
+                } else {
+                    load.loading = false;
+                    load.loaded = true;
+                    load.restriction = restriction;
+                    match answer {
+                        Ok(items) => {
+                            load.items = items;
+                            load.error = None;
+                        }
+                        Err(error) => load.error = Some(error),
+                    }
+                }
+            }
+            if outdated {
                 return;
             }
-            load.loading = false;
-            load.loaded = true;
-            load.restriction = restriction;
-            match answer {
-                Ok(items) => {
-                    load.items = items;
-                    load.error = None;
+            let drop_selection = match state.active {
+                ServiceScope::Source(active_source) => {
+                    active_source == source
+                        && state.selected.as_ref().is_some_and(|selected| {
+                            state.loads.get(&source).is_none_or(|load| {
+                                !load.items.iter().any(|item| &item.id == selected)
+                            })
+                        })
                 }
-                Err(error) => load.error = Some(error),
-            }
-            if state.active == source
-                && let Some(selected) = &state.selected
-                && !load.items.iter().any(|item| &item.id == selected)
-            {
+                ServiceScope::All => state.selected.as_ref().is_some_and(|selected| {
+                    !state
+                        .loads
+                        .values()
+                        .any(|load| load.items.iter().any(|item| &item.id == selected))
+                }),
+            };
+            if drop_selection {
                 state.selected = None;
                 state.detail = None;
                 selection_cleared = true;
@@ -479,14 +559,24 @@ pub(crate) fn refresh(source: Source) {
     });
 }
 
-/// Reads the shown source again, on request, and refreshes the selected
+/// Reads the shown source(s) again, on request, and refreshes the selected
 /// item's detail rows when one is open.
 pub(crate) fn refresh_active() {
-    let source = active_source();
-    refresh(source);
+    let scope = active_scope();
+    match scope {
+        ServiceScope::All => {
+            refresh_helper_status();
+            for source in SOURCES {
+                if provider_of(source).is_some() {
+                    refresh(source);
+                }
+            }
+        }
+        ServiceScope::Source(source) => refresh(source),
+    }
     if let Some(id) = selected_id()
         && let Some(item) = item_by_id(&id)
-        && item.source == source
+        && (scope == ServiceScope::All || scope == ServiceScope::Source(item.source))
     {
         load_detail(item);
     }
@@ -514,7 +604,7 @@ pub(crate) fn loaded_items(source: Source) -> Vec<Item> {
 
 /// Selects `source` and focuses `id` if it is already loaded.
 pub(crate) fn open_item(source: Source, id: &str) {
-    if active_source() != source {
+    if active_source() != Some(source) {
         select_source(source);
     }
     select_item(id);
@@ -572,20 +662,44 @@ pub(crate) fn set_filter(next: Filter) {
     services().update(|state| state.filter = next);
 }
 
-/// The items the list shows for the active source: the search and filter let
-/// them through.
+/// The items the list shows for the active scope: the search and filter let
+/// them through. In `All Items`, items from all loaded sources are combined
+/// and sorted deterministically (running first, then alphabetical by name and
+/// source).
 pub(crate) fn visible_items() -> Vec<Item> {
     services().with(|state| {
-        let Some(load) = state.loads.get(&state.active) else {
-            return Vec::new();
-        };
         let query = &state.query;
         let filter = state.filter;
-        load.items
-            .iter()
-            .filter(|item| item.matches(query) && filter.passes(item))
-            .cloned()
-            .collect()
+        match state.active {
+            ServiceScope::Source(source) => {
+                let Some(load) = state.loads.get(&source) else {
+                    return Vec::new();
+                };
+                load.items
+                    .iter()
+                    .filter(|item| item.matches(query) && filter.passes(item))
+                    .cloned()
+                    .collect()
+            }
+            ServiceScope::All => {
+                let mut items: Vec<Item> = SOURCES
+                    .iter()
+                    .filter_map(|source| state.loads.get(source))
+                    .flat_map(|load| load.items.iter())
+                    .filter(|item| item.matches(query) && filter.passes(item))
+                    .cloned()
+                    .collect();
+                items.sort_by(|a, b| {
+                    b.up()
+                        .cmp(&a.up())
+                        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                        .then_with(|| a.name.cmp(&b.name))
+                        .then_with(|| a.source.cmp(&b.source))
+                        .then_with(|| a.id.cmp(&b.id))
+                });
+                items
+            }
+        }
     })
 }
 
@@ -600,30 +714,59 @@ pub(crate) fn counts(source: Source) -> (usize, usize) {
     })
 }
 
-pub(crate) fn active_loading() -> bool {
+/// How many items exist across all loaded sources, and how many run.
+pub(crate) fn total_counts() -> (usize, usize) {
     services().with(|state| {
-        state
-            .loads
-            .get(&state.active)
-            .is_some_and(|load| load.loading)
+        let mut total = 0;
+        let mut running = 0;
+        for source in SOURCES {
+            if let Some(load) = state.loads.get(&source) {
+                total += load.items.len();
+                running += load.items.iter().filter(|item| item.up()).count();
+            }
+        }
+        (total, running)
+    })
+}
+
+pub(crate) fn active_loading() -> bool {
+    services().with(|state| match state.active {
+        ServiceScope::Source(source) => state.loads.get(&source).is_some_and(|load| load.loading),
+        ServiceScope::All => SOURCES
+            .iter()
+            .any(|source| state.loads.get(source).is_some_and(|load| load.loading)),
     })
 }
 
 pub(crate) fn active_error() -> Option<String> {
-    services().with(|state| {
-        state
-            .loads
-            .get(&state.active)
-            .and_then(|load| load.error.clone())
+    services().with(|state| match state.active {
+        ServiceScope::Source(source) => {
+            state.loads.get(&source).and_then(|load| load.error.clone())
+        }
+        ServiceScope::All => {
+            let errors: Vec<String> = SOURCES
+                .iter()
+                .filter(|source| provider_of(**source).is_some())
+                .filter_map(|source| {
+                    state
+                        .loads
+                        .get(source)
+                        .and_then(|load| load.error.as_deref())
+                        .map(|error| format!("{}: {error}", source.title()))
+                })
+                .collect();
+            (!errors.is_empty()).then(|| errors.join(" · "))
+        }
     })
 }
 
 pub(crate) fn active_restriction() -> Option<Restriction> {
-    services().with(|state| {
-        state
+    services().with(|state| match state.active {
+        ServiceScope::Source(source) => state
             .loads
-            .get(&state.active)
-            .and_then(|load| load.restriction.clone())
+            .get(&source)
+            .and_then(|load| load.restriction.clone()),
+        ServiceScope::All => None,
     })
 }
 
@@ -631,7 +774,9 @@ pub(crate) fn active_restriction() -> Option<Restriction> {
 /// Access for Login Items). Never touches host TCC settings in `FAKE_MODE`
 /// unless a fake restricted provider is installed.
 pub(crate) fn open_restriction_settings() {
-    let source = active_source();
+    let Some(source) = active_source() else {
+        return;
+    };
     let Some(provider) = provider_of(source) else {
         return;
     };
@@ -654,7 +799,9 @@ pub(crate) fn open_restriction_settings() {
 /// Runs a one-time authenticated read for the active restricted source (e.g.
 /// `sfltool dumpbtm` for Login Items) and refreshes the list when done.
 pub(crate) fn read_restricted_once() {
-    let source = active_source();
+    let Some(source) = active_source() else {
+        return;
+    };
     let Some(provider) = provider_of(source) else {
         return;
     };

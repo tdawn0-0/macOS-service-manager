@@ -1,19 +1,21 @@
 name: release
 
-# Pushing a tag on master, as v0.2.0, releases that version: the app is tested,
-# built, signed with the Developer ID, notarized, and published with its disk
-# image, macOS arm64 update archive, and Ed25519-signed nsh-updater manifest
-# (latest.json + latest.json.sig). A tag with a suffix, as v0.2.0-rc.1, makes
-# a prerelease (--latest=false so /releases/latest/download/latest.json serves
-# only stable releases). The version comes from the tag, so app/nsh.json does
-# not need changing first.
+# Pushing a tag on master, as v0.2.0, releases that version: macOS arm64 and
+# Linux x86_64 are tested and packaged in parallel. macOS is signed with the
+# Developer ID and notarized (disk image + update archive); Linux produces a
+# release tarball + .sha256 checksum. Both platforms are published together
+# with a unified Ed25519-signed multi-platform nsh-updater manifest
+# (latest.json + latest.json.sig containing macos-aarch64 and linux-x86_64).
+# A tag with a suffix, as v0.2.0-rc.1, makes a prerelease (--latest=false so
+# /releases/latest/download/latest.json serves only stable releases). The
+# version comes from the tag, so app/nsh.json does not need changing first.
 #
 #   git tag v0.2.0 && git push origin master v0.2.0
 #
 # scripts/setup-release-secrets.sh sets up the Apple signing/notarizing secrets
 # in the "release" environment, alongside NSH_UPDATER_SECRET_KEY (Ed25519
-# secret key matching app/nsh.json's updater.publicKey). The job cannot start
-# until that environment allows the tag.
+# secret key matching app/nsh.json's updater.publicKey). The jobs using the
+# release environment cannot start until that environment allows the tag.
 on:
   push:
     tags:
@@ -23,13 +25,13 @@ permissions:
   contents: read
 
 jobs:
-  release:
+  build-macos:
     runs-on: macos-26
     timeout-minutes: 90
     # Holds the secrets, and hands them only to the tags above.
     environment: release
     permissions:
-      contents: write
+      contents: read
     steps:
       # Pinned to a commit: this job can use the signing certificate.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -167,10 +169,7 @@ jobs:
           security default-keychain -s "$KEYCHAIN_PATH"
           NOTARY_KEYCHAIN="$KEYCHAIN_PATH" scripts/package.sh --skip-tests
 
-      - name: publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+      - name: verify macOS artifacts
         run: |
           set -euo pipefail
           dmg="build/darwin-arm64/Devbase.dmg"
@@ -179,7 +178,7 @@ jobs:
           manifest_sig="build/darwin-arm64/latest.json.sig"
           for file in "$dmg" "$archive" "$manifest" "$manifest_sig"; do
             if [ ! -s "$file" ]; then
-              echo "::error::missing release artifact: $file"
+              echo "::error::missing macOS release artifact: $file"
               exit 1
             fi
           done
@@ -188,12 +187,225 @@ jobs:
           jq -e --arg version "$VERSION" \
             '.id == "xyz.jyeu.devbase" and .version == $version and (.platforms["macos-aarch64"].url | length > 0)' \
             "$manifest" >/dev/null
+
+      - name: upload macOS release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: devbase-macos-aarch64
+          path: |
+            build/darwin-arm64/Devbase.dmg
+            build/darwin-arm64/Devbase-*.tar.gz
+            build/darwin-arm64/latest.json
+            build/darwin-arm64/latest.json.sig
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: remove the signing certificate
+        if: ${{ always() }}
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/certificate.p12" "$RUNNER_TEMP/authority.cer"
+
+  build-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: check the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version=${TAG#v}
+          if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$TAG is not a version, as v1.2.3 or v1.2.3-rc.1"
+            exit 1
+          fi
+          if ! git rev-parse --verify --quiet origin/master >/dev/null; then
+            echo "::error::origin/master is not in this checkout"
+            exit 1
+          fi
+          commit=$(git rev-parse "${GITHUB_SHA}^{commit}")
+          if ! git merge-base --is-ancestor "$commit" origin/master; then
+            echo "::error::$TAG is not on master. Push master too: git push origin master $TAG"
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::$TAG has been released already"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: install Linux build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev \
+            libpango1.0-dev \
+            libcairo2-dev \
+            libgdk-pixbuf-2.0-dev \
+            libgraphene-1.0-dev \
+            liblzma-dev \
+            pkg-config \
+            build-essential
+
+      - name: install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            app -> target
+            app/crates/devcore -> target
+            app/crates/devproxy -> target
+            app/crates/devcli -> target
+
+      - name: fetch dependencies
+        run: |
+          set -euo pipefail
+          for dir in app app/crates/devcore app/crates/devproxy app/crates/devcli; do
+            (cd "$dir" && cargo fetch --locked)
+          done
+
+      - name: test
+        run: |
+          set -euo pipefail
+          for crate in devcore devproxy devcli; do
+            (cd "app/crates/$crate" && cargo test --locked && cargo clippy --locked --all-targets -- -D warnings && cargo fmt --check)
+          done
+          (cd app && cargo test --locked && cargo clippy --locked --all-targets -- -D warnings && cargo fmt --check)
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'
+          python3 scripts/collect-third-party-notices.py --check
+
+      - name: build and package Linux
+        run: |
+          set -euo pipefail
+          DEVBASE_VERSION="$VERSION" scripts/package-linux.sh --skip-tests
+          archive="build/linux-x86_64/Devbase-${VERSION}-linux-x86_64.tar.gz"
+          checksum="${archive}.sha256"
+          for file in "$archive" "$checksum"; do
+            if [ ! -s "$file" ]; then
+              echo "::error::missing Linux release artifact: $file"
+              exit 1
+            fi
+          done
+          (cd build/linux-x86_64 && sha256sum -c "$(basename "$checksum")")
+
+      - name: upload Linux release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: devbase-linux-x86_64
+          path: |
+            build/linux-x86_64/Devbase-*.tar.gz
+            build/linux-x86_64/Devbase-*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs:
+      - build-macos
+      - build-linux
+    runs-on: macos-26
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: install nsh
+        run: |
+          set -euo pipefail
+          brew install longbridge/tap/nsh
+          nsh --version
+
+      - name: download macOS release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: devbase-macos-aarch64
+          path: dist/macos
+
+      - name: download Linux release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: devbase-linux-x86_64
+          path: dist/linux
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          NSH_UPDATER_SECRET_KEY: ${{ secrets.NSH_UPDATER_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          VERSION=${TAG#v}
+          if [ -z "${NSH_UPDATER_SECRET_KEY:-}" ]; then
+            echo "::error::The secret NSH_UPDATER_SECRET_KEY is missing from the release environment."
+            exit 1
+          fi
+
+          jq --arg version "$VERSION" '.version = $version' app/nsh.json > app/nsh.json.new
+          mv app/nsh.json.new app/nsh.json
+
+          dmg="dist/macos/Devbase.dmg"
+          mac_archive="dist/macos/Devbase-${VERSION}-macos-aarch64.tar.gz"
+          linux_archive="dist/linux/Devbase-${VERSION}-linux-x86_64.tar.gz"
+          linux_checksum="dist/linux/Devbase-${VERSION}-linux-x86_64.tar.gz.sha256"
+          for file in "$dmg" "$mac_archive" "$linux_archive" "$linux_checksum"; do
+            if [ ! -s "$file" ]; then
+              echo "::error::missing release artifact: $file"
+              exit 1
+            fi
+          done
+
+          # Nothing goes out that macOS would warn about, and Linux checksum must match.
+          xcrun stapler validate "$dmg"
+          (cd dist/linux && shasum -a 256 -c "$(basename "$linux_checksum")")
+
+          # Generate a unified Ed25519-signed multi-platform nsh-updater manifest
+          # covering both macos-aarch64 and linux-x86_64.
+          mkdir -p dist/manifest
+          key_file=$(
+            umask 077
+            mktemp
+          )
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s\n' "$NSH_UPDATER_SECRET_KEY" > "$key_file"
+          nsh update-manifest --entry app --key "$key_file" --out dist/manifest "$mac_archive" "$linux_archive"
+          rm -f "$key_file"
+
+          manifest="dist/manifest/latest.json"
+          manifest_sig="dist/manifest/latest.json.sig"
+          for file in "$manifest" "$manifest_sig"; do
+            if [ ! -s "$file" ]; then
+              echo "::error::missing release manifest artifact: $file"
+              exit 1
+            fi
+          done
+          jq -e --arg version "$VERSION" \
+            '.id == "xyz.jyeu.devbase" and .version == $version and (.platforms["macos-aarch64"].url | length > 0) and (.platforms["macos-aarch64"].sha256 | length == 64) and (.platforms["linux-x86_64"].url | length > 0) and (.platforms["linux-x86_64"].sha256 | length == 64)' \
+            "$manifest" >/dev/null
+
           dmg_sha=$(shasum -a 256 "$dmg" | cut -d' ' -f1)
-          archive_sha=$(shasum -a 256 "$archive" | cut -d' ' -f1)
-          notes=$(printf 'SHA-256 checksums:\n- `%s`: `%s`\n- `%s`: `%s`' \
+          mac_archive_sha=$(shasum -a 256 "$mac_archive" | cut -d' ' -f1)
+          linux_archive_sha=$(shasum -a 256 "$linux_archive" | cut -d' ' -f1)
+          notes=$(printf 'SHA-256 checksums:\n- `%s`: `%s`\n- `%s`: `%s`\n- `%s`: `%s`' \
             "$(basename "$dmg")" "$dmg_sha" \
-            "$(basename "$archive")" "$archive_sha")
-          args=(gh release create "$TAG" "$dmg" "$archive" "$manifest" "$manifest_sig" --verify-tag
+            "$(basename "$mac_archive")" "$mac_archive_sha" \
+            "$(basename "$linux_archive")" "$linux_archive_sha")
+          args=(gh release create "$TAG" "$dmg" "$mac_archive" "$linux_archive" "$linux_checksum" "$manifest" "$manifest_sig" --verify-tag
             --title "Devbase v$VERSION"
             --notes "$notes"
             --generate-notes)
@@ -201,9 +413,3 @@ jobs:
           *-*) args+=(--prerelease --latest=false) ;;
           esac
           "${args[@]}"
-
-      - name: remove the signing certificate
-        if: ${{ always() }}
-        run: |
-          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
-          rm -f "$RUNNER_TEMP/certificate.p12" "$RUNNER_TEMP/authority.cer"

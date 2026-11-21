@@ -62,3 +62,68 @@ jobs:
           python3 scripts/verify-macos-requirements.py app/.nsh/out/Devbase.app
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'
           python3 scripts/collect-third-party-notices.py --check
+
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: install Linux build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev \
+            libpango1.0-dev \
+            libcairo2-dev \
+            libgdk-pixbuf-2.0-dev \
+            libgraphene-1.0-dev \
+            liblzma-dev \
+            pkg-config \
+            build-essential
+
+      - name: install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            app -> target
+            app/crates/devcore -> target
+            app/crates/devproxy -> target
+            app/crates/devcli -> target
+
+      - name: fetch dependencies
+        run: |
+          set -euo pipefail
+          for dir in app app/crates/devcore app/crates/devproxy app/crates/devcli; do
+            (cd "$dir" && cargo fetch --locked)
+          done
+
+      - name: test
+        run: |
+          set -euo pipefail
+          for crate in devcore devproxy devcli; do
+            (cd "app/crates/$crate" && cargo test --locked && cargo clippy --locked --all-targets -- -D warnings && cargo fmt --check)
+          done
+          (cd app && cargo test --locked && cargo clippy --locked --all-targets -- -D warnings && cargo fmt --check)
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'
+          python3 scripts/collect-third-party-notices.py --check
+
+      - name: package Linux release bundle
+        run: |
+          set -euo pipefail
+          scripts/package-linux.sh --skip-tests
+          version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' app/nsh.json)
+          archive="build/linux-x86_64/Devbase-${version}-linux-x86_64.tar.gz"
+          checksum="${archive}.sha256"
+          test -s "$archive"
+          test -s "$checksum"
+          (cd build/linux-x86_64 && sha256sum -c "$(basename "$checksum")")

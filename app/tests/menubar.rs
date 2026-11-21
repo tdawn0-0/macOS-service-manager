@@ -29,16 +29,18 @@ use devcore::{
     },
     shutdown::{ShutdownPlan, ShutdownResource},
 };
+use nsh_app_devbase::dev_logs;
 use nsh_app_devbase::testing::{
     AuthorityInfo, AuthorityStatus, CancelToken, DatabasesProvider, DatabasesSnapshot, GuideAccess,
-    GuidePersistence, MENUBAR_GLOBAL_SHORTCUT, MENUBAR_GLOBAL_SHORTCUT_LABEL, MenubarInput,
-    MenubarInstance, MenubarMenuEntry, MenubarPanel, MenubarRowKind, MenubarService, ProxyProvider,
-    ProxySnapshot, ProxyWorkers, Source, SystemSettingsProvider, SystemSettingsSnapshot,
-    install_databases_provider, install_guide_access, install_guide_persistence, install_provider,
+    GuidePersistence, MENUBAR_GLOBAL_SHORTCUT, MENUBAR_GLOBAL_SHORTCUT_LABEL, MenubarAction,
+    MenubarInput, MenubarInstance, MenubarMenuEntry, MenubarPanel, MenubarRowKind, MenubarRule,
+    MenubarService, ProxyProvider, ProxySnapshot, ProxyWorkers, Source, SystemSettingsProvider,
+    SystemSettingsSnapshot, clear_menubar_url_opener, install_databases_provider,
+    install_guide_access, install_guide_persistence, install_menubar_url_opener, install_provider,
     install_proxy_provider, install_system_settings_provider, menubar_anchor_position_in,
     menubar_menu_entries, menubar_should_reopen_after_blur, menubar_title_runs, refresh_services,
-    use_fake_databases, use_fake_guide, use_fake_menubar, use_fake_providers, use_fake_proxy,
-    use_fake_system,
+    use_fake_databases, use_fake_dev_logs, use_fake_development, use_fake_guide, use_fake_menubar,
+    use_fake_providers, use_fake_proxy, use_fake_software, use_fake_system,
 };
 use nsh_core::{
     desktop::{Display, DisplayId, Shortcut},
@@ -631,14 +633,12 @@ impl SystemSettingsProvider for FakeSettings {
 
 fn instance(id: &str, kind: &str, port: i64) -> Instance {
     Instance {
-        data_identity: String::new(),
-        data_directory: String::new(),
-        data_owner: String::new(),
         id: id.to_string(),
         kind: kind.to_string(),
         package: format!("{kind}@17.11-arm64"),
         port,
         persistent: true,
+        ..Instance::default()
     }
 }
 
@@ -1626,6 +1626,10 @@ fn PopoverNavigationHarness() -> impl IntoElement {
                         .on_press(nsh_app_devbase::testing::menubar_toggle_popover_shortcut)
                         .child(text("Toggle Popover")),
                 )
+                .child(
+                    text(move || format!("logs-job:{}", dev_logs::active_job_id()))
+                        .test_id("active-logs-job"),
+                )
                 .child(when(
                     nsh_app_devbase::testing::menubar_popover_open,
                     nsh_app_devbase::testing::menubar_popover,
@@ -1657,6 +1661,9 @@ fn clicking_proxy_and_tunnel_rows_navigates_to_https_proxy_and_closes_popover() 
     use_fake_system();
     install_system_settings_provider(settings as Arc<dyn SystemSettingsProvider>);
     use_fake_guide();
+    use_fake_software();
+    use_fake_development();
+    use_fake_dev_logs();
 
     let mut app =
         Headless::start(EngineConfig::new(Root::of::<PopoverNavigationHarness>())).unwrap();
@@ -1681,5 +1688,359 @@ fn clicking_proxy_and_tunnel_rows_navigates_to_https_proxy_and_closes_popover() 
     app.wait_for_gone("id:menubar-popover", Duration::from_secs(2))
         .unwrap();
     app.wait_for("HTTPS proxy rules").unwrap();
+    drop(turn);
+}
+
+#[test]
+fn stop_all_databases_stops_every_running_instance_in_popover_and_menu() {
+    let running_panel = MenubarPanel::from(MenubarInput {
+        instances: vec![
+            MenubarInstance {
+                id: "app".to_string(),
+                title: "PostgreSQL".to_string(),
+                port: 5432,
+                status: "Running".to_string(),
+            },
+            MenubarInstance {
+                id: "cache".to_string(),
+                title: "Redis".to_string(),
+                port: 6379,
+                status: "Running".to_string(),
+            },
+        ],
+        proxy_status: "Stopped".to_string(),
+        proxy_port: 8443,
+        ..MenubarInput::default()
+    });
+    let running_entries = menubar_menu_entries(&running_panel);
+    assert_every_menu_entry_has_svg_icon(&running_entries);
+    assert!(running_entries.iter().any(|entry| matches!(
+        entry,
+        MenubarMenuEntry::Item {
+            label,
+            enabled: true,
+            action: Some(MenubarAction::StopAllDatabases),
+            ..
+        } if label == "Stop All Databases"
+    )));
+
+    let stopped_panel = MenubarPanel::from(MenubarInput {
+        instances: vec![MenubarInstance {
+            id: "app".to_string(),
+            title: "PostgreSQL".to_string(),
+            port: 5432,
+            status: "Stopped".to_string(),
+        }],
+        proxy_status: "Stopped".to_string(),
+        proxy_port: 8443,
+        ..MenubarInput::default()
+    });
+    let stopped_entries = menubar_menu_entries(&stopped_panel);
+    assert!(!stopped_entries.iter().any(|entry| matches!(
+        entry,
+        MenubarMenuEntry::Item {
+            action: Some(MenubarAction::StopAllDatabases),
+            ..
+        }
+    )));
+
+    let databases = FakeDatabases::new(database_fixture(&[
+        ("app", "Running"),
+        ("cache", "Running"),
+    ]));
+    let proxy = FakeProxy::new(proxy_snapshot(Vec::new(), "Stopped"));
+    let settings = FakeSettings::new(settings_snapshot());
+
+    let turn = serial();
+    use_fake_menubar();
+    use_fake_providers();
+    use_fake_databases();
+    install_databases_provider(databases.clone() as Arc<dyn DatabasesProvider>);
+    use_fake_proxy();
+    install_proxy_provider(proxy as Arc<dyn ProxyProvider>);
+    use_fake_system();
+    install_system_settings_provider(settings as Arc<dyn SystemSettingsProvider>);
+
+    let mut app = Headless::start(EngineConfig::new(Root::of::<PopoverHarness>())).unwrap();
+    app.set_viewport(Size::new(px(340.0), px(520.0))).unwrap();
+    app.wait_for("id:popover-stop-all").unwrap();
+    assert!(contains(&app, "2 running"));
+
+    app.press("id:popover-stop-all").unwrap();
+    wait_contains(&mut app, "0 running", Duration::from_secs(5)).unwrap();
+    app.wait_for_gone("id:popover-stop-all", Duration::from_secs(2))
+        .unwrap();
+    let calls = databases.calls();
+    assert!(
+        calls.iter().any(|call| call == "stop app"),
+        "calls: {calls:?}"
+    );
+    assert!(
+        calls.iter().any(|call| call == "stop cache"),
+        "calls: {calls:?}"
+    );
+    drop(turn);
+}
+
+#[test]
+fn https_and_tunnel_urls_open_copy_and_collapse_in_popover_and_menu() {
+    let menu_panel = MenubarPanel::from(MenubarInput {
+        rules: vec![MenubarRule {
+            host: "api.devbase.localhost".to_string(),
+            target: "127.0.0.1:8080".to_string(),
+            tunnel: true,
+            tunnel_url: "https://api.example.workers.dev".to_string(),
+        }],
+        proxy_status: "Running".to_string(),
+        proxy_port: 8443,
+        tunnel_status: "Running".to_string(),
+        tunnel_configured: true,
+        ..MenubarInput::default()
+    });
+    let entries = menubar_menu_entries(&menu_panel);
+    assert_every_menu_entry_has_svg_icon(&entries);
+    assert!(entries.iter().any(|entry| matches!(
+        entry,
+        MenubarMenuEntry::Item {
+            action: Some(MenubarAction::OpenUrl(url)),
+            ..
+        } if url == "https://api.devbase.localhost:8443"
+    )));
+    assert!(entries.iter().any(|entry| matches!(
+        entry,
+        MenubarMenuEntry::Item {
+            action: Some(MenubarAction::CopyUrl(url)),
+            ..
+        } if url == "https://api.devbase.localhost:8443"
+    )));
+    assert!(entries.iter().any(|entry| matches!(
+        entry,
+        MenubarMenuEntry::Item {
+            action: Some(MenubarAction::OpenUrl(url)),
+            ..
+        } if url == "https://api.example.workers.dev"
+    )));
+    assert!(entries.iter().any(|entry| matches!(
+        entry,
+        MenubarMenuEntry::Item {
+            action: Some(MenubarAction::CopyUrl(url)),
+            ..
+        } if url == "https://api.example.workers.dev"
+    )));
+
+    // When tunnel is stopped, tunnel URLs are omitted from menu entries.
+    let stopped_tunnel_panel = MenubarPanel::from(MenubarInput {
+        rules: vec![MenubarRule {
+            host: "api.devbase.localhost".to_string(),
+            target: "127.0.0.1:8080".to_string(),
+            tunnel: true,
+            tunnel_url: "https://api.example.workers.dev".to_string(),
+        }],
+        proxy_status: "Running".to_string(),
+        proxy_port: 8443,
+        tunnel_status: "Stopped".to_string(),
+        tunnel_configured: true,
+        ..MenubarInput::default()
+    });
+    let stopped_entries = menubar_menu_entries(&stopped_tunnel_panel);
+    assert!(!stopped_entries.iter().any(|entry| matches!(
+        entry,
+        MenubarMenuEntry::Item {
+            action: Some(MenubarAction::OpenUrl(url)),
+            ..
+        } if url == "https://api.example.workers.dev"
+    )));
+
+    let mut proxy_rule = rule("app.test.devbase.localhost", true);
+    proxy_rule.tunnel_url = "https://app-test.example.workers.dev".to_string();
+    let mut snapshot = proxy_snapshot(vec![proxy_rule], "Running");
+    snapshot.token_configured = true;
+    snapshot
+        .statuses
+        .insert("tunnel".to_string(), "Running".to_string());
+
+    let databases = FakeDatabases::new(database_fixture(&[("app", "Stopped")]));
+    let proxy = FakeProxy::new(snapshot);
+    let settings = FakeSettings::new(settings_snapshot());
+    let opened_urls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let opener_log = opened_urls.clone();
+
+    let turn = serial();
+    use_fake_menubar();
+    install_menubar_url_opener(Arc::new(move |url| {
+        opener_log
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(url.to_string());
+    }));
+    use_fake_providers();
+    use_fake_databases();
+    install_databases_provider(databases as Arc<dyn DatabasesProvider>);
+    use_fake_proxy();
+    install_proxy_provider(proxy as Arc<dyn ProxyProvider>);
+    use_fake_system();
+    install_system_settings_provider(settings as Arc<dyn SystemSettingsProvider>);
+
+    let mut app = Headless::start(EngineConfig::new(Root::of::<PopoverHarness>())).unwrap();
+    app.set_viewport(Size::new(px(340.0), px(560.0))).unwrap();
+    app.wait_for("id:popover-section-rules-toggle").unwrap();
+    app.wait_for("id:popover-open-rule-app.test.devbase.localhost")
+        .unwrap();
+    app.wait_for("id:popover-open-tunnel-rule-app.test.devbase.localhost")
+        .unwrap();
+
+    // Copy local HTTPS URL and verify clipboard.
+    app.press("id:popover-copy-rule-app.test.devbase.localhost")
+        .unwrap();
+    assert_eq!(
+        app.screen().clipboard(),
+        Some("https://app.test.devbase.localhost:8443")
+    );
+
+    // Open local HTTPS URL in browser.
+    app.press("id:popover-open-rule-app.test.devbase.localhost")
+        .unwrap();
+
+    // Copy & open tunnel URL when tunnel is running.
+    app.press("id:popover-copy-tunnel-rule-app.test.devbase.localhost")
+        .unwrap();
+    assert_eq!(
+        app.screen().clipboard(),
+        Some("https://app-test.example.workers.dev")
+    );
+    app.press("id:popover-open-tunnel-rule-app.test.devbase.localhost")
+        .unwrap();
+
+    let opened = opened_urls
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    assert_eq!(
+        opened,
+        vec![
+            "https://app.test.devbase.localhost:8443".to_string(),
+            "https://app-test.example.workers.dev".to_string(),
+        ]
+    );
+
+    // Collapsing URLs hides rule rows; expanding brings them back.
+    app.press("id:popover-section-rules-toggle").unwrap();
+    app.wait_for_gone(
+        "id:popover-rule-app.test.devbase.localhost",
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    app.press("id:popover-section-rules-toggle").unwrap();
+    app.wait_for("id:popover-rule-app.test.devbase.localhost")
+        .unwrap();
+
+    clear_menubar_url_opener();
+    drop(turn);
+}
+
+#[test]
+fn failed_resources_expose_logs_jump_in_menu_and_popover() {
+    let failed_panel = MenubarPanel::from(MenubarInput {
+        instances: vec![MenubarInstance {
+            id: "app".to_string(),
+            title: "PostgreSQL".to_string(),
+            port: 5432,
+            status: "Failed".to_string(),
+        }],
+        proxy_status: "Failed".to_string(),
+        proxy_rules: 1,
+        proxy_port: 8443,
+        tunnel_status: "Failed".to_string(),
+        tunnel_configured: true,
+        tunnel_rules: 1,
+        ..MenubarInput::default()
+    });
+    let entries = menubar_menu_entries(&failed_panel);
+    assert_every_menu_entry_has_svg_icon(&entries);
+    assert!(entries.iter().any(|entry| matches!(
+        entry,
+        MenubarMenuEntry::Item {
+            action: Some(MenubarAction::OpenLogs(job)),
+            ..
+        } if job == "db-app"
+    )));
+    assert!(entries.iter().any(|entry| matches!(
+        entry,
+        MenubarMenuEntry::Item {
+            action: Some(MenubarAction::OpenLogs(job)),
+            ..
+        } if job == "proxy"
+    )));
+    assert!(entries.iter().any(|entry| matches!(
+        entry,
+        MenubarMenuEntry::Item {
+            action: Some(MenubarAction::OpenLogs(job)),
+            ..
+        } if job == "tunnel"
+    )));
+
+    let databases =
+        FakeDatabases::new(database_fixture(&[("app", "Failed"), ("cache", "Running")]));
+    let mut snapshot = proxy_snapshot(vec![rule("app.test.devbase.localhost", true)], "Failed");
+    snapshot.token_configured = true;
+    snapshot
+        .statuses
+        .insert("tunnel".to_string(), "Failed".to_string());
+    let proxy = FakeProxy::new(snapshot);
+    let settings = FakeSettings::new(settings_snapshot());
+
+    let turn = serial();
+    use_fake_menubar();
+    use_fake_providers();
+    use_fake_databases();
+    install_databases_provider(databases as Arc<dyn DatabasesProvider>);
+    use_fake_proxy();
+    install_proxy_provider(proxy as Arc<dyn ProxyProvider>);
+    use_fake_system();
+    install_system_settings_provider(settings as Arc<dyn SystemSettingsProvider>);
+    use_fake_guide();
+    use_fake_software();
+    use_fake_development();
+    use_fake_dev_logs();
+
+    let mut app =
+        Headless::start(EngineConfig::new(Root::of::<PopoverNavigationHarness>())).unwrap();
+    app.set_viewport(Size::new(px(1440.0), px(720.0))).unwrap();
+    app.wait_for("Development").unwrap();
+
+    // Open popover, verify Logs buttons on failed db, proxy, and tunnel, and jump to db-app logs.
+    app.press("id:open-popover-shortcut").unwrap();
+    app.wait_for("id:popover-logs-instance-app").unwrap();
+    app.wait_for("id:popover-logs-proxy").unwrap();
+    app.wait_for("id:popover-logs-tunnel").unwrap();
+    assert_eq!(
+        app.screen()
+            .count("id:popover-logs-instance-cache")
+            .unwrap(),
+        0
+    );
+
+    app.press("id:popover-logs-instance-app").unwrap();
+    app.wait_for_gone("id:menubar-popover", Duration::from_secs(2))
+        .unwrap();
+    app.wait_for("id:dev-log-drawer").unwrap();
+    app.wait_for("text:logs-job:db-app").unwrap();
+
+    // Reopen popover and jump to proxy logs.
+    app.press("id:open-popover-shortcut").unwrap();
+    app.wait_for("id:popover-logs-proxy").unwrap();
+    app.press("id:popover-logs-proxy").unwrap();
+    app.wait_for_gone("id:menubar-popover", Duration::from_secs(2))
+        .unwrap();
+    app.wait_for("text:logs-job:proxy").unwrap();
+
+    // Reopen popover and jump to tunnel logs.
+    app.press("id:open-popover-shortcut").unwrap();
+    app.wait_for("id:popover-logs-tunnel").unwrap();
+    app.press("id:popover-logs-tunnel").unwrap();
+    app.wait_for_gone("id:menubar-popover", Duration::from_secs(2))
+        .unwrap();
+    app.wait_for("text:logs-job:tunnel").unwrap();
+
     drop(turn);
 }

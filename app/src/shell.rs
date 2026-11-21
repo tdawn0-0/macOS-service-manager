@@ -15,7 +15,7 @@ use nsh_core::{
 use crate::{
     command_palette,
     components::sidebar,
-    dev_logs, editor, guide, meta, pages,
+    dev_logs, editor, guide, meta, pages, readiness,
     store::{self, Section},
     theme as tokens,
 };
@@ -93,6 +93,26 @@ pub(crate) fn install_application_menu() {
                 .checked(active == section)
                 .on_select(move || store::select_section(section))
         };
+        let mut view_items = vec![
+            MenuItem::new("Command Palette…")
+                .shortcut("mod+k")
+                .on_select(command_palette::toggle),
+            MenuItem::separator(),
+            MenuItem::new("Refresh")
+                .shortcut("mod+r")
+                .on_select(refresh_active_section),
+            MenuItem::new("Toggle Logs")
+                .shortcut("mod+l")
+                .checked(dev_logs::is_open())
+                .on_select(dev_logs::toggle),
+            MenuItem::separator(),
+        ];
+        for (index, section) in Section::ALL.iter().copied().enumerate() {
+            view_items.push(section_item(section, &format!("mod+{}", index + 1)));
+        }
+        view_items.push(MenuItem::separator());
+        view_items.push(MenuItem::role(MenuRole::ToggleFullScreen));
+
         set_application_menu(vec![
             MenuItem::submenu(
                 meta::NAME,
@@ -140,31 +160,7 @@ pub(crate) fn install_application_menu() {
                         .on_select(trigger_find),
                 ],
             ),
-            MenuItem::submenu(
-                "View",
-                [
-                    MenuItem::new("Command Palette…")
-                        .shortcut("mod+k")
-                        .on_select(command_palette::toggle),
-                    MenuItem::separator(),
-                    MenuItem::new("Refresh")
-                        .shortcut("mod+r")
-                        .on_select(refresh_active_section),
-                    MenuItem::new("Toggle Logs")
-                        .shortcut("mod+l")
-                        .checked(dev_logs::is_open())
-                        .on_select(dev_logs::toggle),
-                    MenuItem::separator(),
-                    section_item(Section::Services, "mod+1"),
-                    section_item(Section::Development, "mod+2"),
-                    section_item(Section::Databases, "mod+3"),
-                    section_item(Section::HttpsProxy, "mod+4"),
-                    section_item(Section::Diagnostics, "mod+5"),
-                    section_item(Section::Settings, "mod+6"),
-                    MenuItem::separator(),
-                    MenuItem::role(MenuRole::ToggleFullScreen),
-                ],
-            ),
+            MenuItem::submenu("View", view_items),
             MenuItem::submenu(
                 "Window",
                 [
@@ -242,6 +238,7 @@ fn workspace() -> impl IntoElement {
         .min_w(px(0.0))
         .flex_col()
         .bg(tokens::sheet)
+        .child(readiness::strip())
         .child(
             v_resizable()
                 .flex_1()

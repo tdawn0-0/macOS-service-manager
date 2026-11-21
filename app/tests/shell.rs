@@ -16,20 +16,27 @@ use devcore::{
         BackupFile, ConnectionInfo, DatabaseWorkInfo, InstanceAction, InstanceCatalog,
         InstanceDeletionInfo, InstanceDeletionPreview, InstanceInitializationInfo, PortInspection,
     },
-    model::{ConnectionProfile, Instance, ProxyRule},
+    model::{ConnectionProfile, Instance, Package, ProxyRule},
     service::{
         Action as ServiceAction, Autostart, Detail as ServiceDetail, Item as ServiceItem,
         Provider as ServiceProvider, Result as ServiceResult, State as ServiceState,
     },
+    shutdown::ShutdownPlan,
 };
 use nsh_app_devbase::testing::{
     AuthorityAction, AuthorityInfo, AuthorityStatus, CancelToken, DatabasesProvider,
-    DatabasesSnapshot, ProxyHttpResult, ProxyListeningPort, ProxyProvider, ProxySavedCloudflare,
-    ProxySnapshot, ProxyWorkers, Source, command_palette_is_open, install_databases_provider,
-    install_provider, install_proxy_provider, menubar_load, refresh_services, shell_trigger_find,
-    toast_dismiss_all, toast_error, toast_info, toast_success, use_fake_databases,
-    use_fake_dev_logs, use_fake_development, use_fake_editor, use_fake_guide, use_fake_menubar,
-    use_fake_providers, use_fake_proxy, use_fake_software, use_fake_system,
+    DatabasesSnapshot, DevelopmentJava, DevelopmentNode, DevelopmentProvider, DevelopmentReleases,
+    DevelopmentSelection, DevelopmentShell, DevelopmentSnapshot, GuideAccess, GuidePersistence,
+    ProxyHttpResult, ProxyListeningPort, ProxyProvider, ProxySavedCloudflare, ProxySnapshot,
+    ProxyWorkers, Source, SystemCacheClear, SystemCliChange, SystemCliStatus, SystemHelperChange,
+    SystemHelperStatus, SystemLoginChange, SystemSettingsProvider, SystemSettingsSnapshot,
+    TrustState, command_palette_is_open, development_load, install_databases_provider,
+    install_development_provider, install_guide_access, install_guide_persistence,
+    install_provider, install_proxy_provider, install_system_settings_provider, menubar_load,
+    refresh_services, shell_trigger_find, toast_dismiss_all, toast_error, toast_info,
+    toast_success, use_fake_databases, use_fake_dev_logs, use_fake_development, use_fake_editor,
+    use_fake_guide, use_fake_menubar, use_fake_providers, use_fake_proxy, use_fake_software,
+    use_fake_system,
 };
 use nsh_core::{
     desktop::{WindowMode, WindowState},
@@ -243,6 +250,16 @@ impl DatabasesProvider for FakeShellDatabases {
 
 struct FakeShellProxy {
     snapshot: ProxySnapshot,
+    trust: TrustState,
+}
+
+impl FakeShellProxy {
+    fn new(snapshot: ProxySnapshot) -> Self {
+        Self {
+            snapshot,
+            trust: TrustState::NotChecked,
+        }
+    }
 }
 
 impl ProxyProvider for FakeShellProxy {
@@ -276,9 +293,13 @@ impl ProxyProvider for FakeShellProxy {
         Err("unused".to_string())
     }
     fn authority_status(&self) -> Result<AuthorityStatus, String> {
+        let active = AuthorityInfo {
+            trust: self.trust,
+            ..AuthorityInfo::default()
+        };
         Ok(AuthorityStatus {
             checked_at: Utc::now(),
-            active: AuthorityInfo::default(),
+            active,
             prepared: None,
             previous: None,
             archives: Vec::new(),
@@ -357,14 +378,12 @@ impl ServiceProvider for FakeShellServices {
 
 fn sample_instance(id: &str, kind: &str, port: i64) -> Instance {
     Instance {
-        data_identity: String::new(),
-        data_directory: String::new(),
-        data_owner: String::new(),
         id: id.to_string(),
         kind: kind.to_string(),
         package: format!("{kind}@17.1-arm64"),
         port,
         persistent: true,
+        ..Instance::default()
     }
 }
 
@@ -387,11 +406,16 @@ fn sample_service(id: &str, source: Source, name: &str, state: ServiceState) -> 
 #[test]
 fn sidebar_lists_the_six_sections() {
     let (_turn, app) = start();
+    assert_eq!(app.screen().count("id:sidebar-group-workspace").unwrap(), 1);
+    assert_eq!(app.screen().count("id:sidebar-group-system").unwrap(), 1);
+    assert!(app.screen().shows("WORKSPACE"));
+    assert!(app.screen().shows("SYSTEM"));
+    assert_eq!(app.screen().count("id:readiness-bar").unwrap(), 0);
     for section in [
-        "Services",
         "Development",
         "Databases",
         "HTTPS Proxy",
+        "Services",
         "Diagnostics",
         "Settings",
     ] {
@@ -405,7 +429,8 @@ fn sidebar_lists_the_six_sections() {
 #[test]
 fn choosing_a_section_switches_the_workspace() {
     let (_turn, mut app) = start();
-    app.wait_for("launchd jobs, their status and lifecycle controls.")
+    app.wait_for("id:development").unwrap();
+    app.wait_for("Runtimes and software the development workspace manages.")
         .unwrap();
 
     app.press("role:button[Databases]").unwrap();
@@ -419,6 +444,9 @@ fn choosing_a_section_switches_the_workspace() {
     app.press("role:button[Services]").unwrap();
     app.wait_for("launchd jobs, their status and lifecycle controls.")
         .unwrap();
+
+    app.press("role:button[Development]").unwrap();
+    app.wait_for("id:development").unwrap();
 }
 
 #[test]
@@ -458,6 +486,8 @@ fn macos_sidebar_uses_liquid_glass_and_falls_back_in_full_screen() {
 #[test]
 fn services_lists_all_five_sources_and_sidebar_toggles_log_drawer() {
     let (_turn, mut app) = start();
+    app.press("role:button[Services]").unwrap();
+    app.wait_for("Homebrew").unwrap();
     for source in [
         "Homebrew",
         "Login Items",
@@ -502,21 +532,19 @@ fn command_palette_opens_filters_and_executes_navigation_actions_and_db_jump() {
     let mut proxy_statuses = BTreeMap::new();
     proxy_statuses.insert("proxy".to_string(), "Running".to_string());
     proxy_statuses.insert("tunnel".to_string(), "Stopped".to_string());
-    install_proxy_provider(Arc::new(FakeShellProxy {
-        snapshot: ProxySnapshot {
-            rules: vec![ProxyRule {
-                domain: "api.devbase.localhost".to_string(),
-                local_port: 8080,
-                tunnel: true,
-                ..ProxyRule::default()
-            }],
-            listener_port: 8443,
-            statuses: proxy_statuses,
-            token_configured: true,
-            workers: ProxyWorkers::default(),
-            ..ProxySnapshot::default()
-        },
-    }));
+    install_proxy_provider(Arc::new(FakeShellProxy::new(ProxySnapshot {
+        rules: vec![ProxyRule {
+            domain: "api.devbase.localhost".to_string(),
+            local_port: 8080,
+            tunnel: true,
+            ..ProxyRule::default()
+        }],
+        listener_port: 8443,
+        statuses: proxy_statuses,
+        token_configured: true,
+        workers: ProxyWorkers::default(),
+        ..ProxySnapshot::default()
+    })));
 
     let mut config = EngineConfig::new(Root::of::<nsh_app_devbase::App>());
     config.environment.os = Os::MacOs;
@@ -673,18 +701,16 @@ fn sidebar_displays_live_running_counts_for_services_databases_and_proxy() {
 
     let mut proxy_statuses = BTreeMap::new();
     proxy_statuses.insert("proxy".to_string(), "Running".to_string());
-    install_proxy_provider(Arc::new(FakeShellProxy {
-        snapshot: ProxySnapshot {
-            rules: vec![ProxyRule {
-                domain: "web.devbase.localhost".to_string(),
-                local_port: 3000,
-                ..ProxyRule::default()
-            }],
-            listener_port: 8443,
-            statuses: proxy_statuses,
-            ..ProxySnapshot::default()
-        },
-    }));
+    install_proxy_provider(Arc::new(FakeShellProxy::new(ProxySnapshot {
+        rules: vec![ProxyRule {
+            domain: "web.devbase.localhost".to_string(),
+            local_port: 3000,
+            ..ProxyRule::default()
+        }],
+        listener_port: 8443,
+        statuses: proxy_statuses,
+        ..ProxySnapshot::default()
+    })));
 
     let mut app = Headless::start(EngineConfig::new(Root::of::<LiveSidebarHarness>())).unwrap();
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
@@ -715,6 +741,8 @@ fn edit_find_routes_focus_to_services_logs_or_command_palette() {
     install_all_fakes();
     let mut app = Headless::start(EngineConfig::new(Root::of::<FindHarness>())).unwrap();
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    app.wait_for("Services").unwrap();
+    app.press("role:button[Services]").unwrap();
     app.wait_for("id:services-search").unwrap();
 
     // On Services with the log drawer closed, Edit -> Find… focuses services-search.
@@ -752,4 +780,302 @@ fn edit_find_routes_focus_to_services_logs_or_command_palette() {
     app.wait_for("id:settings-page").unwrap();
     app.press("id:trigger-edit-find").unwrap();
     app.wait_for("id:command-palette").unwrap();
+}
+
+struct FakeShellGuidePersistence;
+
+impl GuidePersistence for FakeShellGuidePersistence {
+    fn completed(&self) -> Result<bool, String> {
+        Ok(false)
+    }
+    fn complete(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+struct FakeShellGuideAccess;
+
+impl GuideAccess for FakeShellGuideAccess {
+    fn needs_access(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn app_launches_on_development_workspace_without_auto_guide() {
+    let _turn = serial();
+    install_all_fakes();
+    install_guide_persistence(Arc::new(FakeShellGuidePersistence));
+    install_guide_access(Arc::new(FakeShellGuideAccess));
+
+    let mut config = EngineConfig::new(Root::of::<nsh_app_devbase::App>());
+    config.environment.os = Os::MacOs;
+    config.environment.title_bar.top = px(52.0);
+    let mut app = Headless::start(config).unwrap();
+    app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    app.wait_for("id:development").unwrap();
+    app.wait(Duration::from_millis(250)).unwrap();
+
+    // Per docs/product-scope.md: no automatic welcome/Full Disk Access modal on launch.
+    assert_eq!(app.screen().count("id:guide-overlay").unwrap(), 0);
+}
+
+struct FakeShellSettings {
+    snapshot: SystemSettingsSnapshot,
+}
+
+impl SystemSettingsProvider for FakeShellSettings {
+    fn snapshot(&self) -> Result<SystemSettingsSnapshot, String> {
+        Ok(self.snapshot.clone())
+    }
+    fn install_helper(&self) -> SystemHelperChange {
+        SystemHelperChange::default()
+    }
+    fn uninstall_helper(&self) -> SystemHelperChange {
+        SystemHelperChange::default()
+    }
+    fn install_cli(&self) -> SystemCliChange {
+        SystemCliChange::default()
+    }
+    fn uninstall_cli(&self) -> SystemCliChange {
+        SystemCliChange::default()
+    }
+    fn clear_cache(&self) -> Result<SystemCacheClear, String> {
+        Err("unused".to_string())
+    }
+    fn set_log_rotation(&self, _enabled: bool) -> Result<(), String> {
+        Ok(())
+    }
+    fn set_login_item(&self, enabled: bool) -> SystemLoginChange {
+        SystemLoginChange {
+            enabled,
+            error: None,
+        }
+    }
+    fn open_full_disk_access(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn open_login_items(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn reveal(&self, _path: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn preview_shutdown(&self) -> Result<ShutdownPlan, String> {
+        Ok(ShutdownPlan::default())
+    }
+    fn shutdown(&self, _plan: &ShutdownPlan) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+struct FakeShellDevelopment {
+    snapshot: DevelopmentSnapshot,
+}
+
+impl DevelopmentProvider for FakeShellDevelopment {
+    fn snapshot(&self) -> Result<DevelopmentSnapshot, String> {
+        Ok(self.snapshot.clone())
+    }
+    fn node_releases(&self, _refresh: bool) -> Result<DevelopmentReleases, String> {
+        Ok(DevelopmentReleases::default())
+    }
+    fn set_node_default(&self, _id: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn set_java_default(&self, _id: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn node_binary(&self, _id: &str) -> Result<String, String> {
+        Err("unused".to_string())
+    }
+    fn install_python(&self, _key: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn python_action(&self, _key: &str, _action: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn set_uv_path(&self, _path: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn java_catalog(&self) -> Result<Vec<Package>, String> {
+        Ok(Vec::new())
+    }
+    fn install_java(&self, _package: Package) -> Result<(), String> {
+        Ok(())
+    }
+    fn node_shell(&self, _enable: bool) -> Result<(), String> {
+        Ok(())
+    }
+    fn java_shell(&self, _enable: bool) -> Result<(), String> {
+        Ok(())
+    }
+    fn select_node(
+        &self,
+        _dir: &str,
+        _override_spec: Option<&str>,
+    ) -> Result<DevelopmentSelection, String> {
+        Ok(DevelopmentSelection::default())
+    }
+    fn launch_terminal(&self, _selection: &DevelopmentSelection) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[component]
+fn ReadinessHarness() -> impl IntoElement {
+    menubar_load();
+    development_load();
+    view().size_full().flex_col().child(nsh_app_devbase::app())
+}
+
+#[test]
+fn readiness_checklist_surfaces_actionable_pills_navigates_and_dismisses() {
+    let _turn = serial();
+    install_all_fakes();
+
+    install_system_settings_provider(Arc::new(FakeShellSettings {
+        snapshot: SystemSettingsSnapshot {
+            helper: SystemHelperStatus {
+                installed: false,
+                message: "Not installed".to_string(),
+            },
+            cli: SystemCliStatus {
+                installed: false,
+                wrapper_path: "/usr/local/bin/devbase".to_string(),
+                ..SystemCliStatus::default()
+            },
+            workspace_root: "/tmp/devbase-tests/Development".to_string(),
+            ..SystemSettingsSnapshot::default()
+        },
+    }));
+    install_proxy_provider(Arc::new(FakeShellProxy {
+        snapshot: ProxySnapshot {
+            rules: vec![ProxyRule {
+                domain: "api.devbase.localhost".to_string(),
+                local_port: 8080,
+                ..ProxyRule::default()
+            }],
+            listener_port: 8443,
+            ..ProxySnapshot::default()
+        },
+        trust: TrustState::NotTrusted,
+    }));
+    install_development_provider(Arc::new(FakeShellDevelopment {
+        snapshot: DevelopmentSnapshot {
+            node: vec![DevelopmentNode {
+                id: "node@22.14.0-arm64".to_string(),
+                version: "22.14.0".to_string(),
+                lts: "Jod".to_string(),
+                default: true,
+            }],
+            java: vec![DevelopmentJava {
+                id: "java@21".to_string(),
+                version: "21".to_string(),
+                product: "JBR".to_string(),
+                default: false,
+            }],
+            shells: vec![DevelopmentShell {
+                shell: "zsh".to_string(),
+                label: "Zsh".to_string(),
+                available: true,
+                files: vec!["~/.zshrc".to_string()],
+                node_applied: false,
+                java_applied: false,
+            }],
+            node_shell_enabled: false,
+            java_shell_enabled: false,
+            ..DevelopmentSnapshot::default()
+        },
+    }));
+
+    let mut app = Headless::start(EngineConfig::new(Root::of::<ReadinessHarness>())).unwrap();
+    app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+
+    app.wait_for("id:readiness-bar").unwrap();
+    app.wait_for("id:readiness-pill-helper").unwrap();
+    app.wait_for("id:readiness-pill-ca-trust").unwrap();
+    app.wait_for("id:readiness-pill-cli").unwrap();
+    app.wait_for("id:readiness-pill-shell").unwrap();
+
+    // Clicking Local CA Trust navigates to HTTPS Proxy and opens Authority.
+    app.press("id:readiness-pill-ca-trust").unwrap();
+    app.wait_for("id:ca-page").unwrap();
+
+    // Clicking Privileged Helper navigates to Settings.
+    app.press("id:readiness-pill-helper").unwrap();
+    app.wait_for("id:settings-page").unwrap();
+
+    // Clicking Shell Integration navigates to Development -> Shell integration tab.
+    app.press("id:readiness-pill-shell").unwrap();
+    app.wait_for("id:shell-row-zsh").unwrap();
+
+    // Dismissing hides the strip for the session.
+    app.press("id:readiness-dismiss").unwrap();
+    app.wait_for_gone("id:readiness-bar", Duration::from_secs(2))
+        .unwrap();
+}
+
+#[test]
+fn readiness_checklist_auto_hides_when_all_items_are_ready() {
+    let _turn = serial();
+    install_all_fakes();
+
+    install_system_settings_provider(Arc::new(FakeShellSettings {
+        snapshot: SystemSettingsSnapshot {
+            helper: SystemHelperStatus {
+                installed: true,
+                message: "Installed".to_string(),
+            },
+            cli: SystemCliStatus {
+                installed: true,
+                wrapper_path: "/usr/local/bin/devbase".to_string(),
+                in_path: true,
+                managed_by_devbase: true,
+                ..SystemCliStatus::default()
+            },
+            workspace_root: "/tmp/devbase-tests/Development".to_string(),
+            ..SystemSettingsSnapshot::default()
+        },
+    }));
+    install_proxy_provider(Arc::new(FakeShellProxy {
+        snapshot: ProxySnapshot {
+            rules: vec![ProxyRule {
+                domain: "api.devbase.localhost".to_string(),
+                local_port: 8080,
+                ..ProxyRule::default()
+            }],
+            listener_port: 8443,
+            ..ProxySnapshot::default()
+        },
+        trust: TrustState::Trusted,
+    }));
+    install_development_provider(Arc::new(FakeShellDevelopment {
+        snapshot: DevelopmentSnapshot {
+            node: vec![DevelopmentNode {
+                id: "node@22.14.0-arm64".to_string(),
+                version: "22.14.0".to_string(),
+                lts: "Jod".to_string(),
+                default: true,
+            }],
+            shells: vec![DevelopmentShell {
+                shell: "zsh".to_string(),
+                label: "Zsh".to_string(),
+                available: true,
+                files: vec!["~/.zshrc".to_string()],
+                node_applied: true,
+                java_applied: false,
+            }],
+            node_shell_enabled: true,
+            java_shell_enabled: false,
+            ..DevelopmentSnapshot::default()
+        },
+    }));
+
+    let mut app = Headless::start(EngineConfig::new(Root::of::<ReadinessHarness>())).unwrap();
+    app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    app.wait_for("id:development").unwrap();
+    app.wait(Duration::from_millis(250)).unwrap();
+
+    assert_eq!(app.screen().count("id:readiness-bar").unwrap(), 0);
 }

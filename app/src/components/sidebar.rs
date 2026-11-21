@@ -14,7 +14,7 @@ use nsh_core::{
 use crate::{
     components::icons::{self, Icon},
     meta, shell,
-    store::{self, Section, databases, proxy, services},
+    store::{self, Section, SectionGroup, databases, proxy, services},
     theme as tokens,
 };
 
@@ -252,8 +252,8 @@ pub(crate) fn sidebar() -> impl IntoElement {
                 .child(
                     view()
                         .flex_col()
-                        .gap(tokens::space(0.5))
-                        .child(Section::ALL.iter().map(|section| nav_item(*section))),
+                        .gap(tokens::space(3.0))
+                        .child(SectionGroup::ALL.iter().map(|group| nav_group(*group))),
                 )
                 .child(view().flex_1().window_drag(true))
                 .child(logs_toggle())
@@ -291,6 +291,23 @@ fn identity() -> impl IntoElement {
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground),
         )
+}
+
+/// One semantic group of navigation items with a subtle uppercase heading.
+fn nav_group(group: SectionGroup) -> impl IntoElement {
+    view()
+        .flex_col()
+        .gap(tokens::space(0.5))
+        .child(
+            text(group.heading())
+                .test_id(group.test_id())
+                .px(tokens::space(2.5))
+                .pb(tokens::space(0.5))
+                .text_size(px(10.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(move || theme().muted_foreground.opacity(0.8)),
+        )
+        .child(group.sections().iter().map(|section| nav_item(*section)))
 }
 
 /// One section: a full-width row with an inline icon, selected while it is

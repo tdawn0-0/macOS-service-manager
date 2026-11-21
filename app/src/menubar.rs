@@ -19,11 +19,15 @@
 //! blocking thread and writes its signals.
 
 use std::{
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc, LazyLock, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 use devcore::service::{Action as ServiceAction, Source, State as ServiceState};
+use devproxy::proxy::rules::preview_tunnel_url;
 use nsh_base::{button, collapsible, switch, theme};
 use nsh_core::{
     AccessibilityState, GlassEffect, Haptic, LayoutAnimation, LayoutCurve, LayoutTransition,
@@ -83,9 +87,42 @@ const TRAY_FAILED_COLOR_HEX: u32 = 0xff3b30;
 /// registration so headless tests never touch Carbon hotkeys.
 static FAKE_MODE: AtomicBool = AtomicBool::new(false);
 
+type UrlOpener = Arc<dyn Fn(&str) + Send + Sync>;
+
+static URL_OPENER_FAKE: LazyLock<Mutex<Option<UrlOpener>>> = LazyLock::new(|| Mutex::new(None));
+
 /// Opts out of host OS global-shortcut registration during headless tests.
 pub fn use_fake_menubar() {
     FAKE_MODE.store(true, Ordering::Relaxed);
+}
+
+/// Installs a fake browser URL opener for headless tests so clicking a rule URL
+/// never launches the host browser.
+pub fn install_url_opener(opener: UrlOpener) {
+    *URL_OPENER_FAKE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(opener);
+}
+
+/// Clears any installed fake browser URL opener.
+pub fn clear_url_opener() {
+    *URL_OPENER_FAKE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+}
+
+fn open_url_async(url: String) {
+    if let Some(opener) = URL_OPENER_FAKE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+    {
+        opener(&url);
+        return;
+    }
+    spawn(async move {
+        let _ = open_url(url).await;
+    });
 }
 
 pub(crate) fn is_fake_mode() -> bool {
@@ -124,6 +161,8 @@ pub enum RowKind {
     Proxy,
     /// The Cloudflare tunnel's switch, shown only once it is configured.
     Tunnel,
+    /// A saved HTTPS rule's quick URL action (open or copy).
+    Rule,
     /// An optional Homebrew or UserAgent service row when loaded.
     Service,
     /// Open Devbase, Refresh, Quit.
@@ -141,6 +180,7 @@ impl RowKind {
             RowKind::Instance => "instance",
             RowKind::Proxy => "proxy",
             RowKind::Tunnel => "tunnel",
+            RowKind::Rule => "rule",
             RowKind::Service => "service",
             RowKind::Action => "action",
             RowKind::Separator => "separator",
@@ -157,12 +197,21 @@ pub enum Action {
     OpenNewInstance,
     /// Start or stop a database instance.
     ToggleInstance { id: String, start: bool },
+    /// Stop every currently running managed database instance.
+    StopAllDatabases,
     /// Apply the saved proxy rules, or stop the proxy job.
     ToggleProxy(bool),
     /// Start the Cloudflare tunnel, or stop it.
     ToggleTunnel(bool),
     /// Show the HTTPS Proxy section.
     OpenHttpsProxy,
+    /// Open a local HTTPS or tunnel URL in the default browser.
+    OpenUrl(String),
+    /// Copy a local HTTPS or tunnel URL to the clipboard.
+    CopyUrl(String),
+    /// Open the main window's live log drawer focused on `job_id`
+    /// (`"db-<id>"`, `"proxy"`, or `"tunnel"`).
+    OpenLogs(String),
     /// Show the Services section at a Homebrew or UserAgent item.
     OpenService { source: Source, id: String },
     /// Start or stop a Homebrew or UserAgent service item.
@@ -208,6 +257,8 @@ pub struct Panel {
     pub state: String,
     /// The header's summary line (`3 running · 1 failed`).
     pub summary: String,
+    /// Saved HTTPS rules for quick URL access.
+    pub rules: Vec<RuleRow>,
     pub rows: Vec<Row>,
 }
 
@@ -219,6 +270,15 @@ pub struct InstanceRow {
     pub title: String,
     pub port: i64,
     pub status: String,
+}
+
+/// One saved HTTPS proxy rule in [`PanelInput`] and [`Panel`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuleRow {
+    pub host: String,
+    pub target: String,
+    pub tunnel: bool,
+    pub tunnel_url: String,
 }
 
 /// One optional Homebrew or UserAgent service in [`PanelInput`].
@@ -239,6 +299,7 @@ pub struct ServiceRow {
 pub struct PanelInput {
     pub instances: Vec<InstanceRow>,
     pub services: Vec<ServiceRow>,
+    pub rules: Vec<RuleRow>,
     pub proxy_status: String,
     pub proxy_rules: usize,
     pub proxy_port: i64,
@@ -251,6 +312,23 @@ pub struct PanelInput {
     pub helper: String,
     pub workspace_root: String,
     pub quit_open: bool,
+}
+
+fn local_rule_url(host: &str, port: i64) -> String {
+    if port != 0 && port != 443 {
+        format!("https://{host}:{port}")
+    } else {
+        format!("https://{host}")
+    }
+}
+
+fn rule_target(rule: &devcore::model::ProxyRule) -> String {
+    let host = if rule.upstream_host.trim().is_empty() {
+        "127.0.0.1"
+    } else {
+        rule.upstream_host.trim()
+    };
+    format!("{host}:{}", rule.local_port)
 }
 
 fn is_internal_devbase_service(name: &str, id: &str) -> bool {
@@ -367,6 +445,23 @@ impl Panel {
             enabled: false,
             action: None,
         });
+        let proxy_rules = input.proxy_rules.max(input.rules.len());
+        let tunnel_rules = input
+            .tunnel_rules
+            .max(input.rules.iter().filter(|rule| rule.tunnel).count());
+
+        if instances_running > 0 {
+            rows.push(Row {
+                key: "databases:stop-all".to_string(),
+                kind: RowKind::Instance,
+                label: "Stop All Databases".to_string(),
+                detail: String::new(),
+                state: String::new(),
+                checked: None,
+                enabled: !input.busy && !input.quit_open,
+                action: Some(Action::StopAllDatabases),
+            });
+        }
         if input.instances.is_empty() {
             rows.push(Row {
                 key: "no-instances".to_string(),
@@ -386,6 +481,7 @@ impl Panel {
                 instance.status.clone()
             };
             let on = running_status(&status);
+            let failed_row = status == "Failed";
             let busy = input.busy || input.quit_open || busy_status(&status);
             rows.push(Row {
                 key: format!("instance:{}", instance.id),
@@ -414,6 +510,18 @@ impl Panel {
                     start: !on,
                 }),
             });
+            if failed_row {
+                rows.push(Row {
+                    key: format!("instance:{}:logs", instance.id),
+                    kind: RowKind::Instance,
+                    label: format!("View {} Logs", instance.id),
+                    detail: String::new(),
+                    state: "Failed".to_string(),
+                    checked: None,
+                    enabled: true,
+                    action: Some(Action::OpenLogs(format!("db-{}", instance.id))),
+                });
+            }
         }
 
         rows.push(Row {
@@ -432,14 +540,26 @@ impl Panel {
             label: format!("Proxy · {}", input.proxy_status),
             detail: format!(
                 "{} · :{}",
-                store::software::plural(input.proxy_rules, "rule"),
+                store::software::plural(proxy_rules, "rule"),
                 input.proxy_port
             ),
             state: input.proxy_status.clone(),
             checked: Some(proxy_on),
-            enabled: !input.busy && !input.quit_open && (proxy_on || input.proxy_rules > 0),
+            enabled: !input.busy && !input.quit_open && (proxy_on || proxy_rules > 0),
             action: Some(Action::ToggleProxy(!proxy_on)),
         });
+        if input.proxy_status == "Failed" {
+            rows.push(Row {
+                key: "proxy:logs".to_string(),
+                kind: RowKind::Proxy,
+                label: "View Proxy Logs".to_string(),
+                detail: String::new(),
+                state: "Failed".to_string(),
+                checked: None,
+                enabled: true,
+                action: Some(Action::OpenLogs("proxy".to_string())),
+            });
+        }
         if input.tunnel_configured {
             let detail = if tunnel_on && !input.tunnel_detail.is_empty() {
                 input.tunnel_detail.clone()
@@ -457,9 +577,67 @@ impl Panel {
                 detail,
                 state: input.tunnel_status.clone(),
                 checked: Some(tunnel_on),
-                enabled: !input.busy && !input.quit_open && (tunnel_on || input.tunnel_rules > 0),
+                enabled: !input.busy && !input.quit_open && (tunnel_on || tunnel_rules > 0),
                 action: Some(Action::ToggleTunnel(!tunnel_on)),
             });
+            if input.tunnel_status == "Failed" {
+                rows.push(Row {
+                    key: "tunnel:logs".to_string(),
+                    kind: RowKind::Tunnel,
+                    label: "View Tunnel Logs".to_string(),
+                    detail: String::new(),
+                    state: "Failed".to_string(),
+                    checked: None,
+                    enabled: true,
+                    action: Some(Action::OpenLogs("tunnel".to_string())),
+                });
+            }
+        }
+        for rule in &input.rules {
+            let local_url = local_rule_url(&rule.host, input.proxy_port);
+            rows.push(Row {
+                key: format!("rule:{}", rule.host),
+                kind: RowKind::Rule,
+                label: local_url.clone(),
+                detail: rule.target.clone(),
+                state: String::new(),
+                checked: None,
+                enabled: true,
+                action: Some(Action::OpenUrl(local_url.clone())),
+            });
+            rows.push(Row {
+                key: format!("rule:{}:copy", rule.host),
+                kind: RowKind::Rule,
+                label: format!("Copy {local_url}"),
+                detail: String::new(),
+                state: String::new(),
+                checked: None,
+                enabled: true,
+                action: Some(Action::CopyUrl(local_url)),
+            });
+            if tunnel_on && rule.tunnel && !rule.tunnel_url.trim().is_empty() {
+                let tunnel_url = rule.tunnel_url.trim().to_string();
+                rows.push(Row {
+                    key: format!("rule:{}:tunnel", rule.host),
+                    kind: RowKind::Rule,
+                    label: tunnel_url.clone(),
+                    detail: "Tunnel".to_string(),
+                    state: "Running".to_string(),
+                    checked: None,
+                    enabled: true,
+                    action: Some(Action::OpenUrl(tunnel_url.clone())),
+                });
+                rows.push(Row {
+                    key: format!("rule:{}:tunnel:copy", rule.host),
+                    kind: RowKind::Rule,
+                    label: format!("Copy {tunnel_url}"),
+                    detail: String::new(),
+                    state: String::new(),
+                    checked: None,
+                    enabled: true,
+                    action: Some(Action::CopyUrl(tunnel_url)),
+                });
+            }
         }
 
         let visible_services: Vec<&ServiceRow> = input
@@ -571,6 +749,7 @@ impl Panel {
             failed,
             state,
             summary,
+            rules: input.rules,
             rows,
         }
     }
@@ -665,6 +844,26 @@ fn loaded_service_rows() -> Vec<ServiceRow> {
     rows
 }
 
+fn saved_rule_rows() -> Vec<RuleRow> {
+    let subdomain = proxy::subdomain();
+    proxy::saved_rules()
+        .into_iter()
+        .map(|rule| {
+            let tunnel_url = if rule.tunnel {
+                preview_tunnel_url(&rule, &subdomain)
+            } else {
+                String::new()
+            };
+            RuleRow {
+                target: rule_target(&rule),
+                host: rule.domain,
+                tunnel: rule.tunnel,
+                tunnel_url,
+            }
+        })
+        .collect()
+}
+
 /// Reads the stores the tray shows. Call inside a reactive context (a
 /// component or an effect); every read is tracked.
 pub fn panel() -> Panel {
@@ -679,12 +878,27 @@ pub fn panel() -> Panel {
         .collect();
     let services = loaded_service_rows();
     let rules = proxy::saved_rules();
+    let subdomain = proxy::subdomain();
+    let rule_rows: Vec<RuleRow> = rules
+        .iter()
+        .map(|rule| RuleRow {
+            target: rule_target(rule),
+            host: rule.domain.clone(),
+            tunnel: rule.tunnel,
+            tunnel_url: if rule.tunnel {
+                preview_tunnel_url(rule, &subdomain)
+            } else {
+                String::new()
+            },
+        })
+        .collect();
     let proxy_status = proxy::proxy_status();
     let tunnel_status = proxy::tunnel_status();
     let helper = system::helper_status();
     Panel::from(PanelInput {
         instances,
         services,
+        rules: rule_rows,
         proxy_status,
         proxy_rules: rules.len(),
         proxy_port: proxy::listener_port(),
@@ -730,12 +944,35 @@ pub fn dispatch(action: Action) {
                 databases::stop_instance(&id);
             }
         }
+        Action::StopAllDatabases => {
+            let running_ids: Vec<String> = databases::instances()
+                .into_iter()
+                .filter(|inst| running_status(&databases::status(&inst.id)))
+                .map(|inst| inst.id)
+                .collect();
+            for id in running_ids {
+                databases::stop_instance(&id);
+            }
+        }
         Action::ToggleProxy(on) => proxy::set_proxy_enabled(on),
         Action::ToggleTunnel(on) => proxy::set_tunnel_enabled(on),
         Action::OpenHttpsProxy => {
             close_popover();
             store::select_section(Section::HttpsProxy);
             show_window();
+        }
+        Action::OpenUrl(url) => {
+            close_popover();
+            open_url_async(url);
+        }
+        Action::CopyUrl(url) => {
+            set_clipboard(url);
+            crate::toast::info("Copied URL");
+        }
+        Action::OpenLogs(job_id) => {
+            close_popover();
+            show_window();
+            crate::dev_logs::open(&job_id);
         }
         Action::OpenService { source, id } => {
             close_popover();
@@ -802,6 +1039,7 @@ struct PopoverState {
 
 #[derive(Debug, Clone)]
 struct PopoverSectionState {
+    rules_expanded: bool,
     brew_expanded: bool,
     user_agent_expanded: bool,
 }
@@ -809,6 +1047,7 @@ struct PopoverSectionState {
 impl Default for PopoverSectionState {
     fn default() -> Self {
         Self {
+            rules_expanded: true,
             brew_expanded: true,
             user_agent_expanded: true,
         }
@@ -821,6 +1060,22 @@ fn popover_state() -> Signal<PopoverState> {
 
 fn popover_sections() -> Signal<PopoverSectionState> {
     global::<PopoverSectionState>()
+}
+
+fn rules_expanded() -> bool {
+    popover_sections().with(|state| state.rules_expanded)
+}
+
+fn toggle_rules_section() {
+    if !reduce_motion() {
+        animate_layout(LayoutAnimation::all(LayoutTransition::new(
+            LayoutCurve::EaseInEaseOut,
+            180.0,
+        )));
+    }
+    popover_sections().update(|state| {
+        state.rules_expanded = !state.rules_expanded;
+    });
 }
 
 fn section_expanded(source: Source) -> bool {
@@ -1016,6 +1271,15 @@ fn estimated_popover_height(panel: &Panel) -> f32 {
         })
         .count();
     let has_tunnel = panel.rows.iter().any(|row| row.kind == RowKind::Tunnel);
+    let rules_height = if !panel.rules.is_empty() {
+        26.0 + if untracked(rules_expanded) {
+            panel.rules.len() as f32 * 36.0
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
     let brew_height = if brew_count > 0 {
         26.0 + if untracked(|| section_expanded(Source::Brew)) {
             brew_count as f32 * 44.0
@@ -1037,6 +1301,7 @@ fn estimated_popover_height(panel: &Panel) -> f32 {
     let height = 164.0
         + (instance_count as f32 * 44.0)
         + if has_tunnel { 96.0 } else { 52.0 }
+        + rules_height
         + brew_height
         + agent_height
         + 76.0;
@@ -1400,9 +1665,127 @@ fn popover_no_instances_row() -> impl IntoElement {
         )
 }
 
+fn failed_logs_button(
+    job_id: String,
+    test_id: String,
+    accessibility_label: String,
+) -> impl IntoElement {
+    view()
+        .flex_none()
+        .tooltip(controls::tooltip("Open live logs"))
+        .child(
+            button()
+                .test_id(&test_id)
+                .accessibility_label(accessibility_label)
+                .h(px(20.0))
+                .px(px(6.0))
+                .flex_none()
+                .flex_row()
+                .items_center()
+                .gap(px(3.0))
+                .rounded(px(4.0))
+                .bg(move || theme().destructive.opacity(0.12))
+                .border_1()
+                .border_color(move || theme().destructive.opacity(0.32))
+                .hover(|s| s.bg(move || theme().destructive.opacity(0.22)))
+                .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
+                .on_press(move || dispatch(Action::OpenLogs(job_id.clone())))
+                .child(
+                    text("Logs")
+                        .text_size(px(10.0))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(move || theme().destructive),
+                ),
+        )
+}
+
+fn databases_section_heading() -> impl IntoElement {
+    let running_count = || {
+        databases::instances()
+            .iter()
+            .filter(|inst| running_status(&databases::status(&inst.id)))
+            .count()
+    };
+    view()
+        .w_full()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .px(px(6.0))
+        .pt(px(6.0))
+        .pb(px(4.0))
+        .child(
+            text("Databases")
+                .text_size(px(tokens::TEXT_CAPTION))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(move || theme().muted_foreground),
+        )
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .gap(px(6.0))
+                .child(when(
+                    move || running_count() > 0,
+                    || {
+                        view()
+                            .flex_none()
+                            .tooltip(controls::tooltip("Stop all running databases"))
+                            .child(
+                                button()
+                                    .test_id("popover-stop-all")
+                                    .accessibility_label("Stop all databases")
+                                    .disabled(popover_busy)
+                                    .h(px(18.0))
+                                    .px(px(6.0))
+                                    .flex_none()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(4.0))
+                                    .bg(tokens::control)
+                                    .border_1()
+                                    .border_color(tokens::hairline)
+                                    .hover(|s| s.bg(tokens::row_hover()))
+                                    .focus_visible(|s| {
+                                        s.ring(px(2.0)).ring_color(move || theme().ring)
+                                    })
+                                    .opacity(
+                                        move || if popover_busy() { 0.45_f32 } else { 1.0_f32 },
+                                    )
+                                    .on_press(|| dispatch(Action::StopAllDatabases))
+                                    .child(
+                                        text("Stop all")
+                                            .text_size(px(10.0))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(move || theme().foreground),
+                                    ),
+                            )
+                    },
+                ))
+                .child(
+                    text(move || {
+                        let list = databases::instances();
+                        if list.is_empty() {
+                            String::new()
+                        } else {
+                            let running = list
+                                .iter()
+                                .filter(|inst| running_status(&databases::status(&inst.id)))
+                                .count();
+                            format!("{running}/{}", list.len())
+                        }
+                    })
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .tabular_nums()
+                    .text_color(move || theme().muted_foreground),
+                ),
+        )
+}
+
 fn popover_instance_row(row: ReadSignal<InstanceRow>) -> impl IntoElement {
     let id = row.with_untracked(|r| r.id.clone());
     let open_id = id.clone();
+    let logs_id = id.clone();
     let toggle_id = id.clone();
     view()
         .test_id(&format!("popover-instance-{id}"))
@@ -1448,6 +1831,16 @@ fn popover_instance_row(row: ReadSignal<InstanceRow>) -> impl IntoElement {
                         ),
                 ),
         )
+        .child(when(
+            move || row.with(|r| r.status == "Failed"),
+            move || {
+                failed_logs_button(
+                    format!("db-{logs_id}"),
+                    format!("popover-logs-instance-{logs_id}"),
+                    format!("Open logs for {logs_id}"),
+                )
+            },
+        ))
         .child(popover_switch(
             move || row.with(|r| running_status(&r.status)),
             move || row.with(|r| popover_busy() || busy_status(&r.status)),
@@ -1512,6 +1905,16 @@ fn popover_proxy_row() -> impl IntoElement {
                         ),
                 ),
         )
+        .child(when(
+            move || proxy::proxy_status() == "Failed",
+            || {
+                failed_logs_button(
+                    "proxy".to_string(),
+                    "popover-logs-proxy".to_string(),
+                    "Open proxy logs".to_string(),
+                )
+            },
+        ))
         .child(popover_switch(
             move || proxy::proxy_status() == "Running",
             move || {
@@ -1582,6 +1985,16 @@ fn popover_tunnel_row() -> impl IntoElement {
                         ),
                 ),
         )
+        .child(when(
+            move || proxy::tunnel_status() == "Failed",
+            || {
+                failed_logs_button(
+                    "tunnel".to_string(),
+                    "popover-logs-tunnel".to_string(),
+                    "Open tunnel logs".to_string(),
+                )
+            },
+        ))
         .child(popover_switch(
             move || proxy::tunnel_status() == "Running",
             move || {
@@ -1593,6 +2006,232 @@ fn popover_tunnel_row() -> impl IntoElement {
             "popover-switch-tunnel".to_string(),
             |on| dispatch(Action::ToggleTunnel(on)),
         ))
+}
+
+fn popover_copy_url_button(
+    test_id: String,
+    label: String,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
+    let tip = label.clone();
+    view().flex_none().tooltip(controls::tooltip(tip)).child(
+        button()
+            .test_id(&test_id)
+            .accessibility_label(label)
+            .size(px(22.0))
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .rounded(px(4.0))
+            .hover(|s| s.bg(tokens::row_hover()))
+            .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
+            .on_press(on_press)
+            .child(
+                icons::copy()
+                    .size(px(12.0))
+                    .text_color(move || theme().muted_foreground),
+            ),
+    )
+}
+
+fn popover_rule_row(rule: ReadSignal<RuleRow>) -> impl IntoElement {
+    let host = rule.with_untracked(|r| r.host.clone());
+    let host_open = host.clone();
+    let host_copy = host.clone();
+    let host_label = host.clone();
+    let host_tunnel = host.clone();
+    view()
+        .test_id(&format!("popover-rule-{host}"))
+        .w_full()
+        .flex_col()
+        .gap(px(2.0))
+        .child(
+            view()
+                .w_full()
+                .flex_row()
+                .items_center()
+                .gap(px(4.0))
+                .px(px(6.0))
+                .py(px(4.0))
+                .rounded(move || theme().radius)
+                .hover(|s| s.bg(tokens::row_hover()))
+                .child(
+                    button()
+                        .test_id(&format!("popover-open-rule-{host}"))
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .flex_row()
+                        .items_center()
+                        .justify_start()
+                        .gap(px(6.0))
+                        .on_press(move || {
+                            let url = local_rule_url(&host_open, proxy::listener_port());
+                            dispatch(Action::OpenUrl(url));
+                        })
+                        .child(
+                            icons::globe()
+                                .size(px(12.0))
+                                .flex_none()
+                                .text_color(move || theme().muted_foreground),
+                        )
+                        .child(
+                            view()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .flex_col()
+                                .gap(px(1.0))
+                                .child(
+                                    text(move || {
+                                        local_rule_url(&host_label, proxy::listener_port())
+                                    })
+                                    .text_size(px(tokens::TEXT_SMALL))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(move || theme().foreground)
+                                    .truncate(),
+                                )
+                                .child(
+                                    text(move || rule.with(|r| r.target.clone()))
+                                        .text_size(px(tokens::TEXT_CAPTION))
+                                        .tabular_nums()
+                                        .text_color(move || theme().muted_foreground)
+                                        .truncate(),
+                                ),
+                        ),
+                )
+                .child(popover_copy_url_button(
+                    format!("popover-copy-rule-{host}"),
+                    format!("Copy URL for {host}"),
+                    move || {
+                        let url = local_rule_url(&host_copy, proxy::listener_port());
+                        dispatch(Action::CopyUrl(url));
+                    },
+                )),
+        )
+        .child(when(
+            move || {
+                proxy::tunnel_status() == "Running"
+                    && rule.with(|r| r.tunnel && !r.tunnel_url.trim().is_empty())
+            },
+            move || {
+                let host_t = host_tunnel.clone();
+                view()
+                    .test_id(&format!("popover-tunnel-rule-{host_t}"))
+                    .w_full()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.0))
+                    .pl(px(18.0))
+                    .pr(px(6.0))
+                    .py(px(3.0))
+                    .rounded(move || theme().radius)
+                    .hover(|s| s.bg(tokens::row_hover()))
+                    .child(
+                        button()
+                            .test_id(&format!("popover-open-tunnel-rule-{host_t}"))
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .flex_row()
+                            .items_center()
+                            .justify_start()
+                            .gap(px(6.0))
+                            .on_press(move || {
+                                let url = rule.with_untracked(|r| r.tunnel_url.trim().to_string());
+                                if !url.is_empty() {
+                                    dispatch(Action::OpenUrl(url));
+                                }
+                            })
+                            .child(
+                                icons::cloud()
+                                    .size(px(12.0))
+                                    .flex_none()
+                                    .text_color(tokens::success),
+                            )
+                            .child(
+                                text(move || rule.with(|r| r.tunnel_url.trim().to_string()))
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .text_size(px(tokens::TEXT_CAPTION))
+                                    .text_color(move || theme().muted_foreground)
+                                    .truncate(),
+                            ),
+                    )
+                    .child(popover_copy_url_button(
+                        format!("popover-copy-tunnel-rule-{host_t}"),
+                        format!("Copy tunnel URL for {host_t}"),
+                        move || {
+                            let url = rule.with_untracked(|r| r.tunnel_url.trim().to_string());
+                            if !url.is_empty() {
+                                dispatch(Action::CopyUrl(url));
+                            }
+                        },
+                    ))
+            },
+        ))
+}
+
+fn collapsible_rules_section() -> impl IntoElement {
+    collapsible()
+        .w_full()
+        .flex_col()
+        .open(rules_expanded)
+        .child(
+            view()
+                .test_id("popover-section-rules-toggle")
+                .role(AccessibilityRole::Button)
+                .label("Toggle HTTPS URLs section")
+                .accessibility_state(move || AccessibilityState {
+                    expanded: Some(rules_expanded()),
+                    ..AccessibilityState::default()
+                })
+                .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
+                .w_full()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .px(px(6.0))
+                .pt(px(4.0))
+                .pb(px(3.0))
+                .rounded(move || theme().radius)
+                .hover(|s| s.bg(tokens::row_hover()))
+                .on_press(|_: &()| toggle_rules_section())
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(4.0))
+                        .child(
+                            icons::chevron_right()
+                                .size(px(12.0))
+                                .flex_none()
+                                .text_color(move || theme().muted_foreground)
+                                .rotate(move || {
+                                    if rules_expanded() {
+                                        deg(90.0)
+                                    } else {
+                                        deg(0.0)
+                                    }
+                                }),
+                        )
+                        .child(
+                            text("URLs")
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(move || theme().muted_foreground),
+                        ),
+                )
+                .child(
+                    text(move || proxy::saved_rules().len().to_string())
+                        .test_id("popover-section-rules-count")
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .tabular_nums()
+                        .text_color(move || theme().muted_foreground),
+                ),
+        )
+        .content(view().w_full().flex_col().gap(px(2.0)).child(each(
+            saved_rule_rows,
+            |rule| rule.host.clone(),
+            |rule, _| popover_rule_row(rule),
+        )))
 }
 
 fn popover_service_row(svc: ReadSignal<ServiceRow>) -> impl IntoElement {
@@ -1802,18 +2441,7 @@ fn popover_body() -> impl IntoElement {
         .w_full()
         .flex_col()
         .gap(px(2.0))
-        .child(section_heading("Databases", move || {
-            let list = databases::instances();
-            if list.is_empty() {
-                String::new()
-            } else {
-                let running = list
-                    .iter()
-                    .filter(|inst| running_status(&databases::status(&inst.id)))
-                    .count();
-                format!("{running}/{}", list.len())
-            }
-        }))
+        .child(databases_section_heading())
         .child(when(
             move || databases::instances().is_empty(),
             popover_no_instances_row,
@@ -1828,6 +2456,10 @@ fn popover_body() -> impl IntoElement {
         .child(when(
             move || tunnel_configured(&proxy::saved_rules()),
             popover_tunnel_row,
+        ))
+        .child(when(
+            move || !proxy::saved_rules().is_empty(),
+            collapsible_rules_section,
         ))
         .child(when(
             move || !loaded_services_for(Source::Brew).is_empty(),
@@ -1940,6 +2572,19 @@ pub enum MenuEntry {
 }
 
 fn row_menu_icon(row: &Row) -> &'static str {
+    match &row.action {
+        Some(Action::StopAllDatabases) => return icons::markup(Icon::Stop),
+        Some(Action::OpenLogs(_)) => return icons::markup(Icon::Terminal),
+        Some(Action::OpenUrl(_)) => {
+            return if row.key.ends_with(":tunnel") {
+                icons::markup(Icon::Cloud)
+            } else {
+                icons::markup(Icon::External)
+            };
+        }
+        Some(Action::CopyUrl(_)) => return icons::markup(Icon::Copy),
+        _ => {}
+    }
     match row.kind {
         RowKind::Instance if row.key == "no-instances" => icons::markup(Icon::Plus),
         RowKind::Instance | RowKind::Service if row.checked.is_some() => {
@@ -1952,6 +2597,7 @@ fn row_menu_icon(row: &Row) -> &'static str {
         RowKind::Instance => icons::markup(Icon::Database),
         RowKind::Proxy => icons::markup(Icon::ShieldCheck),
         RowKind::Tunnel => icons::markup(Icon::Cloud),
+        RowKind::Rule => icons::markup(Icon::Globe),
         RowKind::Service => match row.action {
             Some(Action::OpenService { source, .. }) => service_group_icon(source),
             _ => icons::markup(Icon::Layers),
@@ -2065,7 +2711,13 @@ pub fn menu_entries(panel: &Panel) -> Vec<MenuEntry> {
         .filter(|row| matches!(row.kind, RowKind::Proxy | RowKind::Tunnel))
         .map(menu_entry_for)
         .collect();
-    if !https_items.is_empty() {
+    let rule_items: Vec<MenuEntry> = panel
+        .rows
+        .iter()
+        .filter(|row| row.kind == RowKind::Rule)
+        .map(menu_entry_for)
+        .collect();
+    if !https_items.is_empty() || !rule_items.is_empty() {
         entries.push(MenuEntry::Separator);
         entries.push(MenuEntry::Item {
             label: "HTTPS".to_string(),
@@ -2075,6 +2727,15 @@ pub fn menu_entries(panel: &Panel) -> Vec<MenuEntry> {
             action: None,
         });
         entries.extend(https_items);
+        if panel.rules.len() > SERVICE_MENU_SUBMENU_THRESHOLD {
+            entries.push(MenuEntry::Submenu {
+                label: format!("URLs · {}", panel.rules.len()),
+                icon: icons::markup(Icon::Globe),
+                items: rule_items,
+            });
+        } else {
+            entries.extend(rule_items);
+        }
     }
 
     for source in [Source::Brew, Source::UserAgent] {

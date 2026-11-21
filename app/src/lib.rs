@@ -13,6 +13,7 @@ mod logs;
 mod menubar;
 mod meta;
 mod pages;
+mod readiness;
 mod shell;
 mod store;
 mod theme;
@@ -66,11 +67,12 @@ pub mod testing {
         Action as MenubarAction, GLOBAL_SHORTCUT as MENUBAR_GLOBAL_SHORTCUT,
         GLOBAL_SHORTCUT_LABEL as MENUBAR_GLOBAL_SHORTCUT_LABEL, InstanceRow as MenubarInstance,
         MenuEntry as MenubarMenuEntry, Panel as MenubarPanel, PanelInput as MenubarInput,
-        Row as MenubarRow, RowKind as MenubarRowKind, ServiceRow as MenubarService,
-        anchor_position_in as menubar_anchor_position_in, close_popover as menubar_close_popover,
-        dispatch as menubar_dispatch, load as menubar_load, menu_entries as menubar_menu_entries,
-        panel as menubar_panel, popover_content as menubar_popover,
-        popover_open as menubar_popover_open,
+        Row as MenubarRow, RowKind as MenubarRowKind, RuleRow as MenubarRule,
+        ServiceRow as MenubarService, anchor_position_in as menubar_anchor_position_in,
+        clear_url_opener as clear_menubar_url_opener, close_popover as menubar_close_popover,
+        dispatch as menubar_dispatch, install_url_opener as install_menubar_url_opener,
+        load as menubar_load, menu_entries as menubar_menu_entries, panel as menubar_panel,
+        popover_content as menubar_popover, popover_open as menubar_popover_open,
         should_reopen_after_blur as menubar_should_reopen_after_blur,
         title_runs as menubar_title_runs,
         toggle_popover_shortcut as menubar_toggle_popover_shortcut, use_fake_menubar,
@@ -84,7 +86,7 @@ pub mod testing {
         Provider as DevelopmentProvider, PythonVersion as DevelopmentPython,
         ReleaseList as DevelopmentReleases, Selection as DevelopmentSelection,
         ShellRow as DevelopmentShell, Snapshot as DevelopmentSnapshot, Tab as DevelopmentTab,
-        install_provider as install_development_provider,
+        install_provider as install_development_provider, load as development_load,
         use_fake_provider as use_fake_development,
     };
     pub use crate::store::proxy::{
@@ -314,7 +316,6 @@ pub fn App() -> impl IntoElement {
         configure_main_window();
         shell::install_application_menu();
         menubar::install();
-        guide::start();
         install_desktop_effects();
     }
     view()

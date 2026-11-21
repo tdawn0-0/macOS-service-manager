@@ -11,18 +11,60 @@ pub(crate) mod services;
 pub(crate) mod software;
 pub(crate) mod system;
 
+/// Semantic grouping for top-level sections in the sidebar rail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SectionGroup {
+    /// Primary developer workspace: software/runtimes, databases, and HTTPS proxy.
+    Workspace,
+    /// Secondary system inspection, diagnostics, and app settings.
+    System,
+}
+
+impl SectionGroup {
+    /// Sidebar groups in display order.
+    pub(crate) const ALL: [SectionGroup; 2] = [SectionGroup::Workspace, SectionGroup::System];
+
+    /// Subtle uppercase heading shown above the group's items in the sidebar.
+    pub(crate) fn heading(self) -> &'static str {
+        match self {
+            SectionGroup::Workspace => "WORKSPACE",
+            SectionGroup::System => "SYSTEM",
+        }
+    }
+
+    /// Stable `test_id` for the group heading in the sidebar.
+    pub(crate) fn test_id(self) -> &'static str {
+        match self {
+            SectionGroup::Workspace => "sidebar-group-workspace",
+            SectionGroup::System => "sidebar-group-system",
+        }
+    }
+
+    /// Sections belonging to this group, in sidebar order.
+    pub(crate) fn sections(self) -> &'static [Section] {
+        match self {
+            SectionGroup::Workspace => &[
+                Section::Development,
+                Section::Databases,
+                Section::HttpsProxy,
+            ],
+            SectionGroup::System => &[Section::Services, Section::Diagnostics, Section::Settings],
+        }
+    }
+}
+
 /// A top-level section, in sidebar order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Section {
-    /// launchd jobs and their lifecycle.
-    #[default]
-    Services,
     /// Software, runtimes and the development workspace.
+    #[default]
     Development,
     /// Database instances, connections and backups.
     Databases,
     /// Local HTTPS rules, the CA and the Cloudflare tunnel.
     HttpsProxy,
+    /// launchd jobs and their lifecycle.
+    Services,
     /// Environment checks, ports, logs and operations.
     Diagnostics,
     /// Helper, CLI, login items and preferences.
@@ -30,23 +72,34 @@ pub(crate) enum Section {
 }
 
 impl Section {
-    /// Every section, in sidebar order.
+    /// Every section, in sidebar order (`Cmd+1..6`).
     pub(crate) const ALL: [Section; 6] = [
-        Section::Services,
         Section::Development,
         Section::Databases,
         Section::HttpsProxy,
+        Section::Services,
         Section::Diagnostics,
         Section::Settings,
     ];
 
+    /// The sidebar group this section belongs to.
+    #[allow(dead_code)]
+    pub(crate) fn group(self) -> SectionGroup {
+        match self {
+            Section::Development | Section::Databases | Section::HttpsProxy => {
+                SectionGroup::Workspace
+            }
+            Section::Services | Section::Diagnostics | Section::Settings => SectionGroup::System,
+        }
+    }
+
     /// Its label in the sidebar and the window title.
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Section::Services => "Services",
             Section::Development => "Development",
             Section::Databases => "Databases",
             Section::HttpsProxy => "HTTPS Proxy",
+            Section::Services => "Services",
             Section::Diagnostics => "Diagnostics",
             Section::Settings => "Settings",
         }
@@ -55,10 +108,10 @@ impl Section {
     /// One line saying what the section is for.
     pub(crate) fn summary(self) -> &'static str {
         match self {
-            Section::Services => "launchd jobs, their status and lifecycle controls.",
             Section::Development => "Runtimes and software the development workspace manages.",
             Section::Databases => "Database instances, ports, connection profiles and backups.",
             Section::HttpsProxy => "Local HTTPS rules, the local CA and the Cloudflare tunnel.",
+            Section::Services => "launchd jobs, their status and lifecycle controls.",
             Section::Diagnostics => "Environment checks, listening ports, logs and operations.",
             Section::Settings => "Helper installation, CLI, login items and workspace preferences.",
         }
@@ -85,16 +138,32 @@ mod tests {
 
     #[test]
     fn sections_are_in_sidebar_order() {
+        assert_eq!(Section::default(), Section::Development);
         assert_eq!(
             Section::ALL.map(Section::label),
             [
-                "Services",
                 "Development",
                 "Databases",
                 "HTTPS Proxy",
+                "Services",
                 "Diagnostics",
                 "Settings",
             ]
         );
+        assert_eq!(
+            SectionGroup::Workspace.sections(),
+            &[
+                Section::Development,
+                Section::Databases,
+                Section::HttpsProxy,
+            ]
+        );
+        assert_eq!(
+            SectionGroup::System.sections(),
+            &[Section::Services, Section::Diagnostics, Section::Settings]
+        );
+        for section in Section::ALL {
+            assert!(section.group().sections().contains(&section));
+        }
     }
 }

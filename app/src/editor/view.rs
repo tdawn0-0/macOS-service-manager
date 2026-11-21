@@ -938,28 +938,25 @@ fn switch_row(
                 .on_change(move |next: &bool| on_change(*next))
                 .opacity(move || if disabled() { 0.5_f32 } else { 1.0_f32 })
                 .track_style(move |s| {
-                    let s = s
-                        .w(px(30.0))
+                    s.w(px(30.0))
                         .h(px(18.0))
                         .flex_row()
                         .items_center()
                         .px(px(2.0))
                         .rounded(px(9.0))
-                        .bg(if checked() {
-                            theme().primary
-                        } else {
-                            theme().secondary
-                        });
-                    if checked() {
-                        s.justify_end()
-                    } else {
-                        s.justify_start()
-                    }
+                        .bg(move || {
+                            if checked() {
+                                theme().primary
+                            } else {
+                                theme().secondary
+                            }
+                        })
                 })
-                .thumb_style(|s| {
+                .thumb_style(move |s| {
                     s.size(px(14.0))
                         .rounded(px(7.0))
-                        .bg(theme().primary_foreground)
+                        .bg(move || theme().primary_foreground)
+                        .ml(move || if checked() { px(12.0) } else { px(0.0) })
                 }),
         )
 }
@@ -983,15 +980,19 @@ fn checkbox_row(
                 .justify_center()
                 .rounded(px(4.0))
                 .border_1()
-                .border_color(if checked() {
-                    theme().primary
-                } else {
-                    tokens::hairline()
+                .border_color(move || {
+                    if checked() {
+                        theme().primary
+                    } else {
+                        tokens::hairline()
+                    }
                 })
-                .bg(if checked() {
-                    theme().primary
-                } else {
-                    tokens::control()
+                .bg(move || {
+                    if checked() {
+                        theme().primary
+                    } else {
+                        tokens::control()
+                    }
                 })
         })
         .indicator(view().child(when(checked, || {

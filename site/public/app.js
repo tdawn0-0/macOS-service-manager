@@ -10,7 +10,7 @@
   const applyTheme = (theme, persist) => {
     const dark = theme === 'dark';
     root.classList.toggle('dark', dark);
-    metaTheme?.setAttribute('content', dark ? '#0a0a0d' : '#fafaf8');
+    metaTheme?.setAttribute('content', dark ? '#09090b' : '#fcfcfb');
     $$('[data-set-theme]').forEach((b) =>
       b.setAttribute('aria-pressed', String(b.dataset.setTheme === (dark ? 'dark' : 'light')))
     );
@@ -22,6 +22,16 @@
   applyTheme(root.classList.contains('dark') ? 'dark' : 'light', false);
   $('theme-toggle')?.addEventListener('click', () => applyTheme(root.classList.contains('dark') ? 'light' : 'dark', true));
   $$('[data-set-theme]').forEach((b) => b.addEventListener('click', () => applyTheme(b.dataset.setTheme, true)));
+
+  if (window.matchMedia) {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onSystemChange = (e) => {
+      try {
+        if (!localStorage.getItem('devbase-theme')) applyTheme(e.matches ? 'dark' : 'light', false);
+      } catch (_) {}
+    };
+    if (mq.addEventListener) mq.addEventListener('change', onSystemChange);
+  }
 
   /* Header & Mobile Drawer */
   const nav = $('nav');
@@ -42,24 +52,24 @@
   mobileMenu?.querySelectorAll('a').forEach((a) => a.addEventListener('click', closeMobile));
 
   /* Clipboard */
+  const fallbackCopy = (text) => {
+    try {
+      const ta = Object.assign(document.createElement('textarea'), { value: text });
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    } catch (_) {}
+  };
+
   const copyText = (text) => {
     if (navigator.clipboard?.writeText) {
       return navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
     }
     fallbackCopy(text);
     return Promise.resolve();
-  };
-
-  const fallbackCopy = (text) => {
-    try {
-      const ta = Object.assign(document.createElement('textarea'), { value: text });
-      ta.setAttribute('readonly', '');
-      ta.style.cssText = 'position:fixed;opacity:0';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      ta.remove();
-    } catch (_) {}
   };
 
   /* Interactive macOS 26 Demo */
@@ -80,6 +90,7 @@
   };
 
   const titles = { software: 'Software', databases: 'Databases', https: 'HTTPS', services: 'Services' };
+  let activeTab = 'databases';
 
   let toastTimer = null;
   const toastEl = $('demo-toast');
@@ -109,6 +120,16 @@
     logLines.scrollTop = logLines.scrollHeight;
   };
 
+  const updateViewMeta = () => {
+    const el = $('ws-view-meta');
+    if (!el) return;
+    const dbRunning = ['pg-main', 'redis-cache', 'mysql-analytics'].filter((k) => state[k]).length;
+    if (activeTab === 'databases') el.textContent = `${dbRunning} of 3 running`;
+    else if (activeTab === 'software') el.textContent = '3 runtimes · arm64';
+    else if (activeTab === 'https') el.textContent = state['https-proxy'] ? 'Proxy :443 · 3 routes' : 'Proxy stopped';
+    else if (activeTab === 'services') el.textContent = '5 discovered';
+  };
+
   const syncDemo = () => {
     let dbRunning = 0;
     let totalActive = 0;
@@ -125,6 +146,7 @@
     if ($('mb-running-label')) $('mb-running-label').textContent = `${totalActive} running`;
     if ($('mb-pop-count')) $('mb-pop-count').textContent = `${totalActive} active`;
     $('mb-status-dot')?.classList.toggle('is-off', totalActive === 0);
+    updateViewMeta();
   };
 
   $$('[data-toggle-service]').forEach((sw) =>
@@ -142,9 +164,12 @@
   syncDemo();
 
   const selectTab = (key) => {
+    if (!titles[key]) return;
+    activeTab = key;
     $$('[data-app-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.appTab === key)));
     $$('.app-view').forEach((v) => v.classList.toggle('active', v.id === `app-view-${key}`));
-    if ($('ws-view-title') && titles[key]) $('ws-view-title').textContent = titles[key];
+    if ($('ws-view-title')) $('ws-view-title').textContent = titles[key];
+    updateViewMeta();
   };
   $$('[data-app-tab]').forEach((b) => b.addEventListener('click', () => selectTab(b.dataset.appTab)));
 
@@ -161,7 +186,9 @@
     setPopover(!mbPopover.classList.contains('open'));
   });
   document.addEventListener('click', (e) => {
-    if (mbPopover?.classList.contains('open') && !mbPopover.contains(e.target) && e.target !== mbTrigger) setPopover(false);
+    if (mbPopover?.classList.contains('open') && !mbPopover.contains(e.target) && !mbTrigger?.contains(e.target)) {
+      setPopover(false);
+    }
   });
 
   $('mb-stop-all')?.addEventListener('click', () => {
@@ -220,6 +247,7 @@
   };
 
   $('demo-cmdk-btn')?.addEventListener('click', () => setCmdk(true));
+  $('sidebar-cmdk-btn')?.addEventListener('click', () => setCmdk(true));
   $('demo-cmdk-close')?.addEventListener('click', () => setCmdk(false));
   cmdk?.addEventListener('click', (e) => { if (e.target === cmdk) setCmdk(false); });
   cmdkInput?.addEventListener('input', () => filterCmdk(cmdkInput.value));
@@ -233,7 +261,7 @@
     })
   );
 
-  /* QR, Shell Cycler, Toasts, Backup, Services Filter */
+  /* QR, Shell Cycler, Real Copy Toasts, Info Toasts, Backup, Services Filter */
   const qrBtn = $('demo-qr-btn');
   const qrPanel = $('demo-qr-panel');
   qrBtn?.addEventListener('click', () => qrBtn.setAttribute('aria-expanded', String(qrPanel.classList.toggle('open'))));
@@ -248,7 +276,18 @@
     })
   );
 
-  $$('[data-copy-toast]').forEach((btn) => btn.addEventListener('click', () => showToast(btn.dataset.copyToast)));
+  $$('[data-copy-toast]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      const value = btn.dataset.copyValue || btn.dataset.copyToast;
+      copyText(value);
+      showToast(btn.dataset.copyToast);
+    })
+  );
+
+  $$('[data-info-toast]').forEach((btn) =>
+    btn.addEventListener('click', () => showToast(btn.dataset.infoToast))
+  );
+
   $$('[data-backup-db]').forEach((btn) =>
     btn.addEventListener('click', () => {
       const db = btn.dataset.backupDb;
@@ -276,10 +315,23 @@
     })
   );
 
-  /* Keyboard Shortcuts */
-  const demoFrame = $('demo-frame');
+  /* Keyboard Shortcuts (Guarded on Editable Elements) */
+  const isEditable = (el) => {
+    if (!el || el === document.body) return false;
+    const tag = el.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+  };
+
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { setCmdk(false); setPopover(false); closeMobile(); return; }
+    if (e.key === 'Escape') {
+      setCmdk(false);
+      setPopover(false);
+      closeMobile();
+      return;
+    }
+
+    if (isEditable(document.activeElement)) return;
+
     const k = e.key.toLowerCase();
     if ((e.metaKey || e.ctrlKey) && !e.altKey && k === 'k') {
       e.preventDefault();
@@ -287,7 +339,7 @@
     } else if (e.ctrlKey && e.altKey && k === 'd') {
       e.preventDefault();
       setPopover(!mbPopover?.classList.contains('open'));
-    } else if ((e.metaKey || e.ctrlKey) && !e.altKey && k === 'l' && demoFrame?.contains(document.activeElement)) {
+    } else if ((e.metaKey || e.ctrlKey) && !e.altKey && k === 'l') {
       e.preventDefault();
       setLogs(!logsDrawer?.classList.contains('open'));
     }

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Devbase — Your local stack, native to macOS</title>
   <meta name="description" content="Runtimes, databases, local HTTPS, and system services in one 16.9 MB pure-Rust app for Apple Silicon macOS 26+.">
-  <meta name="theme-color" content="#fafaf8" id="meta-theme-color">
+  <meta name="theme-color" content="#fcfcfb" id="meta-theme-color">
   <link rel="canonical" href="https://devbase.jyeu.xyz/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Devbase">
@@ -21,17 +21,22 @@
   <link rel="icon" type="image/png" href="/icon.png">
   <link rel="apple-touch-icon" href="/icon.png">
   <script>
-    try {
-      if (localStorage.getItem('devbase-theme') === 'dark') {
-        document.documentElement.classList.add('dark');
-        document.getElementById('meta-theme-color').setAttribute('content', '#0a0a0d');
-      }
-    } catch (_) {}
+    (function () {
+      try {
+        var saved = localStorage.getItem('devbase-theme');
+        var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (saved === 'dark' || (!saved && prefersDark)) {
+          document.documentElement.classList.add('dark');
+          var meta = document.getElementById('meta-theme-color');
+          if (meta) meta.setAttribute('content', '#09090b');
+        }
+      } catch (_) {}
+    })();
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Geist:wght@400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css?v=20261121c">
 </head>
 <body>
 
@@ -44,29 +49,34 @@
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
     <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
     <symbol id="i-term" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7.5"/><path d="m20.5 20.5-4.2-4.2"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v6c0 5 3.5 8.5 7 9.5 3.5-1 7-4.5 7-9.5V6l-7-3Z"/><path d="m9.5 12 1.8 1.8L15 10"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5 9.5 17 19 7.5"/></symbol>
   </svg>
 
   <header id="nav" data-scrolled="false">
     <div class="container nav-inner">
       <a href="#top" class="nav-brand" aria-label="Devbase home">
-        <img src="/icon.svg" alt="" width="26" height="26">
+        <img src="/icon.svg" alt="" width="24" height="24">
         <span>Devbase</span>
       </a>
 
       <nav class="nav-links" aria-label="Primary">
         <a href="#features">Features</a>
-        <a href="#cli">CLI</a>
+        <a href="#cli">CLI &amp; MCP</a>
+        <a href="#compare">Compare</a>
         <a href="#faq">FAQ</a>
       </nav>
 
       <div class="nav-actions">
         <button type="button" id="theme-toggle" class="icon-btn" aria-label="Toggle theme" title="Toggle theme">
-          <svg class="ic theme-icon-moon" width="17" height="17" aria-hidden="true"><use href="#i-moon"/></svg>
-          <svg class="ic theme-icon-sun" width="17" height="17" aria-hidden="true"><use href="#i-sun"/></svg>
+          <svg class="ic theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-moon"/></svg>
+          <svg class="ic theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sun"/></svg>
         </button>
         <a href="https://github.com/tdawn0-0/macOS-service-manager/releases/latest/download/Devbase.dmg" class="nav-cta">Download</a>
         <button type="button" id="mobile-menu-btn" class="icon-btn nav-mobile-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-menu">
-          <svg class="ic" width="19" height="19" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          <svg class="ic" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
         </button>
       </div>
     </div>
@@ -74,7 +84,8 @@
 
   <nav id="mobile-menu" class="mobile-menu" aria-label="Mobile navigation">
     <a href="#features">Features</a>
-    <a href="#cli">CLI</a>
+    <a href="#cli">CLI &amp; MCP</a>
+    <a href="#compare">Compare</a>
     <a href="#faq">FAQ</a>
   </nav>
 
@@ -90,20 +101,20 @@
           <div class="hero-cta">
             <a href="https://github.com/tdawn0-0/macOS-service-manager/releases/latest/download/Devbase.dmg" class="btn-primary">
               <span>Download Devbase</span>
-              <span class="btn-dot" aria-hidden="true"><svg class="ic" width="15" height="15"><use href="#i-dl"/></svg></span>
+              <span class="btn-dot" aria-hidden="true"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><use href="#i-dl"/></svg></span>
             </a>
             <a href="https://github.com/tdawn0-0/macOS-service-manager" target="_blank" rel="noopener noreferrer" class="btn-ghost">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.63 22.42c.58.1.79-.25.79-.55v-2.16c-3.2.7-3.88-1.36-3.88-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.47.11-3.06 0 0 .97-.31 3.17 1.18a10.95 10.95 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.77.11 3.06.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.4-5.27 5.69.42.36.79 1.06.79 2.14v3.18c0 .31.21.66.8.55A11.5 11.5 0 0 0 12 .5Z"/></svg>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.63 22.42c.58.1.79-.25.79-.55v-2.16c-3.2.7-3.88-1.36-3.88-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.47.11-3.06 0 0 .97-.31 3.17 1.18a10.95 10.95 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.77.11 3.06.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.4-5.27 5.69.42.36.79 1.06.79 2.14v3.18c0 .31.21.66.8.55A11.5 11.5 0 0 0 12 .5Z"/></svg>
               <span>GitHub</span>
             </a>
           </div>
 
-          <div class="hero-meta tabular-nums">
-            <span>v2.0.0</span><span class="sep">·</span>
-            <span>16.9 MB DMG</span><span class="sep">·</span>
-            <span>Apple Silicon</span><span class="sep">·</span>
-            <span>macOS 26+</span><span class="sep">·</span>
-            <span>MIT</span>
+          <div class="hero-meta tabular-nums" aria-label="Release specifications">
+            <span class="meta-item">v2.0.0</span><span class="sep" aria-hidden="true">·</span>
+            <span class="meta-item">16.9 MB DMG</span><span class="sep" aria-hidden="true">·</span>
+            <span class="meta-item">Apple Silicon</span><span class="sep" aria-hidden="true">·</span>
+            <span class="meta-item">macOS 26+</span><span class="sep" aria-hidden="true">·</span>
+            <span class="meta-item">MIT</span>
           </div>
         </div>
 
@@ -120,10 +131,10 @@
                 <span class="mb-menu-item">Window</span>
               </div>
               <div class="mb-right">
-                <button type="button" id="mb-popover-trigger" class="mb-trigger tabular-nums" aria-expanded="false" aria-controls="mb-popover" title="Menu Bar Popover (⌃⌥⌘D)">
+                <button type="button" id="mb-popover-trigger" class="mb-trigger tabular-nums" aria-expanded="false" aria-controls="mb-popover" title="Menu Bar Popover">
                   <span class="status-dot" id="mb-status-dot"></span>
                   <span id="mb-running-label">4 running</span>
-                  <span class="mono mb-kbd">⌃⌥⌘D</span>
+                  <span class="mono mb-kbd kbd-mac">⌃⌥⌘D</span>
                 </button>
                 <span class="mb-clock tabular-nums">Thu 9:41</span>
               </div>
@@ -139,6 +150,7 @@
                 <button type="button" class="mb-pop-stop" id="mb-stop-all">Stop all</button>
               </div>
               <div class="mb-pop-list">
+                <div class="mb-pop-section">Databases</div>
                 <div class="mb-pop-row">
                   <div class="mb-pop-info"><span class="mb-pop-name">pg-main</span><span class="mb-pop-sub">PostgreSQL 17 · :5432</span></div>
                   <button type="button" class="mac-switch" role="switch" aria-checked="true" aria-label="Toggle pg-main" data-toggle-service="pg-main"></button>
@@ -152,8 +164,9 @@
                   <button type="button" class="mac-switch" role="switch" aria-checked="false" aria-label="Toggle mysql-analytics" data-toggle-service="mysql-analytics"></button>
                 </div>
                 <div class="mb-pop-divider"></div>
+                <div class="mb-pop-section">HTTPS Proxy</div>
                 <div class="mb-pop-row">
-                  <div class="mb-pop-info"><span class="mb-pop-name">HTTPS Proxy</span><span class="mb-pop-sub">*.devbase.localhost · :443</span></div>
+                  <div class="mb-pop-info"><span class="mb-pop-name">Local Proxy</span><span class="mb-pop-sub">*.devbase.localhost · :443</span></div>
                   <button type="button" class="mac-switch mac-switch-blue" role="switch" aria-checked="true" aria-label="Toggle HTTPS Proxy" data-toggle-service="https-proxy"></button>
                 </div>
                 <div class="mb-pop-row">
@@ -162,7 +175,7 @@
                 </div>
               </div>
               <div class="mb-pop-foot">
-                <button type="button" id="mb-pop-logs">Logs ⌘L</button>
+                <button type="button" id="mb-pop-logs">Logs <span class="kbd-mac mono">⌘L</span></button>
                 <button type="button" id="mb-pop-copy-url">Copy URL</button>
                 <button type="button" id="mb-pop-close">Close</button>
               </div>
@@ -171,108 +184,134 @@
             <div class="demo-pad">
               <div class="appwin">
                 <aside class="app-sidebar" aria-label="Workspace navigation">
-                  <div class="traffic-lights" aria-hidden="true">
-                    <span class="tl tl-r"></span><span class="tl tl-y"></span><span class="tl tl-g"></span>
+                  <div class="sidebar-top">
+                    <div class="traffic-lights" aria-hidden="true">
+                      <span class="tl tl-r"></span><span class="tl tl-y"></span><span class="tl tl-g"></span>
+                    </div>
+                    <button type="button" class="sidebar-cmdk" id="sidebar-cmdk-btn" aria-label="Open command palette" title="Command Palette (⌘K)">
+                      <svg class="ic" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg>
+                      <span class="mono kbd-mac">⌘K</span>
+                    </button>
+                  </div>
+
+                  <div class="sidebar-brand">
+                    <img src="/icon.svg" alt="" width="16" height="16">
+                    <span>Devbase</span>
+                    <span class="sidebar-ver mono">2.0</span>
                   </div>
 
                   <div class="sidebar-nav" role="tablist" aria-label="Devbase views">
                     <button type="button" class="sidebar-btn" role="tab" aria-selected="false" data-app-tab="software">
-                      <span class="sidebar-btn-left"><svg class="ic" width="15" height="15" aria-hidden="true"><use href="#i-box"/></svg><span>Software</span></span>
+                      <span class="sidebar-btn-left"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-box"/></svg><span>Software</span></span>
                     </button>
                     <button type="button" class="sidebar-btn" role="tab" aria-selected="true" data-app-tab="databases">
-                      <span class="sidebar-btn-left"><svg class="ic" width="15" height="15" aria-hidden="true"><use href="#i-db"/></svg><span>Databases</span></span>
+                      <span class="sidebar-btn-left"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-db"/></svg><span>Databases</span></span>
                       <span class="sidebar-meta tabular-nums" id="sidebar-db-count">2</span>
                     </button>
                     <button type="button" class="sidebar-btn" role="tab" aria-selected="false" data-app-tab="https">
-                      <span class="sidebar-btn-left"><svg class="ic" width="15" height="15" aria-hidden="true"><use href="#i-lock"/></svg><span>HTTPS</span></span>
+                      <span class="sidebar-btn-left"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-lock"/></svg><span>HTTPS</span></span>
                       <span class="sidebar-meta" id="sidebar-https-pill">ON</span>
                     </button>
                     <div class="sidebar-divider" aria-hidden="true"></div>
                     <button type="button" class="sidebar-btn" role="tab" aria-selected="false" data-app-tab="services">
-                      <span class="sidebar-btn-left"><svg class="ic" width="15" height="15" aria-hidden="true"><use href="#i-list"/></svg><span>Services</span></span>
+                      <span class="sidebar-btn-left"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-list"/></svg><span>Services</span></span>
                     </button>
                   </div>
 
                   <div class="sidebar-foot">
                     <button type="button" class="sidebar-btn" id="sidebar-logs-btn" aria-pressed="false" data-toggle-logs>
-                      <span class="sidebar-btn-left"><svg class="ic" width="15" height="15" aria-hidden="true"><use href="#i-term"/></svg><span>Logs</span></span>
-                      <span class="sidebar-meta">⌘L</span>
+                      <span class="sidebar-btn-left"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-term"/></svg><span>Logs</span></span>
+                      <span class="sidebar-meta kbd-mac">⌘L</span>
                     </button>
                   </div>
                 </aside>
 
                 <div class="app-workspace">
                   <div class="app-topbar">
-                    <h3 id="ws-view-title">Databases</h3>
+                    <div class="app-topbar-title">
+                      <h3 id="ws-view-title">Databases</h3>
+                      <span class="ws-view-meta tabular-nums" id="ws-view-meta">2 of 3 running</span>
+                    </div>
                     <div class="app-topbar-actions">
-                      <button type="button" class="ws-tool-btn" id="demo-cmdk-btn" aria-haspopup="dialog"><span>Search</span><span class="mono">⌘K</span></button>
-                      <button type="button" class="ws-tool-btn" id="demo-logs-btn" aria-pressed="false" data-toggle-logs><span>Logs</span><span class="mono">⌘L</span></button>
+                      <button type="button" class="ws-tool-btn" id="demo-cmdk-btn" aria-haspopup="dialog"><span>Search</span><span class="mono kbd-mac">⌘K</span></button>
+                      <button type="button" class="ws-tool-btn" id="demo-logs-btn" aria-pressed="false" data-toggle-logs><span>Logs</span><span class="mono kbd-mac">⌘L</span></button>
                     </div>
                   </div>
 
                   <div class="app-body">
                     <div class="app-view active" id="app-view-databases" role="tabpanel">
+                      <div class="ws-section-label">Managed instances</div>
                       <div class="ws-list">
                         <div class="ws-row">
                           <div class="ws-row-main">
-                            <div class="ws-row-title"><span class="status-dot" data-status-dot="pg-main"></span><span>pg-main</span></div>
-                            <div class="ws-row-sub">PostgreSQL 17.4 · 127.0.0.1:5432 · Daily backup</div>
+                            <div class="ws-row-title"><span class="status-dot" data-status-dot="pg-main"></span><span>pg-main</span><span class="ws-badge">PostgreSQL 17.4</span></div>
+                            <div class="ws-row-sub">127.0.0.1:5432 · Daily backup 03:00</div>
                           </div>
                           <div class="ws-row-controls">
-                            <button type="button" class="ws-mini-btn" data-copy-toast="Copied postgresql://postgres@127.0.0.1:5432/app">Copy URI</button>
+                            <button type="button" class="ws-mini-btn" data-copy-value="postgresql://postgres@127.0.0.1:5432/app" data-copy-toast="Copied PostgreSQL URI">Copy URI</button>
                             <button type="button" class="ws-mini-btn" data-backup-db="pg-main">Backup</button>
                             <button type="button" class="mac-switch" role="switch" aria-checked="true" aria-label="Toggle pg-main" data-toggle-service="pg-main"></button>
                           </div>
                         </div>
                         <div class="ws-row">
                           <div class="ws-row-main">
-                            <div class="ws-row-title"><span class="status-dot" data-status-dot="redis-cache"></span><span>redis-cache</span></div>
-                            <div class="ws-row-sub">Redis 7.4 · 127.0.0.1:6379 · DB 0–15</div>
+                            <div class="ws-row-title"><span class="status-dot" data-status-dot="redis-cache"></span><span>redis-cache</span><span class="ws-badge">Redis 7.4</span></div>
+                            <div class="ws-row-sub">127.0.0.1:6379 · DB 0–15 · AOF</div>
                           </div>
                           <div class="ws-row-controls">
-                            <button type="button" class="ws-mini-btn" data-copy-toast="Copied REDIS_URL=redis://127.0.0.1:6379/0">Copy .env</button>
+                            <button type="button" class="ws-mini-btn" data-copy-value="REDIS_URL=redis://127.0.0.1:6379/0" data-copy-toast="Copied REDIS_URL .env">Copy .env</button>
                             <button type="button" class="mac-switch" role="switch" aria-checked="true" aria-label="Toggle redis-cache" data-toggle-service="redis-cache"></button>
                           </div>
                         </div>
                         <div class="ws-row">
                           <div class="ws-row-main">
-                            <div class="ws-row-title"><span class="status-dot is-off" data-status-dot="mysql-analytics"></span><span>mysql-analytics</span></div>
-                            <div class="ws-row-sub">MySQL 8.4.4 · 127.0.0.1:3306 · ~/Data/mysql-analytics</div>
+                            <div class="ws-row-title"><span class="status-dot is-off" data-status-dot="mysql-analytics"></span><span>mysql-analytics</span><span class="ws-badge">MySQL 8.4</span></div>
+                            <div class="ws-row-sub">127.0.0.1:3306 · External data retained</div>
                           </div>
                           <div class="ws-row-controls">
-                            <button type="button" class="ws-mini-btn" data-copy-toast="Copied jdbc:mysql://127.0.0.1:3306/analytics">Copy JDBC</button>
+                            <button type="button" class="ws-mini-btn" data-copy-value="jdbc:mysql://127.0.0.1:3306/analytics" data-copy-toast="Copied JDBC URL">Copy JDBC</button>
                             <button type="button" class="mac-switch" role="switch" aria-checked="false" aria-label="Toggle mysql-analytics" data-toggle-service="mysql-analytics"></button>
                           </div>
+                        </div>
+                      </div>
+
+                      <div class="ws-section-label">Connection well · pg-main</div>
+                      <div class="ws-uri-well">
+                        <code class="ws-uri-code">postgresql://postgres@127.0.0.1:5432/app</code>
+                        <div class="ws-uri-meta">
+                          <span>Password-free export</span>
+                          <span class="ws-safety-pill"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-shield"/></svg> External dir safe</span>
                         </div>
                       </div>
                     </div>
 
                     <div class="app-view" id="app-view-software" role="tabpanel">
+                      <div class="ws-section-label">Apple Silicon runtimes</div>
                       <div class="ws-list">
                         <div class="ws-row">
                           <div class="ws-row-main">
-                            <div class="ws-row-title"><span>Node.js</span></div>
-                            <div class="ws-row-sub">22.14.0 · .node-version, .nvmrc, engines.node</div>
+                            <div class="ws-row-title"><span class="status-dot"></span><span>Node.js</span><span class="ws-badge">22.14.0</span></div>
+                            <div class="ws-row-sub">.node-version · .nvmrc · engines.node</div>
                           </div>
                           <div class="ws-row-controls"><button type="button" class="ws-mini-btn" data-shell-cycle="zsh">Shell: zsh</button></div>
                         </div>
                         <div class="ws-row">
                           <div class="ws-row-main">
-                            <div class="ws-row-title"><span>Java</span></div>
-                            <div class="ws-row-sub">21.0.6 · JetBrains arm64 JDK · JAVA_HOME</div>
+                            <div class="ws-row-title"><span class="status-dot"></span><span>Java</span><span class="ws-badge">21.0.6</span></div>
+                            <div class="ws-row-sub">JetBrains arm64 JDK · JAVA_HOME</div>
                           </div>
                           <div class="ws-row-controls"><span class="ws-tag">Default</span></div>
                         </div>
                         <div class="ws-row">
                           <div class="ws-row-main">
-                            <div class="ws-row-title"><span>Python</span></div>
-                            <div class="ws-row-sub">3.13.2 · managed via uv</div>
+                            <div class="ws-row-title"><span class="status-dot"></span><span>Python</span><span class="ws-badge">3.13.2</span></div>
+                            <div class="ws-row-sub">Managed via uv · venv-safe</div>
                           </div>
                           <div class="ws-row-controls"><span class="ws-tag">Global</span></div>
                         </div>
                         <div class="ws-row">
                           <div class="ws-row-main">
-                            <div class="ws-row-title"><span>CLI CA Trust</span></div>
+                            <div class="ws-row-title"><span class="status-dot"></span><span>CLI CA Trust</span><span class="ws-badge">Trusted</span></div>
                             <div class="ws-row-sub">Development/proxy/ca.pem</div>
                           </div>
                           <div class="ws-row-controls"><span class="ws-tag">NODE_EXTRA_CA_CERTS</span></div>
@@ -281,16 +320,25 @@
                     </div>
 
                     <div class="app-view" id="app-view-https" role="tabpanel">
-                      <div class="ws-list">
-                        <div class="ws-row">
-                          <div class="ws-row-main">
-                            <div class="ws-row-title"><span class="status-dot" data-status-dot="https-proxy"></span><span>Local HTTPS Proxy</span></div>
-                            <div class="ws-row-sub">127.0.0.1:443 · CA Trusted · 0 /etc/hosts edits</div>
-                          </div>
-                          <div class="ws-row-controls">
-                            <button type="button" class="mac-switch mac-switch-blue" role="switch" aria-checked="true" aria-label="Toggle Local HTTPS Proxy" data-toggle-service="https-proxy"></button>
-                          </div>
+                      <div class="ws-status-strip">
+                        <div class="ws-strip-group">
+                          <span class="status-dot" data-status-dot="https-proxy"></span>
+                          <span class="ws-strip-label">Proxy :443</span>
+                          <button type="button" class="mac-switch mac-switch-blue" role="switch" aria-checked="true" aria-label="Toggle Local HTTPS Proxy" data-toggle-service="https-proxy"></button>
                         </div>
+                        <span class="ws-strip-sep" aria-hidden="true"></span>
+                        <div class="ws-strip-group">
+                          <span class="ws-strip-muted">CA: Trusted</span>
+                          <span class="ws-strip-muted">· 0 /etc/hosts edits</span>
+                        </div>
+                        <div class="ws-strip-group ws-strip-right">
+                          <span class="ws-strip-label">Tunnel</span>
+                          <button type="button" class="mac-switch mac-switch-blue" role="switch" aria-checked="true" aria-label="Toggle Cloudflare Tunnel" data-toggle-service="cf-tunnel"></button>
+                        </div>
+                      </div>
+
+                      <div class="ws-section-label">Routes</div>
+                      <div class="ws-list">
                         <div class="ws-row">
                           <div class="ws-row-main">
                             <div class="ws-row-title"><span class="status-dot" data-status-dot="cf-tunnel"></span><span class="mono">api.devbase.localhost</span></div>
@@ -298,8 +346,7 @@
                           </div>
                           <div class="ws-row-controls">
                             <button type="button" class="ws-mini-btn" id="demo-qr-btn" aria-expanded="false">QR</button>
-                            <button type="button" class="ws-mini-btn" data-copy-toast="Copied https://api.devbase.localhost">Copy</button>
-                            <button type="button" class="mac-switch mac-switch-blue" role="switch" aria-checked="true" aria-label="Toggle Cloudflare Tunnel" data-toggle-service="cf-tunnel"></button>
+                            <button type="button" class="ws-mini-btn" data-copy-value="https://api.devbase.localhost" data-copy-toast="Copied https://api.devbase.localhost">Copy</button>
                           </div>
                         </div>
                         <div class="qr-panel" id="demo-qr-panel">
@@ -310,16 +357,23 @@
                             </svg>
                           </div>
                           <div>
-                            <div class="ws-row-title">https://devbase-api.workers.dev</div>
+                            <div class="ws-row-title mono">https://devbase-api.workers.dev</div>
                             <div class="ws-row-sub">Local SVG QR · Cloudflare Worker + Durable Object</div>
                           </div>
                         </div>
                         <div class="ws-row">
                           <div class="ws-row-main">
-                            <div class="ws-row-title"><span class="mono">web.devbase.localhost</span></div>
-                            <div class="ws-row-sub">→ 127.0.0.1:5173</div>
+                            <div class="ws-row-title"><span class="status-dot" data-status-dot="https-proxy"></span><span class="mono">web.devbase.localhost</span></div>
+                            <div class="ws-row-sub">→ 127.0.0.1:5173 · Local SNI TLS</div>
                           </div>
-                          <div class="ws-row-controls"><button type="button" class="ws-mini-btn" data-copy-toast="Copied https://web.devbase.localhost">Copy</button></div>
+                          <div class="ws-row-controls"><button type="button" class="ws-mini-btn" data-copy-value="https://web.devbase.localhost" data-copy-toast="Copied https://web.devbase.localhost">Copy</button></div>
+                        </div>
+                        <div class="ws-row">
+                          <div class="ws-row-main">
+                            <div class="ws-row-title"><span class="status-dot" data-status-dot="https-proxy"></span><span class="mono">docs.devbase.localhost</span></div>
+                            <div class="ws-row-sub">→ 127.0.0.1:4321 · Local SNI TLS</div>
+                          </div>
+                          <div class="ws-row-controls"><button type="button" class="ws-mini-btn" data-copy-value="https://docs.devbase.localhost" data-copy-toast="Copied https://docs.devbase.localhost">Copy</button></div>
                         </div>
                       </div>
                     </div>
@@ -339,23 +393,23 @@
                       <div class="ws-list" id="demo-svc-list">
                         <div class="ws-row" data-svc-item data-source="user-agent" data-name="xyz.jyeu.devbase.proxy user agent">
                           <div class="ws-row-main"><div class="ws-row-title"><span class="status-dot"></span><span class="mono">xyz.jyeu.devbase.proxy</span></div><div class="ws-row-sub">User Agent · ~/Library/LaunchAgents</div></div>
-                          <button type="button" class="ws-mini-btn" data-copy-toast="Opened plist for xyz.jyeu.devbase.proxy">Plist</button>
+                          <div class="ws-row-controls"><button type="button" class="ws-mini-btn" data-copy-value="~/Library/LaunchAgents/xyz.jyeu.devbase.proxy.plist" data-copy-toast="Copied plist path">Plist</button></div>
                         </div>
                         <div class="ws-row" data-svc-item data-source="system-agent" data-name="org.macosforge.xquartz.startx system agent">
                           <div class="ws-row-main"><div class="ws-row-title"><span class="status-dot is-off"></span><span class="mono">org.macosforge.xquartz.startx</span></div><div class="ws-row-sub">System Agent · /Library/LaunchAgents</div></div>
-                          <button type="button" class="ws-mini-btn" data-copy-toast="Opened plist for org.macosforge.xquartz.startx">Plist</button>
+                          <div class="ws-row-controls"><button type="button" class="ws-mini-btn" data-copy-value="/Library/LaunchAgents/org.macosforge.xquartz.startx.plist" data-copy-toast="Copied plist path">Plist</button></div>
                         </div>
                         <div class="ws-row" data-svc-item data-source="daemon" data-name="xyz.jyeu.devbase.helper daemon">
                           <div class="ws-row-main"><div class="ws-row-title"><span class="status-dot is-off"></span><span class="mono">xyz.jyeu.devbase.helper</span></div><div class="ws-row-sub">Daemon · /Library/LaunchDaemons · idle-exit</div></div>
-                          <button type="button" class="ws-mini-btn" data-copy-toast="Opened plist for xyz.jyeu.devbase.helper">Plist</button>
+                          <div class="ws-row-controls"><button type="button" class="ws-mini-btn" data-copy-value="/Library/LaunchDaemons/xyz.jyeu.devbase.helper.plist" data-copy-toast="Copied helper plist path">Plist</button></div>
                         </div>
                         <div class="ws-row" data-svc-item data-source="brew" data-name="homebrew.mxcl.redis brew">
                           <div class="ws-row-main"><div class="ws-row-title"><span class="status-dot is-off"></span><span class="mono">homebrew.mxcl.redis</span></div><div class="ws-row-sub">Brew · /opt/homebrew/opt/redis</div></div>
-                          <button type="button" class="ws-mini-btn" data-copy-toast="Shared Homebrew keg untouched">Inspect</button>
+                          <div class="ws-row-controls"><button type="button" class="ws-mini-btn" data-info-toast="Shared Homebrew keg untouched">Inspect</button></div>
                         </div>
                         <div class="ws-row" data-svc-item data-source="login-item" data-name="devbase login item">
                           <div class="ws-row-main"><div class="ws-row-title"><span class="status-dot"></span><span>Devbase</span></div><div class="ws-row-sub">Login Item · --background</div></div>
-                          <button type="button" class="ws-mini-btn" data-copy-toast="Starts in menu bar">Inspect</button>
+                          <div class="ws-row-controls"><button type="button" class="ws-mini-btn" data-info-toast="Launches quietly in menu bar">Inspect</button></div>
                         </div>
                       </div>
                     </div>
@@ -381,17 +435,17 @@
                   <div class="cmdk-backdrop" id="demo-cmdk" role="dialog" aria-modal="false" aria-label="Command palette">
                     <div class="cmdk-dialog">
                       <div class="cmdk-head">
-                        <svg class="ic" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                        <input type="text" id="demo-cmdk-input" class="cmdk-input" placeholder="Jump to…" aria-label="Search commands">
+                        <svg class="ic" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg>
+                        <input type="text" id="demo-cmdk-input" class="cmdk-input" placeholder="Jump to view or action…" aria-label="Search commands">
                         <button type="button" id="demo-cmdk-close" class="ws-mini-btn">Esc</button>
                       </div>
                       <div class="cmdk-list" id="demo-cmdk-list">
-                        <button type="button" class="cmdk-item" data-cmd-action="tab:software"><span>Software</span><span class="cmdk-hint">⌘1</span></button>
-                        <button type="button" class="cmdk-item" data-cmd-action="tab:databases"><span>Databases</span><span class="cmdk-hint">⌘2</span></button>
-                        <button type="button" class="cmdk-item" data-cmd-action="tab:https"><span>HTTPS</span><span class="cmdk-hint">⌘3</span></button>
-                        <button type="button" class="cmdk-item" data-cmd-action="tab:services"><span>Services</span><span class="cmdk-hint">⌘4</span></button>
-                        <button type="button" class="cmdk-item" data-cmd-action="toggle-popover"><span>Menu Bar Popover</span><span class="cmdk-hint">⌃⌥⌘D</span></button>
-                        <button type="button" class="cmdk-item" data-cmd-action="toggle-logs"><span>Live Logs</span><span class="cmdk-hint">⌘L</span></button>
+                        <button type="button" class="cmdk-item" data-cmd-action="tab:software"><span>Software</span><span class="cmdk-hint kbd-mac">⌘1</span></button>
+                        <button type="button" class="cmdk-item" data-cmd-action="tab:databases"><span>Databases</span><span class="cmdk-hint kbd-mac">⌘2</span></button>
+                        <button type="button" class="cmdk-item" data-cmd-action="tab:https"><span>HTTPS Proxy</span><span class="cmdk-hint kbd-mac">⌘3</span></button>
+                        <button type="button" class="cmdk-item" data-cmd-action="tab:services"><span>Services</span><span class="cmdk-hint kbd-mac">⌘4</span></button>
+                        <button type="button" class="cmdk-item" data-cmd-action="toggle-popover"><span>Menu Bar Popover</span><span class="cmdk-hint kbd-mac">⌃⌥⌘D</span></button>
+                        <button type="button" class="cmdk-item" data-cmd-action="toggle-logs"><span>Live Logs</span><span class="cmdk-hint kbd-mac">⌘L</span></button>
                       </div>
                     </div>
                   </div>
@@ -401,71 +455,138 @@
               </div>
             </div>
           </div>
+
+          <div class="demo-hint">
+            <span class="demo-hint-dot" aria-hidden="true"></span>
+            <span class="demo-hint-desktop">Interactive preview — toggle switches, inspect tabs, or press <kbd>⌘K</kbd> search · <kbd>⌘L</kbd> logs · <kbd>⌃⌥⌘D</kbd> menu bar</span>
+            <span class="demo-hint-mobile">Tap views or toggle switches to explore</span>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- 2. Features -->
+    <!-- 2. Capabilities Bento (4 Pillars with Bespoke Mini-UI Previews) -->
     <section class="section" id="features">
       <div class="container">
         <div class="section-head">
           <h2 class="display section-title">Four pillars. <span class="muted">Zero bloat.</span></h2>
+          <p class="section-sub">Everything a local macOS environment needs — native binaries, isolated data, and zero VM tax.</p>
         </div>
 
         <div class="bento-grid">
           <article class="bento-card">
             <div class="bento-card-head">
-              <span class="bento-icon" aria-hidden="true"><svg class="ic" width="17" height="17"><use href="#i-box"/></svg></span>
-              <h3>Software</h3>
+              <span class="bento-icon" aria-hidden="true"><svg class="ic" width="16" height="16" viewBox="0 0 24 24"><use href="#i-box"/></svg></span>
+              <div>
+                <h3>Software</h3>
+                <p>SHA-256 verified Node.js, arm64 JetBrains JDK, and Python via uv with reversible shell hooks.</p>
+              </div>
             </div>
-            <p>SHA-256 verified Node.js, arm64 JetBrains JDK, and Python via uv with reversible zsh, Bash, and fish hooks.</p>
+
+            <div class="bento-visual" aria-hidden="true">
+              <div class="mini-chips">
+                <span class="mini-chip is-active"><span class="status-dot"></span>Node 22.14.0</span>
+                <span class="mini-chip is-active"><span class="status-dot"></span>JDK 21.0.6</span>
+                <span class="mini-chip is-active"><span class="status-dot"></span>Python 3.13.2</span>
+              </div>
+              <div class="mini-bar-row">
+                <span class="mono">zsh · bash · fish</span>
+                <span class="mini-ok"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-check"/></svg>SHA-256 arm64</span>
+              </div>
+            </div>
+
             <div class="bento-specs">
-              <div class="bento-spec"><span class="bento-k">Node.js</span><span class="bento-v">.node-version · .nvmrc</span></div>
-              <div class="bento-spec"><span class="bento-k">Java arm64</span><span class="bento-v">~/Library/Java/JavaVirtualMachines</span></div>
-              <div class="bento-spec"><span class="bento-k">Python</span><span class="bento-v">uv store · venv-safe</span></div>
+              <div class="bento-spec"><span class="bento-k">Version files</span><span class="bento-v">.node-version · .nvmrc</span></div>
               <div class="bento-spec"><span class="bento-k">App bundle</span><span class="bento-v">16.9 MB Rust · notarized</span></div>
             </div>
           </article>
 
           <article class="bento-card">
             <div class="bento-card-head">
-              <span class="bento-icon" aria-hidden="true"><svg class="ic" width="17" height="17"><use href="#i-db"/></svg></span>
-              <h3>Databases</h3>
+              <span class="bento-icon" aria-hidden="true"><svg class="ic" width="16" height="16" viewBox="0 0 24 24"><use href="#i-db"/></svg></span>
+              <div>
+                <h3>Databases</h3>
+                <p>Isolated PostgreSQL, MySQL, Redis, and MongoDB instances with scheduled backups and external data safety.</p>
+              </div>
             </div>
-            <p>Isolated PostgreSQL, MySQL, Redis, and MongoDB instances with scheduled backups and hard external data safety.</p>
+
+            <div class="bento-visual" aria-hidden="true">
+              <div class="mini-stack">
+                <div class="mini-db-row">
+                  <span class="mini-db-name"><span class="status-dot"></span>pg-main</span>
+                  <span class="mono mini-muted">:5432</span>
+                  <span class="mini-pill">03:00 backup</span>
+                </div>
+                <div class="mini-db-row">
+                  <span class="mini-db-name"><span class="status-dot"></span>redis-cache</span>
+                  <span class="mono mini-muted">:6379</span>
+                  <span class="mini-pill">DB 0–15</span>
+                </div>
+              </div>
+              <div class="mini-bar-row">
+                <span class="mini-ok"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-shield"/></svg>External data always retained</span>
+                <span class="mono">URI · .env · JDBC</span>
+              </div>
+            </div>
+
             <div class="bento-specs">
-              <div class="bento-spec"><span class="bento-k">External data</span><span class="bento-v">Always retained on remove</span></div>
-              <div class="bento-spec"><span class="bento-k">Backups</span><span class="bento-v">Daily / weekly · 1-click restore</span></div>
-              <div class="bento-spec"><span class="bento-k">Exports</span><span class="bento-v">Password-free URI, .env, JDBC</span></div>
+              <div class="bento-spec"><span class="bento-k">Exports</span><span class="bento-v">Password-free profiles</span></div>
               <div class="bento-spec"><span class="bento-k">Ports</span><span class="bento-v">Inline PID conflict check</span></div>
             </div>
           </article>
 
           <article class="bento-card">
             <div class="bento-card-head">
-              <span class="bento-icon" aria-hidden="true"><svg class="ic" width="17" height="17"><use href="#i-lock"/></svg></span>
-              <h3>HTTPS</h3>
+              <span class="bento-icon" aria-hidden="true"><svg class="ic" width="16" height="16" viewBox="0 0 24 24"><use href="#i-lock"/></svg></span>
+              <div>
+                <h3>HTTPS</h3>
+                <p>Local TLS on *.devbase.localhost without editing /etc/hosts, plus one-click Cloudflare Workers tunnels.</p>
+              </div>
             </div>
-            <p>Local TLS on *.devbase.localhost without editing /etc/hosts, plus one-click Cloudflare Workers tunnels.</p>
+
+            <div class="bento-visual" aria-hidden="true">
+              <div class="mini-route">
+                <span class="mini-node mini-node-tls"><svg class="ic" width="11" height="11" viewBox="0 0 24 24"><use href="#i-lock"/></svg>*.devbase.localhost</span>
+                <span class="mini-arrow">→</span>
+                <span class="mini-node">127.0.0.1:3000</span>
+              </div>
+              <div class="mini-bar-row">
+                <span class="mono">SNI :443 · 0 /etc/hosts edits</span>
+                <span class="mini-pill">Worker + SVG QR</span>
+              </div>
+            </div>
+
             <div class="bento-specs">
-              <div class="bento-spec"><span class="bento-k">Domains</span><span class="bento-v">*.devbase.localhost → :443</span></div>
               <div class="bento-spec"><span class="bento-k">Local CA</span><span class="bento-v">Development/proxy/ca.pem</span></div>
-              <div class="bento-spec"><span class="bento-k">Tunnel</span><span class="bento-v">Worker + Durable Object</span></div>
-              <div class="bento-spec"><span class="bento-k">Mobile test</span><span class="bento-v">Local SVG QR</span></div>
+              <div class="bento-spec"><span class="bento-k">Tunnel</span><span class="bento-v">Cloudflare Durable Object</span></div>
             </div>
           </article>
 
           <article class="bento-card">
             <div class="bento-card-head">
-              <span class="bento-icon" aria-hidden="true"><svg class="ic" width="17" height="17"><use href="#i-list"/></svg></span>
-              <h3>Services</h3>
+              <span class="bento-icon" aria-hidden="true"><svg class="ic" width="16" height="16" viewBox="0 0 24 24"><use href="#i-list"/></svg></span>
+              <div>
+                <h3>Services</h3>
+                <p>Unified launchd, Homebrew, and Login Items inspector with structured plist editing and Liquid Glass controls.</p>
+              </div>
             </div>
-            <p>Unified launchd, Homebrew, and Login Items inspector with structured plist editing and Liquid Glass controls.</p>
+
+            <div class="bento-visual" aria-hidden="true">
+              <div class="mini-chips">
+                <span class="mini-chip">User Agents</span>
+                <span class="mini-chip">Daemons</span>
+                <span class="mini-chip">Brew</span>
+                <span class="mini-chip">Login Items</span>
+              </div>
+              <div class="mini-bar-row">
+                <span class="mono">KeepAlive · RunAtLoad</span>
+                <span class="mini-ok"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-check"/></svg>Validated plist</span>
+              </div>
+            </div>
+
             <div class="bento-specs">
-              <div class="bento-spec"><span class="bento-k">Sources</span><span class="bento-v">Agents · Daemons · Brew · Login</span></div>
-              <div class="bento-spec"><span class="bento-k">Plist editor</span><span class="bento-v">Structured &amp; validated</span></div>
               <div class="bento-spec"><span class="bento-k">Menu bar</span><span class="bento-v">NSGlassEffectView · Stop all</span></div>
-              <div class="bento-spec"><span class="bento-k">Logs</span><span class="bento-v">Cross-stream ⌘L drawer</span></div>
+              <div class="bento-spec"><span class="bento-k">Logs</span><span class="bento-v">Cross-stream live drawer</span></div>
             </div>
           </article>
         </div>
@@ -476,9 +597,9 @@
     <section class="section" id="cli">
       <div class="container">
         <div class="cli-wrap">
-          <div class="cli-head">
+          <div class="section-head">
             <h2 class="display section-title">Built for terminals <span class="muted">and AI agents.</span></h2>
-            <p>Same signed binary. Structured JSON, stdin-only secrets, and 7 read-only stdio MCP tools.</p>
+            <p class="section-sub">Same signed binary. Structured JSON, stdin-only secrets, and 7 read-only stdio MCP tools.</p>
           </div>
 
           <div class="terminal">
@@ -489,12 +610,13 @@
                 <button type="button" class="term-tab" role="tab" aria-selected="false" data-term-tab="mcp">devbase mcp</button>
               </div>
               <button type="button" class="copy-btn" id="cli-copy-btn">
-                <svg class="ic" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <svg class="ic" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy"/></svg>
                 <span>Copy</span>
               </button>
             </div>
 
-            <pre class="terminal-pane active" id="term-schema" data-copy-text="devbase schema --command db"><code><span class="tk-cmd">$ devbase schema --command db</span>
+            <div class="terminal-body">
+              <pre class="terminal-pane active" id="term-schema" data-copy-text="devbase schema --command db"><code><span class="tk-cmd">$ devbase schema --command db</span>
 {
   <span class="tk-key">"command"</span>: <span class="tk-str">"db"</span>,
   <span class="tk-key">"stdinSecrets"</span>: [<span class="tk-str">"--password-stdin"</span>],
@@ -503,7 +625,7 @@
   <span class="tk-key">"subcommands"</span>: [<span class="tk-str">"list"</span>, <span class="tk-str">"create"</span>, <span class="tk-str">"start"</span>, <span class="tk-str">"stop"</span>, <span class="tk-str">"backup"</span>, <span class="tk-str">"connection"</span>, <span class="tk-str">"delete-data"</span>]
 }</code></pre>
 
-            <pre class="terminal-pane" id="term-status" data-copy-text="devbase status --json"><code><span class="tk-cmd">$ devbase status --json</span>
+              <pre class="terminal-pane" id="term-status" data-copy-text="devbase status --json"><code><span class="tk-cmd">$ devbase status --json</span>
 {
   <span class="tk-key">"workspace"</span>: {
     <span class="tk-key">"packages"</span>: [<span class="tk-str">"node@22.14.0"</span>, <span class="tk-str">"java@21.0.6"</span>, <span class="tk-str">"postgresql@17.4"</span>, <span class="tk-str">"redis@7.4"</span>],
@@ -516,7 +638,7 @@
   <span class="tk-key">"helper"</span>: { <span class="tk-key">"installed"</span>: <span class="tk-num">true</span>, <span class="tk-key">"buildBound"</span>: <span class="tk-num">true</span> }
 }</code></pre>
 
-            <pre class="terminal-pane" id="term-mcp" data-copy-text='{
+              <pre class="terminal-pane" id="term-mcp" data-copy-text='{
   "mcpServers": {
     "devbase": {
       "command": "/Users/you/.local/bin/devbase",
@@ -532,9 +654,10 @@
     }
   }
 }</code></pre>
+            </div>
 
             <div class="mcp-strip">
-              <span>MCP tools:</span>
+              <span class="mcp-label">Read-only MCP tools:</span>
               <span class="mcp-tag">devbase_status</span>
               <span class="mcp-tag">devbase_db_list</span>
               <span class="mcp-tag">devbase_db_connection</span>
@@ -548,12 +671,91 @@
       </div>
     </section>
 
-    <!-- 4. FAQ -->
+    <!-- 4. Compact Scannable Comparison -->
+    <section class="section" id="compare">
+      <div class="container">
+        <div class="section-head">
+          <h2 class="display section-title">Native Rust, <span class="muted">not another VM.</span></h2>
+          <p class="section-sub">How Devbase 2.0 compares to containers, manual scripts, and Electron-based stacks.</p>
+        </div>
+
+        <div class="compare-card">
+          <div class="compare-scroll">
+            <table class="compare-table">
+              <thead>
+                <tr>
+                  <th scope="col" class="col-cap">Capability</th>
+                  <th scope="col" class="col-devbase">Devbase 2.0</th>
+                  <th scope="col">Docker Desktop</th>
+                  <th scope="col">Homebrew + scripts</th>
+                  <th scope="col">All-in-one GUI suites</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Footprint &amp; engine</th>
+                  <td class="col-devbase"><strong>16.9 MB pure Rust</strong></td>
+                  <td>Linux VM + GBs RAM</td>
+                  <td>CLI only, ad-hoc</td>
+                  <td>Electron / heavy bundles</td>
+                </tr>
+                <tr>
+                  <th scope="row">Isolated DBs &amp; backups</th>
+                  <td class="col-devbase">Native instances + schedules</td>
+                  <td>Manual Compose &amp; volumes</td>
+                  <td>Single shared data dir</td>
+                  <td>Partial / manual</td>
+                </tr>
+                <tr>
+                  <th scope="row">Zero <code>/etc/hosts</code> HTTPS</th>
+                  <td class="col-devbase"><code>*.devbase.localhost</code> SNI</td>
+                  <td>Manual reverse proxy</td>
+                  <td>mkcert + <code>/etc/hosts</code></td>
+                  <td>Mutates <code>/etc/hosts</code></td>
+                </tr>
+                <tr>
+                  <th scope="row">Cloudflare Tunnel &amp; QR</th>
+                  <td class="col-devbase">Built-in Worker + SVG QR</td>
+                  <td>Separate cloudflared</td>
+                  <td>Separate CLI setup</td>
+                  <td>Third-party / paid</td>
+                </tr>
+                <tr>
+                  <th scope="row">Services &amp; Plist inspector</th>
+                  <td class="col-devbase">launchd, Brew, Login + editor</td>
+                  <td>Containers only</td>
+                  <td><code>brew services</code> only</td>
+                  <td>None</td>
+                </tr>
+                <tr>
+                  <th scope="row">AI-native CLI &amp; MCP</th>
+                  <td class="col-devbase">JSON, stdin secrets, 7 MCP</td>
+                  <td>CLI, no read-only MCP</td>
+                  <td>Unstructured output</td>
+                  <td>GUI-first</td>
+                </tr>
+                <tr>
+                  <th scope="row">License &amp; data safety</th>
+                  <td class="col-devbase">MIT · external dirs retained</td>
+                  <td>Paid tiers · prune risk</td>
+                  <td>Open source · manual</td>
+                  <td>Closed / commercial</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="compare-swipe-hint" aria-hidden="true">Swipe table horizontally to compare all tools →</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. Sticky FAQ -->
     <section class="section" id="faq">
       <div class="container">
         <div class="faq-layout">
           <div class="faq-sticky">
             <h2 class="display section-title">Questions.</h2>
+            <p class="faq-lede">Technical details on architecture, local trust, and safety guarantees.</p>
             <a href="https://github.com/tdawn0-0/macOS-service-manager/issues" target="_blank" rel="noopener noreferrer" class="btn-ghost">GitHub Issues →</a>
           </div>
 
@@ -587,44 +789,44 @@
       </div>
     </section>
 
-    <!-- 5. Closing Download -->
+    <!-- 6. Closing Download -->
     <section class="closing" id="download">
       <div class="container">
-        <div class="cta-halo"><img src="/icon.svg" alt="Devbase" width="96" height="96"></div>
+        <div class="cta-halo"><img src="/icon.svg" alt="Devbase" width="84" height="84"></div>
         <h2 class="display closing-title">Ready for your Mac.</h2>
         <div class="hero-cta">
           <a href="https://github.com/tdawn0-0/macOS-service-manager/releases/latest/download/Devbase.dmg" class="btn-primary">
             <span>Download Devbase</span>
-            <span class="btn-dot" aria-hidden="true"><svg class="ic" width="15" height="15"><use href="#i-dl"/></svg></span>
+            <span class="btn-dot" aria-hidden="true"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><use href="#i-dl"/></svg></span>
           </a>
         </div>
         <div class="hero-meta tabular-nums">
-          <span>v2.0.0</span><span class="sep">·</span>
-          <span>16.9 MB notarized DMG</span><span class="sep">·</span>
-          <span>Apple Silicon</span><span class="sep">·</span>
-          <span>macOS 26+</span><span class="sep">·</span>
-          <span>MIT</span>
+          <span class="meta-item">v2.0.0</span><span class="sep" aria-hidden="true">·</span>
+          <span class="meta-item">16.9 MB notarized DMG</span><span class="sep" aria-hidden="true">·</span>
+          <span class="meta-item">Apple Silicon</span><span class="sep" aria-hidden="true">·</span>
+          <span class="meta-item">macOS 26+</span><span class="sep" aria-hidden="true">·</span>
+          <span class="meta-item">MIT</span>
         </div>
       </div>
     </section>
 
   </main>
 
-  <!-- 6. Minimal 1-Row Footer -->
+  <!-- 7. Clean 1-Row Footer -->
   <footer>
     <div class="container footer-row">
       <div class="footer-left">
         <a href="#top" class="nav-brand">
-          <img src="/icon.svg" alt="" width="22" height="22">
+          <img src="/icon.svg" alt="" width="20" height="20">
           <span>Devbase</span>
         </a>
         <div class="theme-pill" role="group" aria-label="Theme">
           <button type="button" class="theme-pill-btn" data-set-theme="light" aria-pressed="true">
-            <svg class="ic" width="13" height="13" aria-hidden="true"><use href="#i-sun"/></svg>
+            <svg class="ic" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sun"/></svg>
             <span>Light</span>
           </button>
           <button type="button" class="theme-pill-btn" data-set-theme="dark" aria-pressed="false">
-            <svg class="ic" width="13" height="13" aria-hidden="true"><use href="#i-moon"/></svg>
+            <svg class="ic" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-moon"/></svg>
             <span>Dark</span>
           </button>
         </div>
@@ -639,6 +841,6 @@
     </div>
   </footer>
 
-  <script src="/app.js" defer></script>
+  <script src="/app.js?v=20261121c" defer></script>
 </body>
 </html>

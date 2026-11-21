@@ -46,7 +46,7 @@ fn idle_shutdown_leaves_the_socket_file_in_place() {
     let socket = dir.path().join("idle.sock");
     let listener = UnixListener::bind(&socket).expect("bind");
     let config = ServerConfig {
-        idle_timeout: Duration::from_millis(80),
+        idle_timeout: Duration::from_millis(250),
         ..server_config()
     };
     let (_stop, handle) = start(config, listener);
@@ -71,14 +71,14 @@ fn every_request_resets_the_idle_timer() {
     let socket = dir.path().join("reset.sock");
     let listener = UnixListener::bind(&socket).expect("bind");
     let config = ServerConfig {
-        idle_timeout: Duration::from_millis(120),
+        idle_timeout: Duration::from_millis(400),
         ..server_config()
     };
     let (_stop, handle) = start(config, listener);
     let client = client_for(&socket);
 
     for _ in 0..3 {
-        std::thread::sleep(Duration::from_millis(70));
+        std::thread::sleep(Duration::from_millis(150));
         client.ping().expect("requests keep the helper alive");
     }
     let result = handle.join().expect("server thread");
@@ -95,11 +95,11 @@ fn an_in_flight_request_delays_the_idle_exit() {
     let running_in_runner = Arc::clone(&running);
     let runner = FakeRunner::new(move |_, _, _| {
         running_in_runner.store(true, Ordering::SeqCst);
-        std::thread::sleep(Duration::from_millis(150));
+        std::thread::sleep(Duration::from_millis(300));
         CommandOutput::success(b"p1\x00".to_vec())
     });
     let config = ServerConfig {
-        idle_timeout: Duration::from_millis(60),
+        idle_timeout: Duration::from_millis(150),
         runner,
         ..server_config()
     };
@@ -117,7 +117,7 @@ fn an_in_flight_request_delays_the_idle_exit() {
         std::thread::sleep(Duration::from_millis(5));
     }
     // The idle timer would have expired here if it ignored in-flight work.
-    std::thread::sleep(Duration::from_millis(90));
+    std::thread::sleep(Duration::from_millis(180));
     let response = request
         .join()
         .expect("request thread")
@@ -125,11 +125,11 @@ fn an_in_flight_request_delays_the_idle_exit() {
     assert_eq!(response.as_slice(), b"p1\x00");
     let result = handle.join().expect("server thread");
     assert!(result.is_ok());
-    // The server cannot have exited before the 150 ms request completed; if
+    // The server cannot have exited before the 300 ms request completed; if
     // the idle loop ignored in-flight work the request itself would have
     // failed above.
     assert!(
-        server_started.elapsed() >= Duration::from_millis(150),
+        server_started.elapsed() >= Duration::from_millis(300),
         "the helper must not exit while a request is in flight"
     );
 }

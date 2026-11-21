@@ -67,18 +67,16 @@ pub(crate) fn build_items() -> Vec<CommandItem> {
     let saved_rules = proxy::saved_rules();
     let has_tunnel = tunnel_configured(&saved_rules);
     let has_tunnel_rules = saved_rules.iter().any(|r| r.tunnel);
+    let db_instances = databases::instances();
+    let has_running_databases = db_instances
+        .iter()
+        .any(|inst| matches!(databases::status(&inst.id).as_str(), "Running" | "Healthy"));
+    let db_busy = databases::operations_busy();
 
     let mut items = vec![
-        CommandItem::new("nav:services", "Go to Services")
-            .group("Navigate")
-            .shortcut("mod+1")
-            .keywords([
-                "services", "launchd", "homebrew", "agents", "daemons", "login",
-            ])
-            .checked(active == Section::Services),
         CommandItem::new("nav:development", "Go to Development")
             .group("Navigate")
-            .shortcut("mod+2")
+            .shortcut("mod+1")
             .keywords([
                 "development",
                 "software",
@@ -91,7 +89,7 @@ pub(crate) fn build_items() -> Vec<CommandItem> {
             .checked(active == Section::Development),
         CommandItem::new("nav:databases", "Go to Databases")
             .group("Navigate")
-            .shortcut("mod+3")
+            .shortcut("mod+2")
             .keywords([
                 "databases",
                 "postgres",
@@ -104,7 +102,7 @@ pub(crate) fn build_items() -> Vec<CommandItem> {
             .checked(active == Section::Databases),
         CommandItem::new("nav:https-proxy", "Go to HTTPS Proxy")
             .group("Navigate")
-            .shortcut("mod+4")
+            .shortcut("mod+3")
             .keywords([
                 "https",
                 "proxy",
@@ -115,6 +113,13 @@ pub(crate) fn build_items() -> Vec<CommandItem> {
                 "cloudflare",
             ])
             .checked(active == Section::HttpsProxy),
+        CommandItem::new("nav:services", "Go to Services")
+            .group("Navigate")
+            .shortcut("mod+4")
+            .keywords([
+                "services", "launchd", "homebrew", "agents", "daemons", "login",
+            ])
+            .checked(active == Section::Services),
         CommandItem::new("nav:diagnostics", "Go to Diagnostics")
             .group("Navigate")
             .shortcut("mod+5")
@@ -154,6 +159,19 @@ pub(crate) fn build_items() -> Vec<CommandItem> {
             .keywords([
                 "new", "create", "database", "instance", "postgres", "redis", "mysql",
             ]),
+        CommandItem::new("action:stop-all-databases", "Stop All Databases")
+            .group("Actions")
+            .keywords([
+                "stop",
+                "all",
+                "databases",
+                "shutdown",
+                "postgres",
+                "mysql",
+                "redis",
+                "mongodb",
+            ])
+            .disabled(db_busy || !has_running_databases),
         CommandItem::new("action:refresh", "Refresh Active Section")
             .group("Actions")
             .shortcut("mod+r")
@@ -206,7 +224,7 @@ pub(crate) fn build_items() -> Vec<CommandItem> {
             ]),
     );
 
-    for instance in databases::instances() {
+    for instance in db_instances {
         let title = instance_title(&instance.kind);
         let status = databases::status(&instance.id);
         let label = format!("{} ({} · :{})", instance.id, title, instance.port);
@@ -241,6 +259,7 @@ pub(crate) fn execute(id: &str) {
             store::select_section(Section::Databases);
             databases::open_new();
         }
+        "action:stop-all-databases" => databases::stop_all_running(),
         "action:refresh" => shell::refresh_active_section(),
         "action:toggle-proxy" => proxy::set_proxy_enabled(!proxy::proxy_on()),
         "action:toggle-tunnel" => proxy::set_tunnel_enabled(!proxy::tunnel_on()),

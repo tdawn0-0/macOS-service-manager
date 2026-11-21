@@ -24,7 +24,8 @@ use nsh_testing::{DialogAnswer, Headless};
 
 use nsh_app_devbase::testing::{
     SoftwareProvider, SoftwareSnapshot, install_software_provider, use_fake_databases,
-    use_fake_software,
+    use_fake_development, use_fake_guide, use_fake_menubar, use_fake_providers, use_fake_proxy,
+    use_fake_software, use_fake_system, use_fake_updater,
 };
 
 /// The software tests share one fake-provider registry, so they take turns.
@@ -249,7 +250,14 @@ fn mysql(version: &str) -> Package {
 /// holding the tests' turn for as long as the returned guard lives.
 fn start(fake: Arc<FakeSoftware>) -> (MutexGuard<'static, ()>, Headless) {
     let turn = serial();
+    use_fake_menubar();
+    use_fake_providers();
+    use_fake_development();
     use_fake_databases();
+    use_fake_proxy();
+    use_fake_system();
+    use_fake_guide();
+    use_fake_updater();
     use_fake_software();
     install_software_provider(fake as Arc<dyn SoftwareProvider>);
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
@@ -523,8 +531,9 @@ fn installed_database_engines_offer_create_database_instance_cta() {
         assert!(app.screen().shows("Create database instance"));
     }
 
-    // Pressing the CTA navigates to Databases and opens the New Instance form.
+    // Pressing the CTA navigates to Databases and pre-selects the installed engine.
     app.press("id:software-create-instance").unwrap();
     app.wait_for("id:db-create-form").unwrap();
     app.wait_for("New instance").unwrap();
+    assert!(app.screen().selected("id:db-engine-mongodb").unwrap());
 }

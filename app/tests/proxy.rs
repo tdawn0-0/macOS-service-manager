@@ -21,7 +21,9 @@ use nsh_app_devbase::testing::{
     AuthorityAction, AuthorityInfo, AuthorityStatus, DevLogsKnownFile, DevLogsProvider,
     DevLogsRead, DevLogsSnapshot, DevLogsStream, ProxyHttpResult, ProxyListeningPort,
     ProxyProvider, ProxyRuleDraft, ProxySavedCloudflare, ProxySnapshot, ProxyWorkers, TrustState,
-    install_dev_logs_provider, install_proxy_provider, use_fake_dev_logs, use_fake_proxy,
+    install_dev_logs_provider, install_proxy_provider, use_fake_databases, use_fake_dev_logs,
+    use_fake_development, use_fake_guide, use_fake_menubar, use_fake_providers, use_fake_proxy,
+    use_fake_software, use_fake_system, use_fake_updater,
 };
 use nsh_core::prelude::*;
 use nsh_engine::{EngineConfig, Root};
@@ -502,6 +504,14 @@ fn token_file(contents: &str) -> PathBuf {
 /// holding the tests' turn for as long as the returned guard lives.
 fn start(fake: Arc<Fake>) -> (MutexGuard<'static, ()>, Headless) {
     let turn = serial();
+    use_fake_menubar();
+    use_fake_providers();
+    use_fake_software();
+    use_fake_development();
+    use_fake_databases();
+    use_fake_system();
+    use_fake_guide();
+    use_fake_updater();
     use_fake_proxy();
     install_proxy_provider(fake as Arc<dyn ProxyProvider>);
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();

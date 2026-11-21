@@ -129,6 +129,7 @@ struct ReadinessInputs {
     has_java: bool,
     node_shell_enabled: bool,
     java_shell_enabled: bool,
+    ca_env_enabled: bool,
 }
 
 impl ReadinessInputs {
@@ -157,6 +158,7 @@ impl ReadinessInputs {
             has_java: !development::java_versions().is_empty(),
             node_shell_enabled: development::node_shell_enabled(),
             java_shell_enabled: development::java_shell_enabled(),
+            ca_env_enabled: development::ca_env_enabled(),
         }
     }
 
@@ -173,7 +175,9 @@ impl ReadinessInputs {
                     (true, true) => !self.node_shell_enabled || !self.java_shell_enabled,
                     (true, false) => !self.node_shell_enabled,
                     (false, true) => !self.java_shell_enabled,
-                    (false, false) => !self.node_shell_enabled && !self.java_shell_enabled,
+                    (false, false) => {
+                        !self.node_shell_enabled && !self.java_shell_enabled && !self.ca_env_enabled
+                    }
                 }
             }
         }
@@ -329,6 +333,7 @@ mod tests {
             has_java: false,
             node_shell_enabled: false,
             java_shell_enabled: false,
+            ca_env_enabled: false,
         };
         assert!(inputs.is_pending(ReadinessItem::Helper));
         assert!(inputs.is_pending(ReadinessItem::CaTrust));

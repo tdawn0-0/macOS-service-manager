@@ -25,8 +25,9 @@ use nsh_testing::{DialogAnswer, Headless};
 use nsh_app_devbase::testing::{
     DevelopmentJava, DevelopmentNode, DevelopmentProvider, DevelopmentReleases,
     DevelopmentSelection, DevelopmentShell, DevelopmentSnapshot, SoftwareProvider,
-    SoftwareSnapshot, install_development_provider, install_software_provider,
-    use_fake_development, use_fake_software,
+    SoftwareSnapshot, install_development_provider, install_software_provider, use_fake_databases,
+    use_fake_development, use_fake_guide, use_fake_menubar, use_fake_providers, use_fake_proxy,
+    use_fake_software, use_fake_system, use_fake_updater,
 };
 
 /// The development tests share one fake-provider registry, so they take turns.
@@ -462,6 +463,13 @@ fn fixture() -> Fixture {
 /// page, holding the tests' turn for as long as the returned guard lives.
 fn start(fake: Arc<FakeDevelopment>) -> (MutexGuard<'static, ()>, Headless) {
     let turn = serial();
+    use_fake_menubar();
+    use_fake_providers();
+    use_fake_databases();
+    use_fake_proxy();
+    use_fake_system();
+    use_fake_guide();
+    use_fake_updater();
     use_fake_software();
     install_software_provider(Arc::new(EmptySoftware));
     use_fake_development();

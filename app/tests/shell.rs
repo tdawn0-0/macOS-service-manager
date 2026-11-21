@@ -36,7 +36,7 @@ use nsh_app_devbase::testing::{
     refresh_services, shell_trigger_find, toast_dismiss_all, toast_error, toast_info,
     toast_success, use_fake_databases, use_fake_dev_logs, use_fake_development, use_fake_editor,
     use_fake_guide, use_fake_menubar, use_fake_providers, use_fake_proxy, use_fake_software,
-    use_fake_system,
+    use_fake_system, use_fake_updater,
 };
 use nsh_core::{
     desktop::{WindowMode, WindowState},
@@ -65,6 +65,7 @@ fn install_all_fakes() {
     use_fake_guide();
     use_fake_dev_logs();
     use_fake_editor();
+    use_fake_updater();
 }
 
 fn start() -> (MutexGuard<'static, ()>, Headless) {
@@ -557,9 +558,30 @@ fn command_palette_opens_filters_and_executes_navigation_actions_and_db_jump() {
     assert_eq!(app.screen().count("id:command-palette").unwrap(), 0);
     app.press_key("mod+k").unwrap();
     app.wait_for("id:command-palette").unwrap();
+    assert!(app.screen().shows("Go to Development"));
     assert!(app.screen().shows("Go to Services"));
     assert!(app.screen().shows("New LaunchAgent…"));
+    assert!(app.screen().shows("Stop All Databases"));
     assert!(app.screen().shows("Start Cloudflare Tunnel"));
+    let screen = app.screen();
+    let palette_texts = screen.texts();
+    assert!(
+        palette_texts
+            .windows(2)
+            .any(|pair| pair == ["Go to Development", "⌘1"]),
+        "expected Go to Development -> ⌘1 in {palette_texts:?}"
+    );
+    assert!(
+        palette_texts
+            .windows(2)
+            .any(|pair| pair == ["Go to Services", "⌘4"]),
+        "expected Go to Services -> ⌘4 in {palette_texts:?}"
+    );
+    assert!(
+        screen
+            .matches("id:command-item-action:stop-all-databases")
+            .unwrap()
+    );
 
     // Filter to Settings and execute by pressing the matching item.
     app.type_text("label:Search commands", "settings").unwrap();
@@ -910,6 +932,9 @@ impl DevelopmentProvider for FakeShellDevelopment {
     fn java_shell(&self, _enable: bool) -> Result<(), String> {
         Ok(())
     }
+    fn ca_env_shell(&self, _enable: bool) -> Result<(), String> {
+        Ok(())
+    }
     fn select_node(
         &self,
         _dir: &str,
@@ -982,6 +1007,7 @@ fn readiness_checklist_surfaces_actionable_pills_navigates_and_dismisses() {
                 files: vec!["~/.zshrc".to_string()],
                 node_applied: false,
                 java_applied: false,
+                ca_env_applied: false,
             }],
             node_shell_enabled: false,
             java_shell_enabled: false,
@@ -1065,6 +1091,7 @@ fn readiness_checklist_auto_hides_when_all_items_are_ready() {
                 files: vec!["~/.zshrc".to_string()],
                 node_applied: true,
                 java_applied: false,
+                ca_env_applied: false,
             }],
             node_shell_enabled: true,
             java_shell_enabled: false,

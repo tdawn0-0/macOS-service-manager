@@ -27,7 +27,8 @@ use nsh_testing::{DialogAnswer, Headless};
 
 use nsh_app_devbase::testing::{
     DatabasesProvider, DatabasesSnapshot, install_databases_provider, use_fake_databases,
-    use_fake_dev_logs,
+    use_fake_dev_logs, use_fake_development, use_fake_guide, use_fake_menubar, use_fake_providers,
+    use_fake_proxy, use_fake_software, use_fake_system, use_fake_updater,
 };
 
 /// The database tests share one fake-provider registry, so they take turns.
@@ -717,6 +718,14 @@ fn fixture_with_packages() -> Fixture {
 /// holding the tests' turn for as long as the returned guard lives.
 fn start(fake: Arc<FakeDatabases>) -> (MutexGuard<'static, ()>, Headless) {
     let turn = serial();
+    use_fake_menubar();
+    use_fake_providers();
+    use_fake_software();
+    use_fake_development();
+    use_fake_proxy();
+    use_fake_system();
+    use_fake_guide();
+    use_fake_updater();
     use_fake_databases();
     install_databases_provider(fake as Arc<dyn DatabasesProvider>);
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();

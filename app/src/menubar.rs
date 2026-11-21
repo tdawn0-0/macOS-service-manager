@@ -945,14 +945,7 @@ pub fn dispatch(action: Action) {
             }
         }
         Action::StopAllDatabases => {
-            let running_ids: Vec<String> = databases::instances()
-                .into_iter()
-                .filter(|inst| running_status(&databases::status(&inst.id)))
-                .map(|inst| inst.id)
-                .collect();
-            for id in running_ids {
-                databases::stop_instance(&id);
-            }
+            databases::stop_all_running();
         }
         Action::ToggleProxy(on) => proxy::set_proxy_enabled(on),
         Action::ToggleTunnel(on) => proxy::set_tunnel_enabled(on),

@@ -29,7 +29,7 @@ use nsh_app_devbase::testing::{
     SystemSettingsProvider, SystemSettingsSnapshot, install_editor_provider, install_provider,
     install_system_settings_provider, use_fake_databases, use_fake_dev_logs, use_fake_development,
     use_fake_editor, use_fake_guide, use_fake_menubar, use_fake_providers, use_fake_proxy,
-    use_fake_software, use_fake_system,
+    use_fake_software, use_fake_system, use_fake_updater,
 };
 
 /// The service tests share one fake-provider registry, so they take turns.
@@ -39,6 +39,25 @@ fn serial() -> MutexGuard<'static, ()> {
     SERIAL
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn install_all_fakes() {
+    use_fake_providers();
+    use_fake_software();
+    use_fake_development();
+    use_fake_databases();
+    use_fake_proxy();
+    use_fake_system();
+    use_fake_guide();
+    use_fake_menubar();
+    use_fake_dev_logs();
+    use_fake_editor();
+    use_fake_updater();
+}
+
+fn open_services(app: &mut Headless) {
+    app.wait_for("Services").unwrap();
+    app.press("role:button[Services]").unwrap();
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,15 +297,13 @@ fn start(
     daemon: Arc<FakeProvider>,
 ) -> (MutexGuard<'static, ()>, Headless) {
     let turn = serial();
-    use_fake_providers();
-    use_fake_dev_logs();
-    use_fake_editor();
+    install_all_fakes();
     install_provider(Source::UserAgent, user);
     install_provider(Source::SystemAgent, system);
     install_provider(Source::Daemon, daemon);
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
-    app.wait_for("Services").unwrap();
+    open_services(&mut app);
     (turn, app)
 }
 
@@ -628,15 +645,15 @@ impl Drop for TempLogFile {
 fn helper_banner_follows_helper_installation_status() {
     let helper_note = "The privileged helper is not installed. Changing system agents and daemons takes root, so those actions will fail until it is.";
     let turn = serial();
-    use_fake_providers();
+    install_all_fakes();
     install_provider(Source::UserAgent, user_agents(Behaviour::Normal));
     install_provider(Source::SystemAgent, system_agents());
     install_provider(Source::Daemon, daemons(Behaviour::Normal));
-    use_fake_system();
     install_system_settings_provider(FakeSettings::new(false));
 
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    open_services(&mut app);
     app.wait_for("com.example.alpha").unwrap();
 
     // Leftover phase footer is gone, and User Agents never show the helper warning.
@@ -910,9 +927,7 @@ impl EditorProvider for FakeEditor {
 #[test]
 fn brew_login_item_restriction_and_plist_editor_wire_into_services() {
     let turn = serial();
-    use_fake_providers();
-    use_fake_dev_logs();
-    use_fake_editor();
+    install_all_fakes();
 
     let brew = FakeProvider::new(
         Source::Brew,
@@ -955,6 +970,7 @@ fn brew_login_item_restriction_and_plist_editor_wire_into_services() {
 
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    open_services(&mut app);
     app.wait_for("com.example.alpha").unwrap();
 
     // New Job opens the plist editor overlay.
@@ -1050,9 +1066,7 @@ impl Provider for RefreshingDetailProvider {
 #[test]
 fn info_tab_scroll_node_id_stays_stable_across_detail_refreshes() {
     let turn = serial();
-    use_fake_providers();
-    use_fake_dev_logs();
-    use_fake_editor();
+    install_all_fakes();
 
     let provider = Arc::new(RefreshingDetailProvider {
         items: Mutex::new(vec![item(
@@ -1070,6 +1084,7 @@ fn info_tab_scroll_node_id_stays_stable_across_detail_refreshes() {
 
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    open_services(&mut app);
     app.wait_for("com.example.alpha").unwrap();
 
     // No inspector is mounted before selection.
@@ -1105,16 +1120,7 @@ fn info_tab_scroll_node_id_stays_stable_across_detail_refreshes() {
 #[test]
 fn services_keyboard_shortcuts_focus_search_clear_query_and_close_inspector() {
     let turn = serial();
-    use_fake_providers();
-    use_fake_software();
-    use_fake_development();
-    use_fake_databases();
-    use_fake_proxy();
-    use_fake_system();
-    use_fake_guide();
-    use_fake_menubar();
-    use_fake_dev_logs();
-    use_fake_editor();
+    install_all_fakes();
     install_provider(Source::UserAgent, user_agents(Behaviour::Normal));
     install_provider(Source::SystemAgent, system_agents());
     install_provider(Source::Daemon, daemons(Behaviour::Normal));
@@ -1123,6 +1129,7 @@ fn services_keyboard_shortcuts_focus_search_clear_query_and_close_inspector() {
     config.environment.os = nsh_core::platform::Os::MacOs;
     let mut app = Headless::start(config).unwrap();
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    open_services(&mut app);
     app.wait_for("com.example.alpha").unwrap();
     app.wait_for("com.example.bravo").unwrap();
 
@@ -1161,11 +1168,7 @@ fn services_keyboard_shortcuts_focus_search_clear_query_and_close_inspector() {
 #[test]
 fn all_items_view_aggregates_sources_badges_counts_search_and_inspector() {
     let turn = serial();
-    use_fake_providers();
-    use_fake_dev_logs();
-    use_fake_editor();
-    use_fake_guide();
-    use_fake_system();
+    install_all_fakes();
 
     let brew = FakeProvider::new(
         Source::Brew,
@@ -1200,6 +1203,7 @@ fn all_items_view_aggregates_sources_badges_counts_search_and_inspector() {
 
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    open_services(&mut app);
     app.wait_for("com.example.alpha").unwrap();
 
     // Single-source view does not render per-row source badges.
@@ -1285,11 +1289,7 @@ fn all_items_view_aggregates_sources_badges_counts_search_and_inspector() {
 #[test]
 fn login_items_restriction_opens_full_disk_access_guide_on_demand() {
     let turn = serial();
-    use_fake_providers();
-    use_fake_dev_logs();
-    use_fake_editor();
-    use_fake_guide();
-    use_fake_system();
+    install_all_fakes();
 
     let login = Arc::new(FakeRestrictedLoginItems {
         items: vec![item(
@@ -1308,6 +1308,7 @@ fn login_items_restriction_opens_full_disk_access_guide_on_demand() {
 
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    open_services(&mut app);
     app.wait_for("com.example.alpha").unwrap();
 
     // Guide is closed initially (fake guide defaults to already welcomed).

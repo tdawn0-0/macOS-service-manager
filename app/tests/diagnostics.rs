@@ -21,7 +21,9 @@ use devcore::{
 use nsh_app_devbase::testing::{
     SystemDiagnosticsProvider, SystemOperationsProvider, SystemPortsProvider,
     install_system_diagnostics_provider, install_system_operations_provider,
-    install_system_ports_provider, use_fake_system,
+    install_system_ports_provider, use_fake_databases, use_fake_development, use_fake_guide,
+    use_fake_menubar, use_fake_providers, use_fake_proxy, use_fake_software, use_fake_system,
+    use_fake_updater,
 };
 use nsh_core::prelude::*;
 use nsh_engine::{EngineConfig, Root};
@@ -238,6 +240,14 @@ fn start() -> (
     Arc<FakePorts>,
 ) {
     let turn = serial();
+    use_fake_menubar();
+    use_fake_providers();
+    use_fake_software();
+    use_fake_development();
+    use_fake_databases();
+    use_fake_proxy();
+    use_fake_guide();
+    use_fake_updater();
     use_fake_system();
     let diagnostics = FakeDiagnostics::new();
     let operations = FakeOperations::new(vec![

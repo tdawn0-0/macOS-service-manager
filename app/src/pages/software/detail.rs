@@ -231,14 +231,16 @@ fn installed_row(package: devcore::model::Package, index: usize) -> impl IntoEle
                 .flex_wrap()
                 .gap(tokens::space(1.5))
                 .child(is_database.then(|| {
+                    let kind = package.name.clone();
+                    let package_id = id.clone();
                     action_button(
                         "Create database instance",
                         Tone::Primary,
                         create_instance_id,
                         busy,
-                        || {
+                        move || {
                             crate::store::select_section(crate::store::Section::Databases);
-                            crate::store::databases::open_new();
+                            crate::store::databases::open_new_with_package(&kind, &package_id);
                         },
                     )
                 }))

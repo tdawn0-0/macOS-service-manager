@@ -12,9 +12,10 @@ use nsh_core::{
     prelude::*,
 };
 
-use super::is_editable_plist;
+use super::is_editable_service;
 use crate::{
     components::{icon_button, icons, note, status_dot},
+    platform,
     store::services::{self as svc, Filter, ServiceScope},
     theme as tokens,
 };
@@ -22,8 +23,9 @@ use crate::{
 pub(crate) fn list_pane() -> impl IntoElement {
     let search_ref = element_ref();
     let drag_over = signal(false);
-    let login_drag_over =
-        move || svc::active_source() == Some(Source::LoginItem) && drag_over.get();
+    let login_drag_over = move || {
+        platform::is_macos() && svc::active_source() == Some(Source::LoginItem) && drag_over.get()
+    };
 
     view()
         .test_id("services-list-pane")
@@ -39,7 +41,8 @@ pub(crate) fn list_pane() -> impl IntoElement {
             }
         })
         .on_file_drag_enter(move |e: &FileDragEvent| {
-            if svc::active_source() == Some(Source::LoginItem)
+            if platform::is_macos()
+                && svc::active_source() == Some(Source::LoginItem)
                 && (e.uris.is_empty()
                     || e.uris
                         .iter()
@@ -51,7 +54,7 @@ pub(crate) fn list_pane() -> impl IntoElement {
         .on_file_drag_leave(move |_: &()| drag_over.set(false))
         .on_file_drop(move |e: &FileDropEvent| {
             drag_over.set(false);
-            if svc::active_source() == Some(Source::LoginItem) {
+            if platform::is_macos() && svc::active_source() == Some(Source::LoginItem) {
                 for uri in &e.uris {
                     if let Some(path) = app_bundle_path_from_uri(uri) {
                         svc::add_login_item_path(path);
@@ -165,11 +168,17 @@ fn header() -> impl IntoElement {
             move || {
                 matches!(
                     svc::active_source(),
-                    Some(Source::UserAgent | Source::SystemAgent | Source::Daemon)
+                    Some(
+                        Source::UserAgent
+                            | Source::SystemAgent
+                            | Source::Daemon
+                            | Source::SystemdUser
+                            | Source::SystemdSystem
+                    )
                 )
             },
             || {
-                header_action_button("new-job", "New Job", || {
+                header_action_button("new-job", platform::new_service_button_label(), || {
                     if let Some(source) = svc::active_source() {
                         crate::editor::open_new(source);
                     }
@@ -177,7 +186,7 @@ fn header() -> impl IntoElement {
             },
         ))
         .child(when(
-            move || svc::active_source() == Some(Source::LoginItem),
+            move || platform::is_macos() && svc::active_source() == Some(Source::LoginItem),
             || header_action_button("add-login-item", "Add Login Item", svc::add_login_item),
         ))
         .child(icon_button(icons::refresh(), "Refresh", || {
@@ -322,21 +331,25 @@ fn when_some_note() -> impl IntoElement {
             svc::action_error().map(|message| note(icons::warn(), message, true))
         }))
         .child(dynamic(move || {
-            svc::active_restriction().map(restriction_note)
+            platform::has_full_disk_access()
+                .then(svc::active_restriction)
+                .flatten()
+                .map(restriction_note)
         }))
         .child(when(
             move || {
                 matches!(
                     svc::active_source(),
-                    Some(Source::SystemAgent | Source::Daemon)
+                    Some(Source::SystemAgent | Source::Daemon | Source::SystemdSystem)
                 ) && !svc::helper_installed()
             },
             || {
-                note(
-                    icons::lock(),
-                    "The privileged helper is not installed. Changing system agents and daemons takes root, so those actions will fail until it is.",
-                    false,
-                )
+                let message = if platform::is_macos() {
+                    "The privileged helper is not installed. Changing system agents and daemons takes root, so those actions will fail until it is."
+                } else {
+                    "The privileged helper is not installed. Changing system units takes root, so those actions will fail until it is."
+                };
+                note(icons::lock(), message, false)
             },
         ))
 }
@@ -756,14 +769,14 @@ fn row_context_menu_items(item: &Item) -> Vec<MenuItem> {
         );
     }
 
-    if is_editable_plist(item) {
+    if is_editable_service(item) {
         if !entries.is_empty() {
             entries.push(MenuItem::separator());
         }
         let source = item.source;
         let path = item.path.clone();
         entries.push(
-            MenuItem::new("Edit Plist…")
+            MenuItem::new(platform::edit_service_label(source))
                 .on_select(move || crate::editor::open_edit(source, path.clone())),
         );
     }
@@ -775,11 +788,11 @@ fn row_context_menu_items(item: &Item) -> Vec<MenuItem> {
         let copy_path = item.path.display().to_string();
         entries.push(MenuItem::new("Copy Path").on_select(move || svc::copy(&copy_path)));
         let reveal = item.path.clone();
-        entries.push(MenuItem::new("Reveal in Finder").on_select(move || {
+        entries.push(MenuItem::new(platform::reveal_label()).on_select(move || {
             let path = reveal.clone();
             Owner::detached().run(move || {
                 spawn(async move {
-                    let _ = reveal_path(path).await;
+                    let _ = blocking(move || platform::reveal_path(&path)).await;
                 });
             });
         }));

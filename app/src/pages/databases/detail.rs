@@ -1555,7 +1555,7 @@ fn backup_row(id: &str, row: BackupFile) -> impl IntoElement {
         ))
         .child(ui::row_icon_button(
             icons::folder(),
-            format!("Show {name} in Finder"),
+            crate::platform::show_in_files_label(&name),
             format!("db-reveal-{name}"),
             false,
             move || db::reveal(&reveal),

@@ -61,13 +61,7 @@ fn is_internal_devbase_service(name: &str, id: &str) -> bool {
 fn services_badge() -> Option<NavBadge> {
     let mut running = 0usize;
     let mut failed = 0usize;
-    for source in [
-        Source::Brew,
-        Source::UserAgent,
-        Source::LoginItem,
-        Source::SystemAgent,
-        Source::Daemon,
-    ] {
+    for source in Source::platform_all().iter().copied() {
         for item in services::loaded_items(source) {
             if is_internal_devbase_service(&item.name, &item.id) {
                 continue;
@@ -328,7 +322,10 @@ fn identity() -> impl IntoElement {
         .child(
             view()
                 .flex_none()
-                .tooltip(controls::tooltip("Command palette (⌘K)"))
+                .tooltip(controls::tooltip(format!(
+                    "Command palette ({})",
+                    crate::platform::command_palette_shortcut_label()
+                )))
                 .child(
                     button()
                         .test_id("sidebar-search")
@@ -354,7 +351,7 @@ fn identity() -> impl IntoElement {
                                 .text_color(move || theme().muted_foreground),
                         )
                         .child(
-                            text("⌘K")
+                            text(crate::platform::command_palette_shortcut_label())
                                 .text_size(px(10.0))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(move || theme().muted_foreground),

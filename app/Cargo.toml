@@ -25,6 +25,9 @@ devcli = { path = "crates/devcli" }
 nsh-platform-apple = "0.6.1"
 nsh-platform-macos = { version = "0.6.1", default-features = false, features = ["svg"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+nsh-platform-linux = { version = "0.6.1", default-features = false, features = ["svg"] }
+
 [dev-dependencies]
 nsh-testing = "0.6.1"
 

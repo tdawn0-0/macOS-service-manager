@@ -8,7 +8,10 @@
 //! once, with scoped `dynamic` regions only for banners and reactive card
 //! content so notices or busy toggles never tear down the cards or reset scroll.
 
-use devcore::helper::{HELPER_DIR, PLIST_PATH, SOCKET_PATH};
+use devcore::helper::{
+    HELPER_DIR, LINUX_HELPER_DIR, LINUX_HELPER_SERVICE_UNIT, LINUX_HELPER_SOCKET, PLIST_PATH,
+    SOCKET_PATH,
+};
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
@@ -17,7 +20,7 @@ use crate::{
         controls::{self as ui, Tone},
         icons,
     },
-    meta,
+    meta, platform,
     store::{Section, system},
     theme as tokens,
     updater::UpdateState,
@@ -62,7 +65,9 @@ pub(crate) fn settings() -> impl IntoElement {
                                 "Command-line interface",
                                 dynamic(|| Some(cli_body().into_element())),
                             ))
-                            .child(settings_group("Permissions", permissions_body()))
+                            .child(when(platform::has_tcc_permissions, || {
+                                settings_group("Permissions", permissions_body())
+                            }))
                             .child(view().test_id("settings-updates-card").w_full().child(
                                 settings_group(
                                     "Updates & About",
@@ -190,12 +195,20 @@ fn workspace_body() -> impl IntoElement {
         ))
         .child(inset_hairline())
         .child(settings_row(
-            row_title("Start at login in menu bar"),
+            row_title(if platform::is_macos() {
+                "Start at login in menu bar"
+            } else {
+                "Start at login in system tray"
+            }),
             ui::switch(
                 "settings-login-item",
                 system::login_at_login,
                 system::login_busy,
-                "Start at login in menu bar",
+                if platform::is_macos() {
+                    "Start at login in menu bar"
+                } else {
+                    "Start at login in system tray"
+                },
                 system::set_login_item,
             ),
         ))
@@ -375,9 +388,34 @@ fn helper_body() -> impl IntoElement {
                 .gap(tokens::space(1.5))
                 .px(tokens::space(4.0))
                 .py(tokens::space(3.0))
-                .child(ui::kv_mono("Daemon", PLIST_PATH))
-                .child(ui::kv_mono("Socket", SOCKET_PATH))
-                .child(ui::kv_mono("Helper", HELPER_DIR)),
+                .child(ui::kv_mono(
+                    if platform::is_macos() {
+                        "Daemon"
+                    } else {
+                        "Unit"
+                    },
+                    if platform::is_macos() {
+                        PLIST_PATH
+                    } else {
+                        LINUX_HELPER_SERVICE_UNIT
+                    },
+                ))
+                .child(ui::kv_mono(
+                    "Socket",
+                    if platform::is_macos() {
+                        SOCKET_PATH
+                    } else {
+                        LINUX_HELPER_SOCKET
+                    },
+                ))
+                .child(ui::kv_mono(
+                    "Helper",
+                    if platform::is_macos() {
+                        HELPER_DIR
+                    } else {
+                        LINUX_HELPER_DIR
+                    },
+                )),
         )
 }
 
@@ -582,13 +620,22 @@ fn updates_body() -> impl IntoElement {
     view()
         .flex_col()
         .child(settings_row(
-            text(format!(
-                "{} v{} · macOS {}+ · {}",
-                meta::NAME,
-                meta::VERSION,
-                meta::MINIMUM_MACOS,
-                meta::IDENTIFIER
-            ))
+            text(if platform::is_macos() {
+                format!(
+                    "{} v{} · macOS {}+ · {}",
+                    meta::NAME,
+                    meta::VERSION,
+                    meta::MINIMUM_MACOS,
+                    meta::IDENTIFIER
+                )
+            } else {
+                format!(
+                    "{} v{} · Linux · {}",
+                    meta::NAME,
+                    meta::VERSION,
+                    meta::IDENTIFIER
+                )
+            })
             .text_size(px(tokens::TEXT_SMALL))
             .tabular_nums()
             .text_color(move || theme().foreground)

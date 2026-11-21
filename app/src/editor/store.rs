@@ -483,9 +483,18 @@ fn bump_sequence(s: EditorSignals) -> u64 {
 
 // --- Public lifecycle API ----------------------------------------------------
 
-/// Opens the editor for creating a new job targeting `source`.
+/// Opens the editor for creating a new job/unit targeting `source`.
 pub fn open_new(source: Source) {
     let s = signals();
+    if super::systemd::is_systemd_source(source) {
+        bump_sequence(s);
+        s.open.set(false);
+        s.loading.set(false);
+        s.saving.set(false);
+        super::systemd::open_new(source);
+        return;
+    }
+    super::systemd::close();
     bump_sequence(s);
     clear_fields(s);
     s.source.set(normalize_job_source(source));
@@ -498,16 +507,25 @@ pub fn open_new(source: Source) {
     s.open.set(true);
 }
 
-/// Opens the editor on an existing property list at `path` (defaulting
-/// "Reload it after saving" to `true`).
+/// Opens the editor on an existing property list or systemd unit at `path`
+/// (defaulting reload/apply after saving to `true`).
 pub fn open_edit(source: Source, path: PathBuf) {
     open_edit_with_apply(source, path, true);
 }
 
-/// Opens the editor on an existing property list at `path`, initializing the
-/// reload-on-save toggle to `apply` (e.g. `item.state != State::Stopped`).
+/// Opens the editor on an existing property list or systemd unit at `path`,
+/// initializing the reload-on-save toggle to `apply` (e.g. `item.state != State::Stopped`).
 pub fn open_edit_with_apply(source: Source, path: PathBuf, apply: bool) {
     let s = signals();
+    if super::systemd::is_systemd_source(source) {
+        bump_sequence(s);
+        s.open.set(false);
+        s.loading.set(false);
+        s.saving.set(false);
+        super::systemd::open_edit_with_apply(source, path, apply);
+        return;
+    }
+    super::systemd::close();
     let seq = bump_sequence(s);
     clear_fields(s);
     s.source.set(normalize_job_source(source));
@@ -537,6 +555,7 @@ pub fn open_edit_with_apply(source: Source, path: PathBuf, apply: bool) {
 
 /// Closes the editor and cancels any in-flight load/save updates.
 pub fn close() {
+    super::systemd::close();
     let s = signals();
     bump_sequence(s);
     s.open.set(false);
@@ -545,9 +564,24 @@ pub fn close() {
     s.error.set(None);
 }
 
-/// Whether the editor is currently open.
-pub fn is_open() -> bool {
+/// Whether the launchd plist editor specifically is open.
+pub(crate) fn is_launchd_open() -> bool {
     signals().open.get()
+}
+
+/// Whether either the launchd plist editor or systemd unit editor is currently open.
+pub fn is_open() -> bool {
+    signals().open.get() || super::systemd::is_open()
+}
+
+/// Records a save emitted by the sibling systemd unit editor so shared
+/// listeners (`revision`, `last_saved`, `on_saved`) stay unified.
+pub(crate) fn record_external_save(event: SavedEvent) {
+    let s = signals();
+    s.notice.set(Some(format!("{} saved", event.label)));
+    s.last_saved.set(Some(event.clone()));
+    s.revision.update(|rev| *rev += 1);
+    notify_saved(&event);
 }
 
 /// Monotonically increasing counter bumped after every successful plist write.

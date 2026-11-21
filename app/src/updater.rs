@@ -273,26 +273,33 @@ impl UpdateProvider for BundleUpdater {
     }
 }
 
-fn current_app_bundle_path() -> Option<PathBuf> {
+fn current_install_root() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let macos = exe.parent()?;
-    let contents = macos.parent()?;
-    let bundle = contents.parent()?;
-    if macos.file_name().and_then(|n| n.to_str()) == Some("MacOS")
+    let exe = exe.canonicalize().unwrap_or(exe);
+    let parent = exe.parent()?;
+    if parent.file_name().and_then(|n| n.to_str()) == Some("MacOS")
+        && let Some(contents) = parent.parent()
+        && let Some(bundle) = contents.parent()
         && contents.file_name().and_then(|n| n.to_str()) == Some("Contents")
         && bundle.extension().and_then(|e| e.to_str()) == Some("app")
     {
-        Some(bundle.to_path_buf())
-    } else {
-        None
+        return Some(bundle.to_path_buf());
     }
+    if crate::platform::is_linux() {
+        return Some(parent.to_path_buf());
+    }
+    None
 }
 
-fn candidate_config_paths(bundle_root: &Path) -> [PathBuf; 2] {
-    let nsh_dir = bundle_root.join("Contents/Resources/nsh");
-    [
-        nsh_dir.join("assets").join(CONFIG_ASSET),
-        nsh_dir.join(CONFIG_ASSET),
+fn candidate_config_paths(install_root: &Path) -> Vec<PathBuf> {
+    let macos_nsh = install_root.join("Contents/Resources/nsh");
+    let linux_nsh = install_root.join("nsh");
+    vec![
+        macos_nsh.join("assets").join(CONFIG_ASSET),
+        macos_nsh.join(CONFIG_ASSET),
+        linux_nsh.join("assets").join(CONFIG_ASSET),
+        linux_nsh.join(CONFIG_ASSET),
+        install_root.join(CONFIG_ASSET),
     ]
 }
 
@@ -313,7 +320,7 @@ fn load_config_from_bundle(bundle_root: &Path) -> ConfigLookup {
 }
 
 fn load_bundled_config() -> ConfigLookup {
-    let Some(bundle) = current_app_bundle_path() else {
+    let Some(bundle) = current_install_root() else {
         return ConfigLookup::NotFound;
     };
     load_config_from_bundle(&bundle)
@@ -400,7 +407,7 @@ fn check_allowed_url(url: &str) -> Result<(), String> {
 
 fn fetch_bounded_bytes(url: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
     check_allowed_url(url)?;
-    let mut cmd = Command::new("/usr/bin/curl");
+    let mut cmd = Command::new(devcore::platform::resolve_curl());
     cmd.args([
         "-fsSL",
         "--max-time",
@@ -452,7 +459,7 @@ fn download_verified_archive(
         .unwrap_or(MAX_ARCHIVE_BYTES)
         .min(MAX_ARCHIVE_BYTES);
 
-    let mut cmd = Command::new("/usr/bin/curl");
+    let mut cmd = Command::new(devcore::platform::resolve_curl());
     cmd.args([
         "-fsSL",
         "--max-time",
@@ -680,6 +687,15 @@ mod tests {
         fs::write(assets_dir.join(CONFIG_ASSET), &config_bytes).unwrap();
         let found = load_config_from_bundle(&dir.join("Devbase.app"));
         assert!(matches!(found, ConfigLookup::Loaded(_)));
+
+        // 6. Linux install directory config discovery reads nsh/assets/nsh-updater.json.
+        let linux_dir = dir.join("devbase-linux");
+        let linux_assets = linux_dir.join("nsh/assets");
+        fs::create_dir_all(&linux_assets).unwrap();
+        fs::write(linux_assets.join(CONFIG_ASSET), &config_bytes).unwrap();
+        let found_linux = load_config_from_bundle(&linux_dir);
+        assert!(matches!(found_linux, ConfigLookup::Loaded(_)));
+
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -13,6 +13,7 @@ mod logs;
 mod menubar;
 mod meta;
 mod pages;
+pub mod platform;
 mod readiness;
 mod shell;
 mod store;
@@ -27,7 +28,6 @@ use nsh_core::{
     desktop::{ProgressState, TitleBarOptions, TitleBarStyle, WindowAttributes, WindowProgress},
     element::desktop::main_window,
     notifications::{Notification, NotificationPermission},
-    platform::Os,
     prelude::*,
 };
 
@@ -237,8 +237,10 @@ fn configure_main_window() {
     let mut attrs = WindowAttributes::default();
     attrs.title_bar = Some(bar);
     attrs.close_on_press = Some(false);
-    if os() == Os::MacOs {
+    if platform::has_liquid_glass() {
         attrs.transparent = Some(shell::sidebar_glass_active());
+    } else if platform::is_linux() {
+        attrs.transparent = Some(false);
     }
     let main = main_window();
     main.set(attrs);
@@ -246,7 +248,7 @@ fn configure_main_window() {
         main_window().hide();
     });
 
-    if os() == Os::MacOs {
+    if platform::has_liquid_glass() {
         effect(|| {
             let mut update = WindowAttributes::default();
             update.transparent = Some(shell::sidebar_glass_active());
@@ -341,6 +343,12 @@ pub fn App() -> impl IntoElement {
         .child(when(store::system::quit_open, store::system::quit_dialog))
         .child(editor::editor_window())
         .child(when(desktop, menubar::popover_window))
-        .child(when(desktop, guide::guide_window))
-        .child(when(move || !desktop && guide::visible(), guide::overlay))
+        .child(when(
+            move || desktop && platform::has_full_disk_access(),
+            guide::guide_window,
+        ))
+        .child(when(
+            move || !desktop && platform::has_full_disk_access() && guide::visible(),
+            guide::overlay,
+        ))
 }

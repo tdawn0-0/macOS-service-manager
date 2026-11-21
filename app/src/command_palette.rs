@@ -4,13 +4,12 @@
 //! navigation, workspace actions, and loaded database instances natively as the
 //! user types, and executes the selected command on Return or click.
 
-use devcore::service::Source;
 use nsh_base::{CommandEntry, CommandGroup, CommandItem, command, dialog, theme};
 use nsh_core::prelude::*;
 
 use crate::{
     components::icons,
-    dev_logs, editor, guide, shell,
+    dev_logs, editor, guide, platform, shell,
     store::{self, Section, databases, proxy, software::SoftwareKind, system},
     theme as tokens,
 };
@@ -117,7 +116,15 @@ pub(crate) fn build_items() -> Vec<CommandItem> {
             .group("Navigate")
             .shortcut("mod+4")
             .keywords([
-                "services", "launchd", "homebrew", "agents", "daemons", "login",
+                "services",
+                "launchd",
+                "systemd",
+                "units",
+                "autostart",
+                "homebrew",
+                "agents",
+                "daemons",
+                "login",
             ])
             .checked(active == Section::Services),
         CommandItem::new("nav:diagnostics", "Go to Diagnostics")
@@ -141,18 +148,27 @@ pub(crate) fn build_items() -> Vec<CommandItem> {
         .group("Actions")
         .shortcut("mod+l")
         .keywords(["logs", "drawer", "tail", "stderr", "stdout", "console"]),
-        CommandItem::new("action:new-job", "New LaunchAgent…")
-            .group("Actions")
-            .shortcut("mod+n")
-            .keywords([
-                "new",
-                "create",
-                "job",
-                "plist",
-                "launchagent",
-                "service",
-                "editor",
-            ]),
+        CommandItem::new(
+            "action:new-job",
+            if platform::is_macos() {
+                "New LaunchAgent…"
+            } else {
+                "New Systemd Unit…"
+            },
+        )
+        .group("Actions")
+        .shortcut("mod+n")
+        .keywords([
+            "new",
+            "create",
+            "job",
+            "unit",
+            "plist",
+            "launchagent",
+            "systemd",
+            "service",
+            "editor",
+        ]),
         CommandItem::new("action:new-database", "New Database Instance…")
             .group("Actions")
             .shortcut("mod+shift+n")
@@ -210,19 +226,21 @@ pub(crate) fn build_items() -> Vec<CommandItem> {
             .group("Actions")
             .keywords(["diagnostics", "diagnose", "check", "health", "report"]),
     );
-    items.push(
-        CommandItem::new("action:open-guide", "Open Full Disk Access Guide")
-            .group("Actions")
-            .keywords([
-                "full disk access",
-                "fda",
-                "privacy",
-                "permission",
-                "welcome",
-                "guide",
-                "help",
-            ]),
-    );
+    if platform::has_full_disk_access() {
+        items.push(
+            CommandItem::new("action:open-guide", "Open Full Disk Access Guide")
+                .group("Actions")
+                .keywords([
+                    "full disk access",
+                    "fda",
+                    "privacy",
+                    "permission",
+                    "welcome",
+                    "guide",
+                    "help",
+                ]),
+        );
+    }
 
     for instance in db_instances {
         let title = instance_title(&instance.kind);
@@ -254,7 +272,7 @@ pub(crate) fn execute(id: &str) {
         "nav:diagnostics" => store::select_section(Section::Diagnostics),
         "nav:settings" => store::select_section(Section::Settings),
         "action:toggle-logs" => dev_logs::toggle(),
-        "action:new-job" => editor::open_new(Source::UserAgent),
+        "action:new-job" => editor::open_new(platform::default_user_source()),
         "action:new-database" => {
             store::select_section(Section::Databases);
             databases::open_new();

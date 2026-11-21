@@ -408,7 +408,11 @@ fn the_helper_and_cli_status_render() {
     app.wait_for("Privileged helper").unwrap();
     app.wait_for("Installed. Root operations run through it without password prompts.")
         .unwrap();
+    #[cfg(target_os = "macos")]
     app.wait_for(devcore::helper::PLIST_PATH).unwrap();
+    #[cfg(not(target_os = "macos"))]
+    app.wait_for(devcore::helper::LINUX_HELPER_SERVICE_UNIT)
+        .unwrap();
     app.wait_for("id:settings-remove-helper").unwrap();
     app.wait_for("Command-line interface").unwrap();
     app.wait_for("/tmp/devbase-tests/bin/devbase").unwrap();
@@ -418,8 +422,15 @@ fn the_helper_and_cli_status_render() {
     app.wait_for("2.0 KiB · 2 archives").unwrap();
     app.wait_for("Automatic log rotation").unwrap();
     app.wait_for("Updates & About").unwrap();
+    #[cfg(target_os = "macos")]
     app.wait_for("text:/Devbase v.* · macOS 26\\.0\\+ · xyz\\.jyeu\\.devbase/")
         .unwrap();
+    #[cfg(not(target_os = "macos"))]
+    {
+        app.wait_for("text:/Devbase v.* · Linux · xyz\\.jyeu\\.devbase/")
+            .unwrap();
+        assert!(!app.screen().shows("Full Disk Access"));
+    }
 
     // The grouped-card sheet is horizontally centered inside the Settings page.
     let nodes = app.screen().layout_nodes();

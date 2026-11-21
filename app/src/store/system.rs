@@ -16,7 +16,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
-    process::Command,
     sync::{
         Arc, LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -28,11 +27,9 @@ use devcore::{
     diagnostics::{DiagnosticReport, Diagnostics},
     engine::{Engine, SystemCommandRunner},
     helper::{Client as HelperClient, HelperState as CoreHelperState},
-    launchd::{
-        SystemHost, SystemRunner, disable_launch_at_login, enable_launch_at_login,
-        launch_at_login_enabled, resolve_login_executable,
-    },
+    launchd::{SystemHost, SystemRunner},
     operations::{OperationJournal, OperationRecord},
+    platform::login_item,
     shutdown::{Shutdown, ShutdownPlan},
     software::{Software, cache::DownloadCacheInfo},
     state::Store,
@@ -40,6 +37,7 @@ use devcore::{
 use nsh_core::prelude::*;
 
 use crate::{
+    platform,
     store::{
         Section,
         software::{format_bytes, plural},
@@ -372,7 +370,7 @@ impl SettingsProvider for Facade {
             cli: self.cli_status(),
             cache: cache.into(),
             log_rotation_enabled,
-            login_at_login: launch_at_login_enabled(&default_login_agent_dir()),
+            login_at_login: login_item::is_enabled(&default_login_agent_dir()),
             workspace_root: self.store.root().to_string_lossy().into_owned(),
         })
     }
@@ -450,30 +448,36 @@ impl SettingsProvider for Facade {
         let result = if enabled {
             let app = self.app_path();
             let app = (!app.is_empty()).then(|| Path::new(app.as_str()));
-            resolve_login_executable(&SystemHost, app, None)
-                .and_then(|exe| enable_launch_at_login(&dir, &exe, &SystemRunner))
+            login_item::resolve_executable(&SystemHost, app, None)
+                .and_then(|exe| login_item::enable(&dir, &exe, &SystemRunner))
                 .map_err(|error| error.to_string())
         } else {
-            disable_launch_at_login(&dir, &SystemRunner).map_err(|error| error.to_string())
+            login_item::disable(&dir, &SystemRunner).map_err(|error| error.to_string())
         };
         LoginChange {
-            enabled: launch_at_login_enabled(&dir),
+            enabled: login_item::is_enabled(&dir),
             error: result.err(),
         }
     }
 
     fn open_full_disk_access(&self) -> Result<(), String> {
+        if !platform::has_tcc_permissions() {
+            return Err("Full Disk Access is a macOS-only setting".to_string());
+        }
         open_url(
             "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles",
         )
     }
 
     fn open_login_items(&self) -> Result<(), String> {
+        if !platform::has_tcc_permissions() {
+            return Err("System Settings Login Items is macOS-only".to_string());
+        }
         open_url("x-apple.systempreferences:com.apple.LoginItems-Settings.extension")
     }
 
     fn reveal(&self, path: &str) -> Result<(), String> {
-        run_open(&["-R", path])
+        platform::reveal_path(Path::new(path))
     }
 
     fn preview_shutdown(&self) -> Result<ShutdownPlan, String> {
@@ -535,14 +539,16 @@ fn settings_provider_of() -> Option<Arc<dyn SettingsProvider>> {
 
 // --- Production paths --------------------------------------------------------
 
-/// `launchd.UserAgents().Dir`, or the CLI's isolated override.
+/// Platform autostart / login-agent directory, or the CLI's isolated override.
 pub(crate) fn default_login_agent_dir() -> PathBuf {
     match std::env::var("MSM_DEV_HOME") {
         Ok(home) if !home.is_empty() => PathBuf::from(home).join("login-agents"),
-        _ => std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_default()
-            .join("Library/LaunchAgents"),
+        _ => {
+            let home = std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_default();
+            login_item::default_dir(&home)
+        }
     }
 }
 
@@ -566,20 +572,8 @@ fn current_app_bundle() -> String {
     }
 }
 
-fn run_open(args: &[&str]) -> Result<(), String> {
-    let status = Command::new("open")
-        .args(args)
-        .status()
-        .map_err(|error| error.to_string())?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("open exited with {status}"))
-    }
-}
-
 fn open_url(url: &str) -> Result<(), String> {
-    run_open(&[url])
+    platform::open_url(url)
 }
 
 // --- State -------------------------------------------------------------------

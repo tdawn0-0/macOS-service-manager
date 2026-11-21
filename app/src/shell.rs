@@ -3,19 +3,17 @@
 //! It holds no page logic; the store says which section shows and each page
 //! owns its content.
 
-use devcore::service::Source;
 use nsh_base::{resizable_panel, theme, v_resizable};
 use nsh_core::{
     desktop::{MenuRole, WindowMode},
     element::desktop::{MenuItem, set_application_menu, window_state},
-    platform::Os,
     prelude::*,
 };
 
 use crate::{
     command_palette,
     components::sidebar,
-    dev_logs, editor, guide, meta, pages, readiness,
+    dev_logs, editor, guide, meta, pages, platform, readiness,
     store::{self, Section},
     theme as tokens,
 };
@@ -57,7 +55,7 @@ pub(crate) fn find_revision() -> u64 {
 /// its solid fallback fill. Turns off automatically in full screen and off
 /// macOS (including default headless tests).
 pub(crate) fn sidebar_glass_active() -> bool {
-    os() == Os::MacOs
+    platform::has_liquid_glass()
         && !matches!(
             window_state().map(|state| state.mode),
             Some(WindowMode::FullScreen)
@@ -113,6 +111,15 @@ pub(crate) fn install_application_menu() {
         view_items.push(MenuItem::separator());
         view_items.push(MenuItem::role(MenuRole::ToggleFullScreen));
 
+        let mut help_items = Vec::new();
+        if platform::has_full_disk_access() {
+            help_items.push(MenuItem::new("Full Disk Access Guide").on_select(guide::open));
+        }
+        help_items.push(MenuItem::new("Run Diagnostics").on_select(|| {
+            store::select_section(Section::Diagnostics);
+            store::system::run_diagnostics();
+        }));
+
         set_application_menu(vec![
             MenuItem::submenu(
                 meta::NAME,
@@ -133,9 +140,9 @@ pub(crate) fn install_application_menu() {
             MenuItem::submenu(
                 "File",
                 [
-                    MenuItem::new("New Job…")
+                    MenuItem::new(platform::new_service_label())
                         .shortcut("mod+n")
-                        .on_select(|| editor::open_new(Source::UserAgent)),
+                        .on_select(|| editor::open_new(platform::default_user_source())),
                     MenuItem::new("New Database Instance…")
                         .shortcut("mod+shift+n")
                         .on_select(|| {
@@ -170,16 +177,7 @@ pub(crate) fn install_application_menu() {
                     MenuItem::role(MenuRole::Close),
                 ],
             ),
-            MenuItem::submenu(
-                "Help",
-                [
-                    MenuItem::new("Full Disk Access Guide").on_select(guide::open),
-                    MenuItem::new("Run Diagnostics").on_select(|| {
-                        store::select_section(Section::Diagnostics);
-                        store::system::run_diagnostics();
-                    }),
-                ],
-            ),
+            MenuItem::submenu("Help", help_items),
         ]);
     });
 }

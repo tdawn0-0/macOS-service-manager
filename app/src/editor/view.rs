@@ -39,7 +39,8 @@ pub(crate) fn editor_window_attributes() -> WindowAttributes {
 /// The editor's full form panel. Directly mountable in `nsh_testing::Headless`
 /// or embedded inside [`editor_window`].
 pub fn editor_panel() -> impl IntoElement {
-    editor_panel_with_title(true)
+    when(super::systemd::is_open, super::systemd::unit_editor_panel)
+        .otherwise(|| editor_panel_with_title(true))
 }
 
 /// Maximum sheet width for the centered plist editor form.
@@ -131,63 +132,71 @@ fn editor_panel_with_title(show_title: bool) -> impl IntoElement {
         .child(footer(s))
 }
 
-/// Presents the plist editor as a native modal dialog window on desktop
-/// (`WindowKind::Dialog`) or an `nsh_base::dialog()` overlay off-desktop.
+/// Presents the plist editor (macOS) or systemd unit editor (Linux) as a native
+/// modal dialog window on desktop (`WindowKind::Dialog`) or an `nsh_base::dialog()`
+/// overlay off-desktop.
 pub fn editor_window() -> impl IntoElement {
     if os().is_desktop() {
-        desktop::window()
-            .id("plist-editor")
-            .kind(WindowKind::Dialog)
-            .parent("main")
-            .modal(true)
-            .attributes(editor_window_attributes())
-            .title(move || {
-                if store::is_existing() {
-                    "Edit Job".to_string()
-                } else {
-                    "New Job".to_string()
-                }
-            })
-            .default_size(size(px(620.0), px(720.0)))
-            .open(store::is_open)
-            .on_open_change(|event| {
-                if !event.open {
-                    store::close();
-                }
-            })
-            .content(|| editor_panel_with_title(false))
-            .into_element()
-    } else {
-        when(store::is_open, || {
-            dialog()
-                .label(move || {
+        if crate::platform::is_linux() {
+            super::systemd::unit_editor_window().into_element()
+        } else {
+            desktop::window()
+                .id("plist-editor")
+                .kind(WindowKind::Dialog)
+                .parent("main")
+                .modal(true)
+                .attributes(editor_window_attributes())
+                .title(move || {
                     if store::is_existing() {
                         "Edit Job".to_string()
                     } else {
                         "New Job".to_string()
                     }
                 })
-                .on_cancel(|_: &()| store::close())
-                .child(
-                    view()
-                        .size_full()
-                        .items_center()
-                        .justify_center()
-                        .bg(move || theme().background.opacity(0.6))
+                .default_size(size(px(620.0), px(720.0)))
+                .open(store::is_launchd_open)
+                .on_open_change(|event| {
+                    if !event.open {
+                        store::close();
+                    }
+                })
+                .content(|| editor_panel_with_title(false))
+                .into_element()
+        }
+    } else {
+        when(super::systemd::is_open, super::systemd::unit_editor_window)
+            .otherwise(|| {
+                when(store::is_launchd_open, || {
+                    dialog()
+                        .label(move || {
+                            if store::is_existing() {
+                                "Edit Job".to_string()
+                            } else {
+                                "New Job".to_string()
+                            }
+                        })
+                        .on_cancel(|_: &()| store::close())
                         .child(
                             view()
-                                .w(px(620.0))
-                                .max_h(px(720.0))
-                                .rounded(tokens::panel_radius)
-                                .bg(tokens::panel)
-                                .border_1()
-                                .border_color(tokens::hairline)
-                                .overflow_hidden()
-                                .child(editor_panel_with_title(true)),
-                        ),
-                )
-        })
-        .into_element()
+                                .size_full()
+                                .items_center()
+                                .justify_center()
+                                .bg(move || theme().background.opacity(0.6))
+                                .child(
+                                    view()
+                                        .w(px(620.0))
+                                        .max_h(px(720.0))
+                                        .rounded(tokens::panel_radius)
+                                        .bg(tokens::panel)
+                                        .border_1()
+                                        .border_color(tokens::hairline)
+                                        .overflow_hidden()
+                                        .child(editor_panel_with_title(true)),
+                                ),
+                        )
+                })
+            })
+            .into_element()
     }
 }
 

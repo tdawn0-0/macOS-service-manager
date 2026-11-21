@@ -370,7 +370,7 @@ fn action_buttons() -> impl IntoElement {
         .child(drawer_icon_button(
             "dev-log-open-console",
             icons::external(),
-            "Open in Console",
+            crate::platform::open_log_label(),
             || store::active_path().is_none(),
             store::open_in_console,
         ))

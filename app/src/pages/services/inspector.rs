@@ -3,13 +3,14 @@
 
 use std::path::PathBuf;
 
-use devcore::service::{Action, Autostart, Item, LogFile, Row, Source, State};
+use devcore::service::{Action, Autostart, Item, LogFile, LogSource, Row, Source, State};
 use nsh_base::{menu, menu_item, menu_separator, theme};
 use nsh_core::prelude::*;
 
-use super::{hint_tooltip, is_editable_plist};
+use super::{hint_tooltip, is_editable_service};
 use crate::{
     components::{icon_button, icons, labeled_button, state_color, status_dot},
+    platform,
     store::services::{self as svc, DetailTab, LogBodyMode},
     theme as tokens,
 };
@@ -188,7 +189,7 @@ fn action_row(id: String) -> impl IntoElement {
         let restart = actions
             .contains(&Action::Restart)
             .then_some(Action::Restart);
-        let edit_target = is_editable_plist(&item).then(|| (item.source, item.path.clone()));
+        let edit_target = is_editable_service(&item).then(|| (item.source, item.path.clone()));
         Some(
             view()
                 .flex_row()
@@ -307,12 +308,12 @@ fn more_menu(item: &Item, actions: Vec<Action>, busy: bool) -> impl IntoElement 
                 let path = reveal.clone();
                 Owner::detached().run(move || {
                     spawn(async move {
-                        let _ = reveal_path(path).await;
+                        let _ = blocking(move || platform::reveal_path(&path)).await;
                     });
                 });
             })
             .child(
-                text("Reveal in Finder")
+                text(platform::reveal_label())
                     .text_size(px(tokens::TEXT_SMALL))
                     .text_color(move || theme().foreground),
             )
@@ -494,7 +495,7 @@ fn autostart_card(id: String) -> impl IntoElement {
 
 /// What the switch of an item's autostart says.
 fn toggle_label(item: &Item) -> &'static str {
-    if item.source == Source::Daemon {
+    if matches!(item.source, Source::Daemon | Source::SystemdSystem) {
         "Load at boot"
     } else {
         "Load at login"
@@ -882,7 +883,16 @@ fn log_tab_content(logs: Vec<LogFile>) -> impl IntoElement {
                 .child(
                     text(move || {
                         svc::active_log_file()
-                            .map(|file| file.path.display().to_string())
+                            .map(|file| match file.source() {
+                                LogSource::File(path) => path.display().to_string(),
+                                LogSource::Journal { unit, system } => {
+                                    if system {
+                                        format!("journalctl -u {unit}")
+                                    } else {
+                                        format!("journalctl --user -u {unit}")
+                                    }
+                                }
+                            })
                             .unwrap_or_default()
                     })
                     .flex_1()
@@ -891,11 +901,39 @@ fn log_tab_content(logs: Vec<LogFile>) -> impl IntoElement {
                     .text_color(move || theme().muted_foreground)
                     .truncate(),
                 )
-                .child(icon_button(icons::external(), "Open in Console", || {
-                    if let Some(file) = svc::active_log_file_untracked() {
-                        open_log(file.path);
-                    }
-                })),
+                .child(when(
+                    move || {
+                        svc::active_log_file().is_some_and(|file| file.journal_unit().is_none())
+                    },
+                    || {
+                        icon_button(icons::external(), platform::open_log_label(), || {
+                            if let Some(file) = svc::active_log_file_untracked()
+                                && file.journal_unit().is_none()
+                            {
+                                open_log(file.path);
+                            }
+                        })
+                    },
+                ))
+                .child(when(
+                    move || {
+                        svc::active_log_file().is_some_and(|file| file.journal_unit().is_some())
+                    },
+                    || {
+                        icon_button(icons::copy(), "Copy journalctl command", || {
+                            if let Some(file) = svc::active_log_file_untracked()
+                                && let Some((unit, system)) = file.journal_unit()
+                            {
+                                let cmd = if system {
+                                    format!("journalctl -u {unit} -f")
+                                } else {
+                                    format!("journalctl --user -u {unit} -f")
+                                };
+                                svc::copy(&cmd);
+                            }
+                        })
+                    },
+                )),
         )
         .child(dynamic(move || match mode.get() {
             LogBodyMode::Error => text(move || svc::log_error().unwrap_or_default())
@@ -958,15 +996,7 @@ fn log_lines_view() -> impl IntoElement {
 fn open_log(path: PathBuf) {
     Owner::detached().run(move || {
         spawn(async move {
-            let _ = blocking(move || {
-                std::process::Command::new("open")
-                    .arg("-a")
-                    .arg("Console")
-                    .arg(&path)
-                    .status()
-                    .map(|_| ())
-            })
-            .await;
+            let _ = blocking(move || platform::open_log_file(&path)).await;
         });
     });
 }
@@ -977,7 +1007,7 @@ fn action_tip(item: &Item, action: Action) -> String {
         return format!("{} (privileged helper)", action.label());
     }
     match action {
-        Action::Load => "Register with launchd".to_string(),
+        Action::Load => platform::service_register_label().to_string(),
         Action::Unload => "Unregister and stop".to_string(),
         Action::Stop => "Send SIGTERM".to_string(),
         _ => String::new(),

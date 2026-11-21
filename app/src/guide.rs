@@ -98,6 +98,9 @@ struct SystemAccess;
 
 impl Access for SystemAccess {
     fn needs_access(&self) -> bool {
+        if !crate::platform::has_full_disk_access() {
+            return false;
+        }
         let Some(home) = std::env::var_os("HOME") else {
             return false;
         };
@@ -235,6 +238,9 @@ fn later(delay: Duration, f: impl FnOnce() + 'static) {
 /// Opens the guide on a first run, once. App calls this at launch on a
 /// desktop; the file is read on a blocking thread, never in render.
 pub fn start() {
+    if !crate::platform::has_full_disk_access() && !FAKE_MODE.load(Ordering::Relaxed) {
+        return;
+    }
     let state = guide();
     if state.with(|state| state.started) {
         return;

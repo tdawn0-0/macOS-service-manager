@@ -1001,6 +1001,7 @@ fn EditorWindowHarness() -> impl IntoElement {
         .child(nsh_app_devbase::editor::editor_window())
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn desktop_editor_window_hides_duplicate_heading_and_closes_on_escape() {
     let provider = FakeEditorProvider::new();
@@ -1028,6 +1029,116 @@ fn desktop_editor_window_hides_duplicate_heading_and_closes_on_escape() {
     app.press_key("escape").unwrap();
     app.wait_for("window-open=false").unwrap();
     assert!(!app.screen().matches("id:plist-editor").unwrap());
+
+    drop(app);
+    drop(guard);
+}
+
+struct FakeSystemdProvider {
+    saves: Mutex<Vec<(Source, devcore::systemd::UnitSpec, bool)>>,
+}
+
+impl FakeSystemdProvider {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            saves: Mutex::new(Vec::new()),
+        })
+    }
+}
+
+impl nsh_app_devbase::editor::SystemdEditorProvider for FakeSystemdProvider {
+    fn load(&self, _source: Source, _path: &Path) -> Result<devcore::systemd::UnitSpec, String> {
+        Err("not found".to_string())
+    }
+
+    fn save(
+        &self,
+        source: Source,
+        spec: devcore::systemd::UnitSpec,
+        enable_and_start: bool,
+    ) -> Result<PathBuf, String> {
+        let filename = spec.unit_filename().map_err(|e| e.to_string())?;
+        self.saves
+            .lock()
+            .unwrap()
+            .push((source, spec, enable_and_start));
+        Ok(PathBuf::from(format!(
+            "/home/tester/.config/systemd/user/{filename}"
+        )))
+    }
+}
+
+#[component]
+fn SystemdEditorHarness() -> impl IntoElement {
+    view()
+        .test_id("systemd-editor-harness")
+        .size_full()
+        .flex_col()
+        .child(
+            nsh_base::button()
+                .test_id("open-new-systemd-user")
+                .on_press(|| editor_open_new(Source::SystemdUser))
+                .child(text("New User Unit")),
+        )
+        .child(
+            text(move || {
+                let last = editor_last_saved()
+                    .map(|e| format!("{}/{}/{}", e.source.as_str(), e.label, e.loaded))
+                    .unwrap_or_else(|| "none".to_string());
+                format!(
+                    "systemd-status open={} rev={} last={}",
+                    editor_is_open(),
+                    editor_revision(),
+                    last
+                )
+            })
+            .test_id("systemd-status"),
+        )
+        .child(when(editor_is_open, editor_panel))
+}
+
+#[test]
+fn systemd_unit_editor_validates_previews_and_saves_unit() {
+    let provider = FakeSystemdProvider::new();
+    let guard = serial();
+    nsh_app_devbase::editor::use_fake_systemd_provider();
+    nsh_app_devbase::editor::install_systemd_provider(provider.clone());
+
+    let mut app = Headless::start(EngineConfig::new(Root::of::<SystemdEditorHarness>())).unwrap();
+    app.wait_for("id:systemd-editor-harness").unwrap();
+
+    app.press("id:open-new-systemd-user").unwrap();
+    app.wait_for("id:systemd-unit-editor").unwrap();
+    app.wait_for("text:/# Validation: Unit name is required/")
+        .unwrap();
+
+    // Fill unit name, ExecStart, and optional timer schedule.
+    app.type_text("id:systemd-name", "devbase-worker").unwrap();
+    app.type_text("id:systemd-description", "Background queue worker")
+        .unwrap();
+    app.type_text("id:systemd-exec-start", "/usr/bin/node /srv/worker.js")
+        .unwrap();
+    app.type_text("id:systemd-on-calendar", "hourly").unwrap();
+
+    // Live preview renders both .service and companion .timer.
+    app.wait_for("text:/Description=Background queue worker/")
+        .unwrap();
+    app.wait_for("text:/ExecStart=\\/usr\\/bin\\/node \\/srv\\/worker\\.js/")
+        .unwrap();
+    app.wait_for("text:/# --- devbase-worker\\.timer ---/")
+        .unwrap();
+    app.wait_for("text:/OnCalendar=hourly/").unwrap();
+
+    app.press("id:systemd-editor-save").unwrap();
+    app.wait_for("systemd-status open=false rev=1 last=systemd-user/devbase-worker.service/true")
+        .unwrap();
+
+    let saves = provider.saves.lock().unwrap().clone();
+    assert_eq!(saves.len(), 1);
+    assert_eq!(saves[0].0, Source::SystemdUser);
+    assert_eq!(saves[0].1.name, "devbase-worker");
+    assert_eq!(saves[0].1.on_calendar, "hourly");
+    assert!(saves[0].2);
 
     drop(app);
     drop(guard);

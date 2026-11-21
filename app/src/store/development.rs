@@ -378,10 +378,11 @@ impl Provider for Facade {
                 ..row
             })
             .collect();
+        let host_target = devcore::platform::HostTarget::current();
         let python_available: Vec<PythonVersion> = match shell.uv_pythons(false) {
             Ok(rows) => rows
                 .into_iter()
-                .filter(|row| row.os_name == "macos" && row.arch == "aarch64")
+                .filter(|row| host_target.matches_uv(&row.os_name, &row.arch))
                 .map(|row| PythonVersion {
                     key: row.key,
                     version: row.version,
@@ -550,22 +551,20 @@ impl Provider for Facade {
                 devcore::shell::shell_quote(&selection.path)
             )
         };
+        let fallback_shell = if crate::platform::is_macos() {
+            "/bin/zsh"
+        } else {
+            "/bin/bash"
+        };
         let body = format!(
-            "#!/bin/sh\n# Written by Devbase. Changes are overwritten.\ncd {dir}\n{path}exec \"${{SHELL:-/bin/zsh}}\" -l\n"
+            "#!/bin/sh\n# Written by Devbase. Changes are overwritten.\ncd {dir}\n{path}exec \"${{SHELL:-{fallback_shell}}}\" -l\n"
         );
         std::fs::write(&script, body).map_err(|error| error.to_string())?;
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700))
             .map_err(|error| error.to_string())?;
-        let status = std::process::Command::new("/usr/bin/open")
-            .arg("-a")
-            .arg("Terminal")
-            .arg(&script)
-            .status()
-            .map_err(|error| error.to_string())?;
-        if !status.success() {
-            return Err("Terminal could not be opened".to_string());
-        }
+        crate::platform::open_in_terminal(&script)
+            .map_err(|error| format!("Terminal could not be opened: {error}"))?;
         Ok(())
     }
 }
@@ -1290,7 +1289,11 @@ pub(crate) fn select_python(key: &str) {
 pub(crate) fn install_python() {
     let key = python_choice();
     if key.is_empty() {
-        ctrl_error("select an available macOS arm64 Python version".to_string());
+        ctrl_error(if crate::platform::is_macos() {
+            "select an available macOS arm64 Python version".to_string()
+        } else {
+            "select an available Python version".to_string()
+        });
         return;
     }
     let notice = format!("Installed Python {key} with uv");

@@ -90,16 +90,22 @@ pub(crate) fn services() -> impl IntoElement {
         )
 }
 
-/// Whether `item` points to an editable launchd property list.
-pub(super) fn is_editable_plist(item: &Item) -> bool {
-    matches!(
-        item.source,
-        Source::UserAgent | Source::SystemAgent | Source::Daemon
-    ) && !item.path.as_os_str().is_empty()
-        && item
+/// Whether `item` points to an editable launchd plist or systemd `.service` unit.
+pub(super) fn is_editable_service(item: &Item) -> bool {
+    if item.path.as_os_str().is_empty() {
+        return false;
+    }
+    match item.source {
+        Source::UserAgent | Source::SystemAgent | Source::Daemon => item
             .path
             .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("plist"))
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("plist")),
+        Source::SystemdUser | Source::SystemdSystem => item
+            .path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("service")),
+        _ => false,
+    }
 }
 
 /// The launchd sources, with how many of their jobs there are and how
@@ -264,7 +270,7 @@ fn source_row(source: Source) -> impl IntoElement {
                 }),
         )
         .child(
-            text(source.title())
+            text(svc::source_title(source))
                 .flex_1()
                 .min_w(px(0.0))
                 .text_sm()

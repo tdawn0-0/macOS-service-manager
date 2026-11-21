@@ -46,7 +46,6 @@ use nsh_core::{
         haptic, reduce_motion, svg,
     },
     geometry::{Bounds, Point, deg, point, size},
-    platform::Os,
     prelude::*,
 };
 
@@ -55,6 +54,7 @@ use crate::{
         controls,
         icons::{self, Icon},
     },
+    platform,
     store::{self, Section, databases, proxy, services, software::SoftwareKind, system},
     theme as tokens,
 };
@@ -74,11 +74,21 @@ const BLUR_REOPEN_DEBOUNCE: Duration = Duration::from_millis(200);
 /// nests that group inside a clean submenu instead of expanding every row inline.
 const SERVICE_MENU_SUBMENU_THRESHOLD: usize = 6;
 
-/// System-wide shortcut that toggles the menu bar popover on macOS.
+/// System-wide shortcut that toggles the menu bar / tray popover.
+#[cfg(target_os = "macos")]
 pub const GLOBAL_SHORTCUT: &str = "ctrl+alt+cmd+d";
 
-/// macOS symbol representation of [`GLOBAL_SHORTCUT`].
+/// System-wide shortcut that toggles the tray popover on Linux (graceful no-op on Wayland).
+#[cfg(not(target_os = "macos"))]
+pub const GLOBAL_SHORTCUT: &str = "ctrl+alt+super+d";
+
+/// Display representation of [`GLOBAL_SHORTCUT`].
+#[cfg(target_os = "macos")]
 pub const GLOBAL_SHORTCUT_LABEL: &str = "⌃⌥⌘D";
+
+/// Display representation of [`GLOBAL_SHORTCUT`] on Linux.
+#[cfg(not(target_os = "macos"))]
+pub const GLOBAL_SHORTCUT_LABEL: &str = "Ctrl+Alt+Super+D";
 
 /// macOS red tint for the menu bar failure count run (`#ff3b30`).
 const TRAY_FAILED_COLOR_HEX: u32 = 0xff3b30;
@@ -800,6 +810,7 @@ fn service_group_title(source: Source) -> &'static str {
     match source {
         Source::Brew => "Homebrew",
         Source::UserAgent => "Login Agents",
+        Source::SystemdUser => "User Units",
         other => other.title(),
     }
 }
@@ -807,9 +818,17 @@ fn service_group_title(source: Source) -> &'static str {
 fn service_group_icon(source: Source) -> &'static str {
     icons::markup(match source {
         Source::Brew => Icon::Layers,
-        Source::UserAgent => Icon::Terminal,
+        Source::UserAgent | Source::SystemdUser => Icon::Terminal,
         _ => Icon::Layers,
     })
+}
+
+const fn tray_service_sources() -> &'static [Source] {
+    if platform::is_macos() {
+        &[Source::Brew, Source::UserAgent]
+    } else {
+        &[Source::SystemdUser]
+    }
 }
 
 fn loaded_services_for(source: Source) -> Vec<ServiceRow> {
@@ -846,8 +865,10 @@ fn loaded_services_for(source: Source) -> Vec<ServiceRow> {
 }
 
 fn loaded_service_rows() -> Vec<ServiceRow> {
-    let mut rows = loaded_services_for(Source::Brew);
-    rows.extend(loaded_services_for(Source::UserAgent));
+    let mut rows = Vec::new();
+    for source in tray_service_sources().iter().copied() {
+        rows.extend(loaded_services_for(source));
+    }
     rows
 }
 
@@ -1017,8 +1038,9 @@ pub fn refresh() {
     databases::refresh();
     proxy::refresh();
     system::refresh_settings();
-    services::refresh_if_loaded(Source::Brew);
-    services::refresh_if_loaded(Source::UserAgent);
+    for source in tray_service_sources().iter().copied() {
+        services::refresh_if_loaded(source);
+    }
 }
 
 /// Reads what the tray shows the first time the app starts.
@@ -1042,6 +1064,7 @@ struct PopoverSectionState {
     rules_expanded: bool,
     brew_expanded: bool,
     user_agent_expanded: bool,
+    systemd_user_expanded: bool,
 }
 
 impl Default for PopoverSectionState {
@@ -1050,6 +1073,7 @@ impl Default for PopoverSectionState {
             rules_expanded: true,
             brew_expanded: true,
             user_agent_expanded: true,
+            systemd_user_expanded: true,
         }
     }
 }
@@ -1082,6 +1106,7 @@ fn section_expanded(source: Source) -> bool {
     popover_sections().with(|state| match source {
         Source::Brew => state.brew_expanded,
         Source::UserAgent => state.user_agent_expanded,
+        Source::SystemdUser => state.systemd_user_expanded,
         _ => true,
     })
 }
@@ -1096,6 +1121,7 @@ fn toggle_service_section(source: Source) {
     popover_sections().update(|state| match source {
         Source::Brew => state.brew_expanded = !state.brew_expanded,
         Source::UserAgent => state.user_agent_expanded = !state.user_agent_expanded,
+        Source::SystemdUser => state.systemd_user_expanded = !state.systemd_user_expanded,
         _ => {}
     });
 }
@@ -1270,6 +1296,21 @@ fn estimated_popover_height(panel: &Panel) -> f32 {
                 )
         })
         .count();
+    let systemd_user_count = panel
+        .rows
+        .iter()
+        .filter(|row| {
+            row.kind == RowKind::Service
+                && row.checked.is_none()
+                && matches!(
+                    row.action,
+                    Some(Action::OpenService {
+                        source: Source::SystemdUser,
+                        ..
+                    })
+                )
+        })
+        .count();
     let has_tunnel = panel.rows.iter().any(|row| row.kind == RowKind::Tunnel);
     let rules_height = if !panel.rules.is_empty() {
         26.0 + if untracked(rules_expanded) {
@@ -1298,12 +1339,22 @@ fn estimated_popover_height(panel: &Panel) -> f32 {
     } else {
         0.0
     };
+    let systemd_user_height = if systemd_user_count > 0 {
+        26.0 + if untracked(|| section_expanded(Source::SystemdUser)) {
+            systemd_user_count as f32 * 44.0
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
     let height = 132.0
         + (instance_count as f32 * 44.0)
         + if has_tunnel { 96.0 } else { 52.0 }
         + rules_height
         + brew_height
-        + agent_height;
+        + agent_height
+        + systemd_user_height;
     height.clamp(POPOVER_MIN_HEIGHT, POPOVER_MAX_HEIGHT)
 }
 
@@ -1317,7 +1368,7 @@ pub(crate) fn popover_window() -> impl IntoElement {
         let mut attrs = WindowAttributes::default();
         attrs.close_on_blur = Some(true);
         attrs.close_on_escape = Some(true);
-        attrs.transparent = Some(true);
+        attrs.transparent = Some(platform::has_liquid_glass());
         attrs.shadow = Some(true);
         attrs.resizable = Some(false);
         attrs.size_to_content = Some(SizeToContent::Height);
@@ -1414,7 +1465,9 @@ fn popover_switch(
                 .ml(move || if checked.get() { px(14.0) } else { px(0.0) })
         })
         .on_change(move |value: &bool| {
-            haptic(Haptic::Selection);
+            if platform::is_macos() {
+                haptic(Haptic::Selection);
+            }
             on_change(*value);
         })
 }
@@ -1520,28 +1573,25 @@ pub fn popover_content() -> impl IntoElement {
         .border_1()
         .border_color(tokens::hairline)
         .bg(move || {
-            if os() == Os::MacOs {
+            if platform::has_liquid_glass() {
                 AdaptiveColor::TRANSPARENT
             } else {
                 tokens::panel()
             }
         })
         .text_color(move || theme().foreground)
-        .child(when(
-            || os() == Os::MacOs,
-            || {
-                view()
-                    .test_id("menubar-popover-glass")
-                    .absolute()
-                    .top(px(0.0))
-                    .right(px(0.0))
-                    .bottom(px(0.0))
-                    .left(px(0.0))
-                    .rounded(px(12.0))
-                    .pointer_events(PointerEvents::None)
-                    .glass_effect(GlassEffect::Regular)
-            },
-        ))
+        .child(when(platform::has_liquid_glass, || {
+            view()
+                .test_id("menubar-popover-glass")
+                .absolute()
+                .top(px(0.0))
+                .right(px(0.0))
+                .bottom(px(0.0))
+                .left(px(0.0))
+                .rounded(px(12.0))
+                .pointer_events(PointerEvents::None)
+                .glass_effect(GlassEffect::Regular)
+        }))
         .child(popover_header())
         .child(view().h(px(1.0)).w_full().flex_none().bg(tokens::hairline))
         .child(
@@ -2420,6 +2470,10 @@ fn popover_body() -> impl IntoElement {
             move || !loaded_services_for(Source::UserAgent).is_empty(),
             || collapsible_service_section(Source::UserAgent, "user-agent"),
         ))
+        .child(when(
+            move || !loaded_services_for(Source::SystemdUser).is_empty(),
+            || collapsible_service_section(Source::SystemdUser, "systemd-user"),
+        ))
 }
 
 fn footer_button(
@@ -2690,7 +2744,7 @@ pub fn menu_entries(panel: &Panel) -> Vec<MenuEntry> {
         }
     }
 
-    for source in [Source::Brew, Source::UserAgent] {
+    for source in [Source::Brew, Source::UserAgent, Source::SystemdUser] {
         let (running, total, group_items) = service_menu_group(panel, source);
         if total == 0 {
             continue;
@@ -2784,8 +2838,10 @@ fn tray_for(panel: Panel) -> nsh_core::element::desktop::Tray {
     let mut icon = tray()
         .icon(ImageSrc::svg_markup(MENUBAR_ICON))
         .tooltip(panel.tooltip.clone())
-        .menu(menu(&panel))
-        .on_click(toggle_popover);
+        .menu(menu(&panel));
+    if platform::is_macos() {
+        icon = icon.on_click(toggle_popover);
+    }
     let runs = title_runs(&panel);
     if !runs.is_empty() {
         icon = icon.title(runs);

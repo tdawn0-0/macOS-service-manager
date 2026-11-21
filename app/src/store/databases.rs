@@ -2727,11 +2727,11 @@ pub(crate) fn choose_data_parent() {
     });
 }
 
-/// Shows a backup in Finder.
+/// Shows a backup in the system file manager.
 pub(crate) fn reveal(path: &std::path::Path) {
     let path = path.to_path_buf();
     task(async move {
-        let _ = reveal_path(path).await;
+        let _ = blocking(move || crate::platform::reveal_path(&path)).await;
     });
 }
 

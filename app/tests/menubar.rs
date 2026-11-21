@@ -1203,9 +1203,12 @@ fn blur_reopen_debounce_suppresses_bounce_within_200ms() {
 
 #[test]
 fn anchor_position_falls_back_to_top_right_of_primary_display_and_shortcut_parses() {
-    let shortcut = Shortcut::parse(MENUBAR_GLOBAL_SHORTCUT, true).unwrap();
+    let shortcut = Shortcut::parse(MENUBAR_GLOBAL_SHORTCUT, cfg!(target_os = "macos")).unwrap();
     assert!(shortcut.ctrl && shortcut.alt && shortcut.meta);
+    #[cfg(target_os = "macos")]
     assert_eq!(shortcut.label_for(Os::MacOs), MENUBAR_GLOBAL_SHORTCUT_LABEL);
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(MENUBAR_GLOBAL_SHORTCUT_LABEL, "Ctrl+Alt+Super+D");
 
     let secondary = Display::new(
         DisplayId(2),
@@ -2180,4 +2183,42 @@ fn popover_pins_footer_inside_viewport_with_many_databases_and_routes() {
     );
 
     drop(turn);
+}
+
+#[test]
+fn right_click_menu_displays_linux_systemd_user_services() {
+    let panel = MenubarPanel::from(MenubarInput {
+        services: vec![
+            MenubarService {
+                id: "systemd-user:/home/alice/.config/systemd/user/api.service".to_string(),
+                source: Source::SystemdUser,
+                name: "api.service".to_string(),
+                status: "Running".to_string(),
+                running: true,
+                busy: false,
+                can_toggle: true,
+            },
+            MenubarService {
+                id: "systemd-user:/home/alice/.config/systemd/user/worker.service".to_string(),
+                source: Source::SystemdUser,
+                name: "worker.service".to_string(),
+                status: "Stopped".to_string(),
+                running: false,
+                busy: false,
+                can_toggle: true,
+            },
+        ],
+        proxy_status: "Stopped".to_string(),
+        proxy_port: 8443,
+        ..MenubarInput::default()
+    });
+    let entries = menubar_menu_entries(&panel);
+    assert!(
+        entries.iter().any(|entry| matches!(
+            entry,
+            MenubarMenuEntry::Item { label, enabled: false, .. } if label == "User Units · 1/2"
+        )),
+        "expected User Units header in Linux tray menu: {entries:#?}"
+    );
+    assert_every_menu_entry_has_svg_icon(&entries);
 }

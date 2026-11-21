@@ -24,13 +24,14 @@ use std::{
 };
 
 use devcore::{
-    helper::{Client as HelperClient, DefaultHelper},
-    launchd::{Context, Launchd, PrivilegedHelper, SystemHost, SystemRunner},
+    helper::Client as HelperClient,
+    launchd::SystemRunner,
+    service::{LogSource, ServiceRegistry},
 };
 use nsh_base::alert_dialog;
 use nsh_core::prelude::*;
 
-use crate::logs;
+use crate::{logs, platform};
 
 pub(crate) use devcore::service::{Action, Item, LogFile, Provider, Restriction, Row, Source};
 
@@ -91,7 +92,7 @@ pub(crate) enum ServiceScope {
 
 impl Default for ServiceScope {
     fn default() -> Self {
-        ServiceScope::Source(Source::UserAgent)
+        ServiceScope::Source(platform::default_user_source())
     }
 }
 
@@ -99,7 +100,7 @@ impl ServiceScope {
     pub(crate) fn title(self) -> &'static str {
         match self {
             ServiceScope::All => "All Items",
-            ServiceScope::Source(source) => source.title(),
+            ServiceScope::Source(source) => source_title(source),
         }
     }
 
@@ -111,14 +112,17 @@ impl ServiceScope {
     }
 }
 
-/// The sources the inspector shows, in order.
-pub(crate) const SOURCES: [Source; 5] = [
-    Source::Brew,
-    Source::LoginItem,
-    Source::UserAgent,
-    Source::SystemAgent,
-    Source::Daemon,
-];
+/// Human-readable plural label for a service source in the Services rail & header.
+pub(crate) const fn source_title(source: Source) -> &'static str {
+    match source {
+        Source::SystemdUser => "User Units",
+        Source::SystemdSystem => "System Units",
+        other => other.title(),
+    }
+}
+
+/// The sources the inspector shows for the current host platform, in order.
+pub(crate) const SOURCES: &[Source] = Source::platform_all();
 
 /// One source's last read.
 #[derive(Debug, Clone, Default)]
@@ -299,21 +303,11 @@ fn fakes() -> &'static Mutex<BTreeMap<Source, Arc<dyn Provider>>> {
     &FAKES
 }
 
-/// The machine's three launchd providers, made once.
-static LAUNCHD: LazyLock<Launchd> = LazyLock::new(|| {
-    let context = Arc::new(Context::new(
-        Arc::new(SystemRunner::new()),
-        Arc::new(DefaultHelper) as Arc<dyn PrivilegedHelper>,
-        Arc::new(SystemHost::new()),
-    ));
-    Launchd::new(context)
-});
+/// The platform's default service provider registry, initialized once.
+static REGISTRY: LazyLock<ServiceRegistry> = LazyLock::new(ServiceRegistry::platform_default);
 
-/// The machine's Homebrew services provider, made once.
-static BREW: LazyLock<Arc<devcore::brew::Provider>> =
-    LazyLock::new(|| Arc::new(devcore::brew::Provider::default_provider()));
-
-/// The machine's login items provider, made once.
+/// The machine's macOS login items provider, used by `add_login_item_path`.
+#[cfg(target_os = "macos")]
 static LOGIN_ITEM: LazyLock<Arc<devcore::loginitem::Provider>> =
     LazyLock::new(|| Arc::new(devcore::loginitem::Provider::default_provider()));
 
@@ -361,13 +355,7 @@ fn provider_of(source: Source) -> Option<Arc<dyn Provider>> {
     if FAKE_MODE.load(Ordering::Relaxed) {
         return None;
     }
-    match source {
-        Source::Brew => Some(Arc::clone(&*BREW) as Arc<dyn Provider>),
-        Source::LoginItem => Some(Arc::clone(&*LOGIN_ITEM) as Arc<dyn Provider>),
-        _ => LAUNCHD
-            .provider(source)
-            .map(|provider| Arc::clone(provider) as Arc<dyn Provider>),
-    }
+    REGISTRY.provider(source)
 }
 
 /// Makes the surface use test providers instead of launchd, Homebrew or login
@@ -427,7 +415,7 @@ fn load_source_if_needed(source: Source) {
 }
 
 fn load_all_missing() {
-    for source in SOURCES {
+    for source in SOURCES.iter().copied() {
         if provider_of(source).is_some() {
             load_source_if_needed(source);
         }
@@ -450,7 +438,7 @@ pub(crate) fn select_scope(scope: ServiceScope) {
             load_all_missing();
         }
         ServiceScope::Source(source) => {
-            if matches!(source, Source::SystemAgent | Source::Daemon) {
+            if source.is_privileged() || source == Source::SystemAgent {
                 refresh_helper_status();
             }
             load_source_if_needed(source);
@@ -475,7 +463,7 @@ pub(crate) fn load_active() {
 
 /// Reads `source` again.
 pub(crate) fn refresh(source: Source) {
-    if matches!(source, Source::SystemAgent | Source::Daemon | Source::Brew) {
+    if source.is_privileged() || matches!(source, Source::SystemAgent | Source::Brew) {
         refresh_helper_status();
     }
     let Some(provider) = provider_of(source) else {
@@ -566,7 +554,7 @@ pub(crate) fn refresh_active() {
     match scope {
         ServiceScope::All => {
             refresh_helper_status();
-            for source in SOURCES {
+            for source in SOURCES.iter().copied() {
                 if provider_of(source).is_some() {
                     refresh(source);
                 }
@@ -720,7 +708,7 @@ pub(crate) fn total_counts() -> (usize, usize) {
         let mut total = 0;
         let mut running = 0;
         for source in SOURCES {
-            if let Some(load) = state.loads.get(&source) {
+            if let Some(load) = state.loads.get(source) {
                 total += load.items.len();
                 running += load.items.iter().filter(|item| item.up()).count();
             }
@@ -863,7 +851,15 @@ pub(crate) fn add_login_item_path(path: PathBuf) {
             if let Some(adder) = fake_adder {
                 adder(&path)
             } else {
-                LOGIN_ITEM.add(&path).map_err(|error| error.to_string())
+                #[cfg(target_os = "macos")]
+                {
+                    LOGIN_ITEM.add(&path).map_err(|error| error.to_string())
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = &path;
+                    Err("macOS Login Items are not supported on Linux".to_string())
+                }
             }
         })
         .await
@@ -953,6 +949,9 @@ fn load_detail(item: Item) {
         detail.loading = true;
         detail.error = None;
     });
+    let journal_fallback = item
+        .journal_unit()
+        .map(|(unit, system)| LogFile::journal("Systemd journal", unit, system));
     task(async move {
         let answer =
             match blocking(move || provider.detail(&item).map_err(|error| error.to_string())).await
@@ -970,7 +969,12 @@ fn load_detail(item: Item) {
             }
             detail.loading = false;
             match answer {
-                Ok(read) => {
+                Ok(mut read) => {
+                    if read.logs.is_empty()
+                        && let Some(journal) = journal_fallback.clone()
+                    {
+                        read.logs.push(journal);
+                    }
                     let logs_changed = detail.logs != read.logs;
                     detail.rows = read.rows;
                     detail.logs = read.logs;
@@ -1164,17 +1168,39 @@ pub(crate) fn indexed_log_lines() -> Vec<(usize, String)> {
     })
 }
 
-/// Reads the shown log's end. Called when the log tab opens and once a
-/// second while it is open.
+fn read_journal_tail(unit: &str, system: bool) -> Result<logs::Tail, String> {
+    let raw = devcore::systemd::read_journal_logs(
+        &SystemRunner::new(),
+        unit,
+        system,
+        devcore::systemd::DEFAULT_JOURNAL_LINES,
+    )
+    .map_err(|error| error.to_string())?;
+    let trimmed = raw.trim_end_matches('\n').replace("\r\n", "\n");
+    if trimmed.is_empty() {
+        return Ok(logs::Tail::default());
+    }
+    let lines: Vec<String> = trimmed.split('\n').map(str::to_owned).collect();
+    let truncated = lines.len() >= devcore::systemd::DEFAULT_JOURNAL_LINES;
+    Ok(logs::Tail {
+        lines,
+        truncated,
+        size: raw.len() as u64,
+        modified: None,
+    })
+}
+
+/// Reads the shown log's end (file tail or `journalctl` output). Called when
+/// the log tab opens and once a second while it is open.
 pub(crate) fn load_log() {
-    let Some((id, file_index, path)) = services().with_untracked(|state| {
+    let Some((id, file_index, file)) = services().with_untracked(|state| {
         let detail = state.detail.as_ref()?;
         if detail.tab != DetailTab::Logs {
             return None;
         }
         let file_index = log_tail().with_untracked(|tail| tail.file_index);
-        let file = detail.logs.get(file_index)?;
-        Some((detail.item_id.clone(), file_index, file.path.clone()))
+        let file = detail.logs.get(file_index)?.clone();
+        Some((detail.item_id.clone(), file_index, file))
     }) else {
         return;
     };
@@ -1191,7 +1217,12 @@ pub(crate) fn load_log() {
         return;
     };
     task(async move {
-        let answer = match blocking(move || logs::tail(&path)).await {
+        let answer = match blocking(move || match file.source() {
+            LogSource::File(path) => logs::tail(path),
+            LogSource::Journal { unit, system } => read_journal_tail(unit, system),
+        })
+        .await
+        {
             Ok(answer) => answer,
             Err(error) => Err(format!("the log read failed: {error}")),
         };
@@ -1417,8 +1448,9 @@ pub(crate) fn copy(value: &str) {
 mod tests {
     use super::*;
     use devcore::helper::{
-        BinaryInfo, ClientConfig, build_helper_plist, expected_staged_executable,
+        BinaryInfo, ClientConfig, DefaultHelper, build_helper_plist, expected_staged_executable,
     };
+    use devcore::launchd::PrivilegedHelper;
 
     #[test]
     fn default_helper_dynamically_tracks_installed_helper_state() {

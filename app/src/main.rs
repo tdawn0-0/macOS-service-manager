@@ -8,8 +8,8 @@
 //!   LaunchAgent) starts the macOS desktop app with the theme, capabilities,
 //!   main-window options, and unified logging from `nsh.json` and `theme.json`.
 
-#[cfg(not(target_os = "macos"))]
-compile_error!("Devbase targets Apple Silicon macOS 26 and later.");
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+compile_error!("Devbase targets Apple Silicon macOS 26+ and Linux (GTK4).");
 
 #[cfg(target_os = "macos")]
 mod macos {
@@ -295,7 +295,225 @@ mod macos {
     }
 }
 
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::{
+        io::Write,
+        path::{Path, PathBuf},
+        process::ExitCode,
+    };
+
+    use nsh_app_devbase::launch::{self, Seams};
+    use nsh_core::desktop::MainWindowOptions;
+    use nsh_platform_linux::{
+        AppOptions, AppSource, Appearance, AssetBase, Limits, Root, run_app, set_ui_sets,
+    };
+
+    const NSH_JSON: &str = include_str!("../nsh.json");
+    const THEME_JSON: &str = include_str!("../theme.json");
+
+    struct Manifest {
+        name: String,
+        id: String,
+        appearance: Appearance,
+        capabilities_json: Option<String>,
+        main_window: MainWindowOptions,
+    }
+
+    impl Manifest {
+        fn load() -> Self {
+            let value: serde_json::Value =
+                serde_json::from_str(NSH_JSON).expect("app/nsh.json must be valid JSON");
+            let name = value
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("Devbase")
+                .to_owned();
+            let id = value
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("xyz.jyeu.devbase")
+                .to_owned();
+            let appearance = match value.get("appearance").and_then(serde_json::Value::as_str) {
+                Some("light") => Appearance::Light,
+                Some("dark") => Appearance::Dark,
+                _ => Appearance::System,
+            };
+            let capabilities_json = value
+                .get("capabilities")
+                .map(|caps| serde_json::to_string(caps).expect("capabilities JSON"));
+            let main_window = value
+                .get("window")
+                .map(|window| {
+                    MainWindowOptions::from_json(window)
+                        .expect("app/nsh.json window config must be valid")
+                })
+                .unwrap_or_default();
+            Self {
+                name,
+                id,
+                appearance,
+                capabilities_json,
+                main_window,
+            }
+        }
+    }
+
+    fn build_root(manifest: &Manifest, background: bool) -> Root {
+        let tokens = nsh_base::Theme::from_json(THEME_JSON)
+            .expect("app/theme.json must be valid")
+            .into_tokens();
+        let mut main_window = manifest.main_window.clone();
+        // Linux GTK4 uses solid surfaces (no Liquid Glass backdrop).
+        main_window.attributes.transparent = Some(false);
+        main_window.attributes.close_on_press = Some(false);
+        if background {
+            // `--background` (XDG autostart / `devbase gui --background`)
+            // opens the app hidden in the system tray until activated.
+            main_window.default_visible = Some(false);
+        }
+        let mut root = Root::of::<nsh_app_devbase::App>()
+            .tokens(tokens)
+            .app_id(manifest.id.clone())
+            .main_window(main_window);
+        if manifest.appearance != Appearance::System {
+            root = root.appearance(manifest.appearance);
+        }
+        if let Some(capabilities) = &manifest.capabilities_json {
+            root = root.capabilities_json(capabilities);
+        }
+        root
+    }
+
+    fn package_resources_dir() -> (Option<PathBuf>, bool) {
+        if let Some(dir) = std::env::var_os("NSH_APP_DIR") {
+            return (Some(PathBuf::from(dir)), true);
+        }
+        let sibling = std::env::current_exe()
+            .and_then(|exe| exe.canonicalize())
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.join("nsh")));
+        if let Some(dir) = sibling
+            && dir.is_dir()
+        {
+            return (Some(dir), false);
+        }
+        (None, true)
+    }
+
+    fn install_gui_logger(development: bool, app_id: &str, data_dir: Option<&Path>) {
+        let mut logging = nsh_engine::logging::LogOptions::default();
+        logging.development = development;
+        logging.directory = match data_dir {
+            Some(dir) => Some(dir.join("logs")),
+            None => nsh_engine::logging::log_dir(app_id),
+        };
+        logging.output = Some(Box::new(|record: &log::Record<'_>| {
+            eprintln!("{} {}: {}", record.level(), record.target(), record.args());
+        }));
+        nsh_engine::logging::install(logging);
+    }
+
+    /// Production dispatch: `devcli` for `--dev` and public CLI, GTK4 `nsh` for the GUI.
+    struct SystemSeams;
+
+    impl Seams for SystemSeams {
+        fn internal(&self, args: &[String]) -> ExitCode {
+            let _ = env_logger::try_init();
+            let mut out = std::io::stdout();
+            let mut err = std::io::stderr();
+            match devcli::run_internal_with(args, &devcli::SystemInternal, &mut out, &mut err) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    let _ = writeln!(err, "{error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+
+        fn public_cli(&self, args: &[String]) -> ExitCode {
+            let _ = env_logger::try_init();
+            let mut env = devcli::CliEnv::default_env(Box::new(std::io::stdin()));
+            let mut out = std::io::stdout();
+            let mut err = std::io::stderr();
+            match devcli::run_cli_with_env(args, &mut env, &mut out, &mut err) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    if env.json {
+                        let _ = devcli::output::write_action_error_json(
+                            &mut err,
+                            error.message(),
+                            error.exit_code(),
+                        );
+                    } else {
+                        let _ = devcli::output::write_human_error(&mut err, error.message());
+                    }
+                    ExitCode::from(u8::try_from(error.exit_code()).unwrap_or(1))
+                }
+            }
+        }
+
+        fn gui(&self, background: bool) -> ExitCode {
+            let manifest = Manifest::load();
+            let (resources_dir, developing) = package_resources_dir();
+            let data_dir = resources_dir
+                .as_deref()
+                .and_then(|dir| std::fs::read_to_string(dir.join("app.json")).ok())
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                .and_then(|info| {
+                    info.get("dataDir")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(nsh_engine::resolve_data_dir)
+                });
+            install_gui_logger(developing, &manifest.id, data_dir.as_deref());
+
+            set_ui_sets(vec![
+                nsh_base::registry_of([nsh_base::parts::core as nsh_base::parts::Part]),
+                nsh_app_devbase::__nsh_native_module(),
+            ]);
+
+            let default_size = manifest
+                .main_window
+                .default_size
+                .map_or((1100, 720), |size| {
+                    (size.width.0.round() as i32, size.height.0.round() as i32)
+                });
+            let options = AppOptions {
+                app_id: manifest.id.clone(),
+                title: manifest.name.clone(),
+                size: default_size,
+                appearance: manifest.appearance,
+                asset_base: resources_dir.map(|dir| AssetBase::Directory(dir.join("assets"))),
+                limits: Limits::standalone(),
+                data_dir,
+                login_item: !developing,
+                single_instance: true,
+                ..AppOptions::default()
+            };
+
+            let root = build_root(&manifest, background);
+            if run_app(AppSource::Rust(root), options)
+                == nsh_platform_linux::gtk4::glib::ExitCode::SUCCESS
+            {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+    }
+
+    pub fn entry() -> ExitCode {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        launch::run(&args, &SystemSeams)
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn main() -> std::process::ExitCode {
     macos::entry()
+}
+
+#[cfg(target_os = "linux")]
+fn main() -> std::process::ExitCode {
+    linux::entry()
 }

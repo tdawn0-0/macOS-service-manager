@@ -232,17 +232,7 @@ impl DevLogsProvider for SystemDevLogsProvider {
     }
 
     fn open_in_console(&self, path: &Path) -> Result<(), String> {
-        let status = std::process::Command::new("open")
-            .arg("-a")
-            .arg("Console")
-            .arg(path)
-            .status()
-            .map_err(|error| error.to_string())?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!("open -a Console exited with {status}"))
-        }
+        crate::platform::open_log_file(path)
     }
 }
 

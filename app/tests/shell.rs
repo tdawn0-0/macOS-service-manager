@@ -442,12 +442,16 @@ fn choosing_a_section_switches_the_workspace() {
     app.wait_for("id:settings-page").unwrap();
 
     app.press("role:button[Services]").unwrap();
+    #[cfg(target_os = "macos")]
     app.wait_for("Homebrew").unwrap();
+    #[cfg(not(target_os = "macos"))]
+    app.wait_for("User Units").unwrap();
 
     app.press("role:button[Development]").unwrap();
     app.wait_for("id:development").unwrap();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn macos_sidebar_uses_liquid_glass_and_falls_back_in_full_screen() {
     let (_turn, mut app) = start_macos();
@@ -486,18 +490,31 @@ fn macos_sidebar_uses_liquid_glass_and_falls_back_in_full_screen() {
 fn services_lists_all_five_sources_and_sidebar_toggles_log_drawer() {
     let (_turn, mut app) = start();
     app.press("role:button[Services]").unwrap();
-    app.wait_for("Homebrew").unwrap();
-    for source in [
-        "Homebrew",
-        "Login Items",
-        "User Agents",
-        "System Agents",
-        "Daemons",
-    ] {
-        assert!(
-            app.screen().shows(source),
-            "Services rail lacks the {source} source"
-        );
+    #[cfg(target_os = "macos")]
+    {
+        app.wait_for("Homebrew").unwrap();
+        for source in [
+            "Homebrew",
+            "Login Items",
+            "User Agents",
+            "System Agents",
+            "Daemons",
+        ] {
+            assert!(
+                app.screen().shows(source),
+                "Services rail lacks the {source} source"
+            );
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        app.wait_for("User Units").unwrap();
+        for source in ["All Items", "User Units", "System Units", "Autostart"] {
+            assert!(
+                app.screen().shows(source),
+                "Services rail lacks the {source} source"
+            );
+        }
     }
 
     assert_eq!(app.screen().count("id:dev-log-drawer").unwrap(), 0);

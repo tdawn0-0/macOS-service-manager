@@ -312,12 +312,10 @@ fn render_command_entry(entry: &CommandEntry) -> AnyElement {
                         .truncate(),
                 )
                 .child(when(checked, || {
-                    view()
-                        .w(px(6.0))
-                        .h(px(6.0))
+                    icons::check()
+                        .size(px(13.0))
                         .flex_none()
-                        .rounded_full()
-                        .bg(move || theme().primary)
+                        .text_color(move || theme().primary)
                 })),
         )
         .child(when(shortcut.is_some(), move || {
@@ -336,6 +334,7 @@ fn palette_card() -> impl IntoElement {
         .test_id("command-palette")
         .w(px(540.0))
         .flex_col()
+        .pb(px(8.0))
         .rounded(tokens::panel_radius)
         .bg(tokens::panel)
         .border_1()
@@ -373,7 +372,13 @@ fn palette_card() -> impl IntoElement {
                         .text_size(px(14.0))
                         .text_color(move || theme().foreground)
                 })
-                .list_style(|s| s.w_full().max_h(px(360.0)).p(tokens::space(1.5)))
+                .list_style(|s| {
+                    s.w_full()
+                        .max_h(px(360.0))
+                        .px(tokens::space(1.5))
+                        .pt(tokens::space(1.5))
+                        .pb(px(8.0))
+                })
                 .group_style(|s| {
                     s.w_full()
                         .px(tokens::space(2.5))

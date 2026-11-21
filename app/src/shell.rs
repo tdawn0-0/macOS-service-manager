@@ -189,12 +189,6 @@ pub(crate) fn shell() -> impl IntoElement {
         .flex_1()
         .flex_row()
         .child(sidebar())
-        .child(
-            view()
-                .w(px(1.0))
-                .flex_none()
-                .bg(move || theme().sidebar_border),
-        )
         .child(workspace())
 }
 
@@ -238,6 +232,8 @@ fn workspace() -> impl IntoElement {
         .min_w(px(0.0))
         .flex_col()
         .bg(tokens::sheet)
+        .border_l_1()
+        .border_color(move || theme().sidebar_border)
         .child(readiness::strip())
         .child(
             v_resizable()

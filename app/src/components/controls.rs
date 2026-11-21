@@ -43,7 +43,7 @@ pub(crate) fn labeled_button(
         })
         .hover(move |style| {
             if primary {
-                style.bg(theme().primary.opacity(0.86))
+                style.bg(theme().primary.opacity(0.88))
             } else {
                 style.bg(tokens::row_hover())
             }
@@ -62,6 +62,7 @@ pub(crate) fn labeled_button(
         .child(
             text(label.into())
                 .text_size(px(tokens::TEXT_SMALL))
+                .font_weight(FontWeight::MEDIUM)
                 .truncate(),
         )
 }
@@ -226,6 +227,7 @@ pub(crate) fn tooltip(label: impl Into<String>) -> nsh_base::TooltipElement {
         .bg(move || theme().popover)
         .border_1()
         .border_color(tokens::hairline)
+        .shadow_md()
         .child(
             text(label)
                 .text_size(px(tokens::TEXT_CAPTION))
@@ -272,7 +274,7 @@ pub(crate) fn action_button(
             Tone::Default | Tone::Danger => tokens::hairline(),
         })
         .hover(move |style| match tone {
-            Tone::Primary => style.bg(theme().primary.opacity(0.86)),
+            Tone::Primary => style.bg(theme().primary.opacity(0.88)),
             Tone::Danger => style.bg(theme().destructive.opacity(0.12)),
             Tone::Default => style.bg(tokens::row_hover()),
         })
@@ -289,6 +291,7 @@ pub(crate) fn action_button(
         .child(
             text(label)
                 .text_size(px(tokens::TEXT_SMALL))
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(move || match tone {
                     Tone::Primary => theme().primary_foreground,
                     Tone::Default => theme().foreground,
@@ -444,18 +447,19 @@ pub(crate) fn tag(label: impl Into<String>, tone: TagTone) -> impl IntoElement {
     let label = label.into();
     view()
         .flex_none()
-        .px(px(7.0))
-        .py(px(1.0))
-        .rounded(px(99.0))
+        .px(px(8.0))
+        .py(px(2.0))
+        .rounded_full()
         .bg(move || match tone {
-            TagTone::Neutral => tokens::control(),
+            TagTone::Neutral => tokens::inset(),
             TagTone::Success => tokens::success().opacity(0.14),
-            TagTone::Warning => tokens::warning().opacity(0.16),
-            TagTone::Error => theme().destructive.opacity(0.12),
+            TagTone::Warning => tokens::warning().opacity(0.15),
+            TagTone::Error => theme().destructive.opacity(0.13),
         })
         .child(
             text(label)
                 .text_size(px(tokens::TEXT_CAPTION))
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(move || match tone {
                     TagTone::Neutral => theme().muted_foreground,
                     TagTone::Success => tokens::success(),
@@ -704,7 +708,7 @@ pub(crate) fn text_field(
         .rounded(move || theme().radius)
         .bg(tokens::control)
         .border_1()
-        .border_color(tokens::hairline)
+        .border_color(move || theme().input)
         .focus_within(|style| style.border_color(move || theme().ring))
         .child(
             nsh_base::input()
@@ -783,12 +787,14 @@ pub(crate) fn switch(
     let test_id = test_id.into();
     let label = accessibility_label.into();
     let checked = checked.into_reactive();
+    let checked_track = checked.clone();
+    let checked_thumb = checked.clone();
     let disabled = disabled.into_reactive();
     let disabled_opacity = disabled.clone();
     nsh_base::switch()
         .test_id(&test_id)
         .flex_none()
-        .rounded(px(9.0))
+        .rounded_full()
         .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
         .accessibility_label(label)
         .checked(move || checked.get())
@@ -800,30 +806,38 @@ pub(crate) fn switch(
                 1.0_f32
             }
         })
-        .track_style(|style| {
+        .track_style(move |style| {
+            let checked = checked_track.clone();
             style
-                .w(px(30.0))
+                .w(px(32.0))
                 .h(px(18.0))
                 .flex_none()
                 .flex_row()
                 .items_center()
-                .px(px(2.0))
-                .rounded(px(9.0))
-                .bg(move || theme().secondary)
-                .checked(|checked| checked.bg(move || theme().primary))
+                .p(px(2.0))
+                .rounded_full()
+                .bg(move || {
+                    if checked.get() {
+                        theme().primary
+                    } else {
+                        tokens::switch_track_off()
+                    }
+                })
         })
-        .thumb_style(|style| {
+        .thumb_style(move |style| {
+            let checked = checked_thumb.clone();
             style
                 .size(px(14.0))
-                .rounded(px(7.0))
-                .bg(move || theme().primary_foreground)
-                .checked(|checked| checked.translate_x(px(12.0)))
+                .rounded_full()
+                .bg(AdaptiveColor::rgb(0xffffff, 0xffffff))
+                .ml(move || if checked.get() { px(14.0) } else { px(0.0) })
         })
         .on_change(move |next: &bool| on_change(*next))
 }
 
 /// A tab bar backed by `nsh_base::tabs()` with roving arrow-key navigation and
 /// a spring-animated selection indicator.
+#[allow(dead_code)]
 pub(crate) fn tab_bar<E: IntoElement>(
     accessibility_label: impl Into<String>,
     tabs: impl IntoIterator<Item = E>,

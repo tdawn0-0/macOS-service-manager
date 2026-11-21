@@ -552,6 +552,14 @@ fn command_palette_opens_filters_and_executes_navigation_actions_and_db_jump() {
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
     app.wait_for("Services").unwrap();
 
+    // Open Command Palette via sidebar search button and close via Escape.
+    assert_eq!(app.screen().count("id:sidebar-search").unwrap(), 1);
+    app.press("id:sidebar-search").unwrap();
+    app.wait_for("id:command-palette").unwrap();
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:command-palette", Duration::from_secs(2))
+        .unwrap();
+
     // Open Command Palette via Cmd+K.
     assert_eq!(app.screen().count("id:command-palette").unwrap(), 0);
     app.press_key("mod+k").unwrap();

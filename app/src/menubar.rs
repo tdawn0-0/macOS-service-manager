@@ -43,7 +43,7 @@ use nsh_core::{
             MenuItem, TrayClickEvent, displays, main_window, register_global_shortcut, set_tray,
             tray, window,
         },
-        haptic, reduce_motion,
+        haptic, reduce_motion, svg,
     },
     geometry::{Bounds, Point, deg, point, size},
     platform::Os,
@@ -146,6 +146,13 @@ const MENUBAR_ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="36
   <path fill-rule="evenodd" d="M9.5 3h17a6.5 6.5 0 0 1 0 13h-17a6.5 6.5 0 0 1 0-13Zm17 2.9a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z"/>
   <rect x="4.2" y="21.2" width="27.6" height="10.6" rx="5.3" fill="none" stroke="#000" stroke-width="2.4"/>
   <circle cx="9.5" cy="26.5" r="2.7"/>
+</svg>"##;
+
+/// `currentColor` variant of [`MENUBAR_ICON`] for the popover header brand mark.
+const DEVBASE_MARK_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 36 36">
+  <path fill="currentColor" fill-rule="evenodd" d="M9.5 3h17a6.5 6.5 0 0 1 0 13h-17a6.5 6.5 0 0 1 0-13Zm17 2.9a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z"/>
+  <rect x="4.2" y="21.2" width="27.6" height="10.6" rx="5.3" fill="none" stroke="currentColor" stroke-width="2.6"/>
+  <circle cx="9.5" cy="26.5" r="2.7" fill="currentColor"/>
 </svg>"##;
 
 /// One kind of row, so a test can tell a heading from a switch.
@@ -1350,10 +1357,9 @@ fn status_dot_color(state: &str) -> AdaptiveColor {
 fn status_dot(state: impl IntoReactive<String> + 'static) -> impl IntoElement {
     let state = state.into_reactive();
     view()
-        .w(px(7.0))
-        .h(px(7.0))
+        .size(px(6.0))
         .flex_none()
-        .rounded(px(4.0))
+        .rounded_full()
         .bg(move || status_dot_color(&state.get()))
 }
 
@@ -1375,7 +1381,7 @@ fn popover_switch(
         .accessibility_label(label)
         .test_id(&test_id)
         .flex_none()
-        .rounded(px(9.0))
+        .rounded_full()
         .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
         .opacity(move || {
             if disabled_opacity.get() {
@@ -1389,22 +1395,21 @@ fn popover_switch(
             s.w(px(32.0))
                 .h(px(18.0))
                 .p(px(2.0))
-                .rounded(px(9.0))
+                .rounded_full()
                 .flex_row()
                 .items_center()
                 .bg(move || {
                     if checked.get() {
                         theme().primary
                     } else {
-                        theme().foreground.opacity(0.18)
+                        tokens::switch_track_off()
                     }
                 })
         })
         .thumb_style(move |s| {
             let checked = checked_thumb.clone();
-            s.w(px(14.0))
-                .h(px(14.0))
-                .rounded(px(7.0))
+            s.size(px(14.0))
+                .rounded_full()
                 .bg(AdaptiveColor::rgb(0xffffff, 0xffffff))
                 .ml(move || if checked.get() { px(14.0) } else { px(0.0) })
         })
@@ -1506,6 +1511,7 @@ pub fn popover_content() -> impl IntoElement {
         .test_id("menubar-popover")
         .relative()
         .w_full()
+        .h_full()
         .min_h(px(POPOVER_MIN_HEIGHT))
         .max_h(px(POPOVER_MAX_HEIGHT))
         .flex_col()
@@ -1541,7 +1547,7 @@ pub fn popover_content() -> impl IntoElement {
         .child(
             scroll()
                 .test_id("menubar-popover-body")
-                .flex_auto()
+                .flex_1()
                 .min_h(px(0.0))
                 .px(px(8.0))
                 .py(px(6.0))
@@ -1563,16 +1569,18 @@ fn popover_header() -> impl IntoElement {
         .py(px(10.0))
         .child(
             view()
-                .size(px(30.0))
+                .size(px(28.0))
                 .flex_none()
                 .items_center()
                 .justify_center()
-                .rounded(px(8.0))
-                .bg(move || theme().primary)
+                .rounded(px(7.0))
+                .bg(move || theme().primary.opacity(0.14))
+                .border_1()
+                .border_color(move || theme().primary.opacity(0.24))
                 .child(
-                    icons::package()
-                        .size(px(16.0))
-                        .text_color(move || theme().primary_foreground),
+                    svg(ImageSrc::svg_markup(DEVBASE_MARK_SVG))
+                        .size(px(15.0))
+                        .text_color(move || theme().primary),
                 ),
         )
         .child(
@@ -1860,7 +1868,7 @@ fn popover_proxy_row() -> impl IntoElement {
                         .flex_col()
                         .gap(px(1.0))
                         .child(
-                            text(move || format!("Proxy · {}", proxy::proxy_status()))
+                            text("Proxy")
                                 .text_size(px(tokens::TEXT_BODY))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(move || theme().foreground)
@@ -1868,11 +1876,20 @@ fn popover_proxy_row() -> impl IntoElement {
                         )
                         .child(
                             text(move || {
-                                format!(
+                                let base = format!(
                                     "{} · :{}",
                                     store::software::plural(proxy::saved_rules().len(), "rule"),
                                     proxy::listener_port()
-                                )
+                                );
+                                let status = proxy::proxy_status();
+                                if matches!(
+                                    status.as_str(),
+                                    "Failed" | "Starting" | "Stopping" | "Restarting"
+                                ) {
+                                    format!("{base} · {status}")
+                                } else {
+                                    base
+                                }
                             })
                             .text_size(px(tokens::TEXT_CAPTION))
                             .tabular_nums()
@@ -1946,18 +1963,29 @@ fn popover_tunnel_row() -> impl IntoElement {
                         .flex_col()
                         .gap(px(1.0))
                         .child(
-                            text(move || format!("Tunnel · {}", proxy::tunnel_status()))
+                            text("Tunnel")
                                 .text_size(px(tokens::TEXT_BODY))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(move || theme().foreground)
                                 .truncate(),
                         )
                         .child(
-                            text(tunnel_row_detail)
-                                .text_size(px(tokens::TEXT_CAPTION))
-                                .tabular_nums()
-                                .text_color(move || theme().muted_foreground)
-                                .truncate(),
+                            text(move || {
+                                let base = tunnel_row_detail();
+                                let status = proxy::tunnel_status();
+                                if matches!(
+                                    status.as_str(),
+                                    "Failed" | "Starting" | "Stopping" | "Restarting"
+                                ) {
+                                    format!("{base} · {status}")
+                                } else {
+                                    base
+                                }
+                            })
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .tabular_nums()
+                            .text_color(move || theme().muted_foreground)
+                            .truncate(),
                         ),
                 ),
         )
@@ -2154,7 +2182,7 @@ fn collapsible_rules_section() -> impl IntoElement {
             view()
                 .test_id("popover-section-rules-toggle")
                 .role(AccessibilityRole::Button)
-                .label("Toggle HTTPS URLs section")
+                .label("Toggle HTTPS routes section")
                 .accessibility_state(move || AccessibilityState {
                     expanded: Some(rules_expanded()),
                     ..AccessibilityState::default()
@@ -2165,8 +2193,8 @@ fn collapsible_rules_section() -> impl IntoElement {
                 .items_center()
                 .justify_between()
                 .px(px(6.0))
-                .pt(px(4.0))
-                .pb(px(3.0))
+                .pt(px(6.0))
+                .pb(px(4.0))
                 .rounded(move || theme().radius)
                 .hover(|s| s.bg(tokens::row_hover()))
                 .on_press(|_: &()| toggle_rules_section())
@@ -2189,7 +2217,7 @@ fn collapsible_rules_section() -> impl IntoElement {
                                 }),
                         )
                         .child(
-                            text("URLs")
+                            text("Routes")
                                 .text_size(px(tokens::TEXT_CAPTION))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(move || theme().muted_foreground),
@@ -2415,6 +2443,7 @@ fn footer_button(
         .border_1()
         .border_color(tokens::hairline)
         .hover(|s| s.bg(tokens::row_hover()))
+        .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
         .on_press(on_press)
         .child(
             icons::render(icon)
@@ -2426,6 +2455,7 @@ fn footer_button(
         btn = btn.flex_1().child(
             text(label)
                 .text_size(px(tokens::TEXT_SMALL))
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(move || theme().foreground),
         );
         btn.into_element()

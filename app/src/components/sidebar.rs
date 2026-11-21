@@ -7,16 +7,28 @@ use devcore::service::{Source, State as ServiceState};
 use nsh_base::{button, theme};
 use nsh_core::{
     GlassEffect, PointerEvents,
-    element::{Svg, desktop::title_bar},
+    element::{ImageSrc, Svg, desktop::title_bar, svg},
     prelude::*,
 };
 
 use crate::{
-    components::icons::{self, Icon},
+    command_palette,
+    components::{
+        controls,
+        icons::{self, Icon},
+    },
     meta, shell,
     store::{self, Section, SectionGroup, databases, proxy, services},
     theme as tokens,
 };
+
+/// Monochrome `currentColor` variant of Devbase's signature dual-toggle mark
+/// (`assets/icons/menubar.svg`), rendered subtly beside the sidebar wordmark.
+const DEVBASE_GLYPH_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 36 36">
+  <path fill="currentColor" fill-rule="evenodd" d="M9.5 3h17a6.5 6.5 0 0 1 0 13h-17a6.5 6.5 0 0 1 0-13Zm17 2.9a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z"/>
+  <rect x="4.2" y="21.2" width="27.6" height="10.6" rx="5.3" fill="none" stroke="currentColor" stroke-width="2.6"/>
+  <circle cx="9.5" cy="26.5" r="2.7" fill="currentColor"/>
+</svg>"##;
 
 fn section_icon(section: Section) -> Svg {
     icons::render(match section {
@@ -180,18 +192,11 @@ fn nav_badge(section: Section) -> impl IntoElement {
                 .flex_row()
                 .items_center()
                 .gap(px(5.0))
-                .child(
-                    view()
-                        .w(px(6.0))
-                        .h(px(6.0))
-                        .flex_none()
-                        .rounded_full()
-                        .bg(move || {
-                            section_badge(section)
-                                .map(|b| badge_dot_color(b.tone))
-                                .unwrap_or(AdaptiveColor::TRANSPARENT)
-                        }),
-                )
+                .child(view().size(px(6.0)).flex_none().rounded_full().bg(move || {
+                    section_badge(section)
+                        .map(|b| badge_dot_color(b.tone))
+                        .unwrap_or(AdaptiveColor::TRANSPARENT)
+                }))
                 .child(when(
                     move || section_badge(section).and_then(|b| b.label).is_some(),
                     move || {
@@ -213,7 +218,7 @@ pub(crate) fn sidebar() -> impl IntoElement {
     view()
         .test_id("sidebar")
         .relative()
-        .w_52()
+        .w(px(204.0))
         .flex_none()
         .flex_col()
         .bg(move || {
@@ -251,7 +256,15 @@ pub(crate) fn sidebar() -> impl IntoElement {
                 .child(identity())
                 .child(nav_sections())
                 .child(view().flex_1().window_drag(true))
-                .child(logs_toggle()),
+                .child(
+                    view()
+                        .w_full()
+                        .flex_none()
+                        .pt(tokens::space(2.0))
+                        .border_t_1()
+                        .border_color(tokens::hairline)
+                        .child(logs_toggle()),
+                ),
         )
 }
 
@@ -266,17 +279,87 @@ fn title_bar_strip() -> impl IntoElement {
         .window_drag(true)
 }
 
-/// Clean app identity above the navigation list.
+/// App brand mark + wordmark on the left paired with a quiet `⌘K` Command
+/// Palette trigger button on the right.
 fn identity() -> impl IntoElement {
     view()
-        .px(tokens::space(2.5))
+        .w_full()
+        .flex_none()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap(tokens::space(2.0))
+        .px(tokens::space(2.0))
         .pb(tokens::space(3.0))
         .window_drag(true)
         .child(
-            text(meta::NAME)
-                .text_size(px(15.0))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(move || theme().foreground),
+            view()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(2.0))
+                .child(
+                    view()
+                        .size(px(20.0))
+                        .flex_none()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(6.0))
+                        .bg(move || theme().sidebar_primary.opacity(0.14))
+                        .border_1()
+                        .border_color(move || theme().sidebar_primary.opacity(0.24))
+                        .child(
+                            svg(ImageSrc::svg_markup(DEVBASE_GLYPH_SVG))
+                                .size(px(12.0))
+                                .text_color(move || theme().sidebar_primary),
+                        ),
+                )
+                .child(
+                    text(meta::NAME)
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .text_size(px(14.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(move || theme().foreground)
+                        .truncate(),
+                ),
+        )
+        .child(
+            view()
+                .flex_none()
+                .tooltip(controls::tooltip("Command palette (⌘K)"))
+                .child(
+                    button()
+                        .test_id("sidebar-search")
+                        .accessibility_label("Command palette")
+                        .h(px(24.0))
+                        .px(px(6.0))
+                        .flex_none()
+                        .flex_row()
+                        .items_center()
+                        .justify_center()
+                        .gap(px(4.0))
+                        .rounded(px(6.0))
+                        .bg(tokens::inset)
+                        .border_1()
+                        .border_color(tokens::hairline)
+                        .hover(|s| s.bg(tokens::row_hover()))
+                        .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().sidebar_ring))
+                        .on_press(command_palette::open)
+                        .child(
+                            icons::search()
+                                .size(px(11.0))
+                                .flex_none()
+                                .text_color(move || theme().muted_foreground),
+                        )
+                        .child(
+                            text("⌘K")
+                                .text_size(px(10.0))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(move || theme().muted_foreground),
+                        ),
+                ),
         )
 }
 
@@ -290,8 +373,8 @@ fn nav_sections() -> impl IntoElement {
                 view()
                     .test_id("sidebar-group-divider")
                     .w_full()
-                    .py(px(6.0))
-                    .px(tokens::space(2.5))
+                    .py(tokens::space(2.0))
+                    .px(tokens::space(2.0))
                     .child(view().h(px(1.0)).w_full().bg(tokens::hairline)),
             );
         }
@@ -305,7 +388,7 @@ fn nav_group(group: SectionGroup) -> impl IntoElement {
     view()
         .test_id(group.test_id())
         .flex_col()
-        .gap(tokens::space(0.5))
+        .gap(px(2.0))
         .child(group.sections().iter().map(|section| nav_item(*section)))
 }
 
@@ -315,12 +398,12 @@ fn nav_item(section: Section) -> impl IntoElement {
     button()
         .accessibility_label(section.label())
         .w_full()
+        .h(px(30.0))
         .flex_row()
         .items_center()
         .justify_start()
-        .gap(tokens::space(2.5))
+        .gap(tokens::space(2.0))
         .px(tokens::space(2.5))
-        .py(tokens::space(1.5))
         .rounded(move || theme().radius)
         .selected(move || store::active_section() == section)
         .bg(move || {
@@ -350,12 +433,18 @@ fn nav_item(section: Section) -> impl IntoElement {
             text(section.label())
                 .flex_1()
                 .min_w(px(0.0))
-                .text_sm()
+                .text_size(px(tokens::TEXT_BODY))
                 .style_when(
                     move || store::active_section() == section,
                     |s| s.font_weight(FontWeight::MEDIUM),
                 )
-                .text_color(move || theme().sidebar_foreground)
+                .text_color(move || {
+                    if store::active_section() == section {
+                        theme().sidebar_accent_foreground
+                    } else {
+                        theme().sidebar_foreground
+                    }
+                })
                 .truncate(),
         )
         .child(nav_badge(section))
@@ -368,12 +457,12 @@ fn logs_toggle() -> impl IntoElement {
         .test_id("sidebar-logs-toggle")
         .accessibility_label("Logs")
         .w_full()
+        .h(px(30.0))
         .flex_row()
         .items_center()
         .justify_start()
-        .gap(tokens::space(2.5))
+        .gap(tokens::space(2.0))
         .px(tokens::space(2.5))
-        .py(tokens::space(1.5))
         .rounded(move || theme().radius)
         .selected(crate::dev_logs::is_open)
         .bg(move || {
@@ -403,18 +492,23 @@ fn logs_toggle() -> impl IntoElement {
             text("Logs")
                 .flex_1()
                 .min_w(px(0.0))
-                .text_sm()
+                .text_size(px(tokens::TEXT_BODY))
                 .style_when(crate::dev_logs::is_open, |s| {
                     s.font_weight(FontWeight::MEDIUM)
                 })
-                .text_color(move || theme().sidebar_foreground)
+                .text_color(move || {
+                    if crate::dev_logs::is_open() {
+                        theme().sidebar_accent_foreground
+                    } else {
+                        theme().sidebar_foreground
+                    }
+                })
                 .truncate(),
         )
         .child(when(crate::dev_logs::is_open, || {
             view()
                 .test_id("sidebar-logs-active-dot")
-                .w(px(6.0))
-                .h(px(6.0))
+                .size(px(6.0))
                 .flex_none()
                 .rounded_full()
                 .bg(move || theme().sidebar_primary)

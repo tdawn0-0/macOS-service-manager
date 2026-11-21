@@ -1019,13 +1019,17 @@ fn the_popover_ui_renders_status_and_toggles_switches() {
 
     // Toggle proxy switch on.
     app.press("id:popover-switch-proxy").unwrap();
-    wait_contains(&mut app, "Proxy · Running", Duration::from_secs(5)).unwrap();
+    wait_contains(&mut app, "3 running", Duration::from_secs(5)).unwrap();
     assert!(proxy.calls().iter().any(|call| call == "apply proxy"));
+    assert!(contains(&app, "Proxy"));
+    assert!(!contains(&app, "Proxy · Running"));
 
     // Toggle tunnel switch on.
     app.press("id:popover-switch-tunnel").unwrap();
-    wait_contains(&mut app, "Tunnel · Running", Duration::from_secs(5)).unwrap();
+    wait_contains(&mut app, "4 running", Duration::from_secs(5)).unwrap();
     assert!(proxy.calls().iter().any(|call| call == "start tunnel"));
+    assert!(contains(&app, "Tunnel"));
+    assert!(!contains(&app, "Tunnel · Running"));
 
     // Footer Quit button triggers quit flow.
     app.press("id:popover-quit").unwrap();
@@ -1588,7 +1592,7 @@ fn popover_scroll_body_and_rows_stay_stable_across_switch_toggles_and_refresh() 
     wait_contains(&mut app, "2 running", Duration::from_secs(5)).unwrap();
 
     app.press("id:popover-switch-proxy").unwrap();
-    wait_contains(&mut app, "Proxy · Running", Duration::from_secs(5)).unwrap();
+    wait_contains(&mut app, "3 running", Duration::from_secs(5)).unwrap();
 
     app.press("id:popover-refresh").unwrap();
     app.wait(Duration::from_millis(200)).unwrap();
@@ -2046,6 +2050,134 @@ fn failed_resources_expose_logs_jump_in_menu_and_popover() {
     app.wait_for_gone("id:menubar-popover", Duration::from_secs(2))
         .unwrap();
     app.wait_for("text:logs-job:tunnel").unwrap();
+
+    drop(turn);
+}
+
+#[test]
+fn popover_pins_footer_inside_viewport_with_many_databases_and_routes() {
+    let mut statuses = BTreeMap::new();
+    for (id, status) in [
+        ("pg-main", "Running"),
+        ("redis-cache", "Running"),
+        ("mysql-legacy", "Stopped"),
+        ("mongo-events", "Running"),
+    ] {
+        statuses.insert(id.to_string(), status.to_string());
+    }
+    let databases = FakeDatabases::new(DatabaseFixture {
+        instances: vec![
+            instance("pg-main", "postgresql", 5432),
+            instance("redis-cache", "redis", 6379),
+            instance("mysql-legacy", "mysql", 3306),
+            instance("mongo-events", "mongodb", 27017),
+        ],
+        statuses,
+    });
+
+    let mut proxy_rule = rule("app.devbase.localhost", true);
+    proxy_rule.tunnel_url = "https://preview.example.dev".to_string();
+    let mut snapshot = proxy_snapshot(
+        vec![
+            proxy_rule,
+            rule("api.devbase.localhost", false),
+            rule("docs.devbase.localhost", false),
+            rule("admin.devbase.localhost", false),
+            rule("worker.devbase.localhost", false),
+        ],
+        "Running",
+    );
+    snapshot.token_configured = true;
+    snapshot
+        .statuses
+        .insert("tunnel".to_string(), "Running".to_string());
+    let proxy = FakeProxy::new(snapshot);
+    let settings = FakeSettings::new(settings_snapshot());
+
+    let turn = serial();
+    use_fake_menubar();
+    use_fake_providers();
+    use_fake_databases();
+    install_databases_provider(databases as Arc<dyn DatabasesProvider>);
+    use_fake_proxy();
+    install_proxy_provider(proxy as Arc<dyn ProxyProvider>);
+    use_fake_system();
+    install_system_settings_provider(settings as Arc<dyn SystemSettingsProvider>);
+
+    let mut app = Headless::start(EngineConfig::new(Root::of::<PopoverHarness>())).unwrap();
+    app.set_viewport(Size::new(px(340.0), px(520.0))).unwrap();
+    app.wait_for("id:menubar-popover-footer").unwrap();
+    app.wait_for("id:popover-open").unwrap();
+    app.wait_for("id:popover-quit").unwrap();
+
+    assert!(contains(&app, "Routes"));
+    assert!(contains(&app, "Proxy"));
+    assert!(!contains(&app, "Proxy · Running"));
+    assert!(contains(&app, "Tunnel"));
+    assert!(!contains(&app, "Tunnel · Running"));
+
+    let nodes = app.screen().layout_nodes();
+    let bounds_of = |id: &str| {
+        nodes
+            .iter()
+            .find(|n| n.test_id.as_deref() == Some(id))
+            .map(|n| n.bounds)
+            .unwrap_or_else(|| panic!("missing layout node for `{id}`"))
+    };
+
+    let header = bounds_of("menubar-popover-header");
+    let body = bounds_of("menubar-popover-body");
+    let footer = bounds_of("menubar-popover-footer");
+
+    assert!(header.size.height.0 > 0.0, "header collapsed: {header:?}");
+    assert!(body.size.height.0 > 100.0, "body collapsed: {body:?}");
+    assert!(footer.size.height.0 >= 36.0, "footer collapsed: {footer:?}");
+    assert!(
+        footer.origin.y.0 + footer.size.height.0 <= 520.5,
+        "footer clipped below 520pt viewport: header={header:?} body={body:?} footer={footer:?}"
+    );
+    assert!(
+        body.origin.y.0 + body.size.height.0 <= footer.origin.y.0 + 1.0,
+        "body overlapped footer: body={body:?} footer={footer:?}"
+    );
+    drop(app);
+
+    // Also verify SizeToContent::Height (real macOS NSPanel popup mode) expands
+    // naturally for content without collapsing to POPOVER_MIN_HEIGHT and still
+    // clamps cleanly at POPOVER_MAX_HEIGHT (560pt) with the footer unclipped.
+    #[component]
+    fn FittedPopoverHarness() -> impl IntoElement {
+        nsh_app_devbase::testing::menubar_load();
+        let mut attrs = nsh_core::desktop::WindowAttributes::default();
+        attrs.size_to_content = Some(nsh_core::desktop::SizeToContent::Height);
+        nsh_core::element::desktop::current_window().set(attrs);
+        nsh_app_devbase::testing::menubar_popover()
+    }
+    let mut fitted =
+        Headless::start(EngineConfig::new(Root::of::<FittedPopoverHarness>())).unwrap();
+    fitted
+        .set_viewport(Size::new(px(340.0), px(560.0)))
+        .unwrap();
+    fitted.wait_for("id:menubar-popover-footer").unwrap();
+    let fnodes = fitted.screen().layout_nodes();
+    let fbounds = |id: &str| {
+        fnodes
+            .iter()
+            .find(|n| n.test_id.as_deref() == Some(id))
+            .map(|n| n.bounds)
+            .unwrap_or_else(|| panic!("missing fitted layout node for `{id}`"))
+    };
+    let froot = fbounds("menubar-popover");
+    let fbody = fbounds("menubar-popover-body");
+    let ffooter = fbounds("menubar-popover-footer");
+    assert!(
+        froot.size.height.0 > 300.0 && froot.size.height.0 <= 560.5,
+        "fitted popup height wrong: root={froot:?} body={fbody:?} footer={ffooter:?}"
+    );
+    assert!(
+        ffooter.origin.y.0 + ffooter.size.height.0 <= froot.size.height.0 + 0.5,
+        "fitted footer clipped: root={froot:?} body={fbody:?} footer={ffooter:?}"
+    );
 
     drop(turn);
 }

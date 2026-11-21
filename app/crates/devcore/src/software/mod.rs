@@ -138,7 +138,7 @@ impl CurlTransport {
 }
 
 fn curl(args: &[&str]) -> Result<std::process::Output, SoftwareError> {
-    std::process::Command::new("/usr/bin/curl")
+    std::process::Command::new(crate::platform::resolve_curl())
         .args(args)
         .stdin(std::process::Stdio::null())
         .output()
@@ -314,7 +314,10 @@ pub(crate) const MAX_DOWNLOAD: i64 = 2 << 30;
 pub(crate) const MAX_EXPANDED: i64 = 8 << 30;
 pub(crate) const MAX_INTEGRITY_INDEX: usize = 32 << 20;
 pub(crate) const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+#[cfg(target_os = "macos")]
 pub(crate) const BREW_PROGRAM: &str = "/opt/homebrew/bin/brew";
+#[cfg(not(target_os = "macos"))]
+pub(crate) const BREW_PROGRAM: &str = "/home/linuxbrew/.linuxbrew/bin/brew";
 
 /// The integrity index path (`integrity/<id>.json`).
 pub(crate) fn integrity_path(store: &Store, id: &str) -> PathBuf {

@@ -14,6 +14,7 @@ use super::{
     version_less,
 };
 use crate::model::Package;
+use crate::platform::HostTarget;
 use crate::state::StateError;
 
 /// The UI's preview of one package version.
@@ -46,11 +47,12 @@ impl Software {
                 "resolve the Node.js version range to an exact release first",
             ));
         }
+        let target = HostTarget::current();
         let state = self.store().read()?;
         for package in state.packages.values() {
             if package.name == name
                 && package.version == version
-                && (package.arch == "arm64" || package.arch == "universal")
+                && target.accepts_model_arch(&package.arch)
             {
                 package.validate()?;
                 return Ok(package.clone());
@@ -65,18 +67,26 @@ impl Software {
         cancelled: Cancelled<'_>,
         package: &Package,
     ) -> Result<PackageDetails, SoftwareError> {
+        let target = HostTarget::current();
+        let arch_compatible = target.accepts_model_arch(&package.arch);
+        let location = if package.format == "system" {
+            system_package_location(package)
+                .unwrap_or_else(|| self.store().package_directory(package))
+        } else {
+            self.store().package_directory(package)
+        };
         let mut info = PackageDetails {
             package: package.clone(),
             archive_bytes: 0,
             cached: false,
             installed: false,
-            compatible: package.arch == "arm64" || package.arch == "universal",
-            compatibility: if package.arch == "arm64" || package.arch == "universal" {
+            compatible: arch_compatible,
+            compatibility: if arch_compatible {
                 "Compatible architecture".into()
             } else {
                 "This archive is for a different architecture".into()
             },
-            location: self.store().package_directory(package),
+            location,
             references: Vec::new(),
             integrity: String::new(),
             integrity_note: String::new(),
@@ -85,7 +95,7 @@ impl Software {
         if cancelled() {
             return Err(cancelled_error());
         }
-        if !package.min_macos.is_empty() {
+        if target.is_macos() && !package.min_macos.is_empty() {
             let version =
                 self.runner()
                     .run("/usr/bin/sw_vers", &["-productVersion"], COMMAND_TIMEOUT)?;
@@ -108,7 +118,12 @@ impl Software {
             }
             let installed = installed.clone();
             info.package = installed.clone();
-            info.location = self.store().package_directory(&installed);
+            info.location = if installed.format == "system" {
+                system_package_location(&installed)
+                    .unwrap_or_else(|| self.store().package_directory(&installed))
+            } else {
+                self.store().package_directory(&installed)
+            };
             info.installed = true;
             info.integrity = "Not checked".into();
             info.integrity_note =
@@ -141,6 +156,23 @@ impl Software {
             }
         }
         info.references.sort();
+        if info.package.format == "system" {
+            info.compatibility =
+                "Uses system-installed binaries managed by your OS package manager".into();
+            if info.installed {
+                info.integrity = "System managed".into();
+                info.integrity_note =
+                    "Check files validates the required system executables. Your OS package manager manages upgrades.".into();
+                for name in info.package.binaries.keys() {
+                    if let Err(error) = self.binary(&state, &info.package.id(), name) {
+                        info.integrity = "Needs repair".into();
+                        info.integrity_note = error.to_string();
+                        break;
+                    }
+                }
+            }
+            return Ok(info);
+        }
         if !info.package.formula.is_empty() {
             info.compatibility = "Requires Apple Silicon Homebrew; dependencies and downloads are managed by Homebrew".into();
             if info.installed {
@@ -203,6 +235,17 @@ impl Software {
             "too many Java installation folders with this version",
         ))
     }
+}
+
+fn system_package_location(package: &Package) -> Option<PathBuf> {
+    let primary = match package.name.as_str() {
+        "postgresql" => package.binaries.get("postgres"),
+        "redis" => package.binaries.get("redis-server"),
+        _ => package.binaries.values().next(),
+    }?;
+    std::path::Path::new(primary)
+        .parent()
+        .map(std::path::Path::to_path_buf)
 }
 
 fn cancelled_error() -> SoftwareError {

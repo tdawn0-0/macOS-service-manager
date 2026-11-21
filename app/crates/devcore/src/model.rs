@@ -15,6 +15,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::platform::HostTarget;
 use crate::state::StateError;
 
 /// The only state document version this build reads and writes.
@@ -68,7 +69,7 @@ pub struct Package {
     pub url: String,
     #[serde(default)]
     pub sha256: String,
-    /// `tar.gz`, `zip`, or `homebrew`.
+    /// `tar.gz`, `tar.xz`, `zip`, `homebrew`, or `system`.
     #[serde(default)]
     pub format: String,
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -87,8 +88,13 @@ impl Package {
         format!("{}@{}-{}", self.name, self.version, self.arch)
     }
 
-    /// Validate the manifest exactly as the Go install path does.
+    /// Validate the manifest for the compiled host target.
     pub fn validate(&self) -> Result<(), StateError> {
+        self.validate_for_target(HostTarget::current())
+    }
+
+    /// Validate the manifest against an explicit [`HostTarget`].
+    pub fn validate_for_target(&self, target: HostTarget) -> Result<(), StateError> {
         if !self.java_install_name.is_empty()
             && (self.name != "java" || !JAVA_INSTALL_NAME_RE.is_match(&self.java_install_name))
         {
@@ -113,49 +119,78 @@ impl Package {
                 return Err(StateError::invalid("invalid Java installation folder"));
             }
         }
-        if self.arch != "arm64" && self.arch != "universal" {
-            return Err(StateError::invalid(
-                "managed software requires Apple Silicon (arm64); Intel packages are not supported",
-            ));
+        if !target.accepts_model_arch(&self.arch) {
+            return Err(StateError::invalid(if target.is_macos() {
+                "managed software requires Apple Silicon (arm64); Intel packages are not supported"
+            } else {
+                "package architecture does not match this Linux host"
+            }));
         }
-        if !NAME_RE.is_match(&self.name)
-            || !NAME_RE.is_match(&self.version)
-            || (self.arch != "arm64" && self.arch != "universal")
-        {
+        if !NAME_RE.is_match(&self.name) || !NAME_RE.is_match(&self.version) {
             return Err(StateError::invalid("invalid package identity"));
         }
         if self.name == "php" || self.name == "php-fpm" {
             return Err(StateError::invalid("PHP is not managed by this app"));
         }
-        if (self.name == "postgresql" || self.name == "redis") && self.formula.is_empty() {
-            return Err(StateError::invalid(
-                "PostgreSQL and Redis require a Homebrew package",
-            ));
+        if self.name == "postgresql" || self.name == "redis" {
+            if target.is_macos() {
+                if self.formula.is_empty() {
+                    return Err(StateError::invalid(
+                        "PostgreSQL and Redis require a Homebrew package",
+                    ));
+                }
+            } else if self.formula.is_empty() && self.format != "system" {
+                return Err(StateError::invalid(
+                    "PostgreSQL and Redis require a system installation or Homebrew package",
+                ));
+            }
         }
-        if !valid_package_url(&self.url) {
+        let is_linux_system = target.is_linux() && self.format == "system";
+        if is_linux_system {
+            if !self.url.is_empty() && !valid_package_url(&self.url) {
+                return Err(StateError::invalid("package URL must use HTTPS"));
+            }
+        } else if !valid_package_url(&self.url) {
             return Err(StateError::invalid("package URL must use HTTPS"));
         }
         if !crate::fs::valid_digest(&self.sha256) {
             return Err(StateError::invalid("package requires a SHA-256 checksum"));
         }
         if self.format == "homebrew" {
-            if !valid_homebrew_package(self) {
+            if !valid_homebrew_package(self, target) {
                 return Err(StateError::invalid(
                     "invalid Homebrew package source, version or binary layout",
+                ));
+            }
+        } else if self.format == "system" {
+            if !target.is_linux() {
+                return Err(StateError::invalid("unsupported archive format"));
+            }
+            if !valid_system_package(self, target) {
+                return Err(StateError::invalid(
+                    "invalid system package source, version or binary layout",
                 ));
             }
         } else if !self.formula.is_empty() {
             return Err(StateError::invalid(
                 "Homebrew formula requires the Homebrew package format",
             ));
-        } else if self.format != "tar.gz" && self.format != "zip" {
+        } else if self.format != "tar.gz"
+            && self.format != "zip"
+            && !(target.is_linux() && self.format == "tar.xz")
+        {
             return Err(StateError::invalid("unsupported archive format"));
         }
         if !(0..=8).contains(&self.strip) || self.binaries.is_empty() {
             return Err(StateError::invalid("invalid package layout"));
         }
         for (name, path) in &self.binaries {
-            if !NAME_RE.is_match(name) || !crate::fs::safe_relative(path) {
+            let valid_path = if is_linux_system {
+                safe_system_binary_path(path)
+            } else {
+                crate::fs::safe_relative(path)
+            };
+            if !NAME_RE.is_match(name) || !valid_path {
                 return Err(StateError::invalid("invalid binary path"));
             }
         }
@@ -212,11 +247,16 @@ pub fn homebrew_binaries(name: &str) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn valid_homebrew_package(package: &Package) -> bool {
+fn valid_homebrew_package(package: &Package, target: HostTarget) -> bool {
     let Some(formula) = homebrew_formula_for(&package.name, &package.version) else {
         return false;
     };
-    if package.arch != "arm64" || package.strip != 0 || package.formula != formula {
+    let arch_ok = if target.is_macos() {
+        package.arch == "arm64"
+    } else {
+        target.accepts_model_arch(&package.arch)
+    };
+    if !arch_ok || package.strip != 0 || package.formula != formula {
         return false;
     }
     let base = package.version.split('_').next().unwrap_or_default();
@@ -227,6 +267,44 @@ fn valid_homebrew_package(package: &Package) -> bool {
         _ => return false,
     }
     package.binaries == homebrew_binaries(&package.name)
+}
+
+/// Validates a Linux `format == "system"` package (system-installed PostgreSQL or Redis).
+fn valid_system_package(package: &Package, target: HostTarget) -> bool {
+    if !target.is_linux()
+        || !package.formula.is_empty()
+        || package.strip != 0
+        || !target.accepts_model_arch(&package.arch)
+    {
+        return false;
+    }
+    if !matches!(package.name.as_str(), "postgresql" | "redis") {
+        return false;
+    }
+    let expected = homebrew_binaries(&package.name);
+    if package.binaries.len() != expected.len() {
+        return false;
+    }
+    expected.keys().all(|key| {
+        package
+            .binaries
+            .get(key)
+            .is_some_and(|p| safe_system_binary_path(p))
+    })
+}
+
+/// Whether `path` is a safe absolute path to a system executable (no traversal or control chars).
+pub fn safe_system_binary_path(path: &str) -> bool {
+    use std::path::{Component, Path};
+    if path.is_empty() || path.contains(['\0', '\r', '\n']) {
+        return false;
+    }
+    let p = Path::new(path);
+    if !p.is_absolute() || p.file_name().is_none() {
+        return false;
+    }
+    p.components()
+        .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
 }
 
 /// The install folder base for a Java package.
@@ -932,4 +1010,146 @@ pub fn validate_tunnel_state(state: &State) -> Result<(), StateError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_digest() -> String {
+        "a".repeat(64)
+    }
+
+    fn linux_archive(arch: &str, format: &str) -> Package {
+        Package {
+            name: "mysql".into(),
+            version: "8.4.13".into(),
+            arch: arch.into(),
+            url: "https://dev.mysql.com/get/Downloads/MySQL-8.4/mysql-8.4.13-linux-glibc2.28-x86_64.tar.xz".into(),
+            sha256: sample_digest(),
+            format: format.into(),
+            strip: 1,
+            binaries: BTreeMap::from([("mysqld".into(), "bin/mysqld".into())]),
+            license: "GPL-2.0".into(),
+            ..Package::default()
+        }
+    }
+
+    fn system_postgres(arch: &str) -> Package {
+        Package {
+            name: "postgresql".into(),
+            version: "17.4".into(),
+            arch: arch.into(),
+            url: String::new(),
+            sha256: sample_digest(),
+            format: "system".into(),
+            strip: 0,
+            binaries: BTreeMap::from([
+                ("postgres".into(), "/usr/bin/postgres".into()),
+                ("initdb".into(), "/usr/bin/initdb".into()),
+                ("pg_dump".into(), "/usr/bin/pg_dump".into()),
+                ("pg_restore".into(), "/usr/bin/pg_restore".into()),
+                ("psql".into(), "/usr/bin/psql".into()),
+                ("createdb".into(), "/usr/bin/createdb".into()),
+            ]),
+            license: "PostgreSQL".into(),
+            ..Package::default()
+        }
+    }
+
+    #[test]
+    fn model_validation_respects_macos_and_linux_targets() {
+        // Linux x86_64 accepts amd64 & x86_64 and tar.xz
+        assert!(
+            linux_archive("amd64", "tar.xz")
+                .validate_for_target(HostTarget::LINUX_AMD64)
+                .is_ok()
+        );
+        assert!(
+            linux_archive("x86_64", "tar.xz")
+                .validate_for_target(HostTarget::LINUX_AMD64)
+                .is_ok()
+        );
+        assert!(
+            linux_archive("arm64", "tar.xz")
+                .validate_for_target(HostTarget::LINUX_AMD64)
+                .is_err()
+        );
+
+        // Linux aarch64 accepts arm64 & aarch64 and tar.xz
+        assert!(
+            linux_archive("arm64", "tar.xz")
+                .validate_for_target(HostTarget::LINUX_ARM64)
+                .is_ok()
+        );
+        assert!(
+            linux_archive("aarch64", "tar.xz")
+                .validate_for_target(HostTarget::LINUX_ARM64)
+                .is_ok()
+        );
+        assert!(
+            linux_archive("amd64", "tar.xz")
+                .validate_for_target(HostTarget::LINUX_ARM64)
+                .is_err()
+        );
+
+        // macOS rejects amd64 and tar.xz
+        assert!(
+            linux_archive("amd64", "tar.gz")
+                .validate_for_target(HostTarget::MACOS_ARM64)
+                .is_err()
+        );
+        assert!(
+            linux_archive("arm64", "tar.xz")
+                .validate_for_target(HostTarget::MACOS_ARM64)
+                .is_err()
+        );
+        assert!(
+            linux_archive("arm64", "tar.gz")
+                .validate_for_target(HostTarget::MACOS_ARM64)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn linux_system_package_validation_accepts_postgres_and_redis_only() {
+        let pg = system_postgres("amd64");
+        assert!(pg.validate_for_target(HostTarget::LINUX_AMD64).is_ok());
+        assert!(pg.validate_for_target(HostTarget::MACOS_ARM64).is_err());
+
+        let mut traversal = system_postgres("amd64");
+        traversal
+            .binaries
+            .insert("postgres".into(), "/usr/bin/../bin/postgres".into());
+        assert!(
+            traversal
+                .validate_for_target(HostTarget::LINUX_AMD64)
+                .is_err()
+        );
+
+        let mut relative = system_postgres("amd64");
+        relative
+            .binaries
+            .insert("postgres".into(), "bin/postgres".into());
+        assert!(
+            relative
+                .validate_for_target(HostTarget::LINUX_AMD64)
+                .is_err()
+        );
+
+        let redis = Package {
+            name: "redis".into(),
+            version: "7.4.2".into(),
+            arch: "arm64".into(),
+            sha256: sample_digest(),
+            format: "system".into(),
+            binaries: BTreeMap::from([
+                ("redis-server".into(), "/usr/bin/redis-server".into()),
+                ("redis-cli".into(), "/usr/bin/redis-cli".into()),
+            ]),
+            ..Package::default()
+        };
+        assert!(redis.validate_for_target(HostTarget::LINUX_ARM64).is_ok());
+        assert!(redis.validate_for_target(HostTarget::MACOS_ARM64).is_err());
+    }
 }

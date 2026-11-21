@@ -66,7 +66,7 @@ pub use database_work::{DatabaseWorkInfo, DatabaseWorkRecord, install_database_w
 pub use deletion::{InstanceDeletionInfo, InstanceDeletionPreview};
 pub use init::InstanceInitializationInfo;
 pub use inventory::InstanceCatalog;
-pub use lifecycle::{InstanceAction, verify_shutdown_target};
+pub use lifecycle::{InstanceAction, verify_shutdown_job, verify_shutdown_target};
 pub use locations::{
     DATA_OWNER_FILE, config_directory, database_data_directory, deletion_identity, path_within,
     plain_path, prepare_data_location, validate_data_location, verify_data_location,

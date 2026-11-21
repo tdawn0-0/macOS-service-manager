@@ -29,6 +29,12 @@ impl Software {
             ));
         }
         package.validate()?;
+        if package.format == "system" {
+            return Err(SoftwareError::invalid(format!(
+                "System package manager owns this {} installation; reinstall or upgrade it via your OS package manager, then check files again",
+                package.name
+            )));
+        }
         if !package.formula.is_empty() {
             return Err(SoftwareError::invalid(format!(
                 "Homebrew owns this shared installation; stop its users and run brew reinstall {}, then check files again",

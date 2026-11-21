@@ -7,6 +7,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use super::{Shell, ShellError};
+use crate::platform::HostTarget;
 
 static UV_PYTHON_KEY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(cpython|pypy|graalpy)-[0-9][A-Za-z0-9.+_-]*$").unwrap());
@@ -30,7 +31,7 @@ pub struct UVPython {
 }
 
 /// A filesystem candidate list, matching `exec.LookPath("uv")` followed by the
-/// fixed fallbacks.
+/// fixed fallbacks (`~/.local/bin/uv`, `~/.cargo/bin/uv`, and platform paths).
 fn uv_candidates(shell: &Shell) -> Vec<PathBuf> {
     if let Some(override_paths) = shell.uv_candidate_override() {
         return override_paths.to_vec();
@@ -45,7 +46,14 @@ fn uv_candidates(shell: &Shell) -> Vec<PathBuf> {
         candidates.push(path);
     }
     candidates.push(shell.home().join(".local").join("bin").join("uv"));
-    candidates.push(PathBuf::from("/opt/homebrew/bin/uv"));
+    candidates.push(shell.home().join(".cargo").join("bin").join("uv"));
+    if HostTarget::current().is_macos() {
+        candidates.push(PathBuf::from("/opt/homebrew/bin/uv"));
+    } else {
+        candidates.push(PathBuf::from("/usr/bin/uv"));
+        candidates.push(PathBuf::from("/usr/local/bin/uv"));
+        candidates.push(PathBuf::from("/home/linuxbrew/.linuxbrew/bin/uv"));
+    }
     candidates
 }
 
@@ -148,14 +156,17 @@ impl Shell {
 
     /// Install an available managed Python.
     pub fn install_uv_python(&self, key: &str) -> Result<(), ShellError> {
+        let target = HostTarget::current();
         let rows = self.uv_pythons(false)?;
         let found = rows
             .iter()
-            .any(|row| row.key == key && row.os_name == "macos" && row.arch == "aarch64");
+            .any(|row| row.key == key && target.matches_uv(&row.os_name, &row.arch));
         if !found {
-            return Err(ShellError::invalid(
-                "select an available macOS arm64 Python version",
-            ));
+            return Err(ShellError::invalid(if target.is_macos() {
+                "select an available macOS arm64 Python version".to_string()
+            } else {
+                format!("select an available {} Python version", target.cli_arch())
+            }));
         }
         self.uv_run(&["python", "install", "--no-bin", key])?;
         Ok(())
@@ -203,5 +214,30 @@ impl Shell {
             }
             Err(error) => Err(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod uv_candidate_tests {
+    use std::sync::Arc;
+
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::engine::{CommandRunner, SystemCommandRunner};
+    use crate::software::{CurlTransport, Software};
+    use crate::state::Store;
+
+    #[test]
+    fn uv_candidates_include_local_and_cargo_bins() {
+        let dir = TempDir::new().unwrap();
+        let store = Store::new(dir.path().join("root"));
+        let software = Software::new(store.clone());
+        let runner: Arc<dyn CommandRunner> = Arc::new(SystemCommandRunner::new());
+        let http = Arc::new(CurlTransport::new());
+        let shell = Shell::with_seams(store, software, runner, http).with_home(dir.path());
+        let candidates = uv_candidates(&shell);
+        assert!(candidates.contains(&dir.path().join(".local/bin/uv")));
+        assert!(candidates.contains(&dir.path().join(".cargo/bin/uv")));
     }
 }

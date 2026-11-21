@@ -330,6 +330,219 @@ fn split_host_port(address: &str) -> Option<(String, i64)> {
     Some((host.to_string(), port.parse().ok()?))
 }
 
+/// Split an `ss` local address (`127.0.0.1:5432`, `[::1]:5432`, `::1:5432`,
+/// `*:3000`, `127.0.0.53%lo:53`) into `(normalized_display_address, port)`.
+fn split_ss_address(local: &str) -> Option<(String, i64)> {
+    let (raw_host, port_str) = local.rsplit_once(':')?;
+    let port: i64 = port_str.parse().ok()?;
+    if !(1..=65535).contains(&port) {
+        return None;
+    }
+    let host_unbracketed = raw_host
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(raw_host);
+    let host = host_unbracketed
+        .split('%')
+        .next()
+        .unwrap_or(host_unbracketed);
+    if host.is_empty() {
+        return None;
+    }
+    let display = if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
+    Some((display, port))
+}
+
+/// Extract `(process_name, pid)` tuples from an `ss -p` `users:(...)` column.
+fn parse_ss_users(field: &str) -> Vec<(String, i64)> {
+    let Some(rest) = field.strip_prefix("users:(") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut cursor = rest;
+    while let Some(open) = cursor.find('(') {
+        cursor = &cursor[open + 1..];
+        let Some(close) = cursor.find(')') else {
+            break;
+        };
+        let entry = &cursor[..close];
+        cursor = &cursor[close + 1..];
+
+        let mut name = String::new();
+        let mut pid: i64 = 0;
+        for part in entry.split(',') {
+            let part = part.trim();
+            if let Some(quoted) = part.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+                name = visible_port_text(quoted);
+            } else if let Some(pid_str) = part.strip_prefix("pid=")
+                && let Ok(parsed) = pid_str.parse::<i64>()
+                && parsed > 0
+            {
+                pid = parsed;
+            }
+        }
+        if pid > 0 {
+            if name.is_empty() {
+                name = "unknown".to_string();
+            }
+            out.push((name, pid));
+        }
+    }
+    out
+}
+
+/// Parse Linux `ss -Hltpn` (or `ss -Hltpne`) output into [`PortListener`] rows.
+///
+/// When `filter_port` is `Some(port)`, only rows listening on that TCP port are
+/// returned. `limit == 0` disables the entry cap.
+pub fn parse_ss_listeners(
+    output: &str,
+    filter_port: Option<i64>,
+    limit: usize,
+) -> Vec<PortListener> {
+    let mut seen = BTreeSet::new();
+    let mut results = Vec::new();
+    'lines: for line in output.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 5 || fields[0] != "LISTEN" {
+            continue;
+        }
+        let Some((address, port)) = split_ss_address(fields[3]) else {
+            continue;
+        };
+        if let Some(want) = filter_port
+            && port != want
+        {
+            continue;
+        }
+        let mut uid: i64 = -1;
+        let mut users: Vec<(String, i64)> = Vec::new();
+        for token in &fields[5..] {
+            if token.starts_with("users:(") {
+                users.extend(parse_ss_users(token));
+            } else if let Some(raw_uid) = token.strip_prefix("uid:")
+                && let Ok(parsed) = raw_uid.parse::<i64>()
+            {
+                uid = parsed;
+            }
+        }
+        if users.is_empty() {
+            // Root/other-user listener without process info exposed to non-root caller.
+            if seen.insert(format!("0:{address}")) {
+                results.push(PortListener {
+                    pid: 0,
+                    uid,
+                    name: "unknown".to_string(),
+                    address,
+                    own: false,
+                });
+                if limit > 0 && results.len() >= limit {
+                    break 'lines;
+                }
+            }
+            continue;
+        }
+        for (name, pid) in users {
+            if !seen.insert(format!("{pid}:{address}")) {
+                continue;
+            }
+            results.push(PortListener {
+                pid,
+                uid,
+                name,
+                address: address.clone(),
+                own: false,
+            });
+            if limit > 0 && results.len() >= limit {
+                break 'lines;
+            }
+        }
+    }
+    results.sort_by(|a, b| a.pid.cmp(&b.pid).then(a.address.cmp(&b.address)));
+    results
+}
+
+/// Parse Linux `/proc/net/tcp` (`ipv6 = false`) or `/proc/net/tcp6` (`ipv6 = true`)
+/// for listening (`st == "0A"`) sockets.
+pub fn parse_proc_net_tcp(
+    content: &str,
+    ipv6: bool,
+    filter_port: Option<i64>,
+) -> Vec<PortListener> {
+    let mut seen = BTreeSet::new();
+    let mut results = Vec::new();
+    for line in content.lines().skip(1) {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 8 || fields[3] != "0A" {
+            continue;
+        }
+        let Some((hex_ip, hex_port)) = fields[1].split_once(':') else {
+            continue;
+        };
+        let Ok(port) = u16::from_str_radix(hex_port, 16) else {
+            continue;
+        };
+        let port = i64::from(port);
+        if port < 1 {
+            continue;
+        }
+        if let Some(want) = filter_port
+            && port != want
+        {
+            continue;
+        }
+        let address = format_proc_hex_addr(hex_ip, ipv6, port);
+        let uid = fields[7].parse::<i64>().unwrap_or(-1);
+        if !seen.insert(format!("{uid}:{address}")) {
+            continue;
+        }
+        results.push(PortListener {
+            pid: 0,
+            uid,
+            name: "unknown".to_string(),
+            address,
+            own: false,
+        });
+    }
+    results.sort_by(|a, b| a.address.cmp(&b.address));
+    results
+}
+
+fn format_proc_hex_addr(hex_ip: &str, ipv6: bool, port: i64) -> String {
+    if !ipv6
+        && hex_ip.len() == 8
+        && let Ok(val) = u32::from_str_radix(hex_ip, 16)
+    {
+        let octets = val.to_le_bytes();
+        return format!(
+            "{}.{}.{}.{}:{port}",
+            octets[0], octets[1], octets[2], octets[3]
+        );
+    }
+    if ipv6 && hex_ip.len() == 32 {
+        let mut bytes = [0u8; 16];
+        let mut ok = true;
+        for chunk in 0..4 {
+            let start = chunk * 8;
+            if let Ok(word) = u32::from_str_radix(&hex_ip[start..start + 8], 16) {
+                bytes[chunk * 4..chunk * 4 + 4].copy_from_slice(&word.to_le_bytes());
+            } else {
+                ok = false;
+                break;
+            }
+        }
+        if ok {
+            let ip = std::net::Ipv6Addr::from(bytes);
+            return format!("[{ip}]:{port}");
+        }
+    }
+    format!("{hex_ip}:{port}")
+}
+
 /// Select a free instance port, trying the preferred one first (when it is
 /// not reserved) and then 32 kernel-assigned ports.
 pub fn free_instance_port(
@@ -460,34 +673,7 @@ impl Databases {
         }
 
         inspection.status = "In use".to_string();
-        let query_timeout = Duration::from_secs(2);
-        let lsof = self.engine().run_with_timeout(
-            "/usr/sbin/lsof",
-            &[
-                "-nP",
-                "-a",
-                &format!("-iTCP:{port}"),
-                "-sTCP:LISTEN",
-                "+c0",
-                "-F0pcun",
-            ],
-            query_timeout,
-        );
-        if cancelled() {
-            return Err(DatabaseError::Cancelled);
-        }
-        if let Ok(output) = lsof {
-            inspection.listeners = parse_port_listeners(&output);
-        }
-        if inspection.listeners.is_empty()
-            && let Ok(output) = self.engine().run_with_timeout(
-                "/usr/sbin/netstat",
-                &["-anv", "-p", "tcp"],
-                query_timeout,
-            )
-        {
-            inspection.listeners = parse_netstat_listeners(&output, port);
-        }
+        inspection.listeners = self.observe_port_listeners(port, cancelled)?;
         if inspection.listeners.len() > 64 {
             inspection.listeners.truncate(64);
             inspection.truncated = true;
@@ -504,8 +690,99 @@ impl Databases {
         Ok(inspection)
     }
 
+    #[cfg(target_os = "macos")]
+    fn observe_port_listeners(
+        &self,
+        port: i64,
+        cancelled: super::Cancelled<'_>,
+    ) -> Result<Vec<PortListener>, DatabaseError> {
+        let query_timeout = Duration::from_secs(2);
+        let mut listeners = Vec::new();
+        let lsof = self.engine().run_with_timeout(
+            "/usr/sbin/lsof",
+            &[
+                "-nP",
+                "-a",
+                &format!("-iTCP:{port}"),
+                "-sTCP:LISTEN",
+                "+c0",
+                "-F0pcun",
+            ],
+            query_timeout,
+        );
+        if cancelled() {
+            return Err(DatabaseError::Cancelled);
+        }
+        if let Ok(output) = lsof {
+            listeners = parse_port_listeners(&output);
+        }
+        if listeners.is_empty()
+            && let Ok(output) = self.engine().run_with_timeout(
+                "/usr/sbin/netstat",
+                &["-anv", "-p", "tcp"],
+                query_timeout,
+            )
+        {
+            listeners = parse_netstat_listeners(&output, port);
+        }
+        Ok(listeners)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn observe_port_listeners(
+        &self,
+        port: i64,
+        cancelled: super::Cancelled<'_>,
+    ) -> Result<Vec<PortListener>, DatabaseError> {
+        let query_timeout = Duration::from_secs(2);
+        let mut listeners = Vec::new();
+        let ss = self
+            .engine()
+            .run_with_timeout("ss", &["-Hltpne"], query_timeout)
+            .or_else(|_| {
+                self.engine()
+                    .run_with_timeout("ss", &["-Hltpn"], query_timeout)
+            });
+        if cancelled() {
+            return Err(DatabaseError::Cancelled);
+        }
+        if let Ok(output) = ss {
+            listeners = parse_ss_listeners(&output, Some(port), 65);
+        }
+        if listeners.is_empty() {
+            let mut proc_listeners = Vec::new();
+            if let Ok(tcp) = std::fs::read_to_string("/proc/net/tcp") {
+                proc_listeners.extend(parse_proc_net_tcp(&tcp, false, Some(port)));
+            }
+            if let Ok(tcp6) = std::fs::read_to_string("/proc/net/tcp6") {
+                proc_listeners.extend(parse_proc_net_tcp(&tcp6, true, Some(port)));
+            }
+            if !proc_listeners.is_empty() {
+                listeners = proc_listeners;
+            }
+        }
+        if listeners.is_empty()
+            && let Ok(output) = self.engine().run_with_timeout(
+                "lsof",
+                &[
+                    "-nP",
+                    "-a",
+                    &format!("-iTCP:{port}"),
+                    "-sTCP:LISTEN",
+                    "+c0",
+                    "-F0pcun",
+                ],
+                query_timeout,
+            )
+        {
+            listeners = parse_port_listeners(&output);
+        }
+        Ok(listeners)
+    }
+
     /// `ListeningUserPorts`: current-UID TCP listeners at 1024+ excluding the
     /// proxy and managed instances, deduplicated and sorted.
+    #[cfg(target_os = "macos")]
     pub fn listening_user_ports(
         &self,
         cancelled: super::Cancelled<'_>,
@@ -573,6 +850,96 @@ impl Databases {
             .collect())
     }
 
+    /// `ListeningUserPorts` (Linux): current-UID TCP listeners at 1024+ via
+    /// `ss -Hltpne` (falling back to `/proc/net/tcp{,6}` and `lsof`).
+    #[cfg(not(target_os = "macos"))]
+    pub fn listening_user_ports(
+        &self,
+        cancelled: super::Cancelled<'_>,
+    ) -> Result<Vec<ListeningPort>, DatabaseError> {
+        if cancelled() {
+            return Err(DatabaseError::Cancelled);
+        }
+        let state = self.store().read()?;
+        let uid = unsafe { libc::getuid() } as i64;
+        let timeout = Duration::from_secs(2);
+
+        let mut listeners = if let Ok(output) = self
+            .engine()
+            .run_with_timeout("ss", &["-Hltpne"], timeout)
+            .or_else(|_| self.engine().run_with_timeout("ss", &["-Hltpn"], timeout))
+        {
+            parse_ss_listeners(&output, None, 0)
+        } else {
+            Vec::new()
+        };
+        if cancelled() {
+            return Err(DatabaseError::Cancelled);
+        }
+        if listeners.is_empty() {
+            if let Ok(tcp) = std::fs::read_to_string("/proc/net/tcp") {
+                listeners.extend(parse_proc_net_tcp(&tcp, false, None));
+            }
+            if let Ok(tcp6) = std::fs::read_to_string("/proc/net/tcp6") {
+                listeners.extend(parse_proc_net_tcp(&tcp6, true, None));
+            }
+        }
+        if listeners.is_empty()
+            && let Ok(output) = self.engine().run_with_timeout(
+                "lsof",
+                &[
+                    "-w",
+                    "-nP",
+                    "-a",
+                    "-u",
+                    &uid.to_string(),
+                    "-iTCP",
+                    "-sTCP:LISTEN",
+                    "+c0",
+                    "-F0pcun",
+                ],
+                timeout,
+            )
+        {
+            listeners = parse_port_listeners_limit(&output, 0);
+        }
+
+        let mut excluded = BTreeSet::new();
+        excluded.insert(state.proxy_listener_port);
+        for instance in state.instances.values() {
+            excluded.insert(instance.port);
+        }
+        let mut by_port: BTreeMap<i64, String> = BTreeMap::new();
+        for mut listener in listeners {
+            if listener.uid < 0
+                && listener.pid > 0
+                && let Some(proc_uid) = proc_pid_uid(listener.pid)
+            {
+                listener.uid = proc_uid;
+            }
+            if listener.uid != uid {
+                continue;
+            }
+            let Some((_host, port)) = split_host_port(&listener.address) else {
+                continue;
+            };
+            if !(1024..=65535).contains(&port) || excluded.contains(&port) {
+                continue;
+            }
+            match by_port.get(&port) {
+                Some(previous) if !(previous.is_empty() && !listener.name.is_empty()) => {}
+                _ => {
+                    by_port.insert(port, listener.name);
+                }
+            }
+        }
+        Ok(by_port
+            .into_iter()
+            .map(|(port, process)| ListeningPort { port, process })
+            .collect())
+    }
+
+    #[cfg(target_os = "macos")]
     fn mark_own_proxy_listeners(
         &self,
         port: i64,
@@ -609,8 +976,75 @@ impl Databases {
         }
         Ok(all)
     }
+
+    #[cfg(not(target_os = "macos"))]
+    fn mark_own_proxy_listeners(
+        &self,
+        port: i64,
+        listeners: &mut [PortListener],
+        cancelled: super::Cancelled<'_>,
+    ) -> Result<bool, DatabaseError> {
+        if listeners.is_empty() {
+            return Ok(false);
+        }
+        let state = match self.store().read() {
+            Ok(state) => state,
+            Err(_) => return Ok(false),
+        };
+        if state.proxy_listener_port != port {
+            return Ok(false);
+        }
+        let stem = crate::helper::systemd_unit::linux_proxy_unit_stem(self.store().root());
+        let service_unit = format!("{stem}.service");
+        let output = match self.engine().run_with_timeout(
+            "systemctl",
+            &[
+                "show",
+                "--no-pager",
+                "-p",
+                "MainPID",
+                "--value",
+                &service_unit,
+            ],
+            Duration::from_secs(2),
+        ) {
+            Ok(output) => output,
+            Err(_) => return Ok(false),
+        };
+        if cancelled() {
+            return Err(DatabaseError::Cancelled);
+        }
+        let pid = output.trim().parse::<i64>().unwrap_or(0);
+        let socket_listening = if pid == 0 {
+            let socket_unit = format!("{stem}.socket");
+            self.engine()
+                .run_with_timeout(
+                    "systemctl",
+                    &[
+                        "show",
+                        "--no-pager",
+                        "-p",
+                        "ActiveState",
+                        "--value",
+                        &socket_unit,
+                    ],
+                    Duration::from_secs(2),
+                )
+                .is_ok_and(|out| out.trim() == "active" || out.trim() == "listening")
+        } else {
+            false
+        };
+        let mut all = true;
+        for listener in listeners.iter_mut() {
+            listener.own = (pid > 0 && listener.pid == pid)
+                || (pid == 0 && socket_listening && (listener.pid == 1 || listener.pid == 0));
+            all = all && listener.own;
+        }
+        Ok(all)
+    }
 }
 
+#[cfg(target_os = "macos")]
 fn launchctl_pid(output: &str) -> i64 {
     for line in output.split('\n') {
         let line = line.trim();
@@ -619,4 +1053,87 @@ fn launchctl_pid(output: &str) -> i64 {
         }
     }
     0
+}
+
+#[cfg(not(target_os = "macos"))]
+fn proc_pid_uid(pid: i64) -> Option<i64> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("Uid:") {
+            return rest.split_whitespace().next()?.parse::<i64>().ok();
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod linux_port_tests {
+    use super::*;
+
+    #[test]
+    fn parses_ss_hltpn_and_extended_output() {
+        let sample = "\
+LISTEN 0 4096 127.0.0.1:5432 0.0.0.0:* users:((\"postgres\",pid=1234,fd=6)) uid:1000 ino:101
+LISTEN 0 128 0.0.0.0:8080 0.0.0.0:* users:((\"node\",pid=5678,fd=20),(\"node\",pid=5679,fd=20)) uid:1000
+LISTEN 0 4096 [::1]:5432 [::]:* users:((\"postgres\",pid=1234,fd=7)) uid:1000
+LISTEN 0 511 *:3000 *:* users:((\"vite\",pid=9999,fd=12))
+LISTEN 0 4096 127.0.0.53%lo:53 0.0.0.0:* users:((\"systemd-resolve\",pid=412,fd=15))
+LISTEN 0 4096 127.0.0.1:443 0.0.0.0:*
+ESTAB 0 0 127.0.0.1:5432 127.0.0.1:50000 users:((\"postgres\",pid=1234,fd=9))
+";
+        let pg = parse_ss_listeners(sample, Some(5432), 65);
+        assert_eq!(pg.len(), 2);
+        assert_eq!(pg[0].pid, 1234);
+        assert_eq!(pg[0].uid, 1000);
+        assert_eq!(pg[0].name, "postgres");
+        assert_eq!(pg[0].address, "127.0.0.1:5432");
+        assert_eq!(pg[1].address, "[::1]:5432");
+
+        let node = parse_ss_listeners(sample, Some(8080), 65);
+        assert_eq!(node.len(), 2);
+        assert_eq!(node[0].pid, 5678);
+        assert_eq!(node[1].pid, 5679);
+        assert_eq!(node[0].name, "node");
+
+        let dns = parse_ss_listeners(sample, Some(53), 65);
+        assert_eq!(dns.len(), 1);
+        assert_eq!(dns[0].address, "127.0.0.53:53");
+        assert_eq!(dns[0].name, "systemd-resolve");
+
+        let https = parse_ss_listeners(sample, Some(443), 65);
+        assert_eq!(https.len(), 1);
+        assert_eq!(https[0].pid, 0);
+        assert_eq!(https[0].name, "unknown");
+
+        // All listening ports (ignores ESTAB)
+        let all = parse_ss_listeners(sample, None, 0);
+        assert_eq!(all.len(), 7);
+
+        // Respects limit
+        let capped = parse_ss_listeners(sample, None, 2);
+        assert_eq!(capped.len(), 2);
+    }
+
+    #[test]
+    fn parses_proc_net_tcp_and_tcp6() {
+        let tcp = "\
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:1538 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 12345
+   1: 0100007F:1538 0100007F:C350 01 00000000:00000000 00:00000000 00000000  1000        0 12346
+";
+        // 0x1538 == 5432, 0100007F == 127.0.0.1
+        let parsed = parse_proc_net_tcp(tcp, false, Some(5432));
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].address, "127.0.0.1:5432");
+        assert_eq!(parsed[0].uid, 1000);
+
+        let tcp6 = "\
+  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000000000000000000001000000:1538 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 22345
+";
+        let parsed6 = parse_proc_net_tcp(tcp6, true, Some(5432));
+        assert_eq!(parsed6.len(), 1);
+        assert_eq!(parsed6[0].address, "[::1]:5432");
+        assert_eq!(parsed6[0].uid, 1000);
+    }
 }

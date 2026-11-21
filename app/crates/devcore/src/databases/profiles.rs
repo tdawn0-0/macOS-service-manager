@@ -527,18 +527,19 @@ impl Databases {
             return Err(DatabaseError::Cancelled);
         }
         let script = self.database_cli_command(id, profile_id, database_override)?;
+        let script_name = if crate::platform::HostTarget::current().is_macos() {
+            "open-cli.command"
+        } else {
+            "open-cli.sh"
+        };
         let path = self
             .store()
             .root()
             .join("instances")
             .join(id)
-            .join("open-cli.command");
+            .join(script_name);
         crate::fs::atomic_write(&path, script.as_bytes(), 0o700)?;
-        self.engine().run_command(
-            "/usr/bin/open",
-            &["-a", "Terminal", &path.display().to_string()],
-            cancelled,
-        )?;
+        crate::platform::desktop::open_in_terminal(&path)?;
         Ok(())
     }
 }

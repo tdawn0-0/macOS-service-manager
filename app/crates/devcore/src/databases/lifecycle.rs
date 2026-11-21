@@ -7,7 +7,6 @@
 //! job plist — never any data directory.
 
 use std::collections::BTreeMap;
-use std::time::Duration;
 
 use crate::engine::JobSpec;
 use crate::health::{ServiceProbe, wait_service};
@@ -244,15 +243,13 @@ impl Databases {
         cancelled: Cancelled<'_>,
     ) -> Result<(), DatabaseError> {
         verify_data_location(self.store(), instance)?;
-        let target = self.engine().target(job);
-        let already_running =
-            match self
-                .engine()
-                .run_command("launchctl", &["print", &target], cancelled)
-            {
-                Ok(output) => output.contains("state = running"),
-                Err(_) => false,
-            };
+        if cancelled() {
+            return Err(DatabaseError::Cancelled);
+        }
+        let already_running = matches!(
+            self.engine().job_state(job),
+            Ok(Some(state)) if state.running
+        );
         if !already_running {
             super::ports::free_database_port(self.binder(), instance.port)?;
         }
@@ -429,35 +426,106 @@ fn update_engine_config_port(
     Ok(())
 }
 
-/// A failed `launchctl print` is not proof that a job is absent: only the
-/// explicit "could not find service" error is. This mirrors the Go
-/// `verifyShutdownTarget` used after every stop.
-pub fn verify_shutdown_target(
+/// Verify that managed job `id` is definitively stopped/absent through the
+/// active platform [`crate::engine::JobBackend`].
+///
+/// An observation failure is never proof that a job has stopped.
+pub fn verify_shutdown_job(
     engine: &crate::engine::Engine,
-    target: &str,
+    id: &str,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(), DatabaseError> {
     if cancelled() {
         return Err(DatabaseError::Cancelled);
     }
-    match engine.run_with_timeout("launchctl", &["print", target], Duration::from_secs(1)) {
-        Ok(_) => Err(DatabaseError::invalid(format!(
+    let target = engine.target(id);
+    match engine.verify_stopped(id) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(DatabaseError::invalid(format!(
             "managed service is still registered: {target}"
         ))),
         Err(crate::engine::EngineError::Timeout(_)) => Err(DatabaseError::invalid(format!(
             "could not verify stopped service: {target}"
         ))),
-        Err(error) => {
-            let message = error.to_string();
-            if message.contains("Could not find service")
-                || message.contains("Could not find specified service")
-            {
-                Ok(())
+        Err(error) => Err(DatabaseError::invalid(format!(
+            "could not verify stopped service {target}: {error}"
+        ))),
+    }
+}
+
+/// Verify that a managed service target (`<domain>/<label>` or bare job ID) is
+/// definitively stopped/absent.
+///
+/// Accepts the legacy `engine.target(id)` string as well as a bare job ID and
+/// delegates through [`Engine::verify_stopped`] so both macOS `launchd` and
+/// Linux `systemd --user` work uniformly.
+pub fn verify_shutdown_target(
+    engine: &crate::engine::Engine,
+    target: &str,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(), DatabaseError> {
+    let prefix = format!("{}/{}", engine.domain(), engine.label(""));
+    let job_id = target.strip_prefix(&prefix).unwrap_or(target);
+    verify_shutdown_job(engine, job_id, cancelled)
+}
+
+#[cfg(test)]
+mod systemd_lifecycle_tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::engine::{CommandRunner, Engine, SystemdUserBackend};
+    use crate::launchd::CommandError;
+
+    struct FakeSystemctl {
+        active: Arc<AtomicBool>,
+    }
+
+    impl CommandRunner for FakeSystemctl {
+        fn run(
+            &self,
+            program: &str,
+            args: &[&str],
+            _timeout: Duration,
+        ) -> Result<String, CommandError> {
+            assert_eq!(program, "systemctl");
+            assert!(args.starts_with(&["--user", "show"]));
+            if self.active.load(Ordering::SeqCst) {
+                Ok(
+                    "LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=4242\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n"
+                        .into(),
+                )
             } else {
-                Err(DatabaseError::invalid(format!(
-                    "could not verify stopped service {target}: {error}"
-                )))
+                Ok(
+                    "LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n"
+                        .into(),
+                )
             }
         }
+    }
+
+    #[test]
+    fn verify_shutdown_target_works_with_systemd_user_backend() {
+        let dir = TempDir::new().unwrap();
+        let active = Arc::new(AtomicBool::new(true));
+        let engine = Engine::new(
+            dir.path(),
+            Arc::new(FakeSystemctl {
+                active: active.clone(),
+            }),
+        )
+        .with_backend(Arc::new(SystemdUserBackend::with_unit_dir(
+            dir.path().join("systemd-user"),
+        )));
+
+        let target = engine.target("db-pg1");
+        assert!(verify_shutdown_target(&engine, &target, &|| false).is_err());
+
+        active.store(false, Ordering::SeqCst);
+        assert!(verify_shutdown_target(&engine, &target, &|| false).is_ok());
     }
 }

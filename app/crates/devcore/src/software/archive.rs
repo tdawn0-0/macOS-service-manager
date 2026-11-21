@@ -37,6 +37,7 @@ pub fn extract(
     };
     match format {
         "zip" => writer.extract_zip(src)?,
+        "tar.xz" => writer.extract_tar_xz(src)?,
         _ => writer.extract_tar_gz(src)?,
     }
     for (path, target) in &writer.links {
@@ -72,6 +73,16 @@ impl Extractor<'_> {
     fn extract_tar_gz(&mut self, src: &Path) -> Result<(), SoftwareError> {
         let file = File::open(src)?;
         let decoder = GzDecoder::new(file);
+        self.extract_tar(decoder)
+    }
+
+    fn extract_tar_xz(&mut self, src: &Path) -> Result<(), SoftwareError> {
+        let file = File::open(src)?;
+        let decoder = crate::platform::xz_decoder(file);
+        self.extract_tar(decoder)
+    }
+
+    fn extract_tar<R: Read>(&mut self, decoder: R) -> Result<(), SoftwareError> {
         let mut archive = tar::Archive::new(decoder);
         for entry in archive.entries()? {
             let mut entry = entry?;
@@ -265,4 +276,109 @@ fn copy_limited(
         writer.write_all(&buffer[..read])?;
     }
     Ok(copied)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    fn build_tar_xz(
+        build: impl FnOnce(&mut tar::Builder<xz2::write::XzEncoder<Vec<u8>>>),
+    ) -> Vec<u8> {
+        let encoder = xz2::write::XzEncoder::new(Vec::new(), 1);
+        let mut builder = tar::Builder::new(encoder);
+        build(&mut builder);
+        let encoder = builder.into_inner().unwrap();
+        encoder.finish().unwrap()
+    }
+
+    fn append_file(
+        builder: &mut tar::Builder<xz2::write::XzEncoder<Vec<u8>>>,
+        path: &str,
+        body: &[u8],
+        mode: u32,
+    ) {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(body.len() as u64);
+        header.set_mode(mode);
+        header.set_cksum();
+        builder.append_data(&mut header, path, body).unwrap();
+    }
+
+    fn append_symlink(
+        builder: &mut tar::Builder<xz2::write::XzEncoder<Vec<u8>>>,
+        path: &str,
+        target: &str,
+    ) {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_size(0);
+        header.set_mode(0o777);
+        header.set_cksum();
+        builder.append_link(&mut header, path, target).unwrap();
+    }
+
+    #[test]
+    fn tar_xz_extracts_with_strip_and_safe_symlinks() {
+        let dir = TempDir::new().unwrap();
+        let archive_bytes = build_tar_xz(|b| {
+            append_file(b, "mysql-8.4.13/bin/mysqld", b"#!/bin/sh\n", 0o755);
+            append_symlink(b, "mysql-8.4.13/bin/mysqld-link", "mysqld");
+        });
+        let src = dir.path().join("pkg.tar.xz");
+        let dst = dir.path().join("out");
+        std::fs::create_dir(&dst).unwrap();
+        std::fs::write(&src, archive_bytes).unwrap();
+
+        extract(&src, &dst, "tar.xz", 1, &|| false).unwrap();
+        assert_eq!(
+            std::fs::read(dst.join("bin/mysqld")).unwrap(),
+            b"#!/bin/sh\n"
+        );
+        assert_eq!(
+            std::fs::read_link(dst.join("bin/mysqld-link")).unwrap(),
+            PathBuf::from("mysqld")
+        );
+    }
+
+    #[test]
+    fn tar_xz_rejects_traversal_and_escaping_symlinks() {
+        let dir = TempDir::new().unwrap();
+
+        let escape_link = build_tar_xz(|b| {
+            append_file(b, "root/bin/ok", b"ok", 0o755);
+            append_symlink(b, "root/bin/bad", "../../../etc/passwd");
+        });
+        let src = dir.path().join("escape.tar.xz");
+        let dst = dir.path().join("out1");
+        std::fs::create_dir(&dst).unwrap();
+        std::fs::write(&src, escape_link).unwrap();
+        assert!(extract(&src, &dst, "tar.xz", 1, &|| false).is_err());
+
+        // Write a raw tar.xz containing a `../escape` path directly via Header
+        let mut encoder = xz2::write::XzEncoder::new(Vec::new(), 1);
+        let mut header = tar::Header::new_gnu();
+        let name_bytes = b"../escape.txt";
+        header.as_gnu_mut().unwrap().name[..name_bytes.len()].copy_from_slice(name_bytes);
+        header.set_size(4);
+        header.set_mode(0o644);
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_cksum();
+        encoder.write_all(header.as_bytes()).unwrap();
+        let mut block = [0u8; 512];
+        block[..4].copy_from_slice(b"evil");
+        encoder.write_all(&block).unwrap();
+        encoder.write_all(&[0u8; 1024]).unwrap();
+        let traversal_bytes = encoder.finish().unwrap();
+
+        let src2 = dir.path().join("traversal.tar.xz");
+        let dst2 = dir.path().join("out2");
+        std::fs::create_dir(&dst2).unwrap();
+        std::fs::write(&src2, traversal_bytes).unwrap();
+        assert!(extract(&src2, &dst2, "tar.xz", 0, &|| false).is_err());
+    }
 }

@@ -13,7 +13,6 @@ use std::fs;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -520,24 +519,12 @@ impl Databases {
         if cancelled() {
             return Err(DatabaseError::Cancelled);
         }
-        match self.engine().run_with_timeout(
-            "launchctl",
-            &["print", &self.engine().target(job)],
-            Duration::from_secs(1),
-        ) {
-            Ok(_) => Ok(true),
-            Err(error) => {
-                let message = error.to_string();
-                if message.contains("Could not find service")
-                    || message.contains("Could not find specified service")
-                {
-                    Ok(false)
-                } else {
-                    Err(DatabaseError::invalid(format!(
-                        "could not verify whether the package is in use: {error}"
-                    )))
-                }
-            }
+        match self.engine().job_state(job) {
+            Ok(Some(state)) => Ok(state.loaded || state.running),
+            Ok(None) => Ok(false),
+            Err(error) => Err(DatabaseError::invalid(format!(
+                "could not verify whether the package is in use: {error}"
+            ))),
         }
     }
 }

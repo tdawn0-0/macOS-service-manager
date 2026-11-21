@@ -127,9 +127,15 @@ impl Software {
                     .issues
                     .push(format!("Required executable is missing or invalid: {name}"));
             }
-            if !package.formula.is_empty() {
+            if !package.formula.is_empty() || package.format == "system" {
                 result.files += 1;
             }
+        }
+        if package.format == "system" {
+            if result.issues.is_empty() {
+                result.status = "System managed".into();
+            }
+            return Ok(result);
         }
         if !package.formula.is_empty() {
             if result.issues.is_empty() {

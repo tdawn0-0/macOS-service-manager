@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use super::archive::extract;
 use super::integrity::{encode_package_tree, scan_package_tree, write_index};
-use super::macho::require_apple_silicon;
+use super::macho::require_host_executable;
 use super::swap::{exchange_package_directories, publish_new_package_directory};
 use super::{
     COMMAND_TIMEOUT, Cancelled, MAX_DOWNLOAD, Software, SoftwareError, canonical_inside,
@@ -25,6 +25,7 @@ use super::{
 use crate::engine::Engine;
 use crate::fs::{PRIVATE_FILE, atomic_write, create_private_dir_all};
 use crate::model::{Package, State, java_folder_base};
+use crate::platform::HostTarget;
 use crate::state::StateError;
 
 /// The directory-name marker proving a Java bundle belongs to this install.
@@ -56,10 +57,13 @@ impl Software {
                 "package {id} is not installed; install it before starting"
             ))
         })?;
-        if package.arch != "arm64" && package.arch != "universal" {
-            return Err(SoftwareError::invalid(
-                "managed software requires Apple Silicon (arm64)",
-            ));
+        let target = HostTarget::current();
+        if !target.accepts_model_arch(&package.arch) {
+            return Err(SoftwareError::invalid(if target.is_macos() {
+                "managed software requires Apple Silicon (arm64)"
+            } else {
+                "package architecture does not match this Linux host"
+            }));
         }
         if package.id() != id {
             return Err(SoftwareError::invalid(
@@ -67,6 +71,7 @@ impl Software {
             ));
         }
         if !package.formula.is_empty()
+            || package.format == "system"
             || package.name == "postgresql"
             || package.name == "redis"
             || package.name == "java"
@@ -81,7 +86,11 @@ impl Software {
             .binaries
             .get(name)
             .ok_or_else(|| SoftwareError::invalid(format!("{id} does not provide {name}")))?;
-        let path = self.store().package_directory(package).join(rel);
+        let path = if package.format == "system" {
+            PathBuf::from(rel)
+        } else {
+            self.store().package_directory(package).join(rel)
+        };
         let metadata = std::fs::metadata(&path)?;
         if !metadata.is_file() || metadata.mode() & 0o111 == 0 {
             return Err(SoftwareError::invalid(format!(
@@ -89,7 +98,7 @@ impl Software {
                 path.display()
             )));
         }
-        require_apple_silicon(&path)?;
+        require_host_executable(&path)?;
         Ok(path)
     }
 
@@ -100,7 +109,7 @@ impl Software {
         cancelled: Cancelled<'_>,
     ) -> Result<StagedPackage, SoftwareError> {
         package.validate()?;
-        if !package.min_macos.is_empty() {
+        if HostTarget::current().is_macos() && !package.min_macos.is_empty() {
             let output =
                 self.runner()
                     .run("/usr/bin/sw_vers", &["-productVersion"], COMMAND_TIMEOUT)?;
@@ -161,7 +170,7 @@ impl Software {
             if !metadata.is_file() {
                 return Err(SoftwareError::invalid("binary is not a regular file"));
             }
-            require_apple_silicon(&real)?;
+            require_host_executable(&real)?;
             let mut permissions = metadata.permissions();
             permissions.set_mode(metadata.mode() | 0o100);
             std::fs::set_permissions(&real, permissions)?;
@@ -184,6 +193,9 @@ impl Software {
     ) -> Result<(), SoftwareError> {
         package.validate()?;
         self.store().init()?;
+        if package.format == "system" {
+            return self.install_system(package, cancelled);
+        }
         if !package.formula.is_empty() {
             return self.install_homebrew(package, cancelled);
         }
@@ -266,30 +278,55 @@ impl Software {
                         )));
                     }
                 }
-                let jobs = self
-                    .store()
-                    .root()
-                    .join("jobs")
-                    .read_dir()
-                    .map(|entries| {
-                        entries
-                            .filter_map(Result::ok)
-                            .map(|entry| entry.path())
-                            .filter(|path| path.extension() == Some(OsStr::new("plist")))
-                            .collect::<Vec<_>>()
+                let engine = Engine::new(self.store().root(), self.runner.clone());
+                let referenced_err = || {
+                    StateError::invalid(if HostTarget::current().is_macos() {
+                        "package is referenced by a launchd job"
+                    } else {
+                        "package is referenced by a managed service job"
                     })
-                    .unwrap_or_default();
-                for path in jobs {
-                    let value = plist::Value::from_file(&path)
-                        .map_err(|error| StateError::invalid(error.to_string()))?;
+                };
+                if package.format == "system" {
+                    for bin_path in package.binaries.values() {
+                        if !engine
+                            .jobs_referencing(Path::new(bin_path))
+                            .map_err(StateError::from)?
+                            .is_empty()
+                        {
+                            return Err(referenced_err());
+                        }
+                    }
+                } else {
                     let directory = self.store().package_directory(&package);
-                    if value_references(&value, &directory) {
-                        return Err(StateError::invalid(
-                            "package is referenced by a launchd job",
-                        ));
+                    if !engine
+                        .jobs_referencing(&directory)
+                        .map_err(StateError::from)?
+                        .is_empty()
+                    {
+                        return Err(referenced_err());
+                    }
+                    let jobs = self
+                        .store()
+                        .root()
+                        .join("jobs")
+                        .read_dir()
+                        .map(|entries| {
+                            entries
+                                .filter_map(Result::ok)
+                                .map(|entry| entry.path())
+                                .filter(|path| path.extension() == Some(OsStr::new("plist")))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    for path in jobs {
+                        let value = plist::Value::from_file(&path)
+                            .map_err(|error| StateError::invalid(error.to_string()))?;
+                        if value_references(&value, &directory) {
+                            return Err(referenced_err());
+                        }
                     }
                 }
-                if package.formula.is_empty() {
+                if package.formula.is_empty() && package.format != "system" {
                     if package.name == "java" {
                         package.validate()?;
                     }
@@ -490,7 +527,7 @@ impl Software {
             .with_commit(commit))
     }
 
-    /// Check every database instance and launchd job that names the package.
+    /// Check every database instance and managed job that names the package.
     pub(crate) fn require_package_idle(
         &self,
         cancelled: Cancelled<'_>,
@@ -502,8 +539,7 @@ impl Software {
             if instance.package != package.id() {
                 continue;
             }
-            let loaded =
-                self.package_job_loaded(&engine, &engine.label(&format!("db-{}", instance.id)))?;
+            let loaded = self.package_job_loaded(&engine, &format!("db-{}", instance.id))?;
             if loaded {
                 return Err(SoftwareError::invalid(format!(
                     "stop database {} before repairing its software",
@@ -511,7 +547,25 @@ impl Software {
                 )));
             }
         }
+        let stop_job_error = || {
+            SoftwareError::invalid(if HostTarget::current().is_macos() {
+                "stop the launchd job using this package before repairing it"
+            } else {
+                "stop the managed service job using this package before repairing it"
+            })
+        };
         let directory = self.store().package_directory(package);
+        let referenced_ids = engine
+            .jobs_referencing(&directory)
+            .map_err(|error| SoftwareError::invalid(error.to_string()))?;
+        for job_id in &referenced_ids {
+            if cancelled() {
+                return Err(cancelled_error());
+            }
+            if self.package_job_loaded(&engine, job_id)? {
+                return Err(stop_job_error());
+            }
+        }
         let jobs = self.store().root().join("jobs");
         let mut files: Vec<PathBuf> = match std::fs::read_dir(&jobs) {
             Ok(entries) => entries
@@ -523,6 +577,7 @@ impl Software {
             Err(error) => return Err(error.into()),
         };
         files.sort();
+        let label_prefix = engine.label("");
         for file in files {
             if cancelled() {
                 return Err(cancelled_error());
@@ -549,15 +604,13 @@ impl Software {
                 .and_then(|dictionary| dictionary.get("Label"))
                 .and_then(plist::Value::as_string)
                 .unwrap_or_default();
-            if !label.starts_with(&engine.label("")) {
+            let Some(job_id) = label.strip_prefix(&label_prefix) else {
                 return Err(SoftwareError::invalid(
                     "a job outside this workspace references the package; inspect it before repair",
                 ));
-            }
-            if self.package_job_loaded(&engine, label)? {
-                return Err(SoftwareError::invalid(
-                    "stop the launchd job using this package before repairing it",
-                ));
+            };
+            if self.package_job_loaded(&engine, job_id)? {
+                return Err(stop_job_error());
             }
         }
         if cancelled() {
@@ -566,26 +619,13 @@ impl Software {
         Ok(())
     }
 
-    fn package_job_loaded(&self, engine: &Engine, label: &str) -> Result<bool, SoftwareError> {
-        let target = format!("{}/{label}", engine.domain());
-        match self.runner().run(
-            "launchctl",
-            &["print", &target],
-            std::time::Duration::from_secs(1),
-        ) {
-            Ok(_) => Ok(true),
-            Err(error) => {
-                let message = error.to_string();
-                if message.contains("Could not find service")
-                    || message.contains("Could not find specified service")
-                {
-                    Ok(false)
-                } else {
-                    Err(SoftwareError::invalid(format!(
-                        "could not verify whether the package is in use: {error}"
-                    )))
-                }
-            }
+    fn package_job_loaded(&self, engine: &Engine, job_id: &str) -> Result<bool, SoftwareError> {
+        match engine.job_state(job_id) {
+            Ok(Some(state)) => Ok(state.loaded || state.running),
+            Ok(None) => Ok(false),
+            Err(error) => Err(SoftwareError::invalid(format!(
+                "could not verify whether the package is in use: {error}"
+            ))),
         }
     }
 

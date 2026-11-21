@@ -24,7 +24,6 @@ use crate::fs::{
     PRIVATE_DIR, PRIVATE_FILE, atomic_write, create_private_dir_all, digest_bytes,
     read_regular_file, sync_directory,
 };
-use crate::health;
 use crate::model::{Instance, Package, State};
 use crate::software::random_id;
 use crate::state::{ResourceKey, Tx};
@@ -511,16 +510,15 @@ impl Databases {
             if cancelled() {
                 return Err(DatabaseError::Cancelled);
             }
-            let output = self.engine().run_command(
-                "launchctl",
-                &["print", &self.engine().target(&job)],
-                cancelled,
-            )?;
-            let state = health::parse_job_state(&output);
+            let Some(state) = self.engine().job_state(&job)? else {
+                return Err(DatabaseError::invalid(
+                    "initialization tool job is no longer registered",
+                ));
+            };
             if !state.running
                 && state.pid == 0
                 && state.runs > 0
-                && let Some(code) = state.last_exit_code
+                && let Some(code) = state.last_exit_status
             {
                 if code != 0 {
                     return Err(DatabaseError::invalid(format!(

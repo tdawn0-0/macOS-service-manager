@@ -176,7 +176,7 @@ impl Shell {
             shell_available: None,
             node_dist_base: "https://nodejs.org/dist/".into(),
             uv_candidates: None,
-            program: PathBuf::from("/Applications/Devbase.app/Contents/MacOS/Devbase"),
+            program: crate::platform::paths::default_program_path(),
         }
     }
 
@@ -273,6 +273,8 @@ impl Shell {
         for dir in ["/bin", "/usr/bin", "/opt/homebrew/bin", "/usr/local/bin"] {
             candidates.push(Path::new(dir).join(name));
         }
+        #[cfg(not(target_os = "macos"))]
+        candidates.push(Path::new("/home/linuxbrew/.linuxbrew/bin").join(name));
         candidates
     }
 

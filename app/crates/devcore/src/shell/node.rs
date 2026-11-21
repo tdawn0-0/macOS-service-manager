@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Shell, ShellError, fish_quote, shell_quote};
 use crate::model::{Package, State};
+use crate::platform::HostTarget;
 use crate::software::SoftwareError;
 use crate::state::Store;
 
@@ -47,11 +48,20 @@ pub fn node_index_path(store: &Store) -> PathBuf {
 
 const NODE_INDEX_TTL_SECONDS: u64 = 3600;
 
-/// Fetch nodejs.org's index and keep the releases that run on Apple Silicon,
-/// newest first.
+/// Fetch nodejs.org's index and keep the releases that run on the compiled host
+/// target, newest first.
 pub fn fetch_node_releases(
     http: &dyn crate::software::HttpTransport,
     base: &str,
+) -> Result<Vec<NodeRelease>, ShellError> {
+    fetch_node_releases_for_target(http, base, HostTarget::current())
+}
+
+/// Fetch nodejs.org's index filtered for an explicit [`HostTarget`], newest first.
+pub fn fetch_node_releases_for_target(
+    http: &dyn crate::software::HttpTransport,
+    base: &str,
+    target: HostTarget,
 ) -> Result<Vec<NodeRelease>, ShellError> {
     #[derive(Deserialize)]
     struct Row {
@@ -79,13 +89,14 @@ pub fn fetch_node_releases(
     })?;
     let rows: Vec<Row> = serde_json::from_slice(&body)
         .map_err(|error| ShellError::invalid(format!("nodejs.org release index: {error}")))?;
+    let want_tag = target.node_dist_tag();
     let mut out = Vec::new();
     for row in rows {
         let version = row.version.trim_start_matches('v').to_string();
         if parse_semver(&version).is_none() {
             continue;
         }
-        if !row.files.iter().any(|file| file == "osx-arm64-tar") {
+        if !row.files.iter().any(|file| file == want_tag) {
             continue;
         }
         let lts = match row.lts {
@@ -103,9 +114,11 @@ pub fn fetch_node_releases(
     }
     out.sort_by(|a, b| version_order(&a.version, &b.version));
     if out.is_empty() {
-        return Err(ShellError::invalid(
-            "nodejs.org lists no release for Apple Silicon",
-        ));
+        return Err(ShellError::invalid(if target.is_macos() {
+            "nodejs.org lists no release for Apple Silicon".to_string()
+        } else {
+            format!("nodejs.org lists no release for {}", target.cli_arch())
+        }));
     }
     Ok(out)
 }
@@ -534,13 +547,14 @@ pub fn installed_nodes(state: &State, index: &[NodeRelease]) -> Vec<InstalledNod
         .iter()
         .map(|release| (release.version.clone(), release.lts.clone()))
         .collect();
+    let target = HostTarget::current();
     let mut out: Vec<InstalledNode> = state
         .packages
         .iter()
         .filter(|(_, package)| {
             package.name == "node"
                 && package.formula.is_empty()
-                && (package.arch == "arm64" || package.arch == "universal")
+                && target.accepts_model_arch(&package.arch)
         })
         .map(|(id, package)| InstalledNode {
             id: id.clone(),
@@ -920,12 +934,14 @@ impl Shell {
             shell_quote(&exe.to_string_lossy()),
         );
         if self.store().uses_user_storage() {
-            let fallback = "/Applications/Devbase.app/Contents/MacOS/Devbase";
-            wrapper.push_str(&format!(
-                "if [ -x {} ]; then exec {} --dev \"$@\"; fi\n",
-                shell_quote(fallback),
-                shell_quote(fallback)
-            ));
+            let fallback = crate::platform::paths::FALLBACK_PROGRAM_PATH;
+            if Path::new(fallback).is_absolute() {
+                wrapper.push_str(&format!(
+                    "if [ -x {} ]; then exec {} --dev \"$@\"; fi\n",
+                    shell_quote(fallback),
+                    shell_quote(fallback)
+                ));
+            }
         }
         wrapper.push_str("exit 1\n");
         crate::fs::atomic_write(&self.node_wrapper_path(), wrapper.as_bytes(), 0o700)?;
@@ -979,4 +995,66 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
         && haystack
             .windows(needle.len())
             .any(|window| window == needle)
+}
+
+#[cfg(test)]
+mod linux_node_tests {
+    use super::*;
+    use crate::software::HttpTransport;
+
+    struct StubHttp(Vec<u8>);
+    impl HttpTransport for StubHttp {
+        fn download(&self, _: &str, _: &Path) -> Result<u64, SoftwareError> {
+            unimplemented!()
+        }
+        fn get(&self, _: &str) -> Result<Vec<u8>, SoftwareError> {
+            Ok(self.0.clone())
+        }
+        fn size(&self, _: &str) -> Result<Option<i64>, SoftwareError> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn fetch_node_releases_filters_by_host_target_dist_tag() {
+        let payload = br#"[
+          {"version":"v22.14.0","files":["osx-arm64-tar","linux-x64","linux-arm64"],"lts":"Jod"},
+          {"version":"v20.19.0","files":["linux-x64"],"lts":"Iron"},
+          {"version":"v18.20.0","files":["linux-arm64"],"lts":"Hydrogen"}
+        ]"#;
+        let http = StubHttp(payload.to_vec());
+
+        let lx64 = fetch_node_releases_for_target(
+            &http,
+            "https://nodejs.org/dist",
+            HostTarget::LINUX_AMD64,
+        )
+        .unwrap();
+        assert_eq!(
+            lx64.iter().map(|r| r.version.as_str()).collect::<Vec<_>>(),
+            vec!["22.14.0", "20.19.0"]
+        );
+
+        let larm = fetch_node_releases_for_target(
+            &http,
+            "https://nodejs.org/dist",
+            HostTarget::LINUX_ARM64,
+        )
+        .unwrap();
+        assert_eq!(
+            larm.iter().map(|r| r.version.as_str()).collect::<Vec<_>>(),
+            vec!["22.14.0", "18.20.0"]
+        );
+
+        let mac = fetch_node_releases_for_target(
+            &http,
+            "https://nodejs.org/dist",
+            HostTarget::MACOS_ARM64,
+        )
+        .unwrap();
+        assert_eq!(
+            mac.iter().map(|r| r.version.as_str()).collect::<Vec<_>>(),
+            vec!["22.14.0"]
+        );
+    }
 }

@@ -7,6 +7,7 @@ use serde::Deserialize;
 
 use super::{Shell, ShellError, fish_quote, shell_quote};
 use crate::model::Package;
+use crate::platform::{HostArch, HostTarget};
 use crate::software::HttpTransport;
 use crate::state::Tx;
 
@@ -72,8 +73,8 @@ struct FeedPackage {
     filter: serde_json::Value,
 }
 
-/// Evaluate a feed predicate. Unknown predicates fail closed.
-fn feed_predicate(raw: &serde_json::Value, absent: bool) -> bool {
+/// Evaluate a feed predicate for `expected_arch`. Unknown predicates fail closed.
+fn feed_predicate(raw: &serde_json::Value, absent: bool, expected_arch: &str) -> bool {
     match raw {
         serde_json::Value::Null => absent,
         serde_json::Value::Bool(value) => *value,
@@ -88,20 +89,27 @@ fn feed_predicate(raw: &serde_json::Value, absent: bool) -> bool {
                     .and_then(|value| value.as_bool())
                     .unwrap_or(false),
                 "supports_arch" => match object.get("arch").and_then(|value| value.as_str()) {
-                    None | Some("") | Some("aarch64") => true,
-                    Some(_) => false,
+                    None | Some("") => true,
+                    Some(arch) => arch == expected_arch,
                 },
                 "build_number_range" => true,
                 "and" => {
                     let Some(items) = object.get("items").and_then(|value| value.as_array()) else {
                         return false;
                     };
-                    !items.is_empty() && items.iter().all(|item| feed_predicate(item, false))
+                    !items.is_empty()
+                        && items
+                            .iter()
+                            .all(|item| feed_predicate(item, false, expected_arch))
                 }
                 "or" => object
                     .get("items")
                     .and_then(|value| value.as_array())
-                    .is_some_and(|items| items.iter().any(|item| feed_predicate(item, false))),
+                    .is_some_and(|items| {
+                        items
+                            .iter()
+                            .any(|item| feed_predicate(item, false, expected_arch))
+                    }),
                 "not" => {
                     let Some(item) = object.get("item") else {
                         return false;
@@ -114,7 +122,7 @@ fn feed_predicate(raw: &serde_json::Value, absent: bool) -> bool {
                         ),
                         _ => false,
                     };
-                    known && !feed_predicate(item, false)
+                    known && !feed_predicate(item, false, expected_arch)
                 }
                 _ => false,
             }
@@ -123,8 +131,18 @@ fn feed_predicate(raw: &serde_json::Value, absent: bool) -> bool {
     }
 }
 
-/// Parse and filter the JetBrains feed into installable Java manifests.
+/// Parse and filter the JetBrains feed into installable Java manifests for the
+/// compiled host target.
 pub fn java_catalog(http: &dyn HttpTransport) -> Result<Vec<Package>, ShellError> {
+    java_catalog_for_target(http, HostTarget::current())
+}
+
+/// Parse and filter the JetBrains feed into installable Java manifests for an
+/// explicit [`HostTarget`].
+pub fn java_catalog_for_target(
+    http: &dyn HttpTransport,
+    target: HostTarget,
+) -> Result<Vec<Package>, ShellError> {
     let body = http.get(JAVA_CATALOG_URL).map_err(ShellError::Software)?;
     let feed: Feed = serde_json::from_slice(&body)
         .map_err(|error| ShellError::invalid(format!("JetBrains JDK catalog: {error}")))?;
@@ -133,19 +151,21 @@ pub fn java_catalog(http: &dyn HttpTransport) -> Result<Vec<Package>, ShellError
             "JetBrains JDK catalog is missing its version list",
         ));
     };
+    let want_os = target.jetbrains_os();
+    let want_arch = target.jetbrains_arch();
     let mut found: Vec<Package> = Vec::new();
     for product in products {
         if product.vendor.is_empty()
-            || !feed_predicate(&product.filter, true)
-            || !feed_predicate(&product.listed, true)
-            || feed_predicate(&product.preview, false)
+            || !feed_predicate(&product.filter, true, want_arch)
+            || !feed_predicate(&product.listed, true, want_arch)
+            || feed_predicate(&product.preview, false, want_arch)
         {
             continue;
         }
         for item in product.packages {
-            if item.os_name != "macOS"
-                || item.arch != "aarch64"
-                || !feed_predicate(&item.filter, true)
+            if !item.os_name.eq_ignore_ascii_case(want_os)
+                || item.arch != want_arch
+                || !feed_predicate(&item.filter, true, want_arch)
             {
                 continue;
             }
@@ -193,7 +213,7 @@ pub fn java_catalog(http: &dyn HttpTransport) -> Result<Vec<Package>, ShellError
                 java_product: label,
                 name: "java".into(),
                 version: key.clone(),
-                arch: "arm64".into(),
+                arch: target.arch_name().into(),
                 url: item.url,
                 sha256: item.sha256.to_lowercase(),
                 format: format.into(),
@@ -215,7 +235,7 @@ pub fn java_catalog(http: &dyn HttpTransport) -> Result<Vec<Package>, ShellError
                 formula: String::new(),
                 min_macos: String::new(),
             };
-            if package.validate().is_err() {
+            if package.validate_for_target(target).is_err() {
                 continue;
             }
             if let Some(previous) = found.iter().find(|existing| existing.version == key) {
@@ -230,9 +250,14 @@ pub fn java_catalog(http: &dyn HttpTransport) -> Result<Vec<Package>, ShellError
         }
     }
     if found.is_empty() {
-        return Err(ShellError::invalid(
-            "JetBrains catalog contains no supported macOS arm64 JDK archives",
-        ));
+        return Err(ShellError::invalid(if target.is_macos() {
+            "JetBrains catalog contains no supported macOS arm64 JDK archives".to_string()
+        } else {
+            format!(
+                "JetBrains catalog contains no supported {} {} JDK archives",
+                want_os, want_arch
+            )
+        }));
     }
     Ok(found)
 }
@@ -419,11 +444,32 @@ fn software_to_state(error: ShellError) -> crate::state::StateError {
 }
 
 fn runtime_init_script(name: &str, binary: &Path, jvm_dir: &Path) -> String {
+    runtime_init_script_for_target(name, binary, jvm_dir, HostTarget::current())
+}
+
+fn runtime_init_script_for_target(
+    name: &str,
+    binary: &Path,
+    jvm_dir: &Path,
+    target: HostTarget,
+) -> String {
     if name != "java" {
         return runtime_path_script(&binary.parent().unwrap_or(Path::new("")).to_string_lossy());
     }
     let default_bin = binary.parent().unwrap_or(Path::new(""));
     let default_home = default_bin.parent().unwrap_or(Path::new(""));
+    let (arch_reject, arch_match) = match target.arch {
+        HostArch::Arm64 => (
+            r#"if [ -n "$os_arch" ] && [ "$os_arch" != "aarch64" ]; then
+        continue
+      fi"#,
+            r#"[ "$os_arch" = "aarch64" ]"#,
+        ),
+        HostArch::Amd64 => (
+            r#"case "$os_arch" in ""|amd64|x86_64) ;; *) continue ;; esac"#,
+            r#"{ [ "$os_arch" = "amd64" ] || [ "$os_arch" = "x86_64" ]; }"#,
+        ),
+    };
     let template = r#"# Written by Devbase. Changes are overwritten.
 MSM_JAVA_DEFAULT_HOME=__DEFAULT_HOME__
 MSM_JAVA_DEFAULT_BIN=__DEFAULT_BIN__
@@ -547,9 +593,7 @@ __msm_java_apply() {
           esac
         done < "$cand_home/release"
       fi
-      if [ -n "$os_arch" ] && [ "$os_arch" != "aarch64" ]; then
-        continue
-      fi
+      __ARCH_REJECT__
 
       if [ "$base" = "$spec" ]; then
         match1="$cand_home"
@@ -579,7 +623,7 @@ __msm_java_apply() {
             ;;
         esac
       fi
-      if [ "$os_arch" = "aarch64" ] && [ -n "$java_ver" ]; then
+      if __ARCH_MATCH__ && [ -n "$java_ver" ]; then
         if [ -z "$match3" ] && [ "$java_ver" = "$spec" ]; then
           match3="$cand_home"
         elif [ -z "$sdk_ver" ] && [ -z "$match4" ]; then
@@ -676,6 +720,8 @@ __msm_java_apply
             &shell_quote(&default_bin.to_string_lossy()),
         )
         .replace("__JVM_DIR__", &shell_quote(&jvm_dir.to_string_lossy()))
+        .replace("__ARCH_REJECT__", arch_reject)
+        .replace("__ARCH_MATCH__", arch_match)
 }
 
 fn runtime_path_script(bin: &str) -> String {
@@ -698,6 +744,15 @@ unset -f __msm_runtime_path
 }
 
 fn runtime_fish_script(name: &str, binary: &Path, jvm_dir: &Path) -> String {
+    runtime_fish_script_for_target(name, binary, jvm_dir, HostTarget::current())
+}
+
+fn runtime_fish_script_for_target(
+    name: &str,
+    binary: &Path,
+    jvm_dir: &Path,
+    target: HostTarget,
+) -> String {
     if name != "java" {
         let dir = binary.parent().unwrap_or(Path::new(""));
         return format!(
@@ -711,6 +766,16 @@ fn runtime_fish_script(name: &str, binary: &Path, jvm_dir: &Path) -> String {
     }
     let default_bin = binary.parent().unwrap_or(Path::new(""));
     let default_home = default_bin.parent().unwrap_or(Path::new(""));
+    let (fish_arch_reject, fish_arch_match) = match target.arch {
+        HostArch::Arm64 => (
+            r#"if test -n "$os_arch"; and test "$os_arch" != "aarch64""#,
+            r#"test "$os_arch" = "aarch64""#,
+        ),
+        HostArch::Amd64 => (
+            r#"if test -n "$os_arch"; and test "$os_arch" != "amd64"; and test "$os_arch" != "x86_64""#,
+            r#"begin; test "$os_arch" = "amd64"; or test "$os_arch" = "x86_64"; end"#,
+        ),
+    };
     let template = r#"# Written by Devbase. Changes are overwritten.
 set -g MSM_JAVA_DEFAULT_HOME __DEFAULT_HOME__
 set -g MSM_JAVA_DEFAULT_BIN __DEFAULT_BIN__
@@ -826,7 +891,7 @@ function __msm_java_apply --on-variable PWD
           end
         end < "$cand_home/release"
       end
-      if test -n "$os_arch"; and test "$os_arch" != "aarch64"
+      __FISH_ARCH_REJECT__
         continue
       end
 
@@ -850,7 +915,7 @@ function __msm_java_apply --on-variable PWD
           end
         end
       end
-      if test "$os_arch" = "aarch64"; and test -n "$java_ver"
+      if __FISH_ARCH_MATCH__; and test -n "$java_ver"
         if test -z "$match3"; and test "$java_ver" = "$spec"
           set match3 "$cand_home"
         else if test -z "$sdk_ver"; and test -z "$match4"
@@ -933,4 +998,92 @@ __msm_java_apply
             &fish_quote(&default_bin.to_string_lossy()),
         )
         .replace("__JVM_DIR__", &fish_quote(&jvm_dir.to_string_lossy()))
+        .replace("__FISH_ARCH_REJECT__", fish_arch_reject)
+        .replace("__FISH_ARCH_MATCH__", fish_arch_match)
+}
+
+#[cfg(test)]
+mod linux_java_tests {
+    use super::*;
+    use crate::software::SoftwareError;
+
+    struct StubHttp(Vec<u8>);
+    impl HttpTransport for StubHttp {
+        fn download(&self, _: &str, _: &Path) -> Result<u64, SoftwareError> {
+            unimplemented!()
+        }
+        fn get(&self, _: &str) -> Result<Vec<u8>, SoftwareError> {
+            Ok(self.0.clone())
+        }
+        fn size(&self, _: &str) -> Result<Option<i64>, SoftwareError> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn java_catalog_filters_linux_x86_64_and_aarch64_entries() {
+        let sha = "a".repeat(64);
+        let feed = format!(
+            r#"{{
+              "jdks": [
+                {{
+                  "vendor": "Eclipse Temurin",
+                  "product": "JDK",
+                  "jdk_version": "21.0.5",
+                  "packages": [
+                    {{
+                      "os": "linux",
+                      "arch": "x86_64",
+                      "url": "https://example.com/temurin-21-linux-x64.tar.gz",
+                      "sha256": "{sha}",
+                      "package_type": "targz",
+                      "package_root_prefix": "jdk-21.0.5+11",
+                      "package_to_java_home_prefix": "",
+                      "install_folder_name": "temurin-21.0.5+11"
+                    }},
+                    {{
+                      "os": "linux",
+                      "arch": "aarch64",
+                      "url": "https://example.com/temurin-21-linux-arm64.tar.gz",
+                      "sha256": "{sha}",
+                      "package_type": "targz",
+                      "package_root_prefix": "jdk-21.0.5+11",
+                      "package_to_java_home_prefix": "",
+                      "install_folder_name": "temurin-21.0.5+11"
+                    }}
+                  ]
+                }}
+              ]
+            }}"#
+        );
+        let http = StubHttp(feed.into_bytes());
+
+        let x64 = java_catalog_for_target(&http, HostTarget::LINUX_AMD64).unwrap();
+        assert_eq!(x64.len(), 1);
+        assert_eq!(x64[0].arch, "amd64");
+        assert!(x64[0].url.contains("linux-x64"));
+        assert_eq!(x64[0].binaries["java"], "bin/java");
+
+        let arm = java_catalog_for_target(&http, HostTarget::LINUX_ARM64).unwrap();
+        assert_eq!(arm.len(), 1);
+        assert_eq!(arm[0].arch, "arm64");
+        assert!(arm[0].url.contains("linux-arm64"));
+    }
+
+    #[test]
+    fn java_scripts_handle_amd64_and_aarch64_os_arch() {
+        let bin = Path::new("/home/dev/.local/share/devbase/jdks/temurin-21/bin/java");
+        let dir = Path::new("/home/dev/.local/share/devbase/jdks");
+
+        let sh_x64 = runtime_init_script_for_target("java", bin, dir, HostTarget::LINUX_AMD64);
+        assert!(sh_x64.contains("amd64|x86_64"));
+        assert!(!sh_x64.contains("!= \"aarch64\""));
+
+        let fish_x64 = runtime_fish_script_for_target("java", bin, dir, HostTarget::LINUX_AMD64);
+        assert!(fish_x64.contains("test \"$os_arch\" = \"amd64\""));
+        assert!(fish_x64.contains("test \"$os_arch\" = \"x86_64\""));
+
+        let sh_mac = runtime_init_script_for_target("java", bin, dir, HostTarget::MACOS_ARM64);
+        assert!(sh_mac.contains("!= \"aarch64\""));
+    }
 }

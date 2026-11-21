@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::{Engine, EngineError};
+use crate::engine::Engine;
 use crate::fs::{
     atomic_write, create_private_dir_all, digest_bytes, read_regular_file, sync_directory,
 };
@@ -247,27 +247,12 @@ fn read_database_work(dir: &Path, id: &str) -> std::io::Result<DatabaseWorkRecor
 impl Databases {
     fn database_work_job_running(&self, id: &str) -> Result<bool, DatabaseError> {
         let job = format!("dbwork-{id}");
-        match self.engine().run_with_timeout(
-            "launchctl",
-            &["print", &self.engine().target(&job)],
-            std::time::Duration::from_secs(1),
-        ) {
-            Ok(output) => {
-                let state = crate::health::parse_job_state(&output);
-                Ok(state.running || state.pid != 0)
-            }
-            Err(error) => {
-                let message = error.to_string();
-                if message.contains("Could not find service")
-                    || message.contains("Could not find specified service")
-                {
-                    Ok(false)
-                } else {
-                    Err(DatabaseError::invalid(format!(
-                        "could not observe database task {id}: {error}"
-                    )))
-                }
-            }
+        match self.engine().job_state(&job) {
+            Ok(Some(state)) => Ok(state.running || state.pid != 0),
+            Ok(None) => Ok(false),
+            Err(error) => Err(DatabaseError::invalid(format!(
+                "could not observe database task {id}: {error}"
+            ))),
         }
     }
 
@@ -598,8 +583,7 @@ impl Databases {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
-        let target = self.engine().target(&job);
-        verify_shutdown_target(self.engine(), &target, &|| false)?;
+        super::lifecycle::verify_shutdown_job(self.engine(), &job, &|| false)?;
         if !bytes.is_empty() {
             match fs::remove_file(&path) {
                 Ok(()) => {}
@@ -608,40 +592,6 @@ impl Databases {
             }
         }
         Ok(())
-    }
-}
-
-fn verify_shutdown_target(
-    engine: &crate::engine::Engine,
-    target: &str,
-    cancelled: &dyn Fn() -> bool,
-) -> Result<(), DatabaseError> {
-    if cancelled() {
-        return Err(DatabaseError::Cancelled);
-    }
-    match engine.run_with_timeout(
-        "launchctl",
-        &["print", target],
-        std::time::Duration::from_secs(1),
-    ) {
-        Ok(_) => Err(DatabaseError::invalid(format!(
-            "managed service is still registered: {target}"
-        ))),
-        Err(EngineError::Timeout(_)) => Err(DatabaseError::invalid(format!(
-            "could not verify stopped service: {target}"
-        ))),
-        Err(error) => {
-            let message = error.to_string();
-            if message.contains("Could not find service")
-                || message.contains("Could not find specified service")
-            {
-                Ok(())
-            } else {
-                Err(DatabaseError::invalid(format!(
-                    "could not verify stopped service {target}: {error}"
-                )))
-            }
-        }
     }
 }
 

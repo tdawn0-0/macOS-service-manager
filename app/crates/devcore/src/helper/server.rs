@@ -13,7 +13,7 @@ use std::io::Write;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -173,11 +173,35 @@ impl ServerConfig {
     }
 }
 
+struct IdleState {
+    active: usize,
+    last_touch: Instant,
+}
+
+struct ActiveGuard<'a> {
+    server: &'a Server,
+}
+
+impl Drop for ActiveGuard<'_> {
+    fn drop(&mut self) {
+        self.server.end_activity();
+    }
+}
+
+struct OwnedActiveGuard {
+    server: Arc<Server>,
+}
+
+impl Drop for OwnedActiveGuard {
+    fn drop(&mut self) {
+        self.server.end_activity();
+    }
+}
+
 /// Serves privileged operations over the Unix socket for `owner_uid`.
 pub struct Server {
     cfg: ServerConfig,
-    active: AtomicUsize,
-    last_touch: Mutex<Instant>,
+    idle: Mutex<IdleState>,
 }
 
 impl Server {
@@ -200,8 +224,10 @@ impl Server {
         }
         Server {
             cfg,
-            active: AtomicUsize::new(0),
-            last_touch: Mutex::new(Instant::now()),
+            idle: Mutex::new(IdleState {
+                active: 0,
+                last_touch: Instant::now(),
+            }),
         }
     }
 
@@ -238,8 +264,10 @@ impl Server {
                         result = Err(error);
                         break;
                     }
+                    let guard = self.track_owned_activity();
                     let server = Arc::clone(self);
                     connections.push(std::thread::spawn(move || {
+                        let _guard = guard;
                         server.serve_connection(stream);
                     }));
                 }
@@ -276,19 +304,42 @@ impl Server {
     /// Applies authorization and routing to one request. Public within the
     /// crate so endpoint tests never need a socket.
     pub(crate) fn handle(&self, request: &Request, peer: Option<&UnixStream>) -> Response {
-        self.active.fetch_add(1, Ordering::SeqCst);
-        self.touch();
-        let response = match self.authorize(peer) {
+        let _guard = self.track_activity();
+        match self.authorize(peer) {
             Ok(()) => self.route(request),
             Err(response) => response,
-        };
-        self.active.fetch_sub(1, Ordering::SeqCst);
-        response
+        }
+    }
+
+    fn begin_activity(&self) {
+        if let Ok(mut state) = self.idle.lock() {
+            state.active += 1;
+            state.last_touch = Instant::now();
+        }
+    }
+
+    fn end_activity(&self) {
+        if let Ok(mut state) = self.idle.lock() {
+            state.active = state.active.saturating_sub(1);
+            state.last_touch = Instant::now();
+        }
+    }
+
+    fn track_activity(&self) -> ActiveGuard<'_> {
+        self.begin_activity();
+        ActiveGuard { server: self }
+    }
+
+    fn track_owned_activity(self: &Arc<Self>) -> OwnedActiveGuard {
+        self.begin_activity();
+        OwnedActiveGuard {
+            server: Arc::clone(self),
+        }
     }
 
     fn touch(&self) {
-        if let Ok(mut last) = self.last_touch.lock() {
-            *last = Instant::now();
+        if let Ok(mut state) = self.idle.lock() {
+            state.last_touch = Instant::now();
         }
     }
 
@@ -297,21 +348,23 @@ impl Server {
             if stop.load(Ordering::SeqCst) {
                 return;
             }
-            let elapsed = self
-                .last_touch
-                .lock()
-                .map(|last| last.elapsed())
-                .unwrap_or_default();
-            if elapsed >= self.cfg.idle_timeout {
-                if self.active.load(Ordering::SeqCst) > 0 {
-                    self.touch();
-                    continue;
+            let wait = {
+                let Ok(mut state) = self.idle.lock() else {
+                    return;
+                };
+                if state.active > 0 {
+                    state.last_touch = Instant::now();
+                    self.cfg.idle_timeout.min(Duration::from_millis(10))
+                } else {
+                    let elapsed = state.last_touch.elapsed();
+                    if elapsed >= self.cfg.idle_timeout {
+                        stop.store(true, Ordering::SeqCst);
+                        return;
+                    }
+                    (self.cfg.idle_timeout - elapsed).min(Duration::from_millis(10))
                 }
-                stop.store(true, Ordering::SeqCst);
-                return;
-            }
-            let remaining = self.cfg.idle_timeout - elapsed;
-            std::thread::sleep(remaining.min(Duration::from_millis(10)));
+            };
+            std::thread::sleep(wait);
         }
     }
 

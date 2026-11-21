@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "devbase-site",
+  "compatibility_date": "2026-04-01",
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    {
+      "pattern": "devbase.jyeu.xyz",
+      "custom_domain": true
+    }
+  ]
+}

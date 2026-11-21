@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Page Not Found — Devbase</title>
+  <meta name="theme-color" content="#fafaf8" id="meta-theme-color">
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+  <link rel="icon" type="image/png" href="/icon.png">
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem('devbase-theme') === 'dark') {
+          document.documentElement.classList.add('dark');
+          var meta = document.getElementById('meta-theme-color');
+          if (meta) meta.setAttribute('content', '#0a0a0d');
+        }
+      } catch (_) {}
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main style="min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:32px 16px;text-align:center">
+    <div style="max-width:460px">
+      <img src="/icon.svg" alt="Devbase" width="64" height="64" style="border-radius:16px;margin-bottom:22px;box-shadow:0 16px 34px -10px rgba(58,72,224,.38)">
+      <div class="eyebrow">404 · Not Found</div>
+      <h1 class="display" style="font-size:clamp(34px,5vw,52px);line-height:1.04;margin-bottom:14px">
+        Route not found.
+      </h1>
+      <p style="color:var(--color-ink-2);margin:0 0 28px;font-size:15.5px">
+        That page does not exist on <code>devbase.jyeu.xyz</code>. Head back to the Devbase overview or grab the latest macOS release.
+      </p>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center">
+        <a href="/" class="btn-primary">
+          <span>Back to Devbase</span>
+          <span class="btn-dot" aria-hidden="true">→</span>
+        </a>
+        <a href="https://github.com/tdawn0-0/macOS-service-manager/releases/latest" class="btn-ghost">
+          GitHub Releases
+        </a>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

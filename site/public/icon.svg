@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2=".35" y2="1">
+      <stop offset="0" stop-color="#6E7BFF"/>
+      <stop offset=".55" stop-color="#4648E0"/>
+      <stop offset="1" stop-color="#2A1F9E"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx=".3" cy="0" r=".95">
+      <stop offset="0" stop-color="#fff" stop-opacity=".28"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".38"/>
+      <stop offset=".5" stop-color="#fff" stop-opacity=".06"/>
+      <stop offset="1" stop-color="#000" stop-opacity=".16"/>
+    </linearGradient>
+    <linearGradient id="on" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4ADE80"/>
+      <stop offset="1" stop-color="#16B765"/>
+    </linearGradient>
+    <linearGradient id="knob" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff"/>
+      <stop offset="1" stop-color="#e7e9f2"/>
+    </linearGradient>
+    <filter id="drop" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#000" flood-opacity=".32"/>
+    </filter>
+    <filter id="lift" x="-15%" y="-40%" width="130%" height="200%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#0B7A4B" flood-opacity=".55"/>
+    </filter>
+    <filter id="knobShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="6" stdDeviation="7" flood-color="#000" flood-opacity=".3"/>
+    </filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)" filter="url(#drop)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#sheen)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="url(#edge)" stroke-width="3"/>
+  <rect x="256.0" y="238.0" width="512" height="152" rx="76.0" fill="url(#on)" filter="url(#lift)"/>
+  <rect x="257.5" y="239.5" width="509" height="149" rx="74.5" fill="none" stroke="#fff" stroke-opacity=".28" stroke-width="3"/>
+  <circle cx="692.0" cy="314.0" r="60" fill="url(#knob)" filter="url(#knobShadow)"/>
+  <rect x="256.0" y="436.0" width="512" height="152" rx="76.0" fill="#fff" fill-opacity=".17"/>
+  <rect x="257.5" y="437.5" width="509" height="149" rx="74.5" fill="none" stroke="#fff" stroke-opacity=".22" stroke-width="3"/>
+  <circle cx="332.0" cy="512.0" r="60" fill="url(#knob)" filter="url(#knobShadow)"/>
+  <rect x="256.0" y="634.0" width="512" height="152" rx="76.0" fill="url(#on)" filter="url(#lift)"/>
+  <rect x="257.5" y="635.5" width="509" height="149" rx="74.5" fill="none" stroke="#fff" stroke-opacity=".28" stroke-width="3"/>
+  <circle cx="692.0" cy="710.0" r="60" fill="url(#knob)" filter="url(#knobShadow)"/>
+</svg>

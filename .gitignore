@@ -1,5 +1,6 @@
 /build/
 /.cloudflare/
+.wrangler/
 .DS_Store
 .idea
 .vscode/*

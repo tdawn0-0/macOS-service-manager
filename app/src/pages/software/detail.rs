@@ -9,13 +9,11 @@ use nsh_core::prelude::*;
 use crate::{
     components::{
         controls::{self as ui, TagTone, Tone, action_button, card, hairline, tag},
-        icons as app_icons, note,
+        icons, note,
     },
     store::software::{self as sw, SoftwareKind},
     theme as tokens,
 };
-
-use super::{check, folder, package, refresh, warn};
 
 pub(super) fn detail_pane() -> impl IntoElement {
     view()
@@ -31,6 +29,7 @@ pub(super) fn detail_pane() -> impl IntoElement {
                     .flex_col()
                     .gap(tokens::space(4.0))
                     .px(tokens::space(5.0))
+                    .pt(tokens::space(4.0))
                     .pb(tokens::space(5.0))
                     .child(installed_card())
                     .child(install_card())
@@ -41,45 +40,26 @@ pub(super) fn detail_pane() -> impl IntoElement {
 
 /// The software's name, what is installed, and a fresh read.
 fn header() -> impl IntoElement {
-    view()
-        .h(px(60.0))
-        .flex_none()
-        .flex_row()
-        .items_center()
-        .gap(tokens::space(2.0))
-        .px(tokens::space(5.0))
-        .pt(tokens::space(2.0))
-        .child(
-            view()
-                .flex_col()
-                .gap(tokens::space(0.5))
-                .flex_1()
-                .min_w(px(0.0))
-                .child(
-                    text(move || sw::active_software().title().to_string())
-                        .text_size(px(15.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().foreground)
-                        .truncate(),
-                )
-                .child(
-                    text(move || meta(sw::active_software()))
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground)
-                        .truncate(),
-                ),
-        )
-        .child(when(sw::loading, || {
-            text("Loading")
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground)
-        }))
-        .child(ui::toolbar_icon_button(
-            refresh(),
-            "Refresh software",
-            "software-refresh",
-            sw::refresh,
-        ))
+    ui::page_header(
+        move || sw::active_software().title().to_string(),
+        Some(move || meta(sw::active_software())),
+        view()
+            .flex_none()
+            .flex_row()
+            .items_center()
+            .gap(tokens::space(2.0))
+            .child(when(sw::loading, || {
+                text("Loading")
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .text_color(move || theme().muted_foreground)
+            }))
+            .child(ui::toolbar_icon_button(
+                icons::refresh(),
+                "Refresh software",
+                "software-refresh",
+                sw::refresh,
+            )),
+    )
 }
 
 fn meta(kind: SoftwareKind) -> String {
@@ -101,13 +81,13 @@ fn notes() -> impl IntoElement {
         .flex_col()
         .flex_none()
         .child(dynamic(move || {
-            sw::load_error().map(|message| note(warn(), message, true))
+            sw::load_error().map(|message| note(icons::warn(), message, true))
         }))
         .child(dynamic(move || {
-            sw::action_error().map(|message| note(warn(), message, true))
+            sw::action_error().map(|message| note(icons::warn(), message, true))
         }))
         .child(dynamic(move || {
-            sw::notice().map(|message| note(check(), message, false))
+            sw::notice().map(|message| note(icons::check(), message, false))
         }))
 }
 
@@ -179,6 +159,7 @@ fn installed_row(package: devcore::model::Package) -> impl IntoElement {
                     text(format!("{title} · {version}"))
                         .text_size(px(tokens::TEXT_BODY))
                         .font_weight(FontWeight::MEDIUM)
+                        .tabular_nums()
                         .text_color(move || theme().foreground)
                         .truncate(),
                 )
@@ -193,7 +174,7 @@ fn installed_row(package: devcore::model::Package) -> impl IntoElement {
                 .gap(tokens::space(1.5))
                 .min_w(px(0.0))
                 .child(
-                    check()
+                    icons::check()
                         .size(px(12.0))
                         .flex_none()
                         .text_color(move || integrity_color(&status_icon)),
@@ -230,6 +211,7 @@ fn installed_row(package: devcore::model::Package) -> impl IntoElement {
                 .child(
                     text(format!("{files} files checked"))
                         .text_size(px(tokens::TEXT_CAPTION))
+                        .tabular_nums()
                         .text_color(move || theme().muted_foreground),
                 )
                 .child(issues.into_iter().map(|issue| {
@@ -290,22 +272,26 @@ fn installed_row(package: devcore::model::Package) -> impl IntoElement {
             }
         }))
         .child(when(homebrew, move || {
+            let command = format!("brew reinstall {formula}");
+            let copy_command = command.clone();
             view()
                 .flex_row()
                 .items_center()
                 .gap(tokens::space(1.5))
                 .child(
-                    text(format!("brew reinstall {formula}"))
+                    text(command)
                         .font_family("monospace")
                         .text_size(px(tokens::TEXT_CAPTION))
                         .text_color(move || theme().muted_foreground)
                         .selectable(true),
                 )
-                .child(
-                    app_icons::copy()
-                        .size(px(11.0))
-                        .text_color(move || theme().muted_foreground),
-                )
+                .child(ui::row_icon_button(
+                    icons::copy(),
+                    "Copy Homebrew reinstall command",
+                    format!("copy-brew-{key}"),
+                    false,
+                    move || sw::copy(&copy_command),
+                ))
         }))
 }
 
@@ -334,20 +320,11 @@ fn install_card() -> impl IntoElement {
 
 fn install_actions() -> impl IntoElement {
     let preview = sw::preview();
-    let details = preview
-        .as_ref()
-        .filter(|preview| preview.matches)
-        .and_then(|preview| preview.details.clone());
+    let details = preview.as_ref().and_then(|preview| preview.details.clone());
     let installed = details.as_ref().is_some_and(|details| details.installed);
     let formula = details
         .as_ref()
         .is_some_and(|details| !details.package.formula.is_empty());
-    let compatible = details.as_ref().is_none_or(|details| details.compatible);
-    let needs_repair = details.as_ref().is_some_and(|details| {
-        details.installed
-            && details.integrity == "Needs repair"
-            && details.package.formula.is_empty()
-    });
     let label = if installed {
         "Already installed"
     } else if formula {
@@ -355,9 +332,6 @@ fn install_actions() -> impl IntoElement {
     } else {
         "Download and install"
     };
-    let can_install =
-        details.is_some() && !installed && compatible && !needs_repair && !sw::operation_busy();
-    let review_disabled = sw::operation_busy() || sw::version().trim().is_empty();
     let review_tone = if details.is_some() {
         Tone::Default
     } else {
@@ -378,14 +352,14 @@ fn install_actions() -> impl IntoElement {
             "Review package",
             review_tone,
             "software-review",
-            review_disabled,
+            || sw::operation_busy() || sw::version().trim().is_empty(),
             sw::review,
         ))
         .child(action_button(
             label,
             install_tone,
             "software-install",
-            !can_install,
+            || !sw::can_install(),
             sw::install,
         ))
 }
@@ -438,7 +412,7 @@ fn version_field() -> impl IntoElement {
 fn preview_inner(preview: sw::Preview) -> impl IntoElement {
     let error = preview.error.clone();
     let loading = preview.loading;
-    let details = preview.details.clone().filter(|_| preview.matches);
+    let details = preview.details.clone();
     view()
         .test_id("software-preview")
         .flex_col()
@@ -494,7 +468,7 @@ fn preview_details(details: PackageDetails) -> impl IntoElement {
                 .flex_wrap()
                 .gap(tokens::space(1.5))
                 .child(
-                    package()
+                    icons::package()
                         .size(px(13.0))
                         .flex_none()
                         .text_color(move || theme().muted_foreground),
@@ -505,6 +479,7 @@ fn preview_details(details: PackageDetails) -> impl IntoElement {
                         .min_w(px(0.0))
                         .text_size(px(tokens::TEXT_BODY))
                         .font_weight(FontWeight::MEDIUM)
+                        .tabular_nums()
                         .text_color(move || theme().foreground)
                         .truncate(),
                 )
@@ -534,6 +509,7 @@ fn preview_details(details: PackageDetails) -> impl IntoElement {
                 .child(when(!formula && archive_bytes > 0, move || {
                     text(format!("Archive size {}", sw::format_bytes(archive_bytes)))
                         .text_size(px(tokens::TEXT_CAPTION))
+                        .tabular_nums()
                         .text_color(move || theme().muted_foreground)
                 })),
         )
@@ -545,6 +521,7 @@ fn preview_details(details: PackageDetails) -> impl IntoElement {
         .child(
             text(details_text)
                 .font_family("monospace")
+                .tabular_nums()
                 .text_size(px(tokens::TEXT_CAPTION))
                 .text_color(move || theme().foreground)
                 .selectable(true),
@@ -636,6 +613,7 @@ fn cache_body() -> impl IntoElement {
         .child(
             text(meta)
                 .text_size(px(tokens::TEXT_SMALL))
+                .tabular_nums()
                 .text_color(move || theme().foreground),
         )
         .child(when(has_directory, move || {
@@ -645,7 +623,7 @@ fn cache_body() -> impl IntoElement {
                 .gap(tokens::space(1.5))
                 .min_w(px(0.0))
                 .child(
-                    folder()
+                    icons::folder()
                         .size(px(12.0))
                         .flex_none()
                         .text_color(move || theme().muted_foreground),

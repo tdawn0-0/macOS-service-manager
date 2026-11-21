@@ -55,54 +55,36 @@ pub(crate) fn development() -> impl IntoElement {
 /// The workspace's title, summary and a fresh read of the runtime home.
 fn header() -> impl IntoElement {
     let software = move || dev::tab() == Tab::Software;
-    view()
-        .h(px(60.0))
-        .flex_none()
-        .flex_row()
-        .items_center()
-        .gap(tokens::space(2.0))
-        .px(tokens::space(5.0))
-        .pt(tokens::space(2.0))
-        .child(
-            view()
-                .flex_col()
-                .gap(tokens::space(0.5))
-                .flex_1()
-                .min_w(px(0.0))
-                .child(
-                    text("Development")
-                        .text_size(px(15.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().foreground),
-                )
-                .child(
-                    text(Section::Development.summary())
+    ui::page_header(
+        "Development",
+        Some(Section::Development.summary()),
+        view()
+            .flex_none()
+            .flex_row()
+            .items_center()
+            .gap(tokens::space(2.0))
+            .child(when(
+                move || !software() && dev::busy(),
+                || {
+                    text("Working…")
+                        .test_id("dev-busy")
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .text_color(tokens::warning)
+                },
+            ))
+            .child(when(
+                move || !software() && dev::loading(),
+                || {
+                    text("Reading…")
                         .text_size(px(tokens::TEXT_CAPTION))
                         .text_color(move || theme().muted_foreground)
-                        .truncate(),
-                ),
-        )
-        .child(when(
-            move || !software() && dev::busy(),
-            || {
-                text("Working…")
-                    .test_id("dev-busy")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(tokens::warning)
-            },
-        ))
-        .child(when(
-            move || !software() && dev::loading(),
-            || {
-                text("Reading…")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground)
-            },
-        ))
-        .child(when(
-            move || !software(),
-            || ui::action_button("Refresh", Tone::Default, "dev-refresh", false, dev::refresh),
-        ))
+                },
+            ))
+            .child(when(
+                move || !software(),
+                || ui::action_button("Refresh", Tone::Default, "dev-refresh", false, dev::refresh),
+            )),
+    )
 }
 
 /// The read error, an action's error and a short notice.

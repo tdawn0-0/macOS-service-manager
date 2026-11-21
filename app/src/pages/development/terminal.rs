@@ -35,38 +35,18 @@ pub(super) fn terminal_page() -> impl IntoElement {
 }
 
 fn header() -> impl IntoElement {
-    view()
-        .h(px(56.0))
-        .flex_none()
-        .flex_row()
-        .items_center()
-        .gap(tokens::space(2.0))
-        .px(tokens::space(5.0))
-        .child(action_button(
+    ui::page_header_with_leading(
+        Some(action_button(
             "← Development",
             Tone::Default,
             "terminal-back",
             false,
             dev::close_terminal,
-        ))
-        .child(
-            view()
-                .flex_col()
-                .gap(tokens::space(0.5))
-                .flex_1()
-                .min_w(px(0.0))
-                .child(
-                    text("Runtime terminal")
-                        .text_size(px(15.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().foreground),
-                )
-                .child(
-                    text("Node.js for one folder, in the developer's terminal.")
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground),
-                ),
-        )
+        )),
+        "Runtime terminal",
+        Some("Node.js for one folder, in the developer's terminal."),
+        None::<AnyElement>,
+    )
 }
 
 fn folder_card() -> impl IntoElement {
@@ -183,6 +163,7 @@ fn selection_body() -> impl IntoElement {
                     text(format!("Node.js {version}"))
                         .text_size(px(tokens::TEXT_BODY))
                         .font_weight(FontWeight::MEDIUM)
+                        .tabular_nums()
                         .text_color(move || theme().foreground),
                 )
                 .child(ui::kv_mono("Folder", dir))

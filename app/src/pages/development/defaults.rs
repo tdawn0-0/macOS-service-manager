@@ -28,6 +28,7 @@ pub(super) fn node_defaults() -> impl IntoElement {
                     }
                 })
                 .text_size(px(tokens::TEXT_SMALL))
+                .tabular_nums()
                 .text_color(move || theme().foreground),
             )
             .child(
@@ -104,6 +105,7 @@ pub(super) fn java_defaults() -> impl IntoElement {
                     }
                 })
                 .text_size(px(tokens::TEXT_SMALL))
+                .tabular_nums()
                 .text_color(move || theme().foreground),
             )
             .child(dynamic(|| Some(java_chips().into_element())))
@@ -166,6 +168,7 @@ pub(super) fn python_defaults() -> impl IntoElement {
                     }
                 })
                 .text_size(px(tokens::TEXT_SMALL))
+                .tabular_nums()
                 .text_color(move || theme().foreground),
             )
             .child(dynamic(|| Some(python_chips().into_element())))

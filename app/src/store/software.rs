@@ -32,8 +32,8 @@ use devcore::{
 use nsh_base::alert_dialog;
 use nsh_core::prelude::*;
 
-/// The software this phase manages, in the Go app's order: runtimes first,
-/// then database engines. Java and uv have their own catalog slices later.
+/// The software Devbase manages, in order: runtimes first, then database
+/// engines. Java and uv have their own catalog slices on the Runtimes tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SoftwareKind {
     Node,
@@ -287,27 +287,17 @@ pub(crate) struct Preview {
     pub details: Option<PackageDetails>,
     pub loading: bool,
     pub error: Option<String>,
-    /// Whether the preview is of the software and version chosen now.
-    pub matches: bool,
 }
 
 #[derive(Debug, Clone)]
-struct Workspace {
-    active: SoftwareKind,
+struct VersionDrafts {
     /// The version in each software's field, so switching does not lose it.
     versions: BTreeMap<&'static str, String>,
-    load: LoadState,
-    preview: Option<PreviewState>,
-    /// Checks made this session, by package id.
-    checks: BTreeMap<String, PackageIntegrityResult>,
-    /// Package operations in flight, by package id, with their latest line.
-    busy: BTreeMap<String, String>,
-    cache_busy: bool,
-    action_error: Option<String>,
-    notice: Option<String>,
+    /// Bumped on every edit so debounced quiet reviews only run after typing settles.
+    generation: u64,
 }
 
-impl Default for Workspace {
+impl Default for VersionDrafts {
     fn default() -> Self {
         let mut versions = BTreeMap::new();
         for kind in SoftwareKind::RUNTIMES
@@ -322,22 +312,61 @@ impl Default for Workspace {
                     .unwrap_or_default(),
             );
         }
+        VersionDrafts {
+            versions,
+            generation: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct PreviewSlot {
+    preview: Option<PreviewState>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct Feedback {
+    action_error: Option<String>,
+    notice: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct Workspace {
+    active: SoftwareKind,
+    load: LoadState,
+    /// Checks made this session, by package id.
+    checks: BTreeMap<String, PackageIntegrityResult>,
+    /// Package operations in flight, by package id, with their latest line.
+    busy: BTreeMap<String, String>,
+    cache_busy: bool,
+}
+
+impl Default for Workspace {
+    fn default() -> Self {
         Workspace {
             active: SoftwareKind::Node,
-            versions,
             load: LoadState::default(),
-            preview: None,
             checks: BTreeMap::new(),
             busy: BTreeMap::new(),
             cache_busy: false,
-            action_error: None,
-            notice: None,
         }
     }
 }
 
 fn workspace() -> Signal<Workspace> {
     global::<Workspace>()
+}
+
+fn version_drafts() -> Signal<VersionDrafts> {
+    global::<VersionDrafts>()
+}
+
+fn preview_slot() -> Signal<PreviewSlot> {
+    global::<PreviewSlot>()
+}
+
+fn feedback() -> Signal<Feedback> {
+    global::<Feedback>()
 }
 
 /// Runs store work outside the view that asked for it: a pane the store
@@ -363,19 +392,60 @@ fn normalize_version(version: &str) -> String {
         .to_string()
 }
 
-fn preview_matches_state(state: &Workspace) -> bool {
-    let Some(preview) = &state.preview else {
+fn clear_preview() {
+    if preview_slot().with_untracked(|slot| slot.preview.is_some()) {
+        preview_slot().update(|slot| slot.preview = None);
+    }
+}
+
+fn clear_feedback() {
+    if feedback().with_untracked(|fb| fb.action_error.is_some() || fb.notice.is_some()) {
+        feedback().update(|fb| {
+            fb.action_error = None;
+            fb.notice = None;
+        });
+    }
+}
+
+/// Whether the current preview matches the active software and version draft.
+pub(crate) fn preview_matches() -> bool {
+    let active = active_software();
+    let version = version_drafts().with(|drafts| {
+        drafts
+            .versions
+            .get(active.key())
+            .cloned()
+            .unwrap_or_default()
+    });
+    preview_slot().with(|slot| {
+        let Some(preview) = &slot.preview else {
+            return false;
+        };
+        preview.name == active.key()
+            && preview.version == normalize_version(&version)
+            && preview.details.is_some()
+            && !preview.loading
+    })
+}
+
+/// Whether the currently previewed package can be installed right now.
+pub(crate) fn can_install() -> bool {
+    if !preview_matches() || operation_busy() {
         return false;
-    };
-    let version = state
-        .versions
-        .get(state.active.key())
-        .cloned()
-        .unwrap_or_default();
-    preview.name == state.active.key()
-        && preview.version == normalize_version(&version)
-        && preview.details.is_some()
-        && !preview.loading
+    }
+    preview_slot().with(|slot| {
+        let Some(details) = slot
+            .preview
+            .as_ref()
+            .and_then(|preview| preview.details.as_ref())
+        else {
+            return false;
+        };
+        let needs_repair = details.installed
+            && details.integrity == "Needs repair"
+            && details.package.formula.is_empty();
+        !details.installed && details.compatible && !needs_repair
+    })
 }
 
 // --- Selection and catalog ---------------------------------------------------
@@ -388,22 +458,25 @@ pub(crate) fn active_software() -> SoftwareKind {
 /// Shows `kind`, offering its first catalog version and clearing the preview
 /// of the software shown before.
 pub(crate) fn select_software(kind: SoftwareKind) {
+    if workspace().with_untracked(|state| state.active == kind) {
+        return;
+    }
     workspace().update(|state| {
-        if state.active == kind {
-            return;
-        }
         state.active = kind;
-        state.preview = None;
-        state.action_error = None;
-        state.notice = None;
-        state.versions.entry(kind.key()).or_insert_with(|| {
-            catalog::available_versions(kind.key())
-                .first()
-                .cloned()
-                .unwrap_or_default()
-        });
     });
-    if workspace().with(|state| !state.load.loaded && !state.load.loading) {
+    clear_preview();
+    clear_feedback();
+    if version_drafts().with_untracked(|drafts| !drafts.versions.contains_key(kind.key())) {
+        version_drafts().update(|drafts| {
+            drafts.versions.entry(kind.key()).or_insert_with(|| {
+                catalog::available_versions(kind.key())
+                    .first()
+                    .cloned()
+                    .unwrap_or_default()
+            });
+        });
+    }
+    if workspace().with_untracked(|state| !state.load.loaded && !state.load.loading) {
         refresh();
     }
 }
@@ -415,10 +488,11 @@ pub(crate) fn versions(kind: SoftwareKind) -> Vec<String> {
 
 /// The version chosen for the software shown.
 pub(crate) fn version() -> String {
-    workspace().with(|state| {
-        state
+    let active = active_software();
+    version_drafts().with(|drafts| {
+        drafts
             .versions
-            .get(state.active.key())
+            .get(active.key())
             .cloned()
             .unwrap_or_default()
     })
@@ -426,14 +500,16 @@ pub(crate) fn version() -> String {
 
 /// Changes the version field and reviews it shortly after typing stops.
 pub(crate) fn set_version(next: String) {
-    let active = active_software();
-    workspace().update(|state| {
-        state.versions.insert(active.key(), next);
-        state.preview = None;
-        state.action_error = None;
-        state.notice = None;
+    let active = workspace().with_untracked(|state| state.active);
+    let mut generation = 0;
+    version_drafts().update(|drafts| {
+        drafts.versions.insert(active.key(), next);
+        drafts.generation += 1;
+        generation = drafts.generation;
     });
-    later(Duration::from_millis(400), review_quietly);
+    later(Duration::from_millis(400), move || {
+        review_quietly(generation);
+    });
 }
 
 /// Reviews the version in the field: what Install acts on. Called by the
@@ -442,21 +518,26 @@ pub(crate) fn review() {
     fetch_preview(true);
 }
 
-fn review_quietly() {
-    let current = workspace().with(|state| {
-        preview_matches_state(state)
-            || state.preview.as_ref().is_some_and(|preview| {
-                preview.loading
-                    && preview.name == state.active.key()
-                    && preview.version
-                        == normalize_version(
-                            state
-                                .versions
-                                .get(state.active.key())
-                                .map(String::as_str)
-                                .unwrap_or_default(),
-                        )
-            })
+fn review_quietly(generation: u64) {
+    if version_drafts().with_untracked(|drafts| drafts.generation != generation) {
+        return;
+    }
+    let active = workspace().with_untracked(|state| state.active);
+    let current_version = version_drafts().with_untracked(|drafts| {
+        normalize_version(
+            drafts
+                .versions
+                .get(active.key())
+                .map(String::as_str)
+                .unwrap_or_default(),
+        )
+    });
+    let current = preview_slot().with_untracked(|slot| {
+        slot.preview.as_ref().is_some_and(|preview| {
+            preview.name == active.key()
+                && preview.version == current_version
+                && (preview.loading || preview.details.is_some())
+        })
     });
     if !current {
         fetch_preview(false);
@@ -464,37 +545,42 @@ fn review_quietly() {
 }
 
 fn fetch_preview(force: bool) {
-    let Some((name, version)) = workspace().with(|state| {
-        if !force && preview_matches_state(state) {
-            return None;
-        }
-        let name = state.active.key().to_string();
-        let version = normalize_version(
-            &state
+    let active = workspace().with_untracked(|state| state.active);
+    let name = active.key().to_string();
+    let version = version_drafts().with_untracked(|drafts| {
+        normalize_version(
+            drafts
                 .versions
-                .get(state.active.key())
-                .cloned()
+                .get(active.key())
+                .map(String::as_str)
                 .unwrap_or_default(),
-        );
-        if version.is_empty() {
-            return None;
-        }
-        Some((name, version))
-    }) else {
+        )
+    });
+    if version.is_empty() {
         return;
-    };
+    }
+    let already_matches = preview_slot().with_untracked(|slot| {
+        slot.preview.as_ref().is_some_and(|preview| {
+            preview.name == name
+                && preview.version == version
+                && preview.details.is_some()
+                && !preview.loading
+        })
+    });
+    if !force && already_matches {
+        return;
+    }
     let Some(provider) = provider_of() else {
         set_action_error("no software provider is available".to_string());
         return;
     };
-    let sequence = workspace().with(|state| {
-        state
-            .preview
+    let sequence = preview_slot().with_untracked(|slot| {
+        slot.preview
             .as_ref()
             .map_or(1, |preview| preview.sequence + 1)
     });
-    workspace().update(|state| {
-        state.preview = Some(PreviewState {
+    preview_slot().update(|slot| {
+        slot.preview = Some(PreviewState {
             name: name.clone(),
             version: version.clone(),
             details: None,
@@ -502,23 +588,25 @@ fn fetch_preview(force: bool) {
             error: None,
             sequence,
         });
-        state.action_error = None;
     });
+    if feedback().with_untracked(|fb| fb.action_error.is_some()) {
+        feedback().update(|fb| fb.action_error = None);
+    }
     task(async move {
         let request = (name.clone(), version.clone());
         let answer = match blocking(move || provider.preview(&request.0, &request.1)).await {
             Ok(answer) => answer,
             Err(error) => Err(format!("the review did not answer: {error}")),
         };
-        workspace().update(|state| {
-            let Some(preview) = state.preview.as_mut() else {
+        let mut resolved = None;
+        preview_slot().update(|slot| {
+            let Some(preview) = slot.preview.as_mut() else {
                 return;
             };
             if preview.sequence != sequence || preview.name != name || preview.version != version {
                 return;
             }
             preview.loading = false;
-            let mut resolved = None;
             match answer {
                 Ok(details) => {
                     if !details.package.formula.is_empty() || details.package.name == "node" {
@@ -538,23 +626,23 @@ fn fetch_preview(force: bool) {
                     preview.error = Some(error);
                 }
             }
-            if let (Some((_name, version)), Some(kind)) = (resolved, SoftwareKind::from_key(&name))
-            {
-                state.versions.insert(kind.key(), version);
-            }
         });
+        if let (Some((_name, version)), Some(kind)) = (resolved, SoftwareKind::from_key(&name)) {
+            version_drafts().update(|drafts| {
+                drafts.versions.insert(kind.key(), version);
+            });
+        }
     });
 }
 
 /// The preview of the version chosen, if one was asked for.
 pub(crate) fn preview() -> Option<Preview> {
-    workspace().with(|state| {
-        let preview = state.preview.as_ref()?;
+    preview_slot().with(|slot| {
+        let preview = slot.preview.as_ref()?;
         Some(Preview {
             details: preview.details.clone(),
             loading: preview.loading,
             error: preview.error.clone(),
-            matches: preview_matches_state(state),
         })
     })
 }
@@ -771,29 +859,29 @@ pub(crate) fn progress(id: &str) -> Option<String> {
 }
 
 pub(crate) fn action_error() -> Option<String> {
-    workspace().with(|state| state.action_error.clone())
+    feedback().with(|fb| fb.action_error.clone())
 }
 
 pub(crate) fn notice() -> Option<String> {
-    workspace().with(|state| state.notice.clone())
+    feedback().with(|fb| fb.notice.clone())
 }
 
 fn set_action_error(message: String) {
-    workspace().update(|state| {
-        state.action_error = Some(message);
-        state.notice = None;
+    feedback().update(|fb| {
+        fb.action_error = Some(message);
+        fb.notice = None;
     });
 }
 
 fn show_notice(message: String) {
-    workspace().update(|state| {
-        state.notice = Some(message.clone());
-        state.action_error = None;
+    feedback().update(|fb| {
+        fb.notice = Some(message.clone());
+        fb.action_error = None;
     });
     later(Duration::from_secs(3), move || {
-        workspace().update(|state| {
-            if state.notice.as_deref() == Some(message.as_str()) {
-                state.notice = None;
+        feedback().update(|fb| {
+            if fb.notice.as_deref() == Some(message.as_str()) {
+                fb.notice = None;
             }
         });
     });
@@ -801,20 +889,22 @@ fn show_notice(message: String) {
 
 /// Installs the previewed version after the review found it compatible.
 pub(crate) fn install() {
-    let Some((package, installed, compatible, needs_repair)) = workspace().with(|state| {
-        if !preview_matches_state(state) {
-            return None;
-        }
-        let details = state.preview.as_ref()?.details.as_ref()?;
-        Some((
-            details.package.clone(),
-            details.installed,
-            details.compatible,
-            details.installed
-                && details.integrity == "Needs repair"
-                && details.package.formula.is_empty(),
-        ))
-    }) else {
+    if !preview_matches() {
+        return;
+    }
+    let Some((package, installed, compatible, needs_repair)) =
+        preview_slot().with_untracked(|slot| {
+            let details = slot.preview.as_ref()?.details.as_ref()?;
+            Some((
+                details.package.clone(),
+                details.installed,
+                details.compatible,
+                details.installed
+                    && details.integrity == "Needs repair"
+                    && details.package.formula.is_empty(),
+            ))
+        })
+    else {
         return;
     };
     if operation_busy() || installed || !compatible || needs_repair {
@@ -833,9 +923,8 @@ fn perform_install(provider: Arc<dyn Provider>, package: Package, title: String,
     let id = package.id();
     workspace().update(|state| {
         state.busy.insert(id.clone(), format!("Installing {id}…"));
-        state.action_error = None;
-        state.notice = None;
     });
+    clear_feedback();
     let install_id = id.clone();
     task(async move {
         let answer = match blocking(move || provider.install(&package)).await {
@@ -848,27 +937,16 @@ fn perform_install(provider: Arc<dyn Provider>, package: Package, title: String,
         };
         workspace().update(|state| {
             state.busy.remove(&install_id);
-            match &answer {
-                Ok(()) => {
-                    state.action_error = None;
-                    state.notice = Some(message.clone());
-                    state.preview = None;
-                }
-                Err(error) => {
-                    state.action_error = Some(error.clone());
-                    state.notice = None;
-                }
-            }
         });
-        if answer.is_ok() {
-            later(Duration::from_secs(3), move || {
-                workspace().update(|state| {
-                    if state.notice.as_deref() == Some(message.as_str()) {
-                        state.notice = None;
-                    }
-                });
-            });
-            refresh();
+        match &answer {
+            Ok(()) => {
+                clear_preview();
+                show_notice(message);
+                refresh();
+            }
+            Err(error) => {
+                set_action_error(error.clone());
+            }
         }
     });
 }
@@ -923,9 +1001,8 @@ fn perform_uninstall(package: Package) {
     let formula = !package.formula.is_empty();
     workspace().update(|state| {
         state.busy.insert(id.clone(), format!("Removing {id}"));
-        state.action_error = None;
-        state.notice = None;
     });
+    clear_feedback();
     let remove_id = id.clone();
     let message = if formula {
         "Removed workspace registration. The shared Homebrew installation is kept.".to_string()
@@ -938,30 +1015,18 @@ fn perform_uninstall(package: Package) {
             Ok(answer) => answer,
             Err(error) => Err(format!("the uninstall did not finish: {error}")),
         };
-        let notice = message.clone();
         workspace().update(|state| {
             state.busy.remove(&remove_id);
-            match &answer {
-                Ok(()) => {
-                    state.action_error = None;
-                    state.notice = Some(notice.clone());
-                    state.preview = None;
-                }
-                Err(error) => {
-                    state.action_error = Some(format!("{label}: {error}"));
-                    state.notice = None;
-                }
-            }
         });
-        if answer.is_ok() {
-            later(Duration::from_secs(3), move || {
-                workspace().update(|state| {
-                    if state.notice.as_deref() == Some(message.as_str()) {
-                        state.notice = None;
-                    }
-                });
-            });
-            refresh();
+        match &answer {
+            Ok(()) => {
+                clear_preview();
+                show_notice(message);
+                refresh();
+            }
+            Err(error) => {
+                set_action_error(format!("{label}: {error}"));
+            }
         }
     });
 }
@@ -979,9 +1044,8 @@ pub(crate) fn check_files(id: &str) {
         state
             .busy
             .insert(id.to_string(), "Checking files…".to_string());
-        state.action_error = None;
-        state.notice = None;
     });
+    clear_feedback();
     let check_id = id.to_string();
     task(async move {
         let request = check_id.clone();
@@ -994,14 +1058,18 @@ pub(crate) fn check_files(id: &str) {
             .unwrap_or_else(|| check_id.clone());
         workspace().update(|state| {
             state.busy.remove(&check_id);
-            match answer {
-                Ok(result) => {
-                    state.checks.insert(check_id, result);
-                    state.action_error = None;
-                }
-                Err(error) => state.action_error = Some(format!("{label}: {error}")),
+            if let Ok(result) = &answer {
+                state.checks.insert(check_id.clone(), result.clone());
             }
         });
+        match answer {
+            Ok(_) => {
+                if feedback().with_untracked(|fb| fb.action_error.is_some()) {
+                    feedback().update(|fb| fb.action_error = None);
+                }
+            }
+            Err(error) => set_action_error(format!("{label}: {error}")),
+        }
     });
 }
 
@@ -1030,9 +1098,8 @@ pub(crate) fn repair(id: &str) {
         state
             .busy
             .insert(repair_id.clone(), format!("Repairing {repair_id}…"));
-        state.action_error = None;
-        state.notice = None;
     });
+    clear_feedback();
     task(async move {
         let request = repair_id.clone();
         let verify_provider = Arc::clone(&provider);
@@ -1055,23 +1122,21 @@ pub(crate) fn repair(id: &str) {
             .unwrap_or_else(|| repair_id.clone());
         workspace().update(|state| {
             state.busy.remove(&repair_id);
-            match repaired {
-                Ok(()) => {
-                    if let Some(result) = check {
-                        state.checks.insert(repair_id.clone(), result);
-                    }
-                    state.action_error = None;
-                    state.notice = Some("Restored the same exact version.".to_string());
-                    state.preview = None;
-                }
-                Err(error) => {
-                    state.action_error = Some(format!("{label}: Repair did not complete: {error}"));
-                    state.notice = None;
-                }
+            if repaired.is_ok()
+                && let Some(result) = check
+            {
+                state.checks.insert(repair_id.clone(), result);
             }
         });
-        if workspace().with(|state| state.action_error.is_none()) {
-            refresh();
+        match repaired {
+            Ok(()) => {
+                clear_preview();
+                show_notice("Restored the same exact version.".to_string());
+                refresh();
+            }
+            Err(error) => {
+                set_action_error(format!("{label}: Repair did not complete: {error}"));
+            }
         }
     });
 }
@@ -1107,9 +1172,8 @@ fn perform_clear_cache() {
     };
     workspace().update(|state| {
         state.cache_busy = true;
-        state.action_error = None;
-        state.notice = None;
     });
+    clear_feedback();
     task(async move {
         let answer = match blocking(move || provider.clear_cache()).await {
             Ok(answer) => answer,
@@ -1117,30 +1181,31 @@ fn perform_clear_cache() {
         };
         workspace().update(|state| {
             state.cache_busy = false;
-            match answer {
-                Ok(removed) => {
-                    state.action_error = None;
-                    if removed.files == 0 {
-                        state.notice = Some("Download cache is already empty.".to_string());
-                    } else {
-                        state.notice = Some(format!(
-                            "Cleared {} ({}) from the download cache.",
-                            plural(removed.files as usize, "archive"),
-                            format_bytes(removed.bytes)
-                        ));
-                    }
-                    if let Some(preview) = state.preview.as_mut()
+        });
+        match answer {
+            Ok(removed) => {
+                let notice = if removed.files == 0 {
+                    "Download cache is already empty.".to_string()
+                } else {
+                    format!(
+                        "Cleared {} ({}) from the download cache.",
+                        plural(removed.files as usize, "archive"),
+                        format_bytes(removed.bytes)
+                    )
+                };
+                show_notice(notice);
+                preview_slot().update(|slot| {
+                    if let Some(preview) = slot.preview.as_mut()
                         && let Some(details) = preview.details.as_mut()
                     {
                         details.cached = false;
                     }
-                }
-                Err(error) => {
-                    state.action_error = Some(error);
-                    state.notice = None;
-                }
+                });
             }
-        });
+            Err(error) => {
+                set_action_error(error);
+            }
+        }
         refresh();
     });
 }

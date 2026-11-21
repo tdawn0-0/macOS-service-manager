@@ -124,6 +124,7 @@ fn record(record: OperationRecord) -> impl IntoElement {
                     .child(
                         text(format!("Task {}", record.id))
                             .font_family("monospace")
+                            .tabular_nums()
                             .text_size(px(tokens::TEXT_CAPTION))
                             .text_color(move || theme().muted_foreground),
                     ),

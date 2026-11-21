@@ -61,40 +61,27 @@ pub(crate) fn settings() -> impl IntoElement {
 }
 
 fn header() -> impl IntoElement {
-    view()
-        .h(px(44.0))
-        .flex_none()
-        .flex_row()
-        .items_center()
-        .gap(tokens::space(2.0))
-        .px(tokens::space(3.5))
-        .border_b_1()
-        .border_color(tokens::hairline)
-        .child(
-            text("Settings")
-                .text_size(px(15.0))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(move || theme().foreground),
-        )
-        .child(
-            text(Section::Settings.summary())
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground)
-                .truncate(),
-        )
-        .child(view().flex_1())
-        .child(when(system::settings_busy, || {
-            text("Loading")
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground)
-        }))
-        .child(ui::action_button(
-            "Refresh",
-            Tone::Default,
-            "settings-refresh",
-            system::settings_busy,
-            system::refresh_settings,
-        ))
+    ui::page_header(
+        "Settings",
+        Some(Section::Settings.summary()),
+        view()
+            .flex_none()
+            .flex_row()
+            .items_center()
+            .gap(tokens::space(2.0))
+            .child(when(system::settings_busy, || {
+                text("Loading")
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .text_color(move || theme().muted_foreground)
+            }))
+            .child(ui::action_button(
+                "Refresh",
+                Tone::Default,
+                "settings-refresh",
+                system::settings_busy,
+                system::refresh_settings,
+            )),
+    )
 }
 
 fn helper_body() -> impl IntoElement {
@@ -125,9 +112,9 @@ fn helper_body() -> impl IntoElement {
                         .text_color(move || theme().muted_foreground),
                 ),
         )
-        .child(ui::kv("Daemon", PLIST_PATH))
-        .child(ui::kv("Socket", SOCKET_PATH))
-        .child(ui::kv("Helper", HELPER_DIR))
+        .child(ui::kv_mono("Daemon", PLIST_PATH))
+        .child(ui::kv_mono("Socket", SOCKET_PATH))
+        .child(ui::kv_mono("Helper", HELPER_DIR))
         .children(activity.map(|activity| {
             text(activity)
                 .text_size(px(tokens::TEXT_SMALL))
@@ -265,12 +252,12 @@ fn workspace_details() -> impl IntoElement {
         .gap(tokens::space(2.0))
         .child(when(!workspace_root.is_empty(), {
             let root = workspace_root.clone();
-            move || ui::kv("Workspace", root.clone())
+            move || ui::kv_mono("Workspace", root.clone())
         }))
         .child(ui::kv("Download cache", cache_text))
         .child(when(!cache_folder.is_empty(), {
             let folder = cache_folder.clone();
-            move || ui::kv("Cache folder", folder.clone())
+            move || ui::kv_mono("Cache folder", folder.clone())
         }))
         .child(
             view()
@@ -347,7 +334,7 @@ fn cli_body() -> impl IntoElement {
         )
         .child(when(!wrapper.is_empty(), {
             let wrapper = wrapper.clone();
-            move || ui::kv("Command", wrapper.clone())
+            move || ui::kv_mono("Command", wrapper.clone())
         }))
         .children(path_hint.map(|hint| ui::plain_note(hint, false)))
         .children(activity.map(|activity| {

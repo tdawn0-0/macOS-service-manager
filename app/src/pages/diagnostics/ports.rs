@@ -124,6 +124,8 @@ fn listening_ports_body() -> impl IntoElement {
                     text(format!("Port {}", port.port))
                         .w(px(90.0))
                         .flex_none()
+                        .font_family("monospace")
+                        .tabular_nums()
                         .text_size(px(tokens::TEXT_SMALL))
                         .text_color(move || theme().foreground),
                 )
@@ -158,6 +160,8 @@ fn port_result(inspection: devcore::databases::PortInspection) -> impl IntoEleme
                     .gap(tokens::space(2.0))
                     .child(
                         text(format!("Port {port}"))
+                            .font_family("monospace")
+                            .tabular_nums()
                             .text_size(px(tokens::TEXT_SMALL))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(move || theme().foreground),
@@ -175,12 +179,14 @@ fn port_result(inspection: devcore::databases::PortInspection) -> impl IntoEleme
                     listener.pid, owner, listener.name, listener.address
                 ))
                 .font_family("monospace")
+                .tabular_nums()
                 .text_size(px(tokens::TEXT_CAPTION))
                 .text_color(move || theme().muted_foreground)
                 .selectable(true)
             }))
             .child(when(inspection.truncated, || {
                 text("First 64 shown")
+                    .tabular_nums()
                     .text_size(px(tokens::TEXT_CAPTION))
                     .text_color(move || theme().muted_foreground)
             }))

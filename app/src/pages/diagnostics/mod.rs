@@ -52,45 +52,33 @@ pub(crate) fn diagnostics() -> impl IntoElement {
 }
 
 fn header() -> impl IntoElement {
-    view()
-        .h(px(44.0))
-        .flex_none()
-        .flex_row()
-        .items_center()
-        .gap(tokens::space(2.0))
-        .px(tokens::space(3.5))
-        .border_b_1()
-        .border_color(tokens::hairline)
-        .child(
-            text("Diagnostics")
-                .text_size(px(15.0))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(move || theme().foreground),
-        )
-        .child(
-            text(Section::Diagnostics.summary())
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground)
-                .truncate(),
-        )
-        .child(
-            text(checks::summary)
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground)
-                .truncate(),
-        )
-        .child(view().flex_1())
-        .child(dynamic(|| {
-            let status = checks::status();
-            (!status.is_empty()).then(|| ui::status_tag(status))
-        }))
-        .child(ui::action_button(
-            "Run diagnostics again",
-            Tone::Primary,
-            "diagnostics-run",
-            system::report_loading,
-            system::run_diagnostics,
-        ))
+    ui::page_header(
+        "Diagnostics",
+        Some(Section::Diagnostics.summary()),
+        view()
+            .flex_none()
+            .flex_row()
+            .items_center()
+            .gap(tokens::space(2.0))
+            .child(
+                text(checks::summary)
+                    .text_size(px(tokens::TEXT_SMALL))
+                    .tabular_nums()
+                    .text_color(move || theme().muted_foreground)
+                    .truncate(),
+            )
+            .child(dynamic(|| {
+                let status = checks::status();
+                (!status.is_empty()).then(|| ui::status_tag(status))
+            }))
+            .child(ui::action_button(
+                "Run diagnostics again",
+                Tone::Primary,
+                "diagnostics-run",
+                system::report_loading,
+                system::run_diagnostics,
+            )),
+    )
 }
 
 fn toolbar() -> impl IntoElement {
@@ -99,7 +87,7 @@ fn toolbar() -> impl IntoElement {
         .flex_row()
         .items_center()
         .gap(tokens::space(2.0))
-        .px(tokens::space(3.5))
+        .px(tokens::space(5.0))
         .py(tokens::space(2.0))
         .border_b_1()
         .border_color(tokens::hairline)

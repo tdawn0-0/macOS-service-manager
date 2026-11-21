@@ -633,6 +633,18 @@ struct SelectionState {
 }
 
 #[derive(Debug, Clone, Default)]
+struct UvPathDraft(String);
+
+#[derive(Debug, Clone, Default)]
+struct TerminalDirDraft(String);
+
+#[derive(Debug, Clone, Default)]
+struct Feedback {
+    action_error: Option<String>,
+    notice: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
 struct Workspace {
     mode: Mode,
     tab: Tab,
@@ -642,19 +654,25 @@ struct Workspace {
     selection: SelectionState,
     /// Actions in flight, by a stable key.
     busy: BTreeSet<String>,
-    action_error: Option<String>,
-    notice: Option<String>,
-    /// The folder the runtime terminal resolves; set when it opens.
-    terminal_dir: String,
     override_spec: Option<String>,
-    /// The uv executable or Python being chosen.
-    uv_path_draft: String,
     python_choice: String,
     java_choice: String,
 }
 
 fn workspace() -> Signal<Workspace> {
     global::<Workspace>()
+}
+
+fn uv_path_draft() -> Signal<UvPathDraft> {
+    global::<UvPathDraft>()
+}
+
+fn terminal_dir_draft() -> Signal<TerminalDirDraft> {
+    global::<TerminalDirDraft>()
+}
+
+fn feedback() -> Signal<Feedback> {
+    global::<Feedback>()
 }
 
 /// Runs store work outside the view that asked for it: a pane the store
@@ -677,23 +695,32 @@ fn next_sequence() -> u64 {
     workspace().with(|state| state.load.sequence)
 }
 
+fn clear_feedback() {
+    if feedback().with_untracked(|fb| fb.action_error.is_some() || fb.notice.is_some()) {
+        feedback().update(|fb| {
+            fb.action_error = None;
+            fb.notice = None;
+        });
+    }
+}
+
 fn ctrl_error(message: String) {
-    workspace().update(|state| {
-        state.action_error = Some(message);
-        state.notice = None;
+    feedback().update(|fb| {
+        fb.action_error = Some(message);
+        fb.notice = None;
     });
 }
 
 fn show_notice(message: impl Into<String>) {
     let message = message.into();
-    workspace().update(|state| {
-        state.notice = Some(message.clone());
-        state.action_error = None;
+    feedback().update(|fb| {
+        fb.notice = Some(message.clone());
+        fb.action_error = None;
     });
     later(Duration::from_secs(4), move || {
-        workspace().update(|state| {
-            if state.notice.as_deref() == Some(message.as_str()) {
-                state.notice = None;
+        feedback().update(|fb| {
+            if fb.notice.as_deref() == Some(message.as_str()) {
+                fb.notice = None;
             }
         });
     });
@@ -703,8 +730,10 @@ fn start_busy(key: &str) {
     let key = key.to_string();
     workspace().update(|state| {
         state.busy.insert(key);
-        state.action_error = None;
     });
+    if feedback().with_untracked(|fb| fb.action_error.is_some()) {
+        feedback().update(|fb| fb.action_error = None);
+    }
 }
 
 fn finish_busy(key: &str) {
@@ -862,9 +891,8 @@ pub(crate) fn select_tab(next: Tab) {
     workspace().update(|state| {
         state.tab = next;
         state.mode = Mode::Workspace;
-        state.action_error = None;
-        state.notice = None;
     });
+    clear_feedback();
     if next != Tab::Software {
         load();
     }
@@ -875,15 +903,14 @@ pub(crate) fn open_terminal() {
     let cwd = std::env::current_dir()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_default();
+    if terminal_dir_draft().with_untracked(|draft| draft.0.is_empty()) {
+        terminal_dir_draft().update(|draft| draft.0 = cwd);
+    }
     workspace().update(|state| {
         state.mode = Mode::Terminal;
-        state.action_error = None;
-        state.notice = None;
         state.selection = SelectionState::default();
-        if state.terminal_dir.is_empty() {
-            state.terminal_dir = cwd;
-        }
     });
+    clear_feedback();
     load();
 }
 
@@ -891,9 +918,8 @@ pub(crate) fn open_terminal() {
 pub(crate) fn close_terminal() {
     workspace().update(|state| {
         state.mode = Mode::Workspace;
-        state.action_error = None;
-        state.notice = None;
     });
+    clear_feedback();
 }
 
 pub(crate) fn loading() -> bool {
@@ -905,11 +931,11 @@ pub(crate) fn load_error() -> Option<String> {
 }
 
 pub(crate) fn action_error() -> Option<String> {
-    workspace().with(|state| state.action_error.clone())
+    feedback().with(|fb| fb.action_error.clone())
 }
 
 pub(crate) fn notice() -> Option<String> {
-    workspace().with(|state| state.notice.clone())
+    feedback().with(|fb| fb.notice.clone())
 }
 
 pub(crate) fn busy() -> bool {
@@ -945,13 +971,12 @@ pub(crate) fn uv_description() -> String {
 }
 
 pub(crate) fn uv_path() -> String {
-    workspace().with(|state| {
-        if state.uv_path_draft.is_empty() {
-            state.load.snapshot.uv_path.clone()
-        } else {
-            state.uv_path_draft.clone()
-        }
-    })
+    let draft = uv_path_draft().with(|draft| draft.0.clone());
+    if draft.is_empty() {
+        workspace().with(|state| state.load.snapshot.uv_path.clone())
+    } else {
+        draft
+    }
 }
 
 pub(crate) fn uv_error() -> String {
@@ -1254,11 +1279,11 @@ pub(crate) fn install_python() {
 }
 
 pub(crate) fn set_uv_path_draft(next: String) {
-    workspace().update(|state| state.uv_path_draft = next);
+    uv_path_draft().update(|draft| draft.0 = next);
 }
 
 pub(crate) fn use_uv_path() {
-    let path = workspace().with(|state| state.uv_path_draft.trim().to_string());
+    let path = uv_path_draft().with_untracked(|draft| draft.0.trim().to_string());
     if path.is_empty() {
         ctrl_error("choose an absolute uv executable path".to_string());
         return;
@@ -1268,7 +1293,15 @@ pub(crate) fn use_uv_path() {
         "uv executable selected".to_string(),
         move |provider| provider.set_uv_path(&path),
     );
-    workspace().update(|state| state.uv_path_draft.clear());
+    uv_path_draft().update(|draft| draft.0.clear());
+}
+
+pub(crate) fn copy_python_path(path: &str) {
+    if path.is_empty() {
+        return;
+    }
+    set_clipboard(path.to_string());
+    show_notice("Copied Python executable path.");
 }
 
 // --- Shell integration -------------------------------------------------------
@@ -1425,11 +1458,11 @@ pub(crate) fn copy_bash(name: &str) {
 // --- Runtime terminal --------------------------------------------------------
 
 pub(crate) fn terminal_dir() -> String {
-    workspace().with(|state| state.terminal_dir.clone())
+    terminal_dir_draft().with(|draft| draft.0.clone())
 }
 
 pub(crate) fn set_terminal_dir(next: String) {
-    workspace().update(|state| state.terminal_dir = next);
+    terminal_dir_draft().update(|draft| draft.0 = next);
 }
 
 pub(crate) fn override_spec() -> Option<String> {
@@ -1465,12 +1498,8 @@ pub(crate) fn resolve() {
         ctrl_error("no development provider is available".to_string());
         return;
     };
-    let (dir, override_spec) = workspace().with(|state| {
-        (
-            state.terminal_dir.trim().to_string(),
-            state.override_spec.clone(),
-        )
-    });
+    let dir = terminal_dir_draft().with_untracked(|draft| draft.0.trim().to_string());
+    let override_spec = workspace().with_untracked(|state| state.override_spec.clone());
     let sequence = workspace().with(|state| state.selection.sequence + 1);
     workspace().update(|state| {
         state.selection.loading = true;

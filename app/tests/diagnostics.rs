@@ -350,3 +350,35 @@ fn the_journal_lists_tasks_and_retries_and_dismisses_them() {
             .any(|call| call == "dismiss task-1 rev-1")
     );
 }
+
+#[test]
+fn typing_port_input_keeps_input_and_listening_ports_mounted() {
+    let (_turn, mut app, _diagnostics, _operations, _ports) = start();
+
+    app.wait_for("id:diagnostics-port").unwrap();
+    app.wait_for("id:listening-3000").unwrap();
+
+    let port_input_id = app
+        .screen()
+        .layout_nodes()
+        .into_iter()
+        .find(|node| node.test_id.as_deref() == Some("diagnostics-port"))
+        .expect("diagnostics-port should be mounted")
+        .id;
+
+    app.clear("id:diagnostics-port").unwrap();
+    app.type_text("id:diagnostics-port", "5432").unwrap();
+
+    let port_input_after = app
+        .screen()
+        .layout_nodes()
+        .into_iter()
+        .find(|node| node.test_id.as_deref() == Some("diagnostics-port"))
+        .expect("diagnostics-port should remain mounted")
+        .id;
+    assert_eq!(port_input_after, port_input_id);
+    assert_eq!(
+        app.screen().input_text("id:diagnostics-port").unwrap(),
+        Some("5432")
+    );
+}

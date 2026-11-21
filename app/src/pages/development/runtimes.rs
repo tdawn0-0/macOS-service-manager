@@ -51,6 +51,7 @@ fn node_body() -> impl IntoElement {
                         .flex_1()
                         .min_w(px(160.0))
                         .text_size(px(tokens::TEXT_SMALL))
+                        .tabular_nums()
                         .text_color(move || theme().foreground),
                 )
                 .child(action_button(
@@ -126,6 +127,7 @@ fn node_row(node: dev::NodeVersion) -> impl IntoElement {
                     text(format!("Node.js · {version}"))
                         .text_size(px(tokens::TEXT_BODY))
                         .font_weight(FontWeight::MEDIUM)
+                        .tabular_nums()
                         .text_color(move || theme().foreground)
                         .truncate(),
                 )
@@ -189,6 +191,7 @@ fn releases_block() -> impl IntoElement {
                         list.releases.len()
                     ))
                     .text_size(px(tokens::TEXT_CAPTION))
+                    .tabular_nums()
                     .text_color(move || theme().muted_foreground),
                 )
                 .child(
@@ -241,6 +244,7 @@ fn java_body() -> impl IntoElement {
         .child(
             text(summary)
                 .text_size(px(tokens::TEXT_SMALL))
+                .tabular_nums()
                 .text_color(move || theme().foreground),
         )
         .child(field_label("Installed JDKs"))
@@ -368,6 +372,7 @@ fn java_row(jdk: dev::JavaVersion) -> impl IntoElement {
                     })
                     .text_size(px(tokens::TEXT_BODY))
                     .font_weight(FontWeight::MEDIUM)
+                    .tabular_nums()
                     .text_color(move || theme().foreground)
                     .truncate(),
                 )
@@ -514,6 +519,7 @@ fn python_body() -> impl IntoElement {
                 .child(when(!pin.is_empty(), move || {
                     text(format!("uv global pin: {pin}"))
                         .text_size(px(tokens::TEXT_CAPTION))
+                        .tabular_nums()
                         .text_color(move || theme().muted_foreground)
                 })),
         )
@@ -523,7 +529,10 @@ fn python_row(python: dev::PythonVersion) -> impl IntoElement {
     let key = python.key.clone();
     let pin_id = key.clone();
     let uninstall_id = key.clone();
+    let copy_key = key.clone();
     let path = python.path.clone();
+    let has_path = !path.is_empty();
+    let copy_path = path.clone();
     view()
         .test_id(&format!("python-{}", python.key))
         .flex_col()
@@ -539,12 +548,13 @@ fn python_row(python: dev::PythonVersion) -> impl IntoElement {
                     text(format!("Python · {}", python.version))
                         .text_size(px(tokens::TEXT_BODY))
                         .font_weight(FontWeight::MEDIUM)
+                        .tabular_nums()
                         .text_color(move || theme().foreground)
                         .truncate(),
                 )
                 .child(python.pin.then(|| tag("Default", TagTone::Success))),
         )
-        .child(when(!path.is_empty(), move || {
+        .child(when(has_path, move || {
             text(path.clone())
                 .font_family("monospace")
                 .text_size(px(tokens::TEXT_CAPTION))
@@ -572,10 +582,15 @@ fn python_row(python: dev::PythonVersion) -> impl IntoElement {
                     dev::is_busy("python-uninstall"),
                     move || dev::uninstall_python(&uninstall_id),
                 ))
-                .child(
-                    icons::copy()
-                        .size(px(12.0))
-                        .text_color(move || theme().muted_foreground),
-                ),
+                .child(when(has_path, move || {
+                    let path = copy_path.clone();
+                    ui::row_icon_button(
+                        icons::copy(),
+                        "Copy Python executable path",
+                        format!("python-copy-{copy_key}"),
+                        false,
+                        move || dev::copy_python_path(&path),
+                    )
+                })),
         )
 }

@@ -31,8 +31,7 @@ pub(crate) fn summary() -> String {
         report.checks.len()
     );
     if unknown > 0 {
-        // The Phase 3/4 probes report Unknown until they are wired; naming
-        // them keeps the summary from claiming a healthy environment.
+        // Naming unobserved checks keeps the summary from claiming a healthy environment.
         line.push_str(&format!(" · {unknown} unknown"));
     }
     line
@@ -98,8 +97,7 @@ fn runtime_body() -> impl IntoElement {
         }))
 }
 
-/// The checks, one inset per `DiagnosticCheck`, exactly as devcore returns
-/// them (including `Unknown` Phase 3/4 probes).
+/// The checks, one inset per `DiagnosticCheck`, as devcore returns them.
 pub(crate) fn checks_card() -> impl IntoElement {
     ui::card("Checks", dynamic(|| Some(checks_body().into_element())))
 }

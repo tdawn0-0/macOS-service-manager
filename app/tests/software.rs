@@ -415,3 +415,73 @@ fn checking_files_shows_the_result_and_its_issues() {
             .any(|call| call == "verify node@22.14.0-arm64")
     );
 }
+
+fn node_id(app: &Headless, test_id: &str) -> nsh_core::NodeId {
+    app.screen()
+        .layout_nodes()
+        .into_iter()
+        .find(|node| node.test_id.as_deref() == Some(test_id))
+        .unwrap_or_else(|| panic!("{test_id} should be mounted"))
+        .id
+}
+
+#[test]
+fn homebrew_reinstall_copy_button_copies_command_and_shows_notice() {
+    let mut pg = package("postgresql", "17.11");
+    pg.format = "homebrew".to_string();
+    pg.formula = "postgresql@17".to_string();
+    let fake = FakeSoftware::new(vec![pg], "", Behaviour::Normal);
+    let (_turn, mut app) = start(fake);
+
+    app.press("id:software-postgresql").unwrap();
+    app.wait_for("id:copy-brew-postgresql-17.11").unwrap();
+    assert!(app.screen().shows("brew reinstall postgresql@17"));
+
+    app.press("id:copy-brew-postgresql-17.11").unwrap();
+    app.wait_for("Copied").unwrap();
+    assert_eq!(
+        app.screen().clipboard(),
+        Some("brew reinstall postgresql@17")
+    );
+}
+
+#[test]
+fn typing_version_draft_keeps_cards_and_preview_mounted() {
+    let fake = FakeSoftware::new(
+        vec![node("22.14.0")],
+        "node@22.14.0-arm64",
+        Behaviour::Normal,
+    )
+    .with_cache(2, 2048);
+    let (_turn, mut app) = start(fake);
+
+    app.wait_for("id:installed-node-22.14.0").unwrap();
+    app.press("id:software-review").unwrap();
+    app.wait_for("id:software-preview").unwrap();
+
+    let installed_id = node_id(&app, "installed-node-22.14.0");
+    let chip_id = node_id(&app, "version-node-22.14.0");
+    let input_id = node_id(&app, "software-version-exact");
+    let review_id = node_id(&app, "software-review");
+    let install_id = node_id(&app, "software-install");
+    let preview_id = node_id(&app, "software-preview");
+    let cache_id = node_id(&app, "clear-cache");
+
+    app.clear("id:software-version-exact").unwrap();
+    app.type_text("id:software-version-exact", "20.19.0")
+        .unwrap();
+
+    assert_eq!(
+        app.screen()
+            .input_text("id:software-version-exact")
+            .unwrap(),
+        Some("20.19.0")
+    );
+    assert_eq!(node_id(&app, "installed-node-22.14.0"), installed_id);
+    assert_eq!(node_id(&app, "version-node-22.14.0"), chip_id);
+    assert_eq!(node_id(&app, "software-version-exact"), input_id);
+    assert_eq!(node_id(&app, "software-review"), review_id);
+    assert_eq!(node_id(&app, "software-install"), install_id);
+    assert_eq!(node_id(&app, "software-preview"), preview_id);
+    assert_eq!(node_id(&app, "clear-cache"), cache_id);
+}

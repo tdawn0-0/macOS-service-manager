@@ -1,19 +1,18 @@
 //! Software: the runtimes and database engines Devbase manages, with the
 //! versions installed, the catalog's versions, the review of one before it is
-//! installed, its file checks and the download cache (Phase 2).
+//! installed, its file checks and the download cache.
 //!
 //! The page reads [`crate::store::software`] and never calls devcore itself:
 //! a read, a review and every install, uninstall, check or repair is a task
 //! that writes the store when it answers.
 
 mod detail;
-mod icons;
 
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
 use crate::{
-    components::icons as app_icons,
+    components::icons,
     store::{
         Section,
         software::{self as sw, SoftwareKind},
@@ -43,48 +42,59 @@ fn rail() -> impl IntoElement {
         .bg(move || theme().background)
         .border_r_1()
         .border_color(tokens::hairline)
-        .px(tokens::space(2.0))
-        .py(tokens::space(3.0))
         .child(
             view()
+                .h(px(tokens::TITLE_BAR_HEIGHT))
+                .flex_none()
                 .flex_col()
+                .justify_center()
                 .gap(tokens::space(0.5))
-                .px(tokens::space(2.0))
-                .pb(tokens::space(3.0))
+                .px(tokens::space(4.0))
+                .border_b_1()
+                .border_color(tokens::hairline)
+                .window_drag(true)
                 .child(
                     text("Software")
-                        .text_base()
+                        .text_size(px(15.0))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().foreground),
+                        .text_color(move || theme().foreground)
+                        .truncate(),
                 )
                 .child(
                     text(Section::Development.summary())
                         .text_size(px(tokens::TEXT_CAPTION))
                         .text_color(move || theme().muted_foreground)
-                        .number_of_lines(2),
+                        .truncate(),
                 ),
         )
         .child(
             view()
+                .flex_1()
                 .flex_col()
-                .gap(tokens::space(0.5))
-                .child(group("Runtimes", SoftwareKind::RUNTIMES))
+                .px(tokens::space(2.0))
+                .py(tokens::space(3.0))
                 .child(
                     view()
                         .flex_col()
                         .gap(tokens::space(0.5))
-                        .pt(tokens::space(3.0))
-                        .child(group("Database engines", SoftwareKind::DATABASES)),
+                        .child(group("Runtimes", SoftwareKind::RUNTIMES))
+                        .child(
+                            view()
+                                .flex_col()
+                                .gap(tokens::space(0.5))
+                                .pt(tokens::space(3.0))
+                                .child(group("Database engines", SoftwareKind::DATABASES)),
+                        ),
+                )
+                .child(view().flex_1())
+                .child(
+                    view().px(tokens::space(2.0)).pt(tokens::space(3.0)).child(
+                        text("Downloads are verified before they are installed")
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().muted_foreground)
+                            .number_of_lines(2),
+                    ),
                 ),
-        )
-        .child(view().flex_1())
-        .child(
-            view().px(tokens::space(2.0)).pt(tokens::space(3.0)).child(
-                text("Downloads are verified before they are installed")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground)
-                    .number_of_lines(2),
-            ),
         )
 }
 
@@ -146,6 +156,7 @@ fn software_row(kind: SoftwareKind) -> impl IntoElement {
         .child(
             text(move || trailing(kind))
                 .text_size(px(tokens::TEXT_CAPTION))
+                .tabular_nums()
                 .text_color(move || theme().muted_foreground)
                 .flex_none(),
         )
@@ -168,7 +179,3 @@ fn trailing(kind: SoftwareKind) -> String {
         count.to_string()
     }
 }
-
-/// Re-exported so the detail pane names the icon set once.
-pub(super) use app_icons::{check, refresh, warn};
-pub(super) use icons::{folder, package};

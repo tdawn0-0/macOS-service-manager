@@ -702,3 +702,70 @@ fn a_terminal_launch_error_is_shown_verbatim() {
     app.press("id:terminal-launch").unwrap();
     app.wait_for("Terminal could not be opened").unwrap();
 }
+
+fn node_id(app: &Headless, test_id: &str) -> nsh_core::NodeId {
+    app.screen()
+        .layout_nodes()
+        .into_iter()
+        .find(|node| node.test_id.as_deref() == Some(test_id))
+        .unwrap_or_else(|| panic!("{test_id} should be mounted"))
+        .id
+}
+
+#[test]
+fn typing_uv_path_and_terminal_dir_keeps_sibling_cards_mounted() {
+    let fake = FakeDevelopment::new(fixture(), Behaviour::Normal);
+    let (_turn, mut app) = start(fake);
+    open_runtimes(&mut app);
+
+    app.wait_for("id:uv-path-input").unwrap();
+    app.wait_for("id:python-cpython-3.12.7").unwrap();
+
+    let uv_input_id = node_id(&app, "uv-path-input");
+    let node_card_id = node_id(&app, "node-installed");
+    let java_row_id = node_id(&app, "java-java@21.0.5-arm64");
+    let python_row_id = node_id(&app, "python-cpython-3.12.7");
+
+    app.clear("id:uv-path-input").unwrap();
+    app.type_text("id:uv-path-input", "/opt/homebrew/bin/uv")
+        .unwrap();
+
+    assert_eq!(
+        app.screen().input_text("id:uv-path-input").unwrap(),
+        Some("/opt/homebrew/bin/uv")
+    );
+    assert_eq!(node_id(&app, "uv-path-input"), uv_input_id);
+    assert_eq!(node_id(&app, "node-installed"), node_card_id);
+    assert_eq!(node_id(&app, "java-java@21.0.5-arm64"), java_row_id);
+    assert_eq!(node_id(&app, "python-cpython-3.12.7"), python_row_id);
+
+    // Copying the Python executable path populates the clipboard without tearing down sibling cards.
+    app.press("id:python-copy-cpython-3.12.7").unwrap();
+    app.wait_for("Copied Python executable path.").unwrap();
+    assert_eq!(
+        app.screen().clipboard(),
+        Some("/Users/test/.local/share/uv/python/cpython-3.12.7/bin/python3")
+    );
+    assert_eq!(node_id(&app, "node-installed"), node_card_id);
+    assert_eq!(node_id(&app, "java-java@21.0.5-arm64"), java_row_id);
+    assert_eq!(node_id(&app, "python-cpython-3.12.7"), python_row_id);
+
+    // Typing into terminal-dir does not rebuild selection_card or drop input focus.
+    app.press("id:dev-open-terminal").unwrap();
+    app.wait_for("id:terminal-dir").unwrap();
+    app.wait_for("id:terminal-selection").unwrap();
+
+    let dir_input_id = node_id(&app, "terminal-dir");
+    let selection_id = node_id(&app, "terminal-selection");
+
+    app.clear("id:terminal-dir").unwrap();
+    app.type_text("id:terminal-dir", "/tmp/devbase-tests/project")
+        .unwrap();
+
+    assert_eq!(
+        app.screen().input_text("id:terminal-dir").unwrap(),
+        Some("/tmp/devbase-tests/project")
+    );
+    assert_eq!(node_id(&app, "terminal-dir"), dir_input_id);
+    assert_eq!(node_id(&app, "terminal-selection"), selection_id);
+}

@@ -399,105 +399,92 @@ fn autostart_card(id: String) -> impl IntoElement {
             let switch_id = id.clone();
 
             view()
-                .flex_col()
-                .flex_none()
-                .px(tokens::space(4.0))
-                .pb(tokens::space(3.0))
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(2.5))
+                .px(tokens::space(3.0))
+                .py(tokens::space(2.25))
+                .rounded(tokens::panel_radius)
+                .bg(tokens::panel)
+                .border_1()
+                .border_color(tokens::hairline)
                 .child(
-                    view()
+                    nsh_base::button()
+                        .flex_1()
+                        .min_w(px(0.0))
                         .flex_row()
                         .items_center()
-                        .gap(tokens::space(2.5))
-                        .px(tokens::space(3.0))
-                        .py(tokens::space(2.5))
-                        .rounded(tokens::panel_radius)
-                        .bg(tokens::panel)
-                        .border_1()
-                        .border_color(tokens::hairline)
+                        .gap(tokens::space(1.5))
+                        .disabled(move || busy.get())
+                        .on_press(move || {
+                            if let Some((item, toggle)) = toggle_action(&words_id) {
+                                svc::request_action(item, toggle);
+                            }
+                        })
                         .child(
-                            nsh_base::button()
-                                .flex_1()
-                                .min_w(px(0.0))
+                            text(move || {
+                                svc::item_by_id(&label_id)
+                                    .map(|item| toggle_label(&item))
+                                    .unwrap_or("Load at login")
+                                    .to_string()
+                            })
+                            .text_size(px(tokens::TEXT_BODY))
+                            .text_color(move || theme().foreground),
+                        )
+                        .child(when(
+                            move || svc::item_by_id(&admin_id).is_some_and(|item| item.admin),
+                            || {
+                                icons::lock()
+                                    .size(px(11.0))
+                                    .flex_none()
+                                    .text_color(move || theme().muted_foreground)
+                            },
+                        )),
+                )
+                .child(
+                    nsh_base::switch()
+                        .test_id("autostart-toggle")
+                        .checked(move || on.get())
+                        .disabled(move || busy.get())
+                        .accessibility_label(move || {
+                            Some(SharedString::from(
+                                svc::item_by_id(&switch_a11y_id)
+                                    .map(|item| toggle_label(&item))
+                                    .unwrap_or("Load at login"),
+                            ))
+                        })
+                        .rounded(px(9.0))
+                        .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
+                        .opacity(move || if busy.get() { 0.5_f32 } else { 1.0_f32 })
+                        .track_style(move |s| {
+                            s.w(px(30.0))
+                                .h(px(18.0))
+                                .flex_none()
                                 .flex_row()
                                 .items_center()
-                                .gap(tokens::space(1.5))
-                                .disabled(move || busy.get())
-                                .on_press(move || {
-                                    if let Some((item, toggle)) = toggle_action(&words_id) {
-                                        svc::request_action(item, toggle);
-                                    }
-                                })
-                                .child(
-                                    text(move || {
-                                        svc::item_by_id(&label_id)
-                                            .map(|item| toggle_label(&item))
-                                            .unwrap_or("Load at login")
-                                            .to_string()
-                                    })
-                                    .text_size(px(tokens::TEXT_BODY))
-                                    .text_color(move || theme().foreground),
-                                )
-                                .child(when(
-                                    move || {
-                                        svc::item_by_id(&admin_id).is_some_and(|item| item.admin)
-                                    },
-                                    || {
-                                        icons::lock()
-                                            .size(px(11.0))
-                                            .flex_none()
-                                            .text_color(move || theme().muted_foreground)
-                                    },
-                                )),
-                        )
-                        .child(
-                            nsh_base::switch()
-                                .test_id("autostart-toggle")
-                                .checked(move || on.get())
-                                .disabled(move || busy.get())
-                                .accessibility_label(move || {
-                                    Some(SharedString::from(
-                                        svc::item_by_id(&switch_a11y_id)
-                                            .map(|item| toggle_label(&item))
-                                            .unwrap_or("Load at login"),
-                                    ))
-                                })
+                                .px(px(2.0))
                                 .rounded(px(9.0))
-                                .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
-                                .opacity(move || if busy.get() { 0.5_f32 } else { 1.0_f32 })
-                                .track_style(move |s| {
-                                    s.w(px(30.0))
-                                        .h(px(18.0))
-                                        .flex_none()
-                                        .flex_row()
-                                        .items_center()
-                                        .px(px(2.0))
-                                        .rounded(px(9.0))
-                                        .bg(move || {
-                                            if on.get() {
-                                                theme().primary
-                                            } else {
-                                                theme().secondary
-                                            }
-                                        })
-                                })
-                                .thumb_style(move |s| {
-                                    s.size(px(14.0))
-                                        .rounded(px(7.0))
-                                        .bg(move || theme().primary_foreground)
-                                        .translate_x(move || {
-                                            DefiniteLength::from(px(if on.get() {
-                                                12.0
-                                            } else {
-                                                0.0
-                                            }))
-                                        })
-                                })
-                                .on_change(move |_: &bool| {
-                                    if let Some((item, toggle)) = toggle_action(&switch_id) {
-                                        svc::request_action(item, toggle);
+                                .bg(move || {
+                                    if on.get() {
+                                        theme().primary
+                                    } else {
+                                        theme().secondary
                                     }
-                                }),
-                        ),
+                                })
+                        })
+                        .thumb_style(move |s| {
+                            s.size(px(14.0))
+                                .rounded(px(7.0))
+                                .bg(move || theme().primary_foreground)
+                                .translate_x(move || {
+                                    DefiniteLength::from(px(if on.get() { 12.0 } else { 0.0 }))
+                                })
+                        })
+                        .on_change(move |_: &bool| {
+                            if let Some((item, toggle)) = toggle_action(&switch_id) {
+                                svc::request_action(item, toggle);
+                            }
+                        }),
                 )
         },
     )
@@ -523,8 +510,11 @@ fn tabs(id: String) -> impl IntoElement {
                 .accessibility_label("Inspector sections")
                 .flex_none()
                 .flex_row()
-                .px(tokens::space(3.0))
-                .py(tokens::space(1.5))
+                .gap(tokens::space(1.0))
+                .px(tokens::space(4.0))
+                .pb(tokens::space(2.0))
+                .border_b_1()
+                .border_color(tokens::hairline)
                 .child(tab_button("Info", DetailTab::Info, current))
                 .child(tab_button("Logs", DetailTab::Logs, current))
                 .child(view().flex_1())
@@ -602,7 +592,7 @@ fn info_tab(id: String) -> impl IntoElement {
                         .flex_col()
                         .gap(tokens::space(4.0))
                         .px(tokens::space(4.0))
-                        .py(tokens::space(2.0))
+                        .py(tokens::space(3.0))
                         .child(each(
                             move || groups.get(),
                             |(title, _)| title.clone(),
@@ -616,6 +606,7 @@ fn info_tab(id: String) -> impl IntoElement {
 struct KeyedRow {
     row: Row,
     occurrence: usize,
+    is_first: bool,
     long: bool,
     code: bool,
 }
@@ -631,6 +622,7 @@ fn group_rows(rows: Vec<Row>) -> Vec<(String, Vec<KeyedRow>)> {
                 items.push(KeyedRow {
                     row,
                     occurrence,
+                    is_first: false,
                     long,
                     code,
                 });
@@ -642,6 +634,7 @@ fn group_rows(rows: Vec<Row>) -> Vec<(String, Vec<KeyedRow>)> {
                     vec![KeyedRow {
                         row,
                         occurrence: 0,
+                        is_first: true,
                         long,
                         code,
                     }],
@@ -680,6 +673,7 @@ fn info_group(group: ReadSignal<(String, Vec<KeyedRow>)>) -> impl IntoElement {
                         (
                             entry.row.key.clone(),
                             entry.occurrence,
+                            entry.is_first,
                             entry.long,
                             entry.code,
                         )
@@ -700,15 +694,20 @@ fn info_row(entry: ReadSignal<KeyedRow>) -> impl IntoElement {
     let hovered_key = key.clone();
     let opacity_key = key.clone();
     let long = initial.long;
-    let value = info_value(entry, initial.code);
+    let is_first = initial.is_first;
+    let value = info_value(entry, initial.code, long);
     let copy_label = format!("Copy {}", initial.row.key);
-    view()
+    let row_view = view()
         .relative()
         .w_full()
         .px(tokens::space(3.0))
-        .py(tokens::space(2.0))
-        .border_b_1()
-        .border_color(tokens::hairline)
+        .py(tokens::space(2.0));
+    let row_view = if is_first {
+        row_view
+    } else {
+        row_view.border_t_1().border_color(tokens::hairline)
+    };
+    row_view
         .hover(move |style| style.bg(tokens::row_hover()))
         .on_mouse_enter(move |_: &MouseEvent| svc::set_hovered_row(Some(hovered_key.clone())))
         .on_mouse_leave(move |_: &MouseEvent| {
@@ -782,7 +781,7 @@ fn info_key(row: &Row, grow: bool) -> impl IntoElement {
     }
 }
 
-fn info_value(entry: ReadSignal<KeyedRow>, code: bool) -> AnyElement {
+fn info_value(entry: ReadSignal<KeyedRow>, code: bool, long: bool) -> AnyElement {
     let value = text(move || entry.with(|item| item.row.value.clone()))
         .text_size(px(if code {
             tokens::TEXT_CAPTION
@@ -790,8 +789,12 @@ fn info_value(entry: ReadSignal<KeyedRow>, code: bool) -> AnyElement {
             tokens::TEXT_SMALL
         }))
         .text_color(move || theme().foreground)
-        .text_right()
         .selectable(true);
+    let value = if long {
+        value.text_left()
+    } else {
+        value.text_right()
+    };
     if code {
         value.font_family("monospace").into_element()
     } else {
@@ -812,8 +815,9 @@ fn log_tab(id: String) -> impl IntoElement {
             return view()
                 .flex_col()
                 .px(tokens::space(4.0))
+                .py(tokens::space(3.0))
                 .child(
-                    text("No log files.")
+                    text("No logs")
                         .text_size(px(tokens::TEXT_SMALL))
                         .text_color(move || theme().muted_foreground),
                 )
@@ -900,7 +904,7 @@ fn log_tab_content(logs: Vec<LogFile>) -> impl IntoElement {
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
                 .into_element(),
-            LogBodyMode::Empty => text("The log is empty.")
+            LogBodyMode::Empty => text("Empty log")
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
                 .into_element(),
@@ -915,14 +919,10 @@ fn log_lines_view() -> impl IntoElement {
         .min_h(px(0.0))
         .gap(tokens::space(1.0))
         .child(when(svc::log_truncated, || {
-            text(move || {
-                format!(
-                    "The last {} lines, updated while this tab is open.",
-                    svc::log_line_count()
-                )
-            })
-            .text_size(px(tokens::TEXT_CAPTION))
-            .text_color(move || theme().muted_foreground)
+            text(move || format!("Last {} lines", svc::log_line_count()))
+                .tabular_nums()
+                .text_size(px(tokens::TEXT_CAPTION))
+                .text_color(move || theme().muted_foreground)
         }))
         .child(
             scroll()
@@ -969,22 +969,15 @@ fn open_log(path: PathBuf) {
     });
 }
 
-/// Explains an action, where its name does not.
+/// Explains an action where its name alone does not.
 fn action_tip(item: &Item, action: Action) -> String {
     if item.admin {
-        return format!(
-            "{} (runs as root through the privileged helper)",
-            action.label()
-        );
+        return format!("{} (privileged helper)", action.label());
     }
     match action {
-        Action::Load => "Register it with launchd".to_string(),
-        Action::Unload => "Unregister it from launchd, which stops it".to_string(),
-        Action::Start => "Start it now".to_string(),
-        Action::Restart => "Stop it and start it again".to_string(),
-        Action::Stop => {
-            "Ask it to stop (SIGTERM); a job that is kept alive starts again".to_string()
-        }
+        Action::Load => "Register with launchd".to_string(),
+        Action::Unload => "Unregister and stop".to_string(),
+        Action::Stop => "Send SIGTERM".to_string(),
         _ => String::new(),
     }
 }

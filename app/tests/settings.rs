@@ -417,6 +417,9 @@ fn the_helper_and_cli_status_render() {
         .unwrap();
     app.wait_for("2.0 KiB · 2 archives").unwrap();
     app.wait_for("Automatic log rotation").unwrap();
+    app.wait_for("Updates & About").unwrap();
+    app.wait_for("text:/Devbase v.* · macOS 26\\.0\\+ · xyz\\.jyeu\\.devbase/")
+        .unwrap();
 }
 
 #[test]
@@ -461,8 +464,7 @@ fn installing_the_cli_wrapper_updates_its_status() {
     let (_turn, mut app) = start(fake.clone());
 
     app.wait_for("id:settings-install-cli").unwrap();
-    app.wait_for("The public devbase command is not installed.")
-        .unwrap();
+    app.wait_for("Not installed").unwrap();
     app.press("id:settings-install-cli").unwrap();
     app.wait_for("Installed devbase CLI at /tmp/devbase-tests/bin/devbase")
         .unwrap();

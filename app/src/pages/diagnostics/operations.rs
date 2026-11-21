@@ -1,11 +1,11 @@
-//! The task journal card, ported from `view_operations.go`: every record
-//! newest first, its phase, result and lineage, with retry and dismiss where
-//! devcore's journal offers them.
+//! The task journal card: every record newest first, its phase, result and
+//! lineage, with retry and dismiss where devcore's journal offers them.
 
 use devcore::operations::{OperationRecord, operation_can_retry};
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
+use super::section_card;
 use crate::{
     components::controls::{self as ui, Tone},
     store::system,
@@ -13,8 +13,18 @@ use crate::{
 };
 
 pub(crate) fn operations_card() -> impl IntoElement {
-    ui::card(
+    section_card(
         "Task history",
+        Some(
+            ui::action_button(
+                "Refresh",
+                Tone::Default,
+                "operations-refresh",
+                system::operations_loading,
+                system::refresh_operations,
+            )
+            .into_element(),
+        ),
         dynamic(|| Some(operations_body().into_element())),
     )
 }
@@ -26,43 +36,41 @@ fn operations_body() -> impl IntoElement {
     let action_error = system::operation_action_error();
     view()
         .flex_col()
-        .gap(tokens::space(2.0))
-        .children(error.map(|error| ui::plain_note(error, true)))
-        .children(action_error.map(|error| ui::plain_note(error, true)))
-        .child(
+        .children(error.map(|error| {
             view()
-                .flex_row()
-                .items_center()
-                .gap(tokens::space(2.0))
-                .child(
-                    text("Tasks")
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().muted_foreground),
-                )
-                .child(view().flex_1())
-                .child(ui::action_button(
-                    "Refresh tasks",
-                    Tone::Default,
-                    "operations-refresh",
-                    loading,
-                    system::refresh_operations,
-                )),
-        )
+                .px(tokens::space(4.0))
+                .py(tokens::space(2.5))
+                .child(ui::plain_note(error, true))
+        }))
+        .children(action_error.map(|error| {
+            view()
+                .px(tokens::space(4.0))
+                .py(tokens::space(2.5))
+                .child(ui::plain_note(error, true))
+        }))
         .child(when(loading, || {
-            text("Reading task history…")
+            text("Loading…")
+                .px(tokens::space(4.0))
+                .py(tokens::space(3.0))
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
         }))
         .child(when(records.is_empty() && !loading, || {
             text("No tasks")
+                .px(tokens::space(4.0))
+                .py(tokens::space(3.0))
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
         }))
-        .children(records.into_iter().map(record))
+        .children(
+            records
+                .into_iter()
+                .enumerate()
+                .map(|(index, item)| record(item, index == 0)),
+        )
 }
 
-fn record(record: OperationRecord) -> impl IntoElement {
+fn record(record: OperationRecord, is_first: bool) -> impl IntoElement {
     let id = record.id.clone();
     let busy = system::operation_busy(&id) || record.busy;
     let retryable = operation_can_retry(&record);
@@ -89,23 +97,27 @@ fn record(record: OperationRecord) -> impl IntoElement {
             .unwrap_or_else(|| record.artifact.clone());
         details.push(("Output", name));
     }
-    let retry_label = if record.busy {
-        "Retry unavailable: another caller owns this task".to_string()
+    let retry_tip = if record.busy {
+        "Another caller owns this task"
     } else if !retryable {
-        "Retry unavailable for this task".to_string()
+        "Retry unavailable"
     } else {
-        "Retry operation".to_string()
+        "Retry operation"
     };
     let title = format!("{} · {}", record.request.kind, record.request.resource);
+    let phase = record.phase.clone();
     let result = record.result.clone();
     let retry_id = id.clone();
     let dismiss_id = id.clone();
     let test_suffix = id.clone();
-    ui::inset(
+
+    let row =
         view()
             .test_id(&format!("operation-{test_suffix}"))
             .flex_col()
             .gap(tokens::space(1.5))
+            .px(tokens::space(4.0))
+            .py(tokens::space(3.0))
             .child(
                 view()
                     .flex_row()
@@ -121,6 +133,11 @@ fn record(record: OperationRecord) -> impl IntoElement {
                             .text_color(move || theme().foreground)
                             .truncate(),
                     )
+                    .child(when(!phase.is_empty(), move || {
+                        text(phase.clone())
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().muted_foreground)
+                    }))
                     .child(
                         text(format!("Task {}", record.id))
                             .font_family("monospace")
@@ -136,14 +153,6 @@ fn record(record: OperationRecord) -> impl IntoElement {
                         .map(|(label, value)| ui::kv(label, value)),
                 ),
             )
-            .child(when(!record.phase.is_empty(), {
-                let phase = format!("{} · {}", record.status, record.phase);
-                move || {
-                    text(phase.clone())
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground)
-                }
-            }))
             .child(when(!result.is_empty(), move || {
                 text(result.clone())
                     .text_size(px(tokens::TEXT_SMALL))
@@ -169,20 +178,32 @@ fn record(record: OperationRecord) -> impl IntoElement {
                     .flex_row()
                     .items_center()
                     .gap(tokens::space(1.5))
-                    .child(ui::action_button(
-                        retry_label,
-                        Tone::Primary,
-                        format!("operation-retry-{test_suffix}"),
-                        busy || !retryable,
-                        move || system::retry_operation(&retry_id),
+                    .pt(tokens::space(0.5))
+                    .child(view().flex_none().tooltip(ui::tooltip(retry_tip)).child(
+                        ui::action_button(
+                            "Retry",
+                            Tone::Primary,
+                            format!("operation-retry-{test_suffix}"),
+                            busy || !retryable,
+                            move || system::retry_operation(&retry_id),
+                        ),
                     ))
-                    .child(ui::action_button(
-                        "Dismiss record (keep all files)",
-                        Tone::Default,
-                        format!("operation-dismiss-{test_suffix}"),
-                        busy,
-                        move || system::dismiss_operation(&dismiss_id),
-                    )),
-            ),
-    )
+                    .child(
+                        view()
+                            .flex_none()
+                            .tooltip(ui::tooltip("Dismiss record (files are kept)"))
+                            .child(ui::action_button(
+                                "Dismiss",
+                                Tone::Default,
+                                format!("operation-dismiss-{test_suffix}"),
+                                busy,
+                                move || system::dismiss_operation(&dismiss_id),
+                            )),
+                    ),
+            );
+    if is_first {
+        row
+    } else {
+        row.border_t_1().border_color(tokens::hairline)
+    }
 }

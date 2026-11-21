@@ -1,10 +1,10 @@
-//! The port card, ported from `view_ports.go`: check one port through
-//! devcore's bind-first inspection, suggest a free port, and list the
-//! current user's listening ports.
+//! The port card: check one port through devcore's bind-first inspection,
+//! suggest a free port, and list the current user's listening ports.
 
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
+use super::section_card;
 use crate::{
     components::controls::{self as ui, Tone},
     store::system,
@@ -20,78 +20,66 @@ fn parse_valid_port(input: &str) -> Option<i64> {
 }
 
 pub(crate) fn ports_card() -> impl IntoElement {
-    ui::card(
+    section_card(
         "Ports",
+        Some(
+            ui::action_button(
+                "Refresh",
+                Tone::Default,
+                "diagnostics-refresh-ports",
+                system::ports_loading,
+                system::refresh_ports,
+            )
+            .into_element(),
+        ),
         view()
             .flex_col()
-            .gap(tokens::space(2.5))
-            .child(dynamic(|| {
-                system::port_error().map(|error| ui::plain_note(error, true))
-            }))
-            .child(
-                view()
-                    .flex_row()
-                    .items_end()
-                    .gap(tokens::space(2.0))
-                    .child(view().w(px(110.0)).flex_none().child(ui::field(
-                        "Port",
-                        ui::text_field(
-                            "diagnostics-port",
-                            "3000",
-                            system::port_input,
-                            system::set_port_input,
-                        ),
-                    )))
-                    .child(ui::action_button(
-                        "Check port",
-                        Tone::Default,
-                        "diagnostics-check-port",
-                        || {
-                            system::checking_port()
-                                || parse_valid_port(&system::port_input()).is_none()
-                        },
-                        system::check_port,
-                    ))
-                    .child(ui::action_button(
-                        "Find a free port",
-                        Tone::Default,
-                        "diagnostics-free-port",
-                        system::suggesting_port,
-                        system::find_free_port,
-                    )),
-            )
-            .child(dynamic(|| {
-                parse_valid_port(&system::port_input())
-                    .and_then(system::port_inspection)
-                    .map(port_result)
-            }))
             .child(
                 view()
                     .flex_col()
-                    .gap(tokens::space(1.5))
-                    .pt(tokens::space(1.0))
+                    .gap(tokens::space(2.5))
+                    .px(tokens::space(4.0))
+                    .py(tokens::space(3.0))
+                    .child(dynamic(|| {
+                        system::port_error().map(|error| ui::plain_note(error, true))
+                    }))
                     .child(
                         view()
                             .flex_row()
                             .items_center()
                             .gap(tokens::space(2.0))
-                            .child(
-                                text("Listening ports")
-                                    .text_size(px(tokens::TEXT_CAPTION))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(move || theme().muted_foreground),
-                            )
-                            .child(view().flex_1())
+                            .child(view().w(px(110.0)).flex_none().child(ui::text_field(
+                                "diagnostics-port",
+                                "3000",
+                                system::port_input,
+                                system::set_port_input,
+                            )))
                             .child(ui::action_button(
-                                "Refresh",
+                                "Check port",
                                 Tone::Default,
-                                "diagnostics-refresh-ports",
-                                system::ports_loading,
-                                system::refresh_ports,
+                                "diagnostics-check-port",
+                                || {
+                                    system::checking_port()
+                                        || parse_valid_port(&system::port_input()).is_none()
+                                },
+                                system::check_port,
+                            ))
+                            .child(ui::action_button(
+                                "Find free port",
+                                Tone::Default,
+                                "diagnostics-free-port",
+                                system::suggesting_port,
+                                system::find_free_port,
                             )),
                     )
-                    .child(dynamic(|| Some(listening_ports_body().into_element()))),
-            ),
+                    .child(dynamic(|| {
+                        parse_valid_port(&system::port_input())
+                            .and_then(system::port_inspection)
+                            .map(port_result)
+                    })),
+            )
+            .child(ui::hairline())
+            .child(dynamic(|| Some(listening_ports_body().into_element()))),
     )
 }
 
@@ -100,23 +88,29 @@ fn listening_ports_body() -> impl IntoElement {
     let loading = system::ports_loading();
     view()
         .flex_col()
-        .gap(tokens::space(1.5))
         .child(when(loading, || {
-            text("Reading listening ports…")
+            text("Loading…")
+                .px(tokens::space(4.0))
+                .py(tokens::space(3.0))
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
         }))
         .child(when(listening.is_empty() && !loading, || {
-            text("No user-owned listening ports.")
+            text("No listening ports")
+                .px(tokens::space(4.0))
+                .py(tokens::space(3.0))
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
         }))
-        .children(listening.into_iter().map(|port| {
-            view()
+        .children(listening.into_iter().enumerate().map(|(index, port)| {
+            let row = view()
                 .test_id(&format!("listening-{}", port.port))
+                .min_h(px(34.0))
                 .flex_row()
                 .items_center()
                 .gap(tokens::space(2.0))
+                .px(tokens::space(4.0))
+                .py(tokens::space(1.75))
                 .child(
                     text(format!("Port {}", port.port))
                         .w(px(90.0))
@@ -134,7 +128,12 @@ fn listening_ports_body() -> impl IntoElement {
                         .text_size(px(tokens::TEXT_CAPTION))
                         .text_color(move || theme().muted_foreground)
                         .truncate(),
-                )
+                );
+            if index == 0 {
+                row
+            } else {
+                row.border_t_1().border_color(tokens::hairline)
+            }
         }))
 }
 

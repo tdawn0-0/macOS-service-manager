@@ -109,26 +109,18 @@ fn source_rail() -> impl IntoElement {
         .pb(tokens::space(3.0))
         .child(
             view()
-                .min_h(px(tokens::TITLE_BAR_HEIGHT))
+                .h(px(tokens::TITLE_BAR_HEIGHT))
                 .flex_none()
-                .flex_col()
-                .justify_center()
-                .gap(tokens::space(0.5))
-                .px(tokens::space(2.0))
+                .flex_row()
+                .items_center()
+                .px(tokens::space(2.5))
                 .pt(tokens::space(2.0))
-                .pb(tokens::space(2.5))
                 .window_drag(true)
                 .child(
                     text("Services")
-                        .text_base()
+                        .text_size(px(15.0))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(move || theme().foreground),
-                )
-                .child(
-                    text(crate::store::Section::Services.summary())
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground)
-                        .number_of_lines(2),
                 ),
         )
         .child(

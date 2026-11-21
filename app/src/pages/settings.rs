@@ -1,6 +1,5 @@
-//! Settings: the privileged helper, macOS permissions, the workspace
-//! preferences and the public `devbase` CLI wrapper, ported from
-//! `view_settings.go` and `settings.go`.
+//! Settings: workspace preferences, privileged helper, public `devbase` CLI,
+//! macOS permissions, and updates/about metadata.
 //!
 //! The page reads [`crate::store::system`]. Helper installs and removals run
 //! in background tasks and surface their busy line, status and verbatim error;
@@ -34,9 +33,9 @@ pub(crate) fn settings() -> impl IntoElement {
             scroll().flex_1().min_h(px(0.0)).child(
                 view()
                     .w_full()
-                    .max_w(px(880.0))
+                    .max_w(px(760.0))
                     .flex_col()
-                    .gap(tokens::space(4.0))
+                    .gap(tokens::space(5.0))
                     .px(tokens::space(6.0))
                     .py(tokens::space(5.0))
                     .child(dynamic(|| {
@@ -45,22 +44,22 @@ pub(crate) fn settings() -> impl IntoElement {
                     .child(dynamic(|| {
                         system::settings_action_error().map(|error| ui::plain_note(error, true))
                     }))
-                    .child(ui::card(
+                    .child(settings_group("Workspace", workspace_body()))
+                    .child(settings_group(
                         "Privileged helper",
                         dynamic(|| Some(helper_body().into_element())),
                     ))
-                    .child(ui::card("macOS permissions", permissions_body()))
-                    .child(ui::card("Workspace", workspace_body()))
-                    .child(ui::card(
+                    .child(settings_group(
                         "Command-line interface",
                         dynamic(|| Some(cli_body().into_element())),
                     ))
+                    .child(settings_group("Permissions", permissions_body()))
                     .child(
                         view()
                             .test_id("settings-updates-card")
                             .w_full()
-                            .child(ui::card(
-                                "Updates",
+                            .child(settings_group(
+                                "Updates & About",
                                 dynamic(|| Some(updates_body().into_element())),
                             )),
                     ),
@@ -71,7 +70,7 @@ pub(crate) fn settings() -> impl IntoElement {
 fn header() -> impl IntoElement {
     ui::page_header(
         "Settings",
-        Some(Section::Settings.summary()),
+        None::<&str>,
         view()
             .flex_none()
             .flex_row()
@@ -92,6 +91,179 @@ fn header() -> impl IntoElement {
     )
 }
 
+fn settings_group(title: &'static str, body: impl IntoElement) -> impl IntoElement {
+    view()
+        .flex_col()
+        .gap(tokens::space(1.5))
+        .child(
+            text(title)
+                .px(tokens::space(1.0))
+                .text_size(px(tokens::TEXT_CAPTION))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(move || theme().muted_foreground),
+        )
+        .child(
+            view()
+                .flex_col()
+                .rounded(tokens::panel_radius)
+                .bg(tokens::panel)
+                .border_1()
+                .border_color(tokens::hairline)
+                .overflow_hidden()
+                .child(body),
+        )
+}
+
+fn settings_row(leading: impl IntoElement, trailing: impl IntoElement) -> impl IntoElement {
+    view()
+        .min_h(px(40.0))
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap(tokens::space(3.0))
+        .px(tokens::space(4.0))
+        .py(tokens::space(2.25))
+        .child(view().flex_1().min_w(px(0.0)).child(leading))
+        .child(
+            view()
+                .flex_none()
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(1.5))
+                .child(trailing),
+        )
+}
+
+fn row_title(label: &'static str) -> impl IntoElement {
+    text(label)
+        .text_size(px(tokens::TEXT_BODY))
+        .text_color(move || theme().foreground)
+}
+
+fn workspace_body() -> impl IntoElement {
+    view()
+        .flex_col()
+        .child(settings_row(
+            row_title("Automatic log rotation"),
+            ui::switch(
+                "settings-log-rotation",
+                system::log_rotation_enabled,
+                || system::log_rotation_busy() || system::settings_busy(),
+                "Automatic log rotation",
+                system::set_log_rotation,
+            ),
+        ))
+        .child(ui::hairline())
+        .child(settings_row(
+            row_title("Start at login in menu bar"),
+            ui::switch(
+                "settings-login-item",
+                system::login_at_login,
+                system::login_busy,
+                "Start at login in menu bar",
+                system::set_login_item,
+            ),
+        ))
+        .child(dynamic(|| Some(workspace_details().into_element())))
+}
+
+fn workspace_details() -> impl IntoElement {
+    let cache = system::cache();
+    let cache_busy = system::cache_busy();
+    let busy = system::settings_busy();
+    let workspace_root = system::workspace_root();
+    let cache_text = if cache.files > 0 {
+        format!(
+            "{} · {}",
+            crate::store::software::format_bytes(cache.bytes),
+            crate::store::software::plural(cache.files as usize, "archive")
+        )
+    } else {
+        "0 B".to_string()
+    };
+    let cache_folder = cache.directory;
+    let root_for_reveal = workspace_root.clone();
+
+    view()
+        .flex_col()
+        .child(ui::hairline())
+        .child(settings_row(
+            view()
+                .flex_col()
+                .gap(px(2.0))
+                .child(row_title("Workspace folder"))
+                .child(when(!workspace_root.is_empty(), {
+                    let root = workspace_root.clone();
+                    move || {
+                        text(root.clone())
+                            .font_family("monospace")
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().muted_foreground)
+                            .selectable(true)
+                            .truncate()
+                    }
+                })),
+            ui::action_button(
+                "Reveal",
+                Tone::Default,
+                "settings-reveal-workspace",
+                root_for_reveal.is_empty(),
+                system::reveal_workspace,
+            ),
+        ))
+        .child(ui::hairline())
+        .child(settings_row(
+            view()
+                .flex_col()
+                .gap(px(2.0))
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(2.0))
+                        .child(row_title("Download cache"))
+                        .child(
+                            text(cache_text)
+                                .text_size(px(tokens::TEXT_SMALL))
+                                .tabular_nums()
+                                .text_color(move || theme().muted_foreground),
+                        ),
+                )
+                .child(when(!cache_folder.is_empty(), {
+                    let folder = cache_folder.clone();
+                    move || {
+                        text(folder.clone())
+                            .font_family("monospace")
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().muted_foreground)
+                            .selectable(true)
+                            .truncate()
+                    }
+                })),
+            ui::action_button(
+                "Clear",
+                Tone::Default,
+                "settings-clear-cache",
+                cache_busy || busy || cache.files == 0,
+                system::request_clear_cache,
+            ),
+        ))
+        .child(ui::hairline())
+        .child(settings_row(
+            row_title("Diagnostics"),
+            ui::action_button(
+                "Run diagnostics",
+                Tone::Default,
+                "settings-run-diagnostics",
+                busy,
+                || {
+                    crate::store::select_section(Section::Diagnostics);
+                    system::run_diagnostics();
+                },
+            ),
+        ))
+}
+
 fn helper_body() -> impl IntoElement {
     let helper = system::helper_status();
     let busy = system::helper_busy();
@@ -99,36 +271,38 @@ fn helper_body() -> impl IntoElement {
     let settings_busy = system::settings_busy();
     let installed = helper.installed;
     let message = helper.message;
+
     view()
         .flex_col()
-        .gap(tokens::space(2.0))
-        .child(
+        .child(settings_row(
             view()
-                .flex_row()
-                .items_center()
-                .gap(tokens::space(2.0))
-                .child(ui::status_tag(if installed {
-                    "Installed"
-                } else {
-                    "Not installed"
-                }))
+                .flex_col()
+                .gap(tokens::space(1.0))
                 .child(
-                    text(message)
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .text_size(px(tokens::TEXT_SMALL))
-                        .text_color(move || theme().muted_foreground),
-                ),
-        )
-        .child(ui::kv_mono("Daemon", PLIST_PATH))
-        .child(ui::kv_mono("Socket", SOCKET_PATH))
-        .child(ui::kv_mono("Helper", HELPER_DIR))
-        .children(activity.map(|activity| {
-            text(activity)
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground)
-        }))
-        .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(2.0))
+                        .child(row_title("Status"))
+                        .child(ui::status_tag(if installed {
+                            "Installed"
+                        } else {
+                            "Not installed"
+                        })),
+                )
+                .child(when(!message.is_empty(), {
+                    let message = message.clone();
+                    move || {
+                        text(message.clone())
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().muted_foreground)
+                    }
+                }))
+                .children(activity.map(|activity| {
+                    text(activity)
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .text_color(move || theme().muted_foreground)
+                })),
             view()
                 .flex_row()
                 .items_center()
@@ -152,150 +326,23 @@ fn helper_body() -> impl IntoElement {
                     )
                 }))
                 .child(ui::action_button(
-                    "Refresh status",
+                    "Refresh",
                     Tone::Default,
                     "settings-refresh-helper",
                     settings_busy,
                     system::refresh_settings,
                 )),
-        )
-}
-
-fn permissions_body() -> impl IntoElement {
-    view()
-        .flex_col()
-        .gap(tokens::space(2.0))
-        .child(
-            text("Full Disk Access and login items are managed by macOS.")
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground),
-        )
+        ))
+        .child(ui::hairline())
         .child(
             view()
-                .flex_row()
-                .items_center()
+                .flex_col()
                 .gap(tokens::space(1.5))
-                .child(ui::action_button(
-                    "Open Full Disk Access…",
-                    Tone::Default,
-                    "settings-open-fda",
-                    false,
-                    system::open_full_disk_access,
-                ))
-                .child(ui::action_button(
-                    "Open Login Items…",
-                    Tone::Default,
-                    "settings-open-login-items",
-                    false,
-                    system::open_login_items,
-                )),
-        )
-}
-
-fn workspace_body() -> impl IntoElement {
-    view()
-        .flex_col()
-        .gap(tokens::space(2.0))
-        .child(
-            view()
-                .flex_row()
-                .items_center()
-                .gap(tokens::space(2.0))
-                .child(ui::switch(
-                    "settings-log-rotation",
-                    system::log_rotation_enabled,
-                    || system::log_rotation_busy() || system::settings_busy(),
-                    "Automatic log rotation",
-                    system::set_log_rotation,
-                ))
-                .child(
-                    text("Automatic log rotation")
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .text_size(px(tokens::TEXT_SMALL))
-                        .text_color(move || theme().foreground),
-                ),
-        )
-        .child(
-            view()
-                .flex_row()
-                .items_center()
-                .gap(tokens::space(2.0))
-                .child(ui::switch(
-                    "settings-login-item",
-                    system::login_at_login,
-                    system::login_busy,
-                    "Start at login in menu bar",
-                    system::set_login_item,
-                ))
-                .child(
-                    text("Start at login in menu bar")
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .text_size(px(tokens::TEXT_SMALL))
-                        .text_color(move || theme().foreground),
-                ),
-        )
-        .child(dynamic(|| Some(workspace_details().into_element())))
-}
-
-fn workspace_details() -> impl IntoElement {
-    let cache = system::cache();
-    let cache_busy = system::cache_busy();
-    let busy = system::settings_busy();
-    let workspace_root = system::workspace_root();
-    let cache_text = if cache.files > 0 {
-        format!(
-            "{} · {}",
-            crate::store::software::format_bytes(cache.bytes),
-            crate::store::software::plural(cache.files as usize, "archive")
-        )
-    } else {
-        "0 B".to_string()
-    };
-    let cache_folder = cache.directory;
-    let root_for_reveal = workspace_root.clone();
-    view()
-        .flex_col()
-        .gap(tokens::space(2.0))
-        .child(when(!workspace_root.is_empty(), {
-            let root = workspace_root.clone();
-            move || ui::kv_mono("Workspace", root.clone())
-        }))
-        .child(ui::kv("Download cache", cache_text))
-        .child(when(!cache_folder.is_empty(), {
-            let folder = cache_folder.clone();
-            move || ui::kv_mono("Cache folder", folder.clone())
-        }))
-        .child(
-            view()
-                .flex_row()
-                .items_center()
-                .gap(tokens::space(1.5))
-                .child(ui::action_button(
-                    "Show workspace in Finder",
-                    Tone::Default,
-                    "settings-reveal-workspace",
-                    root_for_reveal.is_empty(),
-                    system::reveal_workspace,
-                ))
-                .child(ui::action_button(
-                    "Clear download cache",
-                    Tone::Default,
-                    "settings-clear-cache",
-                    cache_busy || busy || cache.files == 0,
-                    system::request_clear_cache,
-                ))
-                .child(ui::action_button(
-                    "Run diagnostics",
-                    Tone::Default,
-                    "settings-run-diagnostics",
-                    busy,
-                    || {
-                        crate::store::select_section(Section::Diagnostics);
-                        system::run_diagnostics();
-                    },
-                )),
+                .px(tokens::space(4.0))
+                .py(tokens::space(2.5))
+                .child(ui::kv_mono("Daemon", PLIST_PATH))
+                .child(ui::kv_mono("Socket", SOCKET_PATH))
+                .child(ui::kv_mono("Helper", HELPER_DIR)),
         )
 }
 
@@ -315,50 +362,48 @@ fn cli_body() -> impl IntoElement {
             .unwrap_or_default();
         format!("Add {dir} to PATH to run devbase from any shell.")
     });
+
     view()
         .flex_col()
-        .gap(tokens::space(2.0))
-        .child(
+        .child(settings_row(
             view()
-                .flex_row()
-                .items_center()
-                .gap(tokens::space(2.0))
-                .child(ui::status_tag(if installed {
-                    "Installed"
-                } else {
-                    "Not installed"
-                }))
+                .flex_col()
+                .gap(tokens::space(1.0))
                 .child(
-                    text(if installed {
-                        "The public devbase command is available."
-                    } else {
-                        "The public devbase command is not installed."
-                    })
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .text_size(px(tokens::TEXT_SMALL))
-                    .text_color(move || theme().muted_foreground),
-                ),
-        )
-        .child(when(!wrapper.is_empty(), {
-            let wrapper = wrapper.clone();
-            move || ui::kv_mono("Command", wrapper.clone())
-        }))
-        .children(path_hint.map(|hint| ui::plain_note(hint, false)))
-        .children(activity.map(|activity| {
-            text(activity)
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground)
-        }))
-        .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(2.0))
+                        .child(row_title("devbase"))
+                        .child(ui::status_tag(if installed {
+                            "Installed"
+                        } else {
+                            "Not installed"
+                        })),
+                )
+                .child(when(!wrapper.is_empty(), {
+                    let wrapper = wrapper.clone();
+                    move || {
+                        text(wrapper.clone())
+                            .font_family("monospace")
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().muted_foreground)
+                            .selectable(true)
+                            .truncate()
+                    }
+                }))
+                .children(activity.map(|activity| {
+                    text(activity)
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .text_color(move || theme().muted_foreground)
+                })),
             view()
                 .flex_row()
-                .flex_wrap()
                 .items_center()
                 .gap(tokens::space(1.5))
                 .child(when(!installed, move || {
                     ui::action_button(
-                        "Install devbase CLI",
+                        "Install CLI",
                         Tone::Primary,
                         "settings-install-cli",
                         busy || settings_busy,
@@ -367,22 +412,37 @@ fn cli_body() -> impl IntoElement {
                 }))
                 .child(when(installed && managed, move || {
                     ui::action_button(
-                        "Remove devbase CLI",
+                        "Remove CLI",
                         Tone::Danger,
                         "settings-remove-cli",
                         busy || settings_busy,
                         system::uninstall_cli,
                     )
-                }))
+                })),
+        ))
+        .children(path_hint.map(|hint| {
+            view()
+                .px(tokens::space(4.0))
+                .pb(tokens::space(2.5))
+                .child(ui::plain_note(hint, false))
+        }))
+        .child(ui::hairline())
+        .child(settings_row(
+            row_title("Agent & MCP"),
+            view()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap(tokens::space(1.5))
                 .child(ui::action_button(
-                    "Copy AI schema command",
+                    "Copy schema",
                     Tone::Default,
                     "settings-copy-schema",
                     false,
                     system::copy_schema_command,
                 ))
                 .child(ui::action_button(
-                    "Copy AI agent instructions",
+                    "Copy agent prompt",
                     Tone::Default,
                     "settings-copy-agent-prompt",
                     false,
@@ -395,7 +455,33 @@ fn cli_body() -> impl IntoElement {
                     false,
                     system::copy_mcp_config,
                 )),
-        )
+        ))
+}
+
+fn permissions_body() -> impl IntoElement {
+    view()
+        .flex_col()
+        .child(settings_row(
+            row_title("Full Disk Access"),
+            ui::action_button(
+                "Open…",
+                Tone::Default,
+                "settings-open-fda",
+                false,
+                system::open_full_disk_access,
+            ),
+        ))
+        .child(ui::hairline())
+        .child(settings_row(
+            row_title("Login Items"),
+            ui::action_button(
+                "Open…",
+                Tone::Default,
+                "settings-open-login-items",
+                false,
+                system::open_login_items,
+            ),
+        ))
 }
 
 fn updates_body() -> impl IntoElement {
@@ -403,30 +489,38 @@ fn updates_body() -> impl IntoElement {
     let state = system::update_state();
     let busy = system::updates_busy();
 
-    let (status_tag, status_summary) = match &state {
+    let (status_tag, status_summary): (&'static str, Option<String>) = match &state {
         UpdateState::NotConfigured => (
             "Not configured",
-            "No signed update feed is bundled with this build.".to_string(),
+            Some("No signed update feed is bundled with this build.".to_string()),
         ),
-        UpdateState::Idle => ("Ready", "Signed update feed is configured.".to_string()),
-        UpdateState::Checking => ("Checking", "Checking for signed updates…".to_string()),
+        UpdateState::Idle => ("Ready", None),
+        UpdateState::Checking => ("Checking", Some("Checking for signed updates…".to_string())),
         UpdateState::UpToDate => (
             "Up to date",
-            format!("Devbase {} is the latest verified version.", meta::VERSION),
+            Some(format!(
+                "Devbase {} is the latest verified version.",
+                meta::VERSION
+            )),
         ),
         UpdateState::Available(avail) => (
             "Update available",
-            format!("Version {} is available and verified.", avail.version),
+            Some(format!(
+                "Version {} is available and verified.",
+                avail.version
+            )),
         ),
         UpdateState::Installing { version } => (
             "Installing",
-            format!("Downloading and verifying Devbase {version}…"),
+            Some(format!("Downloading and verifying Devbase {version}…")),
         ),
         UpdateState::Installed { version } => (
             "Installed",
-            format!("Devbase {version} is installed. Restart to apply the update."),
+            Some(format!(
+                "Devbase {version} is installed. Restart to apply the update."
+            )),
         ),
-        UpdateState::Error(_) => ("Error", "Update check could not complete.".to_string()),
+        UpdateState::Error(_) => ("Error", None),
     };
 
     let available = match &state {
@@ -452,52 +546,31 @@ fn updates_body() -> impl IntoElement {
 
     view()
         .flex_col()
-        .gap(tokens::space(2.0))
-        .child(
+        .child(settings_row(
+            text(format!(
+                "{} v{} · macOS {}+ · {}",
+                meta::NAME,
+                meta::VERSION,
+                meta::MINIMUM_MACOS,
+                meta::IDENTIFIER
+            ))
+            .text_size(px(tokens::TEXT_SMALL))
+            .tabular_nums()
+            .text_color(move || theme().foreground)
+            .selectable(true),
+            ui::status_tag(status_tag),
+        ))
+        .child(ui::hairline())
+        .child(settings_row(
             view()
-                .flex_row()
-                .items_center()
-                .gap(tokens::space(2.0))
-                .child(ui::status_tag(status_tag))
-                .child(
-                    text(status_summary)
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .text_size(px(tokens::TEXT_SMALL))
-                        .text_color(move || theme().muted_foreground),
-                ),
-        )
-        .child(ui::kv_mono("Current version", meta::VERSION))
-        .child(ui::kv("Channel", feed.channel))
-        .children(
-            feed.source
-                .filter(|source| !source.is_empty())
-                .map(|source| ui::kv_mono("Feed", source)),
-        )
-        .children(notes.map(|notes| {
-            view()
-                .test_id("settings-update-notes")
                 .flex_col()
-                .gap(tokens::space(1.0))
-                .p(tokens::space(2.5))
-                .rounded(move || theme().radius)
-                .bg(tokens::inset)
-                .border_1()
-                .border_color(tokens::hairline)
-                .child(
-                    text("Release notes")
+                .gap(px(2.0))
+                .child(row_title("Software updates"))
+                .children(status_summary.map(|summary| {
+                    text(summary)
                         .text_size(px(tokens::TEXT_CAPTION))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().muted_foreground),
-                )
-                .child(
-                    text(notes)
-                        .text_size(px(tokens::TEXT_SMALL))
-                        .text_color(move || theme().foreground),
-                )
-        }))
-        .children(error_note.map(|error| ui::plain_note(error, true)))
-        .child(
+                        .text_color(move || theme().muted_foreground)
+                })),
             view()
                 .flex_row()
                 .flex_wrap()
@@ -528,5 +601,42 @@ fn updates_body() -> impl IntoElement {
                         system::relaunch_after_update,
                     )
                 })),
+        ))
+        .child(ui::hairline())
+        .child(
+            view()
+                .flex_col()
+                .gap(tokens::space(1.5))
+                .px(tokens::space(4.0))
+                .py(tokens::space(2.5))
+                .child(ui::kv("Channel", feed.channel))
+                .children(
+                    feed.source
+                        .filter(|source| !source.is_empty())
+                        .map(|source| ui::kv_mono("Feed", source)),
+                )
+                .children(notes.map(|notes| {
+                    view()
+                        .test_id("settings-update-notes")
+                        .flex_col()
+                        .gap(tokens::space(1.0))
+                        .p(tokens::space(2.5))
+                        .rounded(move || theme().radius)
+                        .bg(tokens::inset)
+                        .border_1()
+                        .border_color(tokens::hairline)
+                        .child(
+                            text("Release notes")
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(move || theme().muted_foreground),
+                        )
+                        .child(
+                            text(notes)
+                                .text_size(px(tokens::TEXT_SMALL))
+                                .text_color(move || theme().foreground),
+                        )
+                }))
+                .children(error_note.map(|error| ui::plain_note(error, true))),
         )
 }

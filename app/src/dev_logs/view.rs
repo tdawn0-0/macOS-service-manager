@@ -73,7 +73,10 @@ fn drawer_panel() -> impl IntoElement {
         // without intercepting Escape when the modal plist editor is open.
         .child(when(move || !crate::editor::is_open(), escape_shortcut))
         .child(toolbar(filter_ref))
-        .child(metadata_row())
+        .child(when(
+            || store::metadata_summary().is_some() || store::notice().is_some(),
+            metadata_row,
+        ))
         .child(log_viewport(scroll_ref))
 }
 
@@ -106,8 +109,8 @@ fn toolbar(filter_ref: ElementRef) -> impl IntoElement {
         .flex_row()
         .items_center()
         .gap(tokens::space(2.0))
-        .px(tokens::space(4.0))
-        .pt(tokens::space(2.5))
+        .px(tokens::space(3.5))
+        .pt(tokens::space(2.0))
         .pb(tokens::space(1.5))
         .child(target_tabs())
         .child(stream_tabs())
@@ -288,71 +291,68 @@ fn filter_input(filter_ref: ElementRef) -> impl IntoElement {
 }
 
 fn live_switch() -> impl IntoElement {
-    view()
-        .flex_none()
-        .tooltip(tip("Toggle live log tailing"))
-        .child(
-            switch()
-                .test_id("dev-log-follow-switch")
-                .checked(move || !store::is_paused())
-                .accessibility_label("Live follow")
-                .flex_none()
-                .flex_row()
-                .items_center()
-                .gap(tokens::space(1.5))
-                .rounded(move || theme().radius)
-                .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
-                .track_style(|style| {
-                    style
-                        .w(px(28.0))
-                        .h(px(16.0))
-                        .rounded_full()
-                        .p(px(2.0))
-                        .flex_row()
-                        .items_center()
-                        .bg(move || {
-                            if !store::is_paused() {
-                                tokens::success()
-                            } else {
-                                tokens::inset()
-                            }
-                        })
-                        .border_1()
-                        .border_color(move || {
-                            if !store::is_paused() {
-                                tokens::success()
-                            } else {
-                                tokens::hairline()
-                            }
-                        })
-                })
-                .thumb_style(|style| {
-                    style
-                        .size(px(10.0))
-                        .rounded_full()
-                        .bg(move || theme().background)
-                        .ml(move || {
-                            if !store::is_paused() {
-                                px(12.0)
-                            } else {
-                                px(0.0)
-                            }
-                        })
-                })
-                .on_change(move |live: &bool| store::set_paused(!*live))
-                .child(
-                    text(move || if store::is_paused() { "Paused" } else { "Live" })
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(move || {
-                            if store::is_paused() {
-                                theme().muted_foreground
-                            } else {
-                                theme().foreground
-                            }
-                        }),
-                ),
-        )
+    view().flex_none().tooltip(tip("Live follow")).child(
+        switch()
+            .test_id("dev-log-follow-switch")
+            .checked(move || !store::is_paused())
+            .accessibility_label("Live follow")
+            .flex_none()
+            .flex_row()
+            .items_center()
+            .gap(tokens::space(1.5))
+            .rounded(move || theme().radius)
+            .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
+            .track_style(|style| {
+                style
+                    .w(px(28.0))
+                    .h(px(16.0))
+                    .rounded_full()
+                    .p(px(2.0))
+                    .flex_row()
+                    .items_center()
+                    .bg(move || {
+                        if !store::is_paused() {
+                            tokens::success()
+                        } else {
+                            tokens::inset()
+                        }
+                    })
+                    .border_1()
+                    .border_color(move || {
+                        if !store::is_paused() {
+                            tokens::success()
+                        } else {
+                            tokens::hairline()
+                        }
+                    })
+            })
+            .thumb_style(|style| {
+                style
+                    .size(px(10.0))
+                    .rounded_full()
+                    .bg(move || theme().background)
+                    .ml(move || {
+                        if !store::is_paused() {
+                            px(12.0)
+                        } else {
+                            px(0.0)
+                        }
+                    })
+            })
+            .on_change(move |live: &bool| store::set_paused(!*live))
+            .child(
+                text(move || if store::is_paused() { "Paused" } else { "Live" })
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(move || {
+                        if store::is_paused() {
+                            theme().muted_foreground
+                        } else {
+                            theme().foreground
+                        }
+                    }),
+            ),
+    )
 }
 
 fn action_buttons() -> impl IntoElement {
@@ -425,7 +425,7 @@ fn metadata_row() -> impl IntoElement {
         .flex_row()
         .items_center()
         .gap(tokens::space(2.0))
-        .px(tokens::space(4.0))
+        .px(tokens::space(3.5))
         .pb(tokens::space(1.5))
         .child(
             view()
@@ -476,8 +476,8 @@ fn log_viewport(scroll_ref: ElementRef) -> impl IntoElement {
     view()
         .flex_1()
         .min_h(px(0.0))
-        .px(tokens::space(4.0))
-        .pb(tokens::space(3.0))
+        .px(tokens::space(3.5))
+        .pb(tokens::space(2.5))
         .child(
             scroll()
                 .test_id("dev-log-scroll")

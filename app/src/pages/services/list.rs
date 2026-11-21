@@ -492,7 +492,7 @@ fn empty_list() -> impl IntoElement {
                             .hover(move |style| style.bg(tokens::row_hover()))
                             .on_press(svc::clear_search)
                             .child(
-                                text("Clear search and filter")
+                                text("Clear filters")
                                     .text_size(px(tokens::TEXT_SMALL))
                                     .text_color(move || theme().primary),
                             ),

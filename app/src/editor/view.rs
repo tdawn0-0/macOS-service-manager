@@ -227,7 +227,7 @@ fn loading_banner() -> impl IntoElement {
         .rounded(move || theme().radius)
         .bg(tokens::inset)
         .child(
-            text("Loading property list…")
+            text("Loading…")
                 .test_id("editor-loading")
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground),
@@ -242,15 +242,8 @@ fn program_section(s: store::EditorSignals) -> impl IntoElement {
         view()
             .flex_col()
             .gap(tokens::space(2.5))
-            .child(field_with_tooltip(
+            .child(field_static(
                 "Label",
-                move || {
-                    if store::is_existing() {
-                        "The label of an existing job does not change.".to_string()
-                    } else {
-                        "A reverse-domain name that is unique among your jobs.".to_string()
-                    }
-                },
                 text_input_box(
                     "editor-label",
                     "Label",
@@ -285,12 +278,9 @@ fn program_section(s: store::EditorSignals) -> impl IntoElement {
             .child(field_with_tooltip(
                 "Command",
                 move || match s.command_mode.get() {
-                    CommandMode::Shell => {
-                        "Runs with /bin/sh -c. launchd's PATH lacks Homebrew: give full paths, or set PATH below.".to_string()
-                    }
+                    CommandMode::Shell => "/bin/sh -c (use full paths)".to_string(),
                     CommandMode::Program => {
-                        "One item per line: the program with its absolute path, then its arguments."
-                            .to_string()
+                        "One argument per line (absolute path first)".to_string()
                     }
                 },
                 multiline_input_box(
@@ -312,7 +302,7 @@ fn program_section(s: store::EditorSignals) -> impl IntoElement {
                 text_input_box(
                     "editor-workdir",
                     "Working directory",
-                    || "Optional, as /Users/me/project".to_string(),
+                    || "/Users/me/project".to_string(),
                     move || s.working_dir.get(),
                     move |next| s.working_dir.set(next),
                     || false,
@@ -349,7 +339,7 @@ fn when_section(s: store::EditorSignals) -> impl IntoElement {
     };
 
     fieldset(
-        "When it runs",
+        "Schedule",
         view()
             .flex_col()
             .gap(tokens::space(2.5))
@@ -391,26 +381,13 @@ fn when_section(s: store::EditorSignals) -> impl IntoElement {
                             "editor-run-at-load",
                             at_load_label,
                             move || {
-                                s.run_at_load.get()
-                                    || s.restart.get() == RestartPolicy::OnCrash
+                                s.run_at_load.get() || s.restart.get() == RestartPolicy::OnCrash
                             },
                             move || s.restart.get() == RestartPolicy::OnCrash,
                             move |next| s.run_at_load.set(next),
                         ))
-                        .child(field_with_tooltip(
+                        .child(field_static(
                             "Restarts",
-                            move || match s.restart.get() {
-                                RestartPolicy::Never => {
-                                    "launchd leaves the job stopped once it exits.".to_string()
-                                }
-                                RestartPolicy::OnCrash => {
-                                    "Starts it again if it exits with a failure, and so also starts it at load."
-                                        .to_string()
-                                }
-                                RestartPolicy::Always => {
-                                    "Starts it again whenever it exits.".to_string()
-                                }
-                            },
                             when(
                                 move || s.keep_alive_custom.get(),
                                 || {
@@ -457,14 +434,11 @@ fn when_section(s: store::EditorSignals) -> impl IntoElement {
                         ))
                         .child(field_with_tooltip(
                             "Queue directories",
-                            || {
-                                "Runs the job while any of these is not empty. Separate them with commas."
-                                    .to_string()
-                            },
+                            || "Comma-separated paths; runs while non-empty".to_string(),
                             text_input_box(
                                 "editor-queue-dirs",
                                 "Queue directories",
-                                || "Optional, as /Users/me/inbox, /Users/me/outbox".to_string(),
+                                || "/Users/me/inbox, /Users/me/outbox".to_string(),
                                 move || s.queue_dirs.get(),
                                 move |next| s.queue_dirs.set(next),
                                 || false,
@@ -504,28 +478,30 @@ fn when_section(s: store::EditorSignals) -> impl IntoElement {
                     view()
                         .flex_col()
                         .gap(tokens::space(2.5))
-                        .child(when(
-                            move || s.calendar_custom.get(),
-                            || {
-                                field_static(
-                                    "Calendar",
-                                    text("A calendar of its own, which stays as it is")
-                                        .test_id("editor-calendar-custom")
-                                        .text_size(px(tokens::TEXT_SMALL))
-                                        .text_color(move || theme().muted_foreground),
-                                )
-                            },
-                        )
-                        .otherwise(move || {
-                            field_with_tooltip(
-                                "Calendar",
+                        .child(
+                            when(
+                                move || s.calendar_custom.get(),
                                 || {
-                                    "A number, a list (1,15), a range (1-5) or an interval (*/10). An empty field is any value."
-                                        .to_string()
+                                    field_static(
+                                        "Calendar",
+                                        text("A calendar of its own, which stays as it is")
+                                            .test_id("editor-calendar-custom")
+                                            .text_size(px(tokens::TEXT_SMALL))
+                                            .text_color(move || theme().muted_foreground),
+                                    )
                                 },
-                                calendar_fields(s),
                             )
-                        }))
+                            .otherwise(move || {
+                                field_with_tooltip(
+                                    "Calendar",
+                                    || {
+                                        "Number, list (1,15), range (1-5), or */10; empty = any"
+                                            .to_string()
+                                    },
+                                    calendar_fields(s),
+                                )
+                            }),
+                        )
                         .child(switch_row(
                             "editor-calendar-run-at-load",
                             also_at_load_label,
@@ -598,39 +574,40 @@ fn runs_as_section(s: store::EditorSignals) -> impl IntoElement {
         view()
             .flex_col()
             .gap(tokens::space(2.5))
-            .child(field_with_tooltip(
-                "User",
-                || "Without one, the job runs as root.".to_string(),
-                text_input_box(
-                    "editor-user",
-                    "User",
-                    || "root".to_string(),
-                    move || s.user_name.get(),
-                    move |next| s.user_name.set(next),
-                    || false,
-                ),
-            ))
-            .child(field_static(
-                "Group",
-                text_input_box(
-                    "editor-group",
-                    "Group",
-                    || "Optional, with a user".to_string(),
-                    move || s.group_name.get(),
-                    move |next| s.group_name.set(next),
-                    || false,
-                ),
-            ))
+            .child(
+                view()
+                    .flex_row()
+                    .gap(tokens::space(2.5))
+                    .child(view().flex_1().min_w(px(0.0)).child(field_static(
+                        "User",
+                        text_input_box(
+                            "editor-user",
+                            "User",
+                            || "root".to_string(),
+                            move || s.user_name.get(),
+                            move |next| s.user_name.set(next),
+                            || false,
+                        ),
+                    )))
+                    .child(view().flex_1().min_w(px(0.0)).child(field_static(
+                        "Group",
+                        text_input_box(
+                            "editor-group",
+                            "Group",
+                            || "staff".to_string(),
+                            move || s.group_name.get(),
+                            move |next| s.group_name.set(next),
+                            || false,
+                        ),
+                    ))),
+            )
             .child(field_with_tooltip(
                 "Root directory",
-                || {
-                    "Runs the job chrooted into it, where the command must be found too."
-                        .to_string()
-                },
+                || "chroot directory".to_string(),
                 text_input_box(
                     "editor-root-dir",
                     "Root directory",
-                    || "Optional absolute path".to_string(),
+                    || "/path/to/root".to_string(),
                     move || s.root_dir.get(),
                     move |next| s.root_dir.set(next),
                     || false,
@@ -650,7 +627,7 @@ fn logs_section(s: store::EditorSignals) -> impl IntoElement {
                 text_input_box(
                     "editor-stdout",
                     "Output log",
-                    || "Optional absolute path".to_string(),
+                    || "/path/to/stdout.log".to_string(),
                     move || s.stdout.get(),
                     move |next| s.stdout.set(next),
                     || false,
@@ -661,7 +638,7 @@ fn logs_section(s: store::EditorSignals) -> impl IntoElement {
                 text_input_box(
                     "editor-stderr",
                     "Error log",
-                    || "Optional absolute path".to_string(),
+                    || "/path/to/stderr.log".to_string(),
                     move || s.stderr.get(),
                     move |next| s.stderr.set(next),
                     || false,
@@ -703,7 +680,9 @@ fn footer(s: store::EditorSignals) -> impl IntoElement {
         .flex_row()
         .items_center()
         .gap(tokens::space(2.0))
-        .pt(tokens::space(1.0))
+        .pt(tokens::space(3.0))
+        .border_t_1()
+        .border_color(tokens::hairline)
         .child(checkbox_row(
             "editor-apply",
             move || {
@@ -738,19 +717,24 @@ fn footer(s: store::EditorSignals) -> impl IntoElement {
 fn fieldset(title: &'static str, body: impl IntoElement) -> impl IntoElement {
     view()
         .flex_col()
-        .gap(tokens::space(2.0))
-        .p(tokens::space(3.5))
-        .rounded(tokens::panel_radius)
-        .bg(tokens::panel)
-        .border_1()
-        .border_color(tokens::hairline)
+        .gap(tokens::space(1.5))
         .child(
             text(title)
-                .text_size(px(tokens::TEXT_SMALL))
+                .px(tokens::space(1.0))
+                .text_size(px(tokens::TEXT_CAPTION))
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(move || theme().foreground),
+                .text_color(move || theme().muted_foreground),
         )
-        .child(body)
+        .child(
+            view()
+                .flex_col()
+                .p(tokens::space(3.5))
+                .rounded(tokens::panel_radius)
+                .bg(tokens::panel)
+                .border_1()
+                .border_color(tokens::hairline)
+                .child(body),
+        )
 }
 
 fn field_static(label: &'static str, control: impl IntoElement) -> impl IntoElement {

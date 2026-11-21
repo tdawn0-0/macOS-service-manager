@@ -299,11 +299,12 @@ fn run_versions(env: &mut CliEnv, out: &mut dyn Write, args: &[String]) -> CliRe
         "java" => Err(unavailable("JDK discovery")),
         "python" => {
             let shell = shell(env);
+            let target = devcore::platform::HostTarget::current();
             let rows: Vec<UVPythonView> = shell
                 .uv_pythons(false)
                 .map_err(|error| CliError::operation(error.to_string()))?
                 .iter()
-                .filter(|python| python.os_name == "macos" && python.arch == "aarch64")
+                .filter(|python| target.matches_uv(&python.os_name, &python.arch))
                 .map(UVPythonView::from)
                 .collect();
             let payload = serde_json::json!({

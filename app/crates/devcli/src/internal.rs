@@ -112,6 +112,33 @@ impl InternalRunner for SystemInternal {
     }
 
     fn helper(&self, owner_uid: i64) -> CliResult<()> {
+        run_platform_helper(owner_uid)
+    }
+}
+
+/// Builds the Linux privileged-helper server configuration pinned to
+/// [`devcore::helper::LinuxPeerAuth`].
+pub fn linux_helper_server_config(owner_uid: i64) -> devcore::helper::ServerConfig {
+    devcore::helper::ServerConfig {
+        owner_uid,
+        peer_auth: std::sync::Arc::new(devcore::helper::LinuxPeerAuth::new()),
+        ..devcore::helper::ServerConfig::default()
+    }
+}
+
+fn run_platform_helper(owner_uid: i64) -> CliResult<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let config = linux_helper_server_config(owner_uid);
+        devcore::helper::activate::serve_activated_with(
+            owner_uid,
+            &devcore::helper::LinuxSocketActivator,
+            config,
+        )
+        .map_err(|error| CliError::operation(error.to_string()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
         devcore::helper::run_activated(owner_uid)
             .map_err(|error| CliError::operation(error.to_string()))
     }
@@ -268,4 +295,25 @@ pub fn parse_owner_uid(args: &[String]) -> CliResult<i64> {
 fn valid_decimal_integer(value: &str) -> bool {
     let digits = value.strip_prefix(['+', '-']).unwrap_or(value);
     !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_helper_config_wires_owner_uid_and_linux_peer_auth() {
+        let config = linux_helper_server_config(1000);
+        assert_eq!(config.owner_uid, 1000);
+        assert!(format!("{:?}", config.peer_auth).contains("LinuxPeerAuth"));
+
+        // Invalid owner UID fails fast before touching systemd descriptors.
+        let err = devcore::helper::activate::serve_activated_with(
+            0,
+            &devcore::helper::LinuxSocketActivator,
+            linux_helper_server_config(0),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("invalid owner uid"));
+    }
 }

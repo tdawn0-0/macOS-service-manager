@@ -66,6 +66,12 @@ impl From<devcore::launchd::LaunchdError> for CliError {
     }
 }
 
+impl From<devcore::systemd::SystemdError> for CliError {
+    fn from(error: devcore::systemd::SystemdError) -> Self {
+        CliError::Operation(error.to_string())
+    }
+}
+
 impl From<devcore::software::SoftwareError> for CliError {
     fn from(error: devcore::software::SoftwareError) -> Self {
         CliError::Operation(error.to_string())

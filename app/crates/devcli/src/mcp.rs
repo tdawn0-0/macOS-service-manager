@@ -426,13 +426,20 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "devbase_services_list",
-            "description": "List macOS services across launchd (user-agent, system-agent, daemon), brew, and login-item with optional filtering.",
+            "description": if cfg!(target_os = "macos") {
+                "List macOS services across launchd (user-agent, system-agent, daemon), brew, and login-item with optional filtering."
+            } else {
+                "List Linux services across systemd (systemd-user, systemd-system) and XDG autostart with optional filtering."
+            },
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "source": {
                         "type": "string",
-                        "enum": ["brew", "login-item", "user-agent", "system-agent", "daemon"],
+                        "enum": devcore::service::Source::platform_all()
+                            .iter()
+                            .map(|source| source.as_str())
+                            .collect::<Vec<_>>(),
                         "description": "Optional service source filter."
                     },
                     "state": {

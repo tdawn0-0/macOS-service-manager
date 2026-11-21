@@ -9,7 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use devcore::launchd::SystemHost;
-use devcore::launchd::resolve_login_executable;
+use devcore::platform::login_item;
 use serde::Serialize;
 
 use crate::error::{CliError, CliResult};
@@ -154,7 +154,7 @@ pub fn resolve_target_executable(app_path: &str, override_path: &str) -> CliResu
     } else {
         Some(Path::new(override_path))
     };
-    resolve_login_executable(&host, app, override_value)
+    login_item::resolve_executable(&host, app, override_value)
         .map_err(|error| CliError::operation(error.to_string()))
 }
 
@@ -188,8 +188,8 @@ pub fn cli_status(bin_dir: &str, app_path: &str, exe_override: &str) -> CLIInsta
     status
 }
 
-/// The exact wrapper script (`install_path.go:150-181`).
-pub fn wrapper_script(target_exe: &str, bundle_path: &str) -> String {
+/// The exact macOS wrapper script (`install_path.go:150-181`).
+pub fn macos_wrapper_script(target_exe: &str, bundle_path: &str) -> String {
     format!(
         r#"#!/bin/sh
 {marker}
@@ -227,6 +227,55 @@ exit 1
         target = cli_shell_quote(target_exe),
         bundle = cli_shell_quote(bundle_path),
     )
+}
+
+/// The Linux wrapper script: resolves `TARGET` (or standard Linux install paths
+/// such as `~/.local/bin/devbase` without recursing onto the wrapper itself)
+/// and executes it directly without macOS `.app` bundle or `/usr/bin/open`.
+pub fn linux_wrapper_script(target_exe: &str) -> String {
+    format!(
+        r#"#!/bin/sh
+{marker}
+set -eu
+TARGET={target}
+if [ "$#" -eq 0 ]; then
+  set -- help
+fi
+if [ -x "$TARGET" ]; then
+  exec "$TARGET" "$@"
+fi
+if [ -z "${{MSM_DEV_HOME:-}}" ]; then
+  for candidate in "${{HOME:-}}/.local/bin/devbase" "/usr/local/bin/devbase" "/usr/bin/devbase"; do
+    if [ -x "$candidate" ] && [ "$candidate" != "$0" ] && ! head -n 2 "$candidate" 2>/dev/null | grep -Fq {marker_quoted}; then
+      exec "$candidate" "$@"
+    fi
+  done
+fi
+echo "Devbase executable not found at $TARGET" >&2
+exit 1
+"#,
+        marker = CLI_MANAGED_MARKER,
+        marker_quoted = cli_shell_quote(CLI_MANAGED_MARKER),
+        target = cli_shell_quote(target_exe),
+    )
+}
+
+/// Platform-appropriate managed `devbase` wrapper script.
+#[cfg(target_os = "macos")]
+pub fn wrapper_script(target_exe: &str, bundle_path: &str) -> String {
+    macos_wrapper_script(target_exe, bundle_path)
+}
+
+/// Platform-appropriate managed `devbase` wrapper script.
+#[cfg(target_os = "linux")]
+pub fn wrapper_script(target_exe: &str, _bundle_path: &str) -> String {
+    linux_wrapper_script(target_exe)
+}
+
+/// Platform-appropriate managed `devbase` wrapper script.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub fn wrapper_script(target_exe: &str, _bundle_path: &str) -> String {
+    linux_wrapper_script(target_exe)
 }
 
 /// `InstallCLIWrapper`.
@@ -347,7 +396,7 @@ mod tests {
 
     #[test]
     fn script_matches_the_go_text() {
-        let script = wrapper_script(
+        let script = macos_wrapper_script(
             "/Applications/Devbase.app/Contents/MacOS/Devbase",
             "/Applications/Devbase.app",
         );
@@ -356,6 +405,64 @@ mod tests {
         assert!(script.contains("BUNDLE='/Applications/Devbase.app'"));
         assert!(script.contains(r#"echo "Devbase executable not found at $TARGET" >&2"#));
         assert!(script.ends_with("exit 1\n"));
+    }
+
+    #[test]
+    fn linux_script_execs_target_without_macos_bundle_or_open() {
+        let script = linux_wrapper_script("/home/alice/.local/bin/devbase");
+        assert!(script.starts_with("#!/bin/sh\n# Managed by Devbase CLI\nset -eu\n"));
+        assert!(script.contains("TARGET='/home/alice/.local/bin/devbase'"));
+        assert!(script.contains("exec \"$TARGET\" \"$@\""));
+        assert!(script.contains("${HOME:-}/.local/bin/devbase"));
+        assert!(!script.contains("Devbase.app"));
+        assert!(!script.contains("/usr/bin/open"));
+        assert!(!script.contains("BUNDLE="));
+        assert!(script.ends_with("exit 1\n"));
+    }
+
+    #[test]
+    fn linux_script_executes_target_and_defaults_empty_args_to_help() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("devbase-bin");
+        fs::write(&target, "#!/bin/sh\nprintf 'args:%s\\n' \"$*\"\n").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let wrapper = dir.path().join("devbase");
+        fs::write(&wrapper, linux_wrapper_script(&target.to_string_lossy())).unwrap();
+        fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let out = std::process::Command::new(&wrapper)
+            .args(["version", "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "args:version --json\n"
+        );
+
+        let out = std::process::Command::new(&wrapper).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "args:help\n");
+
+        // Missing target under isolated MSM_DEV_HOME exits 1 without recursing.
+        let missing_wrapper = dir.path().join("devbase-missing");
+        fs::write(
+            &missing_wrapper,
+            linux_wrapper_script(&dir.path().join("nope").to_string_lossy()),
+        )
+        .unwrap();
+        fs::set_permissions(&missing_wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+        let out = std::process::Command::new(&missing_wrapper)
+            .env("MSM_DEV_HOME", dir.path())
+            .output()
+            .unwrap();
+        assert!(!out.status.success());
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("Devbase executable not found at"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ pub const CLI_VERSION: &str = match option_env!("DEVBASE_VERSION") {
     Some(version) if !version.is_empty() => version,
     _ => env!("CARGO_PKG_VERSION"),
 };
-pub const CLI_ARCH: &str = "darwin/arm64";
+pub const CLI_ARCH: &str = devcore::platform::HostTarget::current().cli_arch();
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct FlagSpec {
@@ -788,43 +788,68 @@ pub fn build_cli_schema() -> CliSchema {
             command_with(
                 "services",
                 vec!["service"],
+                #[cfg(target_os = "macos")]
                 "Inspect and manage Homebrew services, Login Items, User Agents, System Agents, and Daemons",
+                #[cfg(not(target_os = "macos"))]
+                "Inspect and manage systemd user/system services and XDG autostart entries",
+                #[cfg(target_os = "macos")]
                 "devbase services <list|inspect|start|stop|restart|load|unload|enable|disable|remove|add-login-item|job-save>",
-                vec![
-                    sub(
-                        "list",
-                        "List services filtered by source, state, and query",
-                        "devbase services list [--source <src>] [--state <state>] [--query <text>]",
-                    ),
-                    sub(
-                        "inspect",
-                        "Show details, logs, actions, and parsed launchd Spec",
-                        "devbase services inspect <id-or-name> [--source <src>]",
-                    ),
-                    sub(
-                        "start|stop|restart|load|unload|enable|disable",
-                        "Run lifecycle action on a service",
-                        "devbase services <action> <id-or-name> [--source <src>] [--yes]",
-                    ),
-                    destructive!(
-                        "remove",
-                        "Remove a service or launchd job",
-                        "devbase services remove <id-or-name> [--source <src>] --yes",
-                        [required_flag("--yes", "bool", "Confirm removal")]
-                    ),
-                    sub(
-                        "add-login-item",
-                        "Add an .app bundle to macOS Login Items",
-                        "devbase services add-login-item <app-path>",
-                    ),
-                    sub_full!(
-                        "job-save",
-                        "Create or edit a launchd property list job from flags or JSON stdin",
-                        "devbase services job-save [--source user-agent|system-agent|daemon] [--existing <path>] [--load] (--json-stdin | --label <id> (--command <sh> | --arg <bin>))",
-                        [],
-                        stdin = "optional launchd.Spec JSON"
-                    ),
-                ],
+                #[cfg(not(target_os = "macos"))]
+                "devbase services <list|inspect|start|stop|restart|enable|disable|remove|logs|create>",
+                {
+                    #[cfg_attr(target_os = "macos", allow(unused_mut))]
+                    let mut subs = vec![
+                        sub(
+                            "list",
+                            "List services filtered by source, state, and query",
+                            "devbase services list [--source <src>] [--state <state>] [--query <text>]",
+                        ),
+                        sub(
+                            "inspect",
+                            "Show details, logs, actions, and parsed launchd Spec",
+                            "devbase services inspect <id-or-name> [--source <src>]",
+                        ),
+                        sub(
+                            "start|stop|restart|load|unload|enable|disable",
+                            "Run lifecycle action on a service",
+                            "devbase services <action> <id-or-name> [--source <src>] [--yes]",
+                        ),
+                        destructive!(
+                            "remove",
+                            "Remove a service or launchd job",
+                            "devbase services remove <id-or-name> [--source <src>] --yes",
+                            [required_flag("--yes", "bool", "Confirm removal")]
+                        ),
+                        sub(
+                            "add-login-item",
+                            "Add an .app bundle to macOS Login Items",
+                            "devbase services add-login-item <app-path>",
+                        ),
+                        sub_full!(
+                            "job-save",
+                            "Create or edit a launchd property list job from flags or JSON stdin",
+                            "devbase services job-save [--source user-agent|system-agent|daemon] [--existing <path>] [--load] (--json-stdin | --label <id> (--command <sh> | --arg <bin>))",
+                            [],
+                            stdin = "optional launchd.Spec JSON"
+                        ),
+                    ];
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        subs.push(sub(
+                            "logs",
+                            "Read systemd journal or file logs for a service",
+                            "devbase services logs <id-or-name> [--source <src>] [--lines <n>]",
+                        ));
+                        subs.push(sub_full!(
+                            "create",
+                            "Create a validated systemd .service unit from flags or JSON stdin",
+                            "devbase services create [--source systemd-user|systemd-system] [--enable] (--json-stdin | --name <unit> (--command <sh> | --arg <bin>))",
+                            [],
+                            stdin = "optional systemd UnitSpec JSON"
+                        ));
+                    }
+                    subs
+                },
             ),
             command_with(
                 "settings",
@@ -1124,5 +1149,19 @@ mod tests {
         assert!(text.starts_with("{\n  \"schemaVersion\": 1,"));
         assert!(text.contains("  \"commands\": ["));
         assert!(!text.contains("\\u003c"));
+    }
+
+    #[test]
+    fn cli_arch_matches_current_host_target() {
+        assert_eq!(
+            CLI_ARCH,
+            devcore::platform::HostTarget::current().cli_arch()
+        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(CLI_ARCH, "darwin/arm64");
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        assert_eq!(CLI_ARCH, "linux/amd64");
+        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+        assert_eq!(CLI_ARCH, "linux/arm64");
     }
 }

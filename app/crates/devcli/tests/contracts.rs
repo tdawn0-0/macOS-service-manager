@@ -60,9 +60,18 @@ fn version_json_is_the_sorted_go_map() {
     let dir = temp();
     let output = run(dir.path(), &["version", "--json"]);
     assert_eq!(output.code, 0);
+    #[cfg(target_os = "macos")]
     assert_eq!(
         output.out,
         "{\n  \"arch\": \"darwin/arm64\",\n  \"name\": \"devbase\",\n  \"version\": \"0.1.0\"\n}\n"
+    );
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(
+        output.out,
+        format!(
+            "{{\n  \"arch\": \"{}\",\n  \"name\": \"devbase\",\n  \"version\": \"0.1.0\"\n}}\n",
+            devcli::schema::CLI_ARCH
+        )
     );
     assert!(output.err.is_empty());
 }
@@ -72,7 +81,13 @@ fn version_human_and_unexpected_argument() {
     let dir = temp();
     let output = run(dir.path(), &["--version"]);
     assert_eq!(output.code, 0);
+    #[cfg(target_os = "macos")]
     assert_eq!(output.out, "devbase 0.1.0 (darwin/arm64)\n");
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(
+        output.out,
+        format!("devbase 0.1.0 ({})\n", devcli::schema::CLI_ARCH)
+    );
     let output = run(dir.path(), &["version", "extra"]);
     assert_eq!(output.code, 2);
     assert_eq!(
@@ -224,9 +239,15 @@ fn services_list_reports_the_unported_sources_honestly() {
         &["--json", "services", "list", "--source", "brew"],
     );
     assert_eq!(output.code, 0);
+    #[cfg(target_os = "macos")]
     assert_eq!(
         output.out,
         "{\n  \"items\": [],\n  \"warnings\": [\n    {\n      \"restriction\": \"The Homebrew provider is not part of this build yet; only launchd jobs are listed.\",\n      \"source\": \"brew\"\n    }\n  ]\n}\n"
+    );
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(
+        output.out,
+        "{\n  \"items\": [],\n  \"warnings\": [\n    {\n      \"restriction\": \"The Homebrew provider is only available on macOS.\",\n      \"source\": \"brew\"\n    }\n  ]\n}\n"
     );
     let output = run(dir.path(), &["services", "list", "--source", "nope"]);
     assert_eq!(output.code, 2);
@@ -393,7 +414,14 @@ fn cli_wrapper_install_writes_the_exact_managed_script() {
     let wrapper = dir.path().join("bin/devbase");
     let script = std::fs::read_to_string(&wrapper).unwrap();
     assert!(script.starts_with("#!/bin/sh\n# Managed by Devbase CLI\nset -eu\n"));
+    #[cfg(target_os = "macos")]
     assert!(script.contains("if [ \"$1\" = \"gui\" ] || [ \"$1\" = \"open\" ]; then"));
+    #[cfg(not(target_os = "macos"))]
+    {
+        assert!(script.contains("exec \"$TARGET\" \"$@\""));
+        assert!(!script.contains("/usr/bin/open"));
+        assert!(!script.contains("Devbase.app"));
+    }
     assert!(script.ends_with("exit 1\n"));
     #[cfg(unix)]
     {
@@ -428,11 +456,26 @@ fn json_false_and_last_flag_wins() {
     let dir = temp();
     let output = run(dir.path(), &["--json", "--json=false", "version"]);
     assert_eq!(output.code, 0);
+    #[cfg(target_os = "macos")]
     assert_eq!(output.out, "devbase 0.1.0 (darwin/arm64)\n");
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(
+        output.out,
+        format!("devbase 0.1.0 ({})\n", devcli::schema::CLI_ARCH)
+    );
     let output = run(dir.path(), &["--json=false", "--json", "version"]);
+    #[cfg(target_os = "macos")]
     assert_eq!(
         output.out,
         "{\n  \"arch\": \"darwin/arm64\",\n  \"name\": \"devbase\",\n  \"version\": \"0.1.0\"\n}\n"
+    );
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(
+        output.out,
+        format!(
+            "{{\n  \"arch\": \"{}\",\n  \"name\": \"devbase\",\n  \"version\": \"0.1.0\"\n}}\n",
+            devcli::schema::CLI_ARCH
+        )
     );
 }
 

@@ -15,10 +15,8 @@ use crate::commands::require_yes;
 use crate::env::CliEnv;
 use crate::error::{CliError, CliResult};
 
-use devcore::launchd::{
-    SystemHost, SystemRunner, disable_launch_at_login, enable_launch_at_login,
-    launch_at_login_enabled, login_agent_plist_path, resolve_login_executable,
-};
+use devcore::launchd::{SystemHost, SystemRunner};
+use devcore::platform::login_item;
 use devcore::software::cache::DownloadCacheInfo;
 use devcore::state::Store;
 
@@ -26,13 +24,35 @@ fn store(env: &CliEnv) -> Store {
     Store::new(env.root.clone())
 }
 
-fn login_agent_dir(_env: &CliEnv) -> PathBuf {
+fn login_item_dir(_env: &CliEnv) -> PathBuf {
     match std::env::var("MSM_DEV_HOME") {
-        Ok(home) if !home.is_empty() => PathBuf::from(home).join("login-agents"),
-        _ => std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_default()
-            .join("Library/LaunchAgents"),
+        Ok(home) if !home.is_empty() => {
+            #[cfg(target_os = "macos")]
+            {
+                PathBuf::from(home).join("login-agents")
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                PathBuf::from(home).join("autostart")
+            }
+        }
+        _ => {
+            let home = std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_default();
+            login_item::default_dir(&home)
+        }
+    }
+}
+
+fn login_item_status_key() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "loginAgentPlist"
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "autostartPath"
     }
 }
 
@@ -74,10 +94,11 @@ fn settings_status(env: &mut CliEnv, out: &mut dyn Write) -> CliResult<()> {
     let state = store(env).read()?;
     let software = devcore::software::Software::new(store(env));
     let cache = software.download_cache_info()?;
-    let login_dir = login_agent_dir(env);
-    let plist = login_agent_plist_path(&login_dir)
+    let login_dir = login_item_dir(env);
+    let login_entry = login_item::entry_path(&login_dir)
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let start_at_login = login_item::is_enabled(&login_dir);
     let mut payload = BTreeMap::new();
     payload.insert(
         "workspace",
@@ -91,9 +112,12 @@ fn settings_status(env: &mut CliEnv, out: &mut dyn Write) -> CliResult<()> {
     );
     payload.insert(
         "startAtLoginEnabled",
-        serde_json::Value::Bool(launch_at_login_enabled(&login_dir)),
+        serde_json::Value::Bool(start_at_login),
     );
-    payload.insert("loginAgentPlist", serde_json::Value::String(plist));
+    payload.insert(
+        login_item_status_key(),
+        serde_json::Value::String(login_entry),
+    );
     payload.insert(
         "cli",
         serde_json::to_value(crate::commands::cli_status(env)).unwrap(),
@@ -117,7 +141,7 @@ fn settings_status(env: &mut CliEnv, out: &mut dyn Write) -> CliResult<()> {
                 "on"
             }
         )?;
-        writeln!(w, "Start at Login: {}", launch_at_login_enabled(&login_dir))?;
+        writeln!(w, "Start at Login: {start_at_login}")?;
         Ok(())
     })
 }
@@ -271,23 +295,16 @@ fn run_login_item(env: &mut CliEnv, out: &mut dyn Write, args: &[String]) -> Cli
     if let Some(first) = args.first() {
         sub = first;
     }
-    let dir = login_agent_dir(env);
-    let plist = login_agent_plist_path(&dir)
+    let dir = login_item_dir(env);
+    let entry_path = login_item::entry_path(&dir)
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_default();
     match sub {
         "status" => {
-            #[derive(Serialize)]
-            struct Payload {
-                enabled: bool,
-                plist: String,
-            }
-            let payload = Payload {
-                enabled: launch_at_login_enabled(&dir),
-                plist,
-            };
+            let enabled = login_item::is_enabled(&dir);
+            let payload = login_item_status_payload(enabled, entry_path);
             crate::commands::write_result(env, out, &payload, |w| {
-                writeln!(w, "Start at Login: {}", payload.enabled)
+                writeln!(w, "Start at Login: {enabled}")
             })
         }
         "on" => {
@@ -297,45 +314,95 @@ fn run_login_item(env: &mut CliEnv, out: &mut dyn Write, args: &[String]) -> Cli
             } else {
                 Some(std::path::Path::new(&env.app_path))
             };
-            let executable = resolve_login_executable(&host, app, None)?;
-            enable_launch_at_login(&dir, &executable, &SystemRunner::new())?;
-            #[derive(Serialize)]
-            struct Payload {
-                enabled: bool,
-                executable: String,
-                plist: String,
-            }
-            crate::commands::write_result(
-                env,
-                out,
-                &Payload {
-                    enabled: true,
-                    executable: executable.to_string_lossy().into_owned(),
-                    plist,
-                },
-                |w| writeln!(w, "Start at Login enabled."),
-            )
+            let override_path = if env.login_program.is_empty() {
+                None
+            } else {
+                Some(std::path::Path::new(&env.login_program))
+            };
+            let executable = login_item::resolve_executable(&host, app, override_path)?;
+            login_item::enable(&dir, &executable, &SystemRunner::new())?;
+            let payload =
+                login_item_enabled_payload(executable.to_string_lossy().into_owned(), entry_path);
+            crate::commands::write_result(env, out, &payload, |w| {
+                writeln!(w, "Start at Login enabled.")
+            })
         }
         "off" => {
-            disable_launch_at_login(&dir, &SystemRunner::new())?;
-            #[derive(Serialize)]
-            struct Payload {
-                enabled: bool,
-                plist: String,
-            }
-            crate::commands::write_result(
-                env,
-                out,
-                &Payload {
-                    enabled: false,
-                    plist,
-                },
-                |w| writeln!(w, "Start at Login disabled."),
-            )
+            login_item::disable(&dir, &SystemRunner::new())?;
+            let payload = login_item_status_payload(false, entry_path);
+            crate::commands::write_result(env, out, &payload, |w| {
+                writeln!(w, "Start at Login disabled.")
+            })
         }
         other => Err(CliError::usage(format!(
             "unknown settings login-item subcommand {other:?}"
         ))),
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Serialize)]
+struct LoginItemStatusPayload {
+    enabled: bool,
+    plist: String,
+}
+
+#[cfg(not(target_os = "macos"))]
+#[derive(Serialize)]
+struct LoginItemStatusPayload {
+    enabled: bool,
+    #[serde(rename = "autostartPath")]
+    autostart_path: String,
+}
+
+#[cfg(target_os = "macos")]
+fn login_item_status_payload(enabled: bool, entry_path: String) -> LoginItemStatusPayload {
+    LoginItemStatusPayload {
+        enabled,
+        plist: entry_path,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn login_item_status_payload(enabled: bool, entry_path: String) -> LoginItemStatusPayload {
+    LoginItemStatusPayload {
+        enabled,
+        autostart_path: entry_path,
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Serialize)]
+struct LoginItemEnabledPayload {
+    enabled: bool,
+    executable: String,
+    plist: String,
+}
+
+#[cfg(not(target_os = "macos"))]
+#[derive(Serialize)]
+struct LoginItemEnabledPayload {
+    enabled: bool,
+    executable: String,
+    #[serde(rename = "autostartPath")]
+    autostart_path: String,
+}
+
+#[cfg(target_os = "macos")]
+fn login_item_enabled_payload(executable: String, entry_path: String) -> LoginItemEnabledPayload {
+    LoginItemEnabledPayload {
+        enabled: true,
+        executable,
+        plist: entry_path,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn login_item_enabled_payload(executable: String, entry_path: String) -> LoginItemEnabledPayload {
+    LoginItemEnabledPayload {
+        enabled: true,
+        executable,
+        autostart_path: entry_path,
     }
 }
 
@@ -398,5 +465,48 @@ pub fn run_cli_command(env: &mut CliEnv, out: &mut dyn Write, args: &[String]) -
             )
         }
         other => Err(CliError::usage(format!("unknown cli subcommand {other:?}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use devcore::launchd::{CommandError, ProcessRunner};
+
+    struct NoopRunner;
+
+    impl ProcessRunner for NoopRunner {
+        fn run(&self, _: &str, _: &[&str]) -> Result<String, CommandError> {
+            Ok(String::new())
+        }
+    }
+
+    #[test]
+    fn settings_status_key_matches_target_platform() {
+        #[cfg(target_os = "macos")]
+        assert_eq!(login_item_status_key(), "loginAgentPlist");
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(login_item_status_key(), "autostartPath");
+    }
+
+    #[test]
+    fn linux_login_item_enable_and_disable_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let autostart_dir = dir.path().join("autostart");
+        assert!(!devcore::platform::linux::login_item::is_enabled(
+            &autostart_dir
+        ));
+        let exe = std::path::Path::new("/usr/bin/devbase");
+        devcore::platform::linux::login_item::enable(&autostart_dir, exe, &NoopRunner).unwrap();
+        assert!(devcore::platform::linux::login_item::is_enabled(
+            &autostart_dir
+        ));
+        let entry = devcore::platform::linux::login_item::entry_path(&autostart_dir).unwrap();
+        assert!(entry.ends_with("xyz.jyeu.devbase.desktop"));
+        assert!(entry.exists());
+        devcore::platform::linux::login_item::disable(&autostart_dir, &NoopRunner).unwrap();
+        assert!(!devcore::platform::linux::login_item::is_enabled(
+            &autostart_dir
+        ));
     }
 }

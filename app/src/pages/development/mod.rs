@@ -25,8 +25,6 @@ use crate::{
 };
 
 pub(crate) fn development() -> impl IntoElement {
-    // Keep `ui::tab_bar` referenced until sibling branches merge its allow attribute.
-    let _ = || ui::tab_bar("", std::iter::empty::<AnyElement>());
     view()
         .test_id("development")
         .flex_1()

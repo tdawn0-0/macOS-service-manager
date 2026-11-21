@@ -503,73 +503,6 @@ pub(crate) fn card(title: impl Into<String>, body: impl IntoElement) -> impl Int
         .child(body)
 }
 
-/// A horizontal Apple System Settings row: a clean label on the left and its
-/// control, badge, or action right-aligned.
-#[allow(dead_code)]
-pub(crate) fn setting_row(label: impl Into<String>, control: impl IntoElement) -> impl IntoElement {
-    view()
-        .w_full()
-        .min_h(px(tokens::ROW_HEIGHT))
-        .flex_row()
-        .items_center()
-        .justify_between()
-        .gap(tokens::space(3.0))
-        .px(tokens::space(4.0))
-        .py(tokens::space(2.0))
-        .child(
-            text(label.into())
-                .flex_1()
-                .min_w(px(0.0))
-                .text_size(px(tokens::TEXT_BODY))
-                .text_color(move || theme().foreground)
-                .truncate(),
-        )
-        .child(
-            view()
-                .flex_none()
-                .flex_row()
-                .items_center()
-                .gap(tokens::space(2.0))
-                .child(control),
-        )
-}
-
-/// An Apple System Settings / Apple Notes grouped card: an optional quiet
-/// section title above a rounded surface whose rows are separated by inset 1px
-/// hairlines.
-#[allow(dead_code)]
-pub(crate) fn grouped_card<E: IntoElement>(
-    title: Option<impl Into<String>>,
-    rows: impl IntoIterator<Item = E>,
-) -> impl IntoElement {
-    let mut list = view()
-        .w_full()
-        .flex_col()
-        .rounded(tokens::panel_radius)
-        .bg(tokens::panel)
-        .border_1()
-        .border_color(tokens::hairline)
-        .overflow_hidden();
-    for (index, row) in rows.into_iter().enumerate() {
-        if index > 0 {
-            list = list.child(view().w_full().px(tokens::space(4.0)).child(hairline()));
-        }
-        list = list.child(row);
-    }
-    view()
-        .w_full()
-        .flex_col()
-        .gap(tokens::space(1.5))
-        .children(title.map(|heading| {
-            text(heading.into())
-                .px(tokens::space(1.0))
-                .text_size(px(tokens::TEXT_CAPTION))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(move || theme().muted_foreground)
-        }))
-        .child(list)
-}
-
 /// A card whose actions remove or erase something.
 pub(crate) fn danger_card(title: impl Into<String>, body: impl IntoElement) -> impl IntoElement {
     view()
@@ -835,40 +768,7 @@ pub(crate) fn switch(
         .on_change(move |next: &bool| on_change(*next))
 }
 
-/// A tab bar backed by `nsh_base::tabs()` with roving arrow-key navigation and
-/// a spring-animated selection indicator.
-#[allow(dead_code)]
-pub(crate) fn tab_bar<E: IntoElement>(
-    accessibility_label: impl Into<String>,
-    tabs: impl IntoIterator<Item = E>,
-) -> impl IntoElement {
-    view()
-        .h(px(38.0))
-        .flex_none()
-        .flex_row()
-        .items_center()
-        .px(tokens::space(5.0))
-        .border_b_1()
-        .border_color(tokens::hairline)
-        .child(
-            nsh_base::tabs()
-                .flex_row()
-                .items_center()
-                .gap(tokens::space(0.5))
-                .accessibility_label(accessibility_label.into())
-                .indicator_style(|style| {
-                    style
-                        .top(px(0.0))
-                        .bottom(px(0.0))
-                        .rounded(move || theme().radius)
-                        .bg(tokens::row_selected)
-                })
-                .children(tabs),
-        )
-        .child(view().flex_1())
-}
-
-/// A single tab inside [`tab_bar`], backed by `nsh_base::tab()`.
+/// A single tab inside an `nsh_base::tabs()` bar, backed by `nsh_base::tab()`.
 pub(crate) fn tab_item(
     label: impl Into<String>,
     test_id: impl Into<String>,

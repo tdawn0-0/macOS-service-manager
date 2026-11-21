@@ -1,44 +1,89 @@
 //! The menu bar panel, ported from `menubar.go`.
 //!
-//! Left-clicking the menu bar status item toggles a native floating `NSPanel`
-//! popover ([`WindowKind::Popup`]) anchored beneath the status item with
-//! macOS 26 Liquid Glass (`NSGlassEffectView`), status dots, `nsh_base::switch()`
-//! controls for managed databases, the HTTPS proxy and Cloudflare tunnel, a
-//! scrollable body, and an Open / Refresh / Quit footer. Right-clicking (or
-//! Control-clicking) opens a sleek native `NSMenu` with SF Symbols, monochrome
-//! template icons, and inline section groupings.
+//! Left-clicking the menu bar status item (or pressing `⌃⌥⌘D`) toggles a
+//! native floating `NSPanel` popover ([`WindowKind::Popup`]) anchored beneath
+//! the status item with macOS 26 Liquid Glass (`NSGlassEffectView`),
+//! content-driven height (`SizeToContent::Height`), fine-grained reactive rows,
+//! collapsible Homebrew and Login Agents service sections, `nsh_base::switch()`
+//! controls with subtle haptic feedback, and an Open / Refresh / Quit footer
+//! with native tooltips. Right-clicking (or Control-clicking) opens a native
+//! `NSMenu` with monochrome template SVG icons on every item and explicit
+//! section headers.
 //!
-//! The rows are a plain model ([`Panel`]) built by [`panel`]. Both the popover
-//! UI ([`popover_content`]) and the right-click menu ([`menu`]) read it, and
-//! tests can inspect [`Panel`] or mount [`popover_content`] headlessly without
-//! a platform. Nothing in a handler blocks: every switch calls the store, which
-//! runs its provider call on a blocking thread and writes its signals.
+//! The rows are a plain model ([`Panel`]) built by [`panel`]. Both the tray
+//! title/menu ([`title_runs`], [`menu_entries`], [`menu`]) and headless tests
+//! read it, while [`popover_content`] binds directly to store signals and
+//! keyed `each(...)` lists so toggling switches or refreshing never rebuilds
+//! the scroll container or resets scroll position. Nothing in a handler
+//! blocks: every switch calls the store, which runs its provider call on a
+//! blocking thread and writes its signals.
+
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::{Duration, Instant},
+};
 
 use devcore::service::{Action as ServiceAction, Source, State as ServiceState};
-use nsh_base::{button, switch, theme};
+use nsh_base::{button, collapsible, switch, theme};
 use nsh_core::{
-    GlassEffect, PointerEvents,
-    desktop::{TrayTitleRun, WindowAttributes, WindowKind, WindowPosition},
-    element::{
-        ImageSrc, Svg,
-        desktop::{MenuItem, TrayClickEvent, displays, main_window, set_tray, tray, window},
-        svg,
+    AccessibilityState, GlassEffect, Haptic, LayoutAnimation, LayoutCurve, LayoutTransition,
+    PointerEvents,
+    color::rgb,
+    desktop::{
+        Display, SizeToContent, TrayTitleRun, WindowAttributes, WindowCloseCause, WindowKind,
+        WindowPosition,
     },
-    geometry::{Bounds, Point, point, size},
+    element::{
+        ImageSrc, ReadSignal, Svg, animate_layout,
+        desktop::{
+            MenuItem, TrayClickEvent, displays, main_window, register_global_shortcut, set_tray,
+            tray, window,
+        },
+        haptic, reduce_motion, svg,
+    },
+    geometry::{Bounds, Point, deg, point, size},
     platform::Os,
     prelude::*,
 };
 
 use crate::{
+    components::controls,
     store::{self, Section, databases, proxy, services, software::SoftwareKind, system},
     theme as tokens,
 };
 
-/// The popover's width and maximum height in points (matching `menubar.go`).
+/// The popover's width and height bounds in points (matching `menubar.go`).
 const POPOVER_WIDTH: f32 = 340.0;
 const POPOVER_MIN_HEIGHT: f32 = 240.0;
 const POPOVER_MAX_HEIGHT: f32 = 560.0;
 const POPOVER_MARGIN: f32 = 8.0;
+
+/// Suppresses the `LeftMouseUp` reopen bounce when clicking the status item
+/// while the popover was already open caused `close_on_blur` to hide it on
+/// `LeftMouseDown`.
+const BLUR_REOPEN_DEBOUNCE: Duration = Duration::from_millis(200);
+
+/// Above this service count in a single source group, the right-click `NSMenu`
+/// nests that group inside a clean submenu instead of expanding every row inline.
+const SERVICE_MENU_SUBMENU_THRESHOLD: usize = 6;
+
+/// System-wide shortcut that toggles the menu bar popover on macOS.
+pub const GLOBAL_SHORTCUT: &str = "ctrl+alt+cmd+d";
+
+/// macOS symbol representation of [`GLOBAL_SHORTCUT`].
+pub const GLOBAL_SHORTCUT_LABEL: &str = "⌃⌥⌘D";
+
+/// macOS red tint for the menu bar failure count run (`#ff3b30`).
+const TRAY_FAILED_COLOR_HEX: u32 = 0xff3b30;
+
+/// When enabled by tests (`use_fake_menubar`), skips OS-level global shortcut
+/// registration so headless tests never touch Carbon hotkeys.
+static FAKE_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Opts out of host OS global-shortcut registration during headless tests.
+pub fn use_fake_menubar() {
+    FAKE_MODE.store(true, Ordering::Relaxed);
+}
 
 /// The icon `assets/icons/menubar.svg` draws, inline so a cargo run and a
 /// bundled app show the same template.
@@ -61,6 +106,11 @@ const REFRESH_BODY: &str =
 const QUIT_BODY: &str = r#"<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>"#;
 const PLUS_BODY: &str = r#"<path d="M5 12h14"/><path d="M12 5v14"/>"#;
 const LAYERS_BODY: &str = r#"<path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/>"#;
+const PLAY_BODY: &str = r#"<polygon points="6 3 20 12 6 21 6 3"/>"#;
+const STOP_BODY: &str = r#"<rect x="5" y="5" width="14" height="14" rx="2"/>"#;
+const CHEVRON_RIGHT_BODY: &str = r#"<path d="m9 18 6-6-6-6"/>"#;
+const TERMINAL_BODY: &str =
+    r#"<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>"#;
 
 fn icon_src(body: &str) -> ImageSrc {
     ImageSrc::svg_markup(&format!("{ICON_OPEN}{body}{ICON_CLOSE}"))
@@ -567,38 +617,58 @@ fn service_status_label(state: ServiceState) -> &'static str {
     }
 }
 
-fn loaded_service_rows() -> Vec<ServiceRow> {
-    let mut rows = Vec::new();
-    for source in [Source::Brew, Source::UserAgent] {
-        let provider = services::provider(source);
-        for item in services::loaded_items(source) {
-            if is_internal_devbase_service(&item.name, &item.id) {
-                continue;
-            }
-            let running = item.up();
-            let can_toggle = provider.as_ref().is_some_and(|p| {
-                let actions = p.actions(&item);
-                if running {
-                    actions
-                        .iter()
-                        .any(|a| matches!(a, ServiceAction::Stop | ServiceAction::Unload))
-                } else {
-                    actions
-                        .iter()
-                        .any(|a| matches!(a, ServiceAction::Start | ServiceAction::Load))
-                }
-            });
-            rows.push(ServiceRow {
-                busy: services::is_busy(&item.id),
-                status: service_status_label(item.state).to_string(),
-                id: item.id,
-                source,
-                name: item.name,
-                running,
-                can_toggle,
-            });
-        }
+fn service_group_title(source: Source) -> &'static str {
+    match source {
+        Source::Brew => "Homebrew",
+        Source::UserAgent => "Login Agents",
+        other => other.title(),
     }
+}
+
+fn service_group_icon(source: Source) -> &'static str {
+    match source {
+        Source::Brew => LAYERS_BODY,
+        Source::UserAgent => TERMINAL_BODY,
+        _ => LAYERS_BODY,
+    }
+}
+
+fn loaded_services_for(source: Source) -> Vec<ServiceRow> {
+    let provider = services::provider(source);
+    let mut rows = Vec::new();
+    for item in services::loaded_items(source) {
+        if is_internal_devbase_service(&item.name, &item.id) {
+            continue;
+        }
+        let running = item.up();
+        let can_toggle = provider.as_ref().is_some_and(|p| {
+            let actions = p.actions(&item);
+            if running {
+                actions
+                    .iter()
+                    .any(|a| matches!(a, ServiceAction::Stop | ServiceAction::Unload))
+            } else {
+                actions
+                    .iter()
+                    .any(|a| matches!(a, ServiceAction::Start | ServiceAction::Load))
+            }
+        });
+        rows.push(ServiceRow {
+            busy: services::is_busy(&item.id),
+            status: service_status_label(item.state).to_string(),
+            id: item.id,
+            source,
+            name: item.name,
+            running,
+            can_toggle,
+        });
+    }
+    rows
+}
+
+fn loaded_service_rows() -> Vec<ServiceRow> {
+    let mut rows = loaded_services_for(Source::Brew);
+    rows.extend(loaded_services_for(Source::UserAgent));
     rows
 }
 
@@ -729,10 +799,52 @@ pub fn load() {
 struct PopoverState {
     open: bool,
     anchor: Option<Bounds<Points>>,
+    last_blur_close: Option<Instant>,
+}
+
+#[derive(Debug, Clone)]
+struct PopoverSectionState {
+    brew_expanded: bool,
+    user_agent_expanded: bool,
+}
+
+impl Default for PopoverSectionState {
+    fn default() -> Self {
+        Self {
+            brew_expanded: true,
+            user_agent_expanded: true,
+        }
+    }
 }
 
 fn popover_state() -> Signal<PopoverState> {
     global::<PopoverState>()
+}
+
+fn popover_sections() -> Signal<PopoverSectionState> {
+    global::<PopoverSectionState>()
+}
+
+fn section_expanded(source: Source) -> bool {
+    popover_sections().with(|state| match source {
+        Source::Brew => state.brew_expanded,
+        Source::UserAgent => state.user_agent_expanded,
+        _ => true,
+    })
+}
+
+fn toggle_service_section(source: Source) {
+    if !reduce_motion() {
+        animate_layout(LayoutAnimation::all(LayoutTransition::new(
+            LayoutCurve::EaseInEaseOut,
+            180.0,
+        )));
+    }
+    popover_sections().update(|state| match source {
+        Source::Brew => state.brew_expanded = !state.brew_expanded,
+        Source::UserAgent => state.user_agent_expanded = !state.user_agent_expanded,
+        _ => {}
+    });
 }
 
 /// Whether the native tray popover is currently open.
@@ -744,18 +856,42 @@ pub fn popover_open() -> bool {
 pub fn close_popover() {
     popover_state().update(|state| {
         state.open = false;
+        state.last_blur_close = None;
     });
 }
 
+fn close_popover_with_cause(cause: WindowCloseCause) {
+    let blur_at = (cause == WindowCloseCause::Blur).then(Instant::now);
+    popover_state().update(|state| {
+        state.open = false;
+        state.last_blur_close = blur_at;
+    });
+}
+
+/// Returns `false` when the popover just closed due to focus loss (`Blur`)
+/// within [`BLUR_REOPEN_DEBOUNCE`], preventing a tray icon click that closed
+/// the panel on mouse-down from immediately bouncing it open on mouse-up.
+pub fn should_reopen_after_blur(last_blur: Option<Instant>, now: Instant) -> bool {
+    match last_blur {
+        Some(closed_at) => now.saturating_duration_since(closed_at) >= BLUR_REOPEN_DEBOUNCE,
+        None => true,
+    }
+}
+
 /// Toggles the tray popover on a primary tray click, anchoring it to the
-/// clicked status item's screen bounds.
+/// clicked status item's screen bounds while suppressing blur-reopen bounce.
 fn toggle_popover(event: &TrayClickEvent) {
+    let now = Instant::now();
     let mut opened = false;
     popover_state().update(|state| {
         if state.open {
             state.open = false;
+            state.last_blur_close = None;
+        } else if !should_reopen_after_blur(state.last_blur_close, now) {
+            state.last_blur_close = None;
         } else {
             state.anchor = event.bounds;
+            state.last_blur_close = None;
             state.open = true;
             opened = true;
         }
@@ -765,40 +901,83 @@ fn toggle_popover(event: &TrayClickEvent) {
     }
 }
 
-/// Computes the popover's top-left screen point beneath the status item,
-/// clamped horizontally inside the display that owns the status item.
-fn anchor_position(anchor: Option<Bounds<Points>>) -> Option<Point<Points>> {
-    let bounds = anchor?;
-    let center_x = bounds.origin.x.0 + bounds.size.width.0 / 2.0;
-    let mut x = (center_x - POPOVER_WIDTH / 2.0).round();
-    let y = (bounds.origin.y.0 + bounds.size.height.0 + 6.0).round();
+/// Toggles the tray popover from the global shortcut (`⌃⌥⌘D`), reusing the
+/// last known tray anchor if available or falling back to top-right placement.
+pub fn toggle_popover_shortcut() {
+    let mut opened = false;
+    popover_state().update(|state| {
+        if state.open {
+            state.open = false;
+            state.last_blur_close = None;
+        } else {
+            state.last_blur_close = None;
+            state.open = true;
+            opened = true;
+        }
+    });
+    if opened {
+        refresh();
+    }
+}
 
-    let screens = displays();
-    let target = screens
-        .iter()
-        .find(|d| {
-            let left = d.bounds.origin.x.0;
-            let right = left + d.bounds.size.width.0;
-            let top = d.bounds.origin.y.0;
-            let bottom = top + d.bounds.size.height.0;
-            center_x >= left
-                && center_x <= right
-                && bounds.origin.y.0 >= top
-                && bounds.origin.y.0 <= bottom
-        })
-        .or_else(|| screens.iter().find(|d| d.primary))
-        .or_else(|| screens.first());
+/// Computes the popover's top-left screen point within `screens`:
+/// - Beneath `anchor` (centered horizontally and clamped inside the owning
+///   display's `visible_bounds` inset by `POPOVER_MARGIN`) when `anchor` is
+///   `Some`.
+/// - At the top-right of the primary display's `visible_bounds` (under the
+///   menu bar, inset by `POPOVER_MARGIN`) when `anchor` is `None`.
+pub fn anchor_position_in(
+    anchor: Option<Bounds<Points>>,
+    screens: &[Display],
+) -> Option<Point<Points>> {
+    if let Some(bounds) = anchor {
+        let center_x = bounds.origin.x.0 + bounds.size.width.0 / 2.0;
+        let mut x = (center_x - POPOVER_WIDTH / 2.0).round();
+        let y = (bounds.origin.y.0 + bounds.size.height.0 + 6.0).round();
 
-    if let Some(display) = target {
-        let min_x = display.visible_bounds.origin.x.0 + POPOVER_MARGIN;
-        let max_x = (display.visible_bounds.origin.x.0 + display.visible_bounds.size.width.0
-            - POPOVER_WIDTH
-            - POPOVER_MARGIN)
-            .max(min_x);
-        x = x.clamp(min_x, max_x);
+        let target = screens
+            .iter()
+            .find(|d| {
+                let left = d.bounds.origin.x.0;
+                let right = left + d.bounds.size.width.0;
+                let top = d.bounds.origin.y.0;
+                let bottom = top + d.bounds.size.height.0;
+                center_x >= left
+                    && center_x <= right
+                    && bounds.origin.y.0 >= top
+                    && bounds.origin.y.0 <= bottom
+            })
+            .or_else(|| screens.iter().find(|d| d.primary))
+            .or_else(|| screens.first());
+
+        if let Some(display) = target {
+            let min_x = display.visible_bounds.origin.x.0 + POPOVER_MARGIN;
+            let max_x = (display.visible_bounds.origin.x.0 + display.visible_bounds.size.width.0
+                - POPOVER_WIDTH
+                - POPOVER_MARGIN)
+                .max(min_x);
+            x = x.clamp(min_x, max_x);
+        }
+
+        return Some(point(px(x), px(y)));
     }
 
+    let display = screens
+        .iter()
+        .find(|d| d.primary)
+        .or_else(|| screens.first())?;
+    let min_x = display.visible_bounds.origin.x.0 + POPOVER_MARGIN;
+    let x = (display.visible_bounds.origin.x.0 + display.visible_bounds.size.width.0
+        - POPOVER_WIDTH
+        - POPOVER_MARGIN)
+        .max(min_x)
+        .round();
+    let y = (display.visible_bounds.origin.y.0 + POPOVER_MARGIN).round();
     Some(point(px(x), px(y)))
+}
+
+fn anchor_position(anchor: Option<Bounds<Points>>) -> Option<Point<Points>> {
+    anchor_position_in(anchor, &displays())
 }
 
 fn estimated_popover_height(panel: &Panel) -> f32 {
@@ -808,21 +987,60 @@ fn estimated_popover_height(panel: &Panel) -> f32 {
         .filter(|row| row.kind == RowKind::Instance && row.checked.is_some())
         .count()
         .max(1);
-    let service_count = panel
+    let brew_count = panel
         .rows
         .iter()
-        .filter(|row| row.kind == RowKind::Service && row.checked.is_none())
+        .filter(|row| {
+            row.kind == RowKind::Service
+                && row.checked.is_none()
+                && matches!(
+                    row.action,
+                    Some(Action::OpenService {
+                        source: Source::Brew,
+                        ..
+                    })
+                )
+        })
+        .count();
+    let agent_count = panel
+        .rows
+        .iter()
+        .filter(|row| {
+            row.kind == RowKind::Service
+                && row.checked.is_none()
+                && matches!(
+                    row.action,
+                    Some(Action::OpenService {
+                        source: Source::UserAgent,
+                        ..
+                    })
+                )
+        })
         .count();
     let has_tunnel = panel.rows.iter().any(|row| row.kind == RowKind::Tunnel);
-    let services_height = if service_count > 0 {
-        26.0 + (service_count as f32 * 44.0)
+    let brew_height = if brew_count > 0 {
+        26.0 + if untracked(|| section_expanded(Source::Brew)) {
+            brew_count as f32 * 44.0
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+    let agent_height = if agent_count > 0 {
+        26.0 + if untracked(|| section_expanded(Source::UserAgent)) {
+            agent_count as f32 * 44.0
+        } else {
+            0.0
+        }
     } else {
         0.0
     };
     let height = 164.0
         + (instance_count as f32 * 44.0)
         + if has_tunnel { 96.0 } else { 52.0 }
-        + services_height
+        + brew_height
+        + agent_height
         + 76.0;
     height.clamp(POPOVER_MIN_HEIGHT, POPOVER_MAX_HEIGHT)
 }
@@ -840,6 +1058,7 @@ pub(crate) fn popover_window() -> impl IntoElement {
         attrs.transparent = Some(true);
         attrs.shadow = Some(true);
         attrs.resizable = Some(false);
+        attrs.size_to_content = Some(SizeToContent::Height);
         attrs.min_size = Some(Some(size(px(POPOVER_WIDTH), px(POPOVER_MIN_HEIGHT))));
         attrs.max_size = Some(Some(size(px(POPOVER_WIDTH), px(POPOVER_MAX_HEIGHT))));
 
@@ -851,7 +1070,7 @@ pub(crate) fn popover_window() -> impl IntoElement {
             .open(true)
             .on_open_change(|change| {
                 if !change.open {
-                    close_popover();
+                    close_popover_with_cause(change.reason);
                 }
             })
             .content(popover_content);
@@ -873,55 +1092,78 @@ fn status_dot_color(state: &str) -> AdaptiveColor {
     }
 }
 
-fn status_dot(state: String) -> impl IntoElement {
+fn status_dot(state: impl IntoReactive<String> + 'static) -> impl IntoElement {
+    let state = state.into_reactive();
     view()
         .w(px(7.0))
         .h(px(7.0))
         .flex_none()
         .rounded(px(4.0))
-        .bg(move || status_dot_color(&state))
+        .bg(move || status_dot_color(&state.get()))
 }
 
 fn popover_switch(
-    checked: bool,
-    disabled: bool,
+    checked: impl IntoReactive<bool> + 'static,
+    disabled: impl IntoReactive<bool> + 'static,
     label: String,
     test_id: String,
     on_change: impl Fn(bool) + 'static,
 ) -> impl IntoElement {
-    let track_bg = if checked {
-        theme().primary
-    } else {
-        theme().foreground.opacity(0.18)
-    };
-    let thumb_offset = if checked { px(14.0) } else { px(0.0) };
+    let checked = checked.into_reactive();
+    let disabled = disabled.into_reactive();
+    let checked_track = checked.clone();
+    let checked_thumb = checked.clone();
+    let disabled_opacity = disabled.clone();
     switch()
-        .checked(checked)
-        .disabled(disabled)
+        .checked(move || checked.get())
+        .disabled(move || disabled.get())
         .accessibility_label(label)
         .test_id(&test_id)
         .flex_none()
-        .opacity(if disabled { 0.45 } else { 1.0 })
+        .rounded(px(9.0))
+        .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
+        .opacity(move || {
+            if disabled_opacity.get() {
+                0.45_f32
+            } else {
+                1.0_f32
+            }
+        })
         .track_style(move |s| {
+            let checked = checked_track.clone();
             s.w(px(32.0))
                 .h(px(18.0))
                 .p(px(2.0))
                 .rounded(px(9.0))
                 .flex_row()
                 .items_center()
-                .bg(track_bg)
+                .bg(move || {
+                    if checked.get() {
+                        theme().primary
+                    } else {
+                        theme().foreground.opacity(0.18)
+                    }
+                })
         })
         .thumb_style(move |s| {
+            let checked = checked_thumb.clone();
             s.w(px(14.0))
                 .h(px(14.0))
                 .rounded(px(7.0))
                 .bg(AdaptiveColor::rgb(0xffffff, 0xffffff))
-                .ml(thumb_offset)
+                .ml(move || if checked.get() { px(14.0) } else { px(0.0) })
         })
-        .on_change(move |value: &bool| on_change(*value))
+        .on_change(move |value: &bool| {
+            haptic(Haptic::Selection);
+            on_change(*value);
+        })
 }
 
-fn section_heading(title: String, detail: String) -> impl IntoElement {
+fn section_heading(
+    title: &'static str,
+    detail: impl IntoReactive<String> + 'static,
+) -> impl IntoElement {
+    let detail = detail.into_reactive();
     view()
         .w_full()
         .flex_row()
@@ -937,10 +1179,68 @@ fn section_heading(title: String, detail: String) -> impl IntoElement {
                 .text_color(move || theme().muted_foreground),
         )
         .child(
-            text(detail)
+            text(move || detail.get())
                 .text_size(px(tokens::TEXT_CAPTION))
                 .text_color(move || theme().muted_foreground),
         )
+}
+
+fn popover_busy() -> bool {
+    proxy::busy() || databases::operations_busy() || system::quit_open()
+}
+
+fn effective_instance_status(status: &str) -> String {
+    if status.is_empty() {
+        "Unknown".to_string()
+    } else {
+        status.to_string()
+    }
+}
+
+fn database_instance_rows() -> Vec<InstanceRow> {
+    databases::instances()
+        .into_iter()
+        .map(|instance| InstanceRow {
+            title: instance_title(&instance.kind),
+            port: instance.port,
+            status: effective_instance_status(&databases::status(&instance.id)),
+            id: instance.id,
+        })
+        .collect()
+}
+
+fn header_status_summary() -> (String, String) {
+    let instances = databases::instances();
+    let instances_running = instances
+        .iter()
+        .filter(|inst| running_status(&databases::status(&inst.id)))
+        .count();
+    let instances_failed = instances
+        .iter()
+        .filter(|inst| databases::status(&inst.id) == "Failed")
+        .count();
+    let proxy_status = proxy::proxy_status();
+    let tunnel_status = proxy::tunnel_status();
+    let running = instances_running
+        + usize::from(proxy_status == "Running")
+        + usize::from(tunnel_status == "Running");
+    let failed = instances_failed
+        + usize::from(proxy_status == "Failed")
+        + usize::from(tunnel_status == "Failed");
+    let state = if failed > 0 {
+        "Failed"
+    } else if running > 0 {
+        "Running"
+    } else {
+        "Stopped"
+    }
+    .to_string();
+    let summary = if failed > 0 {
+        format!("{running} running · {failed} failed")
+    } else {
+        format!("{running} running")
+    };
+    (state, summary)
 }
 
 /// The native tray popover's interior UI. Rendered inside the `WindowKind::Popup`
@@ -949,7 +1249,9 @@ pub fn popover_content() -> impl IntoElement {
     view()
         .test_id("menubar-popover")
         .relative()
-        .size_full()
+        .w_full()
+        .min_h(px(POPOVER_MIN_HEIGHT))
+        .max_h(px(POPOVER_MAX_HEIGHT))
         .flex_col()
         .rounded(px(12.0))
         .overflow_hidden()
@@ -970,8 +1272,9 @@ pub fn popover_content() -> impl IntoElement {
                     .test_id("menubar-popover-glass")
                     .absolute()
                     .top(px(0.0))
+                    .right(px(0.0))
+                    .bottom(px(0.0))
                     .left(px(0.0))
-                    .size_full()
                     .rounded(px(12.0))
                     .pointer_events(PointerEvents::None)
                     .glass_effect(GlassEffect::Regular)
@@ -982,11 +1285,11 @@ pub fn popover_content() -> impl IntoElement {
         .child(
             scroll()
                 .test_id("menubar-popover-body")
-                .flex_1()
+                .flex_auto()
                 .min_h(px(0.0))
                 .px(px(8.0))
                 .py(px(6.0))
-                .child(dynamic(|| Some(popover_body().into_element()))),
+                .child(popover_body()),
         )
         .child(view().h(px(1.0)).w_full().flex_none().bg(tokens::hairline))
         .child(popover_footer())
@@ -1016,383 +1319,490 @@ fn popover_header() -> impl IntoElement {
                         .text_color(move || theme().primary_foreground),
                 ),
         )
-        .child(dynamic(|| {
-            let current = panel();
-            Some(
-                view()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .flex_col()
-                    .gap(px(2.0))
-                    .child(
-                        text("Devbase")
-                            .text_size(px(14.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(move || theme().foreground),
-                    )
-                    .child(
-                        view()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(6.0))
-                            .child(status_dot(current.state))
-                            .child(
-                                text(current.summary)
-                                    .test_id("popover-summary")
-                                    .text_size(px(tokens::TEXT_CAPTION))
-                                    .text_color(move || theme().muted_foreground),
-                            ),
-                    )
-                    .into_element(),
-            )
+        .child(
+            view()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex_col()
+                .gap(px(2.0))
+                .child(
+                    text("Devbase")
+                        .text_size(px(14.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(move || theme().foreground),
+                )
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(status_dot(move || header_status_summary().0))
+                        .child(
+                            text(move || header_status_summary().1)
+                                .test_id("popover-summary")
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .text_color(move || theme().muted_foreground),
+                        ),
+                ),
+        )
+        .child(
+            view()
+                .flex_none()
+                .tooltip(controls::tooltip(format!(
+                    "Toggle panel ({GLOBAL_SHORTCUT_LABEL})"
+                )))
+                .px(px(5.0))
+                .py(px(2.0))
+                .rounded(px(4.0))
+                .bg(tokens::inset)
+                .border_1()
+                .border_color(tokens::hairline)
+                .child(
+                    text(GLOBAL_SHORTCUT_LABEL)
+                        .test_id("popover-shortcut-hint")
+                        .text_size(px(10.0))
+                        .text_color(move || theme().muted_foreground),
+                ),
+        )
+}
+
+fn popover_no_instances_row() -> impl IntoElement {
+    button()
+        .test_id("popover-no-instances")
+        .w_full()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .px(px(8.0))
+        .py(px(7.0))
+        .rounded(move || theme().radius)
+        .hover(|s| s.bg(tokens::row_hover()))
+        .on_press(|| dispatch(Action::OpenNewInstance))
+        .child(
+            view()
+                .flex_col()
+                .gap(px(1.0))
+                .child(
+                    text("No instances")
+                        .text_size(px(tokens::TEXT_BODY))
+                        .text_color(move || theme().foreground),
+                )
+                .child(
+                    text("New database instance")
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .text_color(move || theme().muted_foreground),
+                ),
+        )
+        .child(
+            icon_svg(PLUS_BODY)
+                .size(px(14.0))
+                .text_color(move || theme().muted_foreground),
+        )
+}
+
+fn popover_instance_row(row: ReadSignal<InstanceRow>) -> impl IntoElement {
+    let id = row.with_untracked(|r| r.id.clone());
+    let open_id = id.clone();
+    let toggle_id = id.clone();
+    view()
+        .test_id(&format!("popover-instance-{id}"))
+        .w_full()
+        .flex_row()
+        .items_center()
+        .gap(px(8.0))
+        .px(px(6.0))
+        .py(px(5.0))
+        .rounded(move || theme().radius)
+        .hover(|s| s.bg(tokens::row_hover()))
+        .child(
+            button()
+                .test_id(&format!("popover-open-instance-{id}"))
+                .flex_1()
+                .min_w(px(0.0))
+                .flex_row()
+                .items_center()
+                .justify_start()
+                .gap(px(8.0))
+                .on_press(move || dispatch(Action::OpenInstance(open_id.clone())))
+                .child(status_dot(move || row.with(|r| r.status.clone())))
+                .child(
+                    view()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .flex_col()
+                        .gap(px(1.0))
+                        .child(
+                            text(id.clone())
+                                .text_size(px(tokens::TEXT_BODY))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(move || theme().foreground),
+                        )
+                        .child(
+                            text(move || {
+                                row.with(|r| format!("{} · :{} · {}", r.title, r.port, r.status))
+                            })
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().muted_foreground),
+                        ),
+                ),
+        )
+        .child(popover_switch(
+            move || row.with(|r| running_status(&r.status)),
+            move || row.with(|r| popover_busy() || busy_status(&r.status)),
+            format!("Toggle {id}"),
+            format!("popover-switch-instance-{id}"),
+            move |start| {
+                dispatch(Action::ToggleInstance {
+                    id: toggle_id.clone(),
+                    start,
+                });
+            },
+        ))
+}
+
+fn popover_proxy_row() -> impl IntoElement {
+    view()
+        .test_id("popover-proxy")
+        .w_full()
+        .flex_row()
+        .items_center()
+        .gap(px(8.0))
+        .px(px(6.0))
+        .py(px(5.0))
+        .rounded(move || theme().radius)
+        .hover(|s| s.bg(tokens::row_hover()))
+        .child(status_dot(proxy::proxy_status))
+        .child(
+            view()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex_col()
+                .gap(px(1.0))
+                .child(
+                    text(move || format!("Proxy · {}", proxy::proxy_status()))
+                        .text_size(px(tokens::TEXT_BODY))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(move || theme().foreground),
+                )
+                .child(
+                    text(move || {
+                        format!(
+                            "{} · :{}",
+                            store::software::plural(proxy::saved_rules().len(), "rule"),
+                            proxy::listener_port()
+                        )
+                    })
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .text_color(move || theme().muted_foreground),
+                ),
+        )
+        .child(popover_switch(
+            move || proxy::proxy_status() == "Running",
+            move || {
+                let on = proxy::proxy_status() == "Running";
+                popover_busy() || (!on && proxy::saved_rules().is_empty())
+            },
+            "Toggle HTTPS proxy".to_string(),
+            "popover-switch-proxy".to_string(),
+            |on| dispatch(Action::ToggleProxy(on)),
+        ))
+}
+
+fn tunnel_row_detail() -> String {
+    let tunnel_on = proxy::tunnel_status() == "Running";
+    let detail = proxy::tunnel_detail();
+    if tunnel_on && !detail.is_empty() {
+        detail
+    } else {
+        match proxy::worker_count() {
+            0 => "Cloudflare Workers".to_string(),
+            1 => "1 worker".to_string(),
+            n => format!("{n} workers"),
+        }
+    }
+}
+
+fn popover_tunnel_row() -> impl IntoElement {
+    view()
+        .test_id("popover-tunnel")
+        .w_full()
+        .flex_row()
+        .items_center()
+        .gap(px(8.0))
+        .px(px(6.0))
+        .py(px(5.0))
+        .rounded(move || theme().radius)
+        .hover(|s| s.bg(tokens::row_hover()))
+        .child(status_dot(proxy::tunnel_status))
+        .child(
+            view()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex_col()
+                .gap(px(1.0))
+                .child(
+                    text(move || format!("Tunnel · {}", proxy::tunnel_status()))
+                        .text_size(px(tokens::TEXT_BODY))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(move || theme().foreground),
+                )
+                .child(
+                    text(tunnel_row_detail)
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .text_color(move || theme().muted_foreground),
+                ),
+        )
+        .child(popover_switch(
+            move || proxy::tunnel_status() == "Running",
+            move || {
+                let on = proxy::tunnel_status() == "Running";
+                let has_rules = proxy::saved_rules().iter().any(|rule| rule.tunnel);
+                popover_busy() || (!on && !has_rules)
+            },
+            "Toggle Cloudflare tunnel".to_string(),
+            "popover-switch-tunnel".to_string(),
+            |on| dispatch(Action::ToggleTunnel(on)),
+        ))
+}
+
+fn popover_service_row(svc: ReadSignal<ServiceRow>) -> impl IntoElement {
+    let initial = svc.get_untracked();
+    let name = initial.name;
+    let source = initial.source;
+    let open_id = initial.id.clone();
+    let toggle_id = initial.id;
+    let toggle_name = name.clone();
+    view()
+        .test_id(&format!("popover-service-{name}"))
+        .w_full()
+        .flex_row()
+        .items_center()
+        .gap(px(8.0))
+        .px(px(6.0))
+        .py(px(5.0))
+        .rounded(move || theme().radius)
+        .hover(|s| s.bg(tokens::row_hover()))
+        .child(
+            button()
+                .test_id(&format!("popover-open-service-{name}"))
+                .flex_1()
+                .min_w(px(0.0))
+                .flex_row()
+                .items_center()
+                .justify_start()
+                .gap(px(8.0))
+                .on_press(move || {
+                    dispatch(Action::OpenService {
+                        source,
+                        id: open_id.clone(),
+                    });
+                })
+                .child(status_dot(move || svc.with(|s| s.status.clone())))
+                .child(
+                    view()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .flex_col()
+                        .gap(px(1.0))
+                        .child(
+                            text(name.clone())
+                                .text_size(px(tokens::TEXT_BODY))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(move || theme().foreground)
+                                .truncate(),
+                        )
+                        .child(
+                            text(move || {
+                                svc.with(|s| format!("{} · {}", s.source.title(), s.status))
+                            })
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().muted_foreground)
+                            .truncate(),
+                        ),
+                ),
+        )
+        .child(when(
+            move || svc.with(|s| s.can_toggle),
+            move || {
+                let toggle_id = toggle_id.clone();
+                let toggle_name = toggle_name.clone();
+                popover_switch(
+                    move || svc.with(|s| s.running),
+                    move || svc.with(|s| system::quit_open() || s.busy),
+                    format!("Toggle {toggle_name}"),
+                    format!("popover-switch-service-{toggle_name}"),
+                    move |start| {
+                        dispatch(Action::ToggleService {
+                            id: toggle_id.clone(),
+                            start,
+                        });
+                    },
+                )
+            },
+        ))
+}
+
+fn collapsible_service_section(source: Source, section_key: &'static str) -> impl IntoElement {
+    let title = service_group_title(source);
+    let toggle_test_id = format!("popover-section-{section_key}-toggle");
+    let count_test_id = format!("popover-section-{section_key}-count");
+    collapsible()
+        .w_full()
+        .flex_col()
+        .open(move || section_expanded(source))
+        .child(
+            view()
+                .test_id(&toggle_test_id)
+                .role(AccessibilityRole::Button)
+                .label(format!("Toggle {title} section"))
+                .accessibility_state(move || AccessibilityState {
+                    expanded: Some(section_expanded(source)),
+                    ..AccessibilityState::default()
+                })
+                .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
+                .w_full()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .px(px(6.0))
+                .pt(px(6.0))
+                .pb(px(4.0))
+                .rounded(move || theme().radius)
+                .hover(|s| s.bg(tokens::row_hover()))
+                .on_press(move |_: &()| toggle_service_section(source))
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(4.0))
+                        .child(
+                            icon_svg(CHEVRON_RIGHT_BODY)
+                                .size(px(12.0))
+                                .flex_none()
+                                .text_color(move || theme().muted_foreground)
+                                .rotate(move || {
+                                    if section_expanded(source) {
+                                        deg(90.0)
+                                    } else {
+                                        deg(0.0)
+                                    }
+                                }),
+                        )
+                        .child(
+                            text(title)
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(move || theme().muted_foreground),
+                        ),
+                )
+                .child(
+                    text(move || {
+                        let items = loaded_services_for(source);
+                        let running = items.iter().filter(|s| s.running).count();
+                        format!("{running}/{}", items.len())
+                    })
+                    .test_id(&count_test_id)
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .text_color(move || theme().muted_foreground),
+                ),
+        )
+        .content(view().w_full().flex_col().gap(px(2.0)).child(each(
+            move || loaded_services_for(source),
+            |svc| svc.id.clone(),
+            |svc, _| popover_service_row(svc),
+        )))
+}
+
+fn popover_status_row(
+    label: &'static str,
+    value: impl IntoReactive<String> + 'static,
+) -> impl IntoElement {
+    let value = value.into_reactive();
+    view()
+        .w_full()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap(px(8.0))
+        .child(
+            text(label)
+                .text_size(px(tokens::TEXT_CAPTION))
+                .text_color(move || theme().muted_foreground),
+        )
+        .child(
+            text(move || value.get())
+                .text_size(px(tokens::TEXT_CAPTION))
+                .text_color(move || theme().foreground),
+        )
+}
+
+fn popover_status_box() -> impl IntoElement {
+    view()
+        .w_full()
+        .flex_col()
+        .gap(px(3.0))
+        .mt(px(6.0))
+        .px(px(8.0))
+        .py(px(6.0))
+        .rounded(move || theme().radius)
+        .bg(tokens::inset)
+        .child(popover_status_row("Workspace", move || {
+            let root = system::workspace_root();
+            if root.is_empty() {
+                "Unknown".to_string()
+            } else {
+                root
+            }
+        }))
+        .child(popover_status_row("Proxy port", move || {
+            format!(":{}", proxy::listener_port())
+        }))
+        .child(popover_status_row("Helper", move || {
+            helper_label(&system::helper_status())
         }))
 }
 
 fn popover_body() -> impl IntoElement {
-    let current = panel();
-    let mut column = view().w_full().flex_col().gap(px(2.0));
-
-    let db_header = current
-        .rows
-        .iter()
-        .find(|row| row.key == "databases")
-        .map(|row| row.detail.clone())
-        .unwrap_or_default();
-    column = column.child(section_heading("Databases".to_string(), db_header));
-
-    let mut had_instances = false;
-    let mut i = 0;
-    while i < current.rows.len() {
-        let row = &current.rows[i];
-        if row.key == "no-instances" {
-            column = column.child(
-                button()
-                    .test_id("popover-no-instances")
-                    .w_full()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .px(px(8.0))
-                    .py(px(7.0))
-                    .rounded(move || theme().radius)
-                    .hover(|s| s.bg(tokens::row_hover()))
-                    .on_press(|| dispatch(Action::OpenNewInstance))
-                    .child(
-                        view()
-                            .flex_col()
-                            .gap(px(1.0))
-                            .child(
-                                text("No instances")
-                                    .text_size(px(tokens::TEXT_BODY))
-                                    .text_color(move || theme().foreground),
-                            )
-                            .child(
-                                text("New database instance")
-                                    .text_size(px(tokens::TEXT_CAPTION))
-                                    .text_color(move || theme().muted_foreground),
-                            ),
-                    )
-                    .child(
-                        icon_svg(PLUS_BODY)
-                            .size(px(14.0))
-                            .text_color(move || theme().muted_foreground),
-                    ),
-            );
-        } else if row.kind == RowKind::Instance && row.checked.is_none() {
-            had_instances = true;
-            let toggle = current
-                .rows
-                .get(i + 1)
-                .filter(|next| next.key == format!("{}:toggle", row.key));
-            let id = row.label.clone();
-            let detail = row.detail.clone();
-            let state = row.state.clone();
-            let open_id = id.clone();
-            let toggle_id = id.clone();
-            let checked = toggle.and_then(|t| t.checked).unwrap_or(false);
-            let enabled = toggle.is_some_and(|t| t.enabled);
-
-            column = column.child(
-                view()
-                    .test_id(&format!("popover-instance-{id}"))
-                    .w_full()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.0))
-                    .px(px(6.0))
-                    .py(px(5.0))
-                    .rounded(move || theme().radius)
-                    .hover(|s| s.bg(tokens::row_hover()))
-                    .child(
-                        button()
-                            .test_id(&format!("popover-open-instance-{id}"))
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .flex_row()
-                            .items_center()
-                            .justify_start()
-                            .gap(px(8.0))
-                            .on_press(move || dispatch(Action::OpenInstance(open_id.clone())))
-                            .child(status_dot(state))
-                            .child(
-                                view()
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .flex_col()
-                                    .gap(px(1.0))
-                                    .child(
-                                        text(id.clone())
-                                            .text_size(px(tokens::TEXT_BODY))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(move || theme().foreground),
-                                    )
-                                    .child(
-                                        text(detail)
-                                            .text_size(px(tokens::TEXT_CAPTION))
-                                            .text_color(move || theme().muted_foreground),
-                                    ),
-                            ),
-                    )
-                    .child(popover_switch(
-                        checked,
-                        !enabled,
-                        format!("Toggle {id}"),
-                        format!("popover-switch-instance-{id}"),
-                        move |start| {
-                            dispatch(Action::ToggleInstance {
-                                id: toggle_id.clone(),
-                                start,
-                            });
-                        },
-                    )),
-            );
-            if toggle.is_some() {
-                i += 1;
+    view()
+        .w_full()
+        .flex_col()
+        .gap(px(2.0))
+        .child(section_heading("Databases", move || {
+            let list = databases::instances();
+            if list.is_empty() {
+                String::new()
+            } else {
+                let running = list
+                    .iter()
+                    .filter(|inst| running_status(&databases::status(&inst.id)))
+                    .count();
+                format!("{running}/{}", list.len())
             }
-        }
-        i += 1;
-    }
-    let _ = had_instances;
-
-    column = column.child(section_heading("HTTPS".to_string(), String::new()));
-
-    if let Some(proxy_row) = current.rows.iter().find(|row| row.kind == RowKind::Proxy) {
-        let checked = proxy_row.checked.unwrap_or(false);
-        let enabled = proxy_row.enabled;
-        column = column.child(
-            view()
-                .test_id("popover-proxy")
-                .w_full()
-                .flex_row()
-                .items_center()
-                .gap(px(8.0))
-                .px(px(6.0))
-                .py(px(5.0))
-                .rounded(move || theme().radius)
-                .hover(|s| s.bg(tokens::row_hover()))
-                .child(status_dot(proxy_row.state.clone()))
-                .child(
-                    view()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .flex_col()
-                        .gap(px(1.0))
-                        .child(
-                            text(proxy_row.label.clone())
-                                .text_size(px(tokens::TEXT_BODY))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(move || theme().foreground),
-                        )
-                        .child(
-                            text(proxy_row.detail.clone())
-                                .text_size(px(tokens::TEXT_CAPTION))
-                                .text_color(move || theme().muted_foreground),
-                        ),
-                )
-                .child(popover_switch(
-                    checked,
-                    !enabled,
-                    "Toggle HTTPS proxy".to_string(),
-                    "popover-switch-proxy".to_string(),
-                    |on| dispatch(Action::ToggleProxy(on)),
-                )),
-        );
-    }
-
-    if let Some(tunnel_row) = current.rows.iter().find(|row| row.kind == RowKind::Tunnel) {
-        let checked = tunnel_row.checked.unwrap_or(false);
-        let enabled = tunnel_row.enabled;
-        column = column.child(
-            view()
-                .test_id("popover-tunnel")
-                .w_full()
-                .flex_row()
-                .items_center()
-                .gap(px(8.0))
-                .px(px(6.0))
-                .py(px(5.0))
-                .rounded(move || theme().radius)
-                .hover(|s| s.bg(tokens::row_hover()))
-                .child(status_dot(tunnel_row.state.clone()))
-                .child(
-                    view()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .flex_col()
-                        .gap(px(1.0))
-                        .child(
-                            text(tunnel_row.label.clone())
-                                .text_size(px(tokens::TEXT_BODY))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(move || theme().foreground),
-                        )
-                        .child(
-                            text(tunnel_row.detail.clone())
-                                .text_size(px(tokens::TEXT_CAPTION))
-                                .text_color(move || theme().muted_foreground),
-                        ),
-                )
-                .child(popover_switch(
-                    checked,
-                    !enabled,
-                    "Toggle Cloudflare tunnel".to_string(),
-                    "popover-switch-tunnel".to_string(),
-                    |on| dispatch(Action::ToggleTunnel(on)),
-                )),
-        );
-    }
-
-    if let Some(services_header) = current.rows.iter().find(|row| row.key == "services") {
-        column = column.child(section_heading(
-            "Services".to_string(),
-            services_header.detail.clone(),
-        ));
-        let mut s = 0;
-        while s < current.rows.len() {
-            let row = &current.rows[s];
-            if row.kind == RowKind::Service && row.checked.is_none() {
-                let toggle = current
-                    .rows
-                    .get(s + 1)
-                    .filter(|next| next.key == format!("{}:toggle", row.key));
-                let name = row.label.clone();
-                let detail = row.detail.clone();
-                let state = row.state.clone();
-                let open_action = row.action.clone();
-                let toggle_action = toggle.and_then(|t| t.action.clone());
-                let checked = toggle.and_then(|t| t.checked);
-                let enabled = toggle.is_some_and(|t| t.enabled);
-
-                let mut item_row = view()
-                    .test_id(&format!("popover-service-{name}"))
-                    .w_full()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.0))
-                    .px(px(6.0))
-                    .py(px(5.0))
-                    .rounded(move || theme().radius)
-                    .hover(|s| s.bg(tokens::row_hover()))
-                    .child(
-                        button()
-                            .test_id(&format!("popover-open-service-{name}"))
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .flex_row()
-                            .items_center()
-                            .justify_start()
-                            .gap(px(8.0))
-                            .on_press(move || {
-                                if let Some(action) = open_action.clone() {
-                                    dispatch(action);
-                                }
-                            })
-                            .child(status_dot(state))
-                            .child(
-                                view()
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .flex_col()
-                                    .gap(px(1.0))
-                                    .child(
-                                        text(name.clone())
-                                            .text_size(px(tokens::TEXT_BODY))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(move || theme().foreground)
-                                            .truncate(),
-                                    )
-                                    .child(
-                                        text(detail)
-                                            .text_size(px(tokens::TEXT_CAPTION))
-                                            .text_color(move || theme().muted_foreground)
-                                            .truncate(),
-                                    ),
-                            ),
-                    );
-                if let (Some(checked), Some(Action::ToggleService { id, .. })) =
-                    (checked, toggle_action)
-                {
-                    item_row = item_row.child(popover_switch(
-                        checked,
-                        !enabled,
-                        format!("Toggle {name}"),
-                        format!("popover-switch-service-{name}"),
-                        move |start| {
-                            dispatch(Action::ToggleService {
-                                id: id.clone(),
-                                start,
-                            });
-                        },
-                    ));
-                }
-                column = column.child(item_row);
-                if toggle.is_some() {
-                    s += 1;
-                }
-            }
-            s += 1;
-        }
-    }
-
-    let status_rows: Vec<&Row> = current
-        .rows
-        .iter()
-        .filter(|row| row.kind == RowKind::Status)
-        .collect();
-    if !status_rows.is_empty() {
-        let mut status_box = view()
-            .w_full()
-            .flex_col()
-            .gap(px(3.0))
-            .mt(px(6.0))
-            .px(px(8.0))
-            .py(px(6.0))
-            .rounded(move || theme().radius)
-            .bg(tokens::inset);
-        for row in status_rows {
-            status_box = status_box.child(
-                view()
-                    .w_full()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(8.0))
-                    .child(
-                        text(row.label.clone())
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .text_color(move || theme().muted_foreground),
-                    )
-                    .child(
-                        text(row.detail.clone())
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .text_color(move || theme().foreground),
-                    ),
-            );
-        }
-        column = column.child(status_box);
-    }
-
-    column
+        }))
+        .child(when(
+            move || databases::instances().is_empty(),
+            popover_no_instances_row,
+        ))
+        .child(each(
+            database_instance_rows,
+            |row| row.id.clone(),
+            |row, _| popover_instance_row(row),
+        ))
+        .child(section_heading("HTTPS", ""))
+        .child(popover_proxy_row())
+        .child(when(
+            move || tunnel_configured(&proxy::saved_rules()),
+            popover_tunnel_row,
+        ))
+        .child(when(
+            move || !loaded_services_for(Source::Brew).is_empty(),
+            || collapsible_service_section(Source::Brew, "brew"),
+        ))
+        .child(when(
+            move || !loaded_services_for(Source::UserAgent).is_empty(),
+            || collapsible_service_section(Source::UserAgent, "user-agent"),
+        ))
+        .child(popover_status_box())
 }
 
 fn footer_button(
@@ -1429,8 +1839,14 @@ fn footer_button(
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().foreground),
         );
+        btn.into_element()
+    } else {
+        view()
+            .flex_none()
+            .tooltip(controls::tooltip(label))
+            .child(btn)
+            .into_element()
     }
-    btn
 }
 
 fn popover_footer() -> impl IntoElement {
@@ -1468,139 +1884,249 @@ fn popover_footer() -> impl IntoElement {
 
 // --- Right-click native NSMenu -----------------------------------------------
 
-fn menu_item_for(row: &Row) -> MenuItem {
+/// One entry in the right-click native `NSMenu`, modeled plainly so headless
+/// tests can verify every macOS section header, icon, and submenu without
+/// calling AppKit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MenuEntry {
+    Separator,
+    Item {
+        label: String,
+        icon: &'static str,
+        enabled: bool,
+        checked: Option<bool>,
+        action: Option<Action>,
+    },
+    Submenu {
+        label: String,
+        icon: &'static str,
+        items: Vec<MenuEntry>,
+    },
+}
+
+fn row_menu_icon(row: &Row) -> &'static str {
+    match row.kind {
+        RowKind::Instance if row.key == "no-instances" => PLUS_BODY,
+        RowKind::Instance | RowKind::Service if row.checked.is_some() => {
+            if row.checked == Some(true) {
+                STOP_BODY
+            } else {
+                PLAY_BODY
+            }
+        }
+        RowKind::Instance => DATABASE_BODY,
+        RowKind::Proxy => SHIELD_BODY,
+        RowKind::Tunnel => CLOUD_BODY,
+        RowKind::Service => match row.action {
+            Some(Action::OpenService { source, .. }) => service_group_icon(source),
+            _ => LAYERS_BODY,
+        },
+        RowKind::Action => match row.action {
+            Some(Action::OpenWindow) => WINDOW_BODY,
+            Some(Action::Refresh) => REFRESH_BODY,
+            Some(Action::Quit) => QUIT_BODY,
+            _ => PACKAGE_BODY,
+        },
+        RowKind::Header | RowKind::Status | RowKind::Separator => PACKAGE_BODY,
+    }
+}
+
+fn menu_entry_for(row: &Row) -> MenuEntry {
     if row.kind == RowKind::Separator {
-        return MenuItem::separator();
+        return MenuEntry::Separator;
     }
     let label = if row.detail.is_empty() {
         row.label.clone()
     } else {
         format!("{} · {}", row.label, row.detail)
     };
-    let mut item = MenuItem::new(label);
-    match row.kind {
-        RowKind::Instance if row.key == "no-instances" => {
-            item = item.symbol("plus.circle").icon(icon_src(PLUS_BODY));
-        }
-        RowKind::Instance if row.checked.is_some() => {
-            let symbol = if row.checked == Some(true) {
-                "stop.circle"
-            } else {
-                "play.circle"
-            };
-            item = item.symbol(symbol);
-        }
-        RowKind::Instance => {
-            item = item
-                .symbol("cylinder.split.1x2")
-                .icon(icon_src(DATABASE_BODY));
-        }
-        RowKind::Proxy => {
-            item = item.symbol("lock.shield").icon(icon_src(SHIELD_BODY));
-        }
-        RowKind::Tunnel => {
-            item = item.symbol("cloud").icon(icon_src(CLOUD_BODY));
-        }
-        RowKind::Service if row.checked.is_some() => {
-            let symbol = if row.checked == Some(true) {
-                "stop.circle"
-            } else {
-                "play.circle"
-            };
-            item = item.symbol(symbol);
-        }
-        RowKind::Service => {
-            item = item
-                .symbol("square.stack.3d.up")
-                .icon(icon_src(LAYERS_BODY));
-        }
-        RowKind::Action => match row.action {
-            Some(Action::OpenWindow) => {
-                item = item.symbol("macwindow").icon(icon_src(WINDOW_BODY));
-            }
-            Some(Action::Refresh) => {
-                item = item.symbol("arrow.clockwise").icon(icon_src(REFRESH_BODY));
-            }
-            Some(Action::Quit) => {
-                item = item.symbol("power").icon(icon_src(QUIT_BODY));
-            }
-            _ => {}
-        },
-        _ => {}
+    MenuEntry::Item {
+        label,
+        icon: row_menu_icon(row),
+        enabled: row.enabled,
+        checked: row.checked,
+        action: row.enabled.then(|| row.action.clone()).flatten(),
     }
-    if let Some(checked) = row.checked {
-        item = item.checked(checked);
-    }
-    item = item.disabled(!row.enabled);
-    if row.enabled
-        && let Some(action) = row.action.clone()
-    {
-        item = item.on_select(move || dispatch(action.clone()));
-    }
-    item
 }
 
-/// The right-click system menu of the tray item, organized with inline section
-/// headers and SF Symbols + template SVG icons.
-fn menu(panel: &Panel) -> Vec<MenuItem> {
+fn service_menu_group(panel: &Panel, source: Source) -> (usize, usize, Vec<MenuEntry>) {
+    let mut total = 0usize;
+    let mut running = 0usize;
     let mut items = Vec::new();
-    items.push(
-        MenuItem::new(format!("Devbase · {}", panel.summary))
-            .symbol("shippingbox")
-            .disabled(true),
-    );
-    items.push(MenuItem::separator());
+    let mut i = 0;
+    while i < panel.rows.len() {
+        let row = &panel.rows[i];
+        let matches_source = row.kind == RowKind::Service
+            && row.checked.is_none()
+            && matches!(row.action, Some(Action::OpenService { source: s, .. }) if s == source);
+        if matches_source {
+            total += 1;
+            let toggle = panel
+                .rows
+                .get(i + 1)
+                .filter(|next| next.key == format!("{}:toggle", row.key));
+            let is_running = toggle
+                .and_then(|t| t.checked)
+                .unwrap_or_else(|| running_status(&row.state));
+            if is_running {
+                running += 1;
+            }
+            items.push(menu_entry_for(row));
+            if let Some(toggle_row) = toggle {
+                items.push(menu_entry_for(toggle_row));
+                i += 1;
+            }
+        }
+        i += 1;
+    }
+    (running, total, items)
+}
 
-    let db_items: Vec<MenuItem> = panel
+/// Builds the right-click `NSMenu` structure for macOS: explicit disabled
+/// section headers between separators (or non-inline submenus for long service
+/// lists) and monochrome template SVG icons on every item.
+pub fn menu_entries(panel: &Panel) -> Vec<MenuEntry> {
+    let mut entries = Vec::new();
+    entries.push(MenuEntry::Item {
+        label: format!("Devbase · {}", panel.summary),
+        icon: PACKAGE_BODY,
+        enabled: false,
+        checked: None,
+        action: None,
+    });
+
+    let db_items: Vec<MenuEntry> = panel
         .rows
         .iter()
         .filter(|row| row.kind == RowKind::Instance)
-        .map(menu_item_for)
+        .map(menu_entry_for)
         .collect();
     if !db_items.is_empty() {
-        items.push(
-            MenuItem::submenu("Databases", db_items)
-                .inline(true)
-                .symbol("cylinder.split.1x2")
-                .icon(icon_src(DATABASE_BODY)),
-        );
+        entries.push(MenuEntry::Separator);
+        let db_detail = panel
+            .rows
+            .iter()
+            .find(|row| row.key == "databases")
+            .map(|row| row.detail.as_str())
+            .unwrap_or("");
+        let db_heading = if db_detail.is_empty() {
+            "Databases".to_string()
+        } else {
+            format!("Databases · {db_detail}")
+        };
+        entries.push(MenuEntry::Item {
+            label: db_heading,
+            icon: DATABASE_BODY,
+            enabled: false,
+            checked: None,
+            action: None,
+        });
+        entries.extend(db_items);
     }
 
-    let https_items: Vec<MenuItem> = panel
+    let https_items: Vec<MenuEntry> = panel
         .rows
         .iter()
         .filter(|row| matches!(row.kind, RowKind::Proxy | RowKind::Tunnel))
-        .map(menu_item_for)
+        .map(menu_entry_for)
         .collect();
     if !https_items.is_empty() {
-        items.push(
-            MenuItem::submenu("HTTPS", https_items)
-                .inline(true)
-                .symbol("lock.shield")
-                .icon(icon_src(SHIELD_BODY)),
-        );
+        entries.push(MenuEntry::Separator);
+        entries.push(MenuEntry::Item {
+            label: "HTTPS".to_string(),
+            icon: SHIELD_BODY,
+            enabled: false,
+            checked: None,
+            action: None,
+        });
+        entries.extend(https_items);
     }
 
-    let service_items: Vec<MenuItem> = panel
-        .rows
-        .iter()
-        .filter(|row| row.kind == RowKind::Service)
-        .map(menu_item_for)
-        .collect();
-    if !service_items.is_empty() {
-        items.push(
-            MenuItem::submenu("Services", service_items)
-                .inline(true)
-                .symbol("square.stack.3d.up")
-                .icon(icon_src(LAYERS_BODY)),
-        );
+    for source in [Source::Brew, Source::UserAgent] {
+        let (running, total, group_items) = service_menu_group(panel, source);
+        if total == 0 {
+            continue;
+        }
+        entries.push(MenuEntry::Separator);
+        let heading = format!("{} · {running}/{total}", service_group_title(source));
+        let group_icon = service_group_icon(source);
+        if total > SERVICE_MENU_SUBMENU_THRESHOLD {
+            entries.push(MenuEntry::Submenu {
+                label: heading,
+                icon: group_icon,
+                items: group_items,
+            });
+        } else {
+            entries.push(MenuEntry::Item {
+                label: heading,
+                icon: group_icon,
+                enabled: false,
+                checked: None,
+                action: None,
+            });
+            entries.extend(group_items);
+        }
     }
 
-    items.push(MenuItem::separator());
+    entries.push(MenuEntry::Separator);
     for row in panel.rows.iter().filter(|row| row.kind == RowKind::Action) {
-        items.push(menu_item_for(row));
+        entries.push(menu_entry_for(row));
     }
-    items
+    entries
+}
+
+fn build_menu_item(entry: MenuEntry) -> MenuItem {
+    match entry {
+        MenuEntry::Separator => MenuItem::separator(),
+        MenuEntry::Item {
+            label,
+            icon,
+            enabled,
+            checked,
+            action,
+        } => {
+            let mut item = MenuItem::new(label).icon(icon_src(icon)).disabled(!enabled);
+            if let Some(checked) = checked {
+                item = item.checked(checked);
+            }
+            if enabled && let Some(action) = action {
+                item = item.on_select(move || dispatch(action.clone()));
+            }
+            item
+        }
+        MenuEntry::Submenu { label, icon, items } => {
+            MenuItem::submenu(label, items.into_iter().map(build_menu_item)).icon(icon_src(icon))
+        }
+    }
+}
+
+/// The right-click system menu of the tray item for macOS `NSMenu`.
+fn menu(panel: &Panel) -> Vec<MenuItem> {
+    menu_entries(panel)
+        .into_iter()
+        .map(build_menu_item)
+        .collect()
+}
+
+/// Colored menu bar title runs beside the status item icon:
+/// - Empty when nothing is running and nothing has failed.
+/// - Running count in default menu-bar `labelColor` (`color: None`).
+/// - Red failure indicator (` · <N>!`, or `<N>!` if nothing is running) when
+///   `panel.failed > 0`.
+pub fn title_runs(panel: &Panel) -> Vec<TrayTitleRun> {
+    let mut runs = Vec::new();
+    if panel.running > 0 {
+        runs.push(TrayTitleRun::new(panel.running.to_string()));
+    }
+    if panel.failed > 0 {
+        let label = if panel.running > 0 {
+            format!(" · {}!", panel.failed)
+        } else {
+            format!("{}!", panel.failed)
+        };
+        runs.push(TrayTitleRun::new(label).color(rgb(TRAY_FAILED_COLOR_HEX)));
+    }
+    runs
 }
 
 fn tray_for(panel: Panel) -> nsh_core::element::desktop::Tray {
@@ -1609,18 +2135,26 @@ fn tray_for(panel: Panel) -> nsh_core::element::desktop::Tray {
         .tooltip(panel.tooltip.clone())
         .menu(menu(&panel))
         .on_click(toggle_popover);
-    if !panel.title.is_empty() {
-        icon = icon.title([TrayTitleRun::new(panel.title.clone())]);
+    let runs = title_runs(&panel);
+    if !runs.is_empty() {
+        icon = icon.title(runs);
     }
     icon
 }
 
-/// Installs the status item on a desktop. The effect reads the stores, so
-/// the title, popover and right-click menu follow them; off desktops
-/// `set_tray` does nothing.
+/// Installs the status item and global toggle shortcut on a desktop. The
+/// effect reads the stores, so the title, popover and right-click menu follow
+/// them; off desktops `set_tray` does nothing and tests with
+/// [`use_fake_menubar`] never register OS global shortcuts.
 pub(crate) fn install() {
     if os().is_desktop() {
         load();
+        if !FAKE_MODE.load(Ordering::Relaxed) {
+            drop(register_global_shortcut(
+                GLOBAL_SHORTCUT,
+                toggle_popover_shortcut,
+            ));
+        }
     }
     effect(move || {
         let panel = panel();

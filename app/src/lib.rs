@@ -45,11 +45,17 @@ pub mod testing {
         start as guide_start, use_fake_provider as use_fake_guide, visible as guide_visible,
     };
     pub use crate::menubar::{
-        Action as MenubarAction, InstanceRow as MenubarInstance, Panel as MenubarPanel,
-        PanelInput as MenubarInput, Row as MenubarRow, RowKind as MenubarRowKind,
-        ServiceRow as MenubarService, close_popover as menubar_close_popover,
-        dispatch as menubar_dispatch, load as menubar_load, panel as menubar_panel,
-        popover_content as menubar_popover, popover_open as menubar_popover_open,
+        Action as MenubarAction, GLOBAL_SHORTCUT as MENUBAR_GLOBAL_SHORTCUT,
+        GLOBAL_SHORTCUT_LABEL as MENUBAR_GLOBAL_SHORTCUT_LABEL, InstanceRow as MenubarInstance,
+        MenuEntry as MenubarMenuEntry, Panel as MenubarPanel, PanelInput as MenubarInput,
+        Row as MenubarRow, RowKind as MenubarRowKind, ServiceRow as MenubarService,
+        anchor_position_in as menubar_anchor_position_in, close_popover as menubar_close_popover,
+        dispatch as menubar_dispatch, load as menubar_load, menu_entries as menubar_menu_entries,
+        panel as menubar_panel, popover_content as menubar_popover,
+        popover_open as menubar_popover_open,
+        should_reopen_after_blur as menubar_should_reopen_after_blur,
+        title_runs as menubar_title_runs,
+        toggle_popover_shortcut as menubar_toggle_popover_shortcut, use_fake_menubar,
     };
     pub use crate::store::databases::{
         CancelToken, Provider as DatabasesProvider, Snapshot as DatabasesSnapshot,
@@ -72,6 +78,11 @@ pub mod testing {
     pub use crate::store::services::{
         install_login_item_adder, install_provider, use_fake_providers,
     };
+
+    /// Triggers a refresh of `source` in the services store during headless tests.
+    pub fn refresh_services(source: Source) {
+        crate::store::services::refresh(source);
+    }
     pub use crate::store::software::{
         Provider as SoftwareProvider, Snapshot as SoftwareSnapshot, SoftwareKind,
         install_provider as install_software_provider, use_fake_provider as use_fake_software,

@@ -8,12 +8,12 @@
 
 use std::{
     collections::BTreeMap,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex, MutexGuard,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use chrono::Utc;
@@ -23,17 +23,29 @@ use devcore::{
         InstanceDeletionInfo, InstanceDeletionPreview, InstanceInitializationInfo, PortInspection,
     },
     model::{ConnectionProfile, Instance, ProxyRule},
+    service::{
+        Action as ServiceAction, Autostart, Detail as ServiceDetail, Item as ServiceItem,
+        Provider as ServiceProvider, Result as ServiceResult, State as ServiceState,
+    },
     shutdown::{ShutdownPlan, ShutdownResource},
 };
 use nsh_app_devbase::testing::{
     AuthorityInfo, AuthorityStatus, CancelToken, DatabasesProvider, DatabasesSnapshot, GuideAccess,
-    GuidePersistence, MenubarInput, MenubarPanel, MenubarRowKind, MenubarService, ProxyProvider,
+    GuidePersistence, MENUBAR_GLOBAL_SHORTCUT, MENUBAR_GLOBAL_SHORTCUT_LABEL, MenubarInput,
+    MenubarInstance, MenubarMenuEntry, MenubarPanel, MenubarRowKind, MenubarService, ProxyProvider,
     ProxySnapshot, ProxyWorkers, Source, SystemSettingsProvider, SystemSettingsSnapshot,
-    install_databases_provider, install_guide_access, install_guide_persistence,
-    install_proxy_provider, install_system_settings_provider, use_fake_databases, use_fake_guide,
-    use_fake_providers, use_fake_proxy, use_fake_system,
+    install_databases_provider, install_guide_access, install_guide_persistence, install_provider,
+    install_proxy_provider, install_system_settings_provider, menubar_anchor_position_in,
+    menubar_menu_entries, menubar_should_reopen_after_blur, menubar_title_runs, refresh_services,
+    use_fake_databases, use_fake_guide, use_fake_menubar, use_fake_providers, use_fake_proxy,
+    use_fake_system,
 };
-use nsh_core::prelude::*;
+use nsh_core::{
+    desktop::{Display, DisplayId, Shortcut},
+    geometry::{Bounds, point, size},
+    platform::Os,
+    prelude::*,
+};
 use nsh_engine::{EngineConfig, Root};
 use nsh_testing::Headless;
 
@@ -1073,4 +1085,519 @@ fn panel_includes_optional_services_and_excludes_internal_devbase_jobs() {
             .iter()
             .any(|row| row.label.contains("xyz.jyeu.devbase.dev."))
     );
+}
+
+// --- Native macOS tray & popover polish tests --------------------------------
+
+#[test]
+fn title_runs_renders_running_and_colored_failure_indicator() {
+    let idle = MenubarPanel::from(MenubarInput {
+        proxy_status: "Stopped".to_string(),
+        proxy_port: 8443,
+        ..MenubarInput::default()
+    });
+    assert!(menubar_title_runs(&idle).is_empty());
+
+    let running_only = MenubarPanel::from(MenubarInput {
+        instances: vec![
+            MenubarInstance {
+                id: "app".to_string(),
+                title: "PostgreSQL".to_string(),
+                port: 5432,
+                status: "Running".to_string(),
+            },
+            MenubarInstance {
+                id: "cache".to_string(),
+                title: "Redis".to_string(),
+                port: 6379,
+                status: "Running".to_string(),
+            },
+        ],
+        proxy_status: "Stopped".to_string(),
+        proxy_port: 8443,
+        ..MenubarInput::default()
+    });
+    let runs = menubar_title_runs(&running_only);
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].text, "2");
+    assert_eq!(runs[0].color, None);
+
+    let running_and_failed = MenubarPanel::from(MenubarInput {
+        instances: vec![
+            MenubarInstance {
+                id: "app".to_string(),
+                title: "PostgreSQL".to_string(),
+                port: 5432,
+                status: "Running".to_string(),
+            },
+            MenubarInstance {
+                id: "cache".to_string(),
+                title: "Redis".to_string(),
+                port: 6379,
+                status: "Failed".to_string(),
+            },
+        ],
+        proxy_status: "Running".to_string(),
+        proxy_port: 8443,
+        ..MenubarInput::default()
+    });
+    let runs = menubar_title_runs(&running_and_failed);
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].text, "2");
+    assert_eq!(runs[0].color, None);
+    assert_eq!(runs[1].text, " · 1!");
+    assert!(runs[1].color.is_some());
+
+    let failed_only = MenubarPanel::from(MenubarInput {
+        instances: vec![MenubarInstance {
+            id: "app".to_string(),
+            title: "PostgreSQL".to_string(),
+            port: 5432,
+            status: "Failed".to_string(),
+        }],
+        proxy_status: "Failed".to_string(),
+        proxy_port: 8443,
+        ..MenubarInput::default()
+    });
+    let runs = menubar_title_runs(&failed_only);
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].text, "2!");
+    assert!(runs[0].color.is_some());
+}
+
+#[test]
+fn blur_reopen_debounce_suppresses_bounce_within_200ms() {
+    let closed_at = Instant::now();
+    assert!(menubar_should_reopen_after_blur(None, closed_at));
+    assert!(!menubar_should_reopen_after_blur(
+        Some(closed_at),
+        closed_at
+    ));
+    assert!(!menubar_should_reopen_after_blur(
+        Some(closed_at),
+        closed_at + Duration::from_millis(50)
+    ));
+    assert!(!menubar_should_reopen_after_blur(
+        Some(closed_at),
+        closed_at + Duration::from_millis(199)
+    ));
+    assert!(menubar_should_reopen_after_blur(
+        Some(closed_at),
+        closed_at + Duration::from_millis(200)
+    ));
+    assert!(menubar_should_reopen_after_blur(
+        Some(closed_at),
+        closed_at + Duration::from_millis(500)
+    ));
+}
+
+#[test]
+fn anchor_position_falls_back_to_top_right_of_primary_display_and_shortcut_parses() {
+    let shortcut = Shortcut::parse(MENUBAR_GLOBAL_SHORTCUT, true).unwrap();
+    assert!(shortcut.ctrl && shortcut.alt && shortcut.meta);
+    assert_eq!(shortcut.label_for(Os::MacOs), MENUBAR_GLOBAL_SHORTCUT_LABEL);
+
+    let secondary = Display::new(
+        DisplayId(2),
+        Bounds::new(point(px(-1920.0), px(0.0)), size(px(1920.0), px(1080.0))),
+        Bounds::new(point(px(-1920.0), px(25.0)), size(px(1920.0), px(1055.0))),
+        false,
+    );
+    let primary = Display::new(
+        DisplayId(1),
+        Bounds::new(point(px(0.0), px(0.0)), size(px(1512.0), px(982.0))),
+        Bounds::new(point(px(0.0), px(38.0)), size(px(1512.0), px(874.0))),
+        true,
+    );
+    let screens = vec![secondary, primary];
+
+    // No tray click anchor (e.g. opened via global shortcut): top-right under
+    // the menu bar, inset by POPOVER_MARGIN (8pt), POPOVER_WIDTH (340pt).
+    let fallback = menubar_anchor_position_in(None, &screens).unwrap();
+    assert_eq!(fallback, point(px(1512.0 - 340.0 - 8.0), px(38.0 + 8.0)));
+
+    // Tray click near right edge clamps cleanly inside visible_bounds.
+    let right_edge_tray = Bounds::new(point(px(1480.0), px(0.0)), size(px(28.0), px(24.0)));
+    let clamped = menubar_anchor_position_in(Some(right_edge_tray), &screens).unwrap();
+    assert_eq!(clamped, point(px(1512.0 - 340.0 - 8.0), px(30.0)));
+
+    // No displays and no anchor yields None.
+    assert_eq!(menubar_anchor_position_in(None, &[]), None);
+}
+
+fn assert_every_menu_entry_has_svg_icon(entries: &[MenubarMenuEntry]) {
+    for entry in entries {
+        match entry {
+            MenubarMenuEntry::Separator => {}
+            MenubarMenuEntry::Item { label, icon, .. } => {
+                assert!(
+                    !icon.is_empty() && icon.contains('<'),
+                    "menu item `{label}` missing template SVG icon"
+                );
+            }
+            MenubarMenuEntry::Submenu { label, icon, items } => {
+                assert!(
+                    !icon.is_empty() && icon.contains('<'),
+                    "submenu `{label}` missing template SVG icon"
+                );
+                assert!(!items.is_empty(), "submenu `{label}` should not be empty");
+                assert_every_menu_entry_has_svg_icon(items);
+            }
+        }
+    }
+}
+
+#[test]
+fn right_click_menu_has_explicit_macos_section_headers_and_svg_icons_on_every_item() {
+    let panel = MenubarPanel::from(MenubarInput {
+        instances: vec![
+            MenubarInstance {
+                id: "app".to_string(),
+                title: "PostgreSQL".to_string(),
+                port: 5432,
+                status: "Running".to_string(),
+            },
+            MenubarInstance {
+                id: "cache".to_string(),
+                title: "Redis".to_string(),
+                port: 6379,
+                status: "Stopped".to_string(),
+            },
+        ],
+        services: vec![
+            MenubarService {
+                id: "brew:redis".to_string(),
+                source: Source::Brew,
+                name: "redis".to_string(),
+                status: "Running".to_string(),
+                running: true,
+                busy: false,
+                can_toggle: true,
+            },
+            MenubarService {
+                id: "user-agent:com.example.sync".to_string(),
+                source: Source::UserAgent,
+                name: "com.example.sync".to_string(),
+                status: "Stopped".to_string(),
+                running: false,
+                busy: false,
+                can_toggle: true,
+            },
+        ],
+        proxy_status: "Running".to_string(),
+        proxy_rules: 2,
+        proxy_port: 8443,
+        tunnel_status: "Stopped".to_string(),
+        tunnel_configured: true,
+        tunnel_rules: 1,
+        tunnel_workers: 1,
+        ..MenubarInput::default()
+    });
+
+    let entries = menubar_menu_entries(&panel);
+    assert_every_menu_entry_has_svg_icon(&entries);
+
+    let disabled_headers: Vec<&str> = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            MenubarMenuEntry::Item {
+                label,
+                enabled: false,
+                action: None,
+                ..
+            } => Some(label.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(disabled_headers.iter().any(|h| h.starts_with("Devbase · ")));
+    assert!(disabled_headers.contains(&"Databases · 1/2"));
+    assert!(disabled_headers.contains(&"HTTPS"));
+    assert!(disabled_headers.contains(&"Homebrew · 1/1"));
+    assert!(disabled_headers.contains(&"Login Agents · 0/1"));
+
+    // Start and Stop toggle items both have distinct template SVG icons.
+    let stop_icon = entries.iter().find_map(|entry| match entry {
+        MenubarMenuEntry::Item { label, icon, .. } if label.starts_with("Stop app") => Some(*icon),
+        _ => None,
+    });
+    let start_icon = entries.iter().find_map(|entry| match entry {
+        MenubarMenuEntry::Item { label, icon, .. } if label.starts_with("Start cache") => {
+            Some(*icon)
+        }
+        _ => None,
+    });
+    assert!(stop_icon.is_some() && start_icon.is_some());
+    assert_ne!(stop_icon, start_icon);
+
+    // Long service lists collapse into a clean non-inline submenu with an SVG icon.
+    let many_brew: Vec<MenubarService> = (0..8)
+        .map(|idx| MenubarService {
+            id: format!("brew:svc-{idx}"),
+            source: Source::Brew,
+            name: format!("svc-{idx}"),
+            status: if idx % 2 == 0 { "Running" } else { "Stopped" }.to_string(),
+            running: idx % 2 == 0,
+            busy: false,
+            can_toggle: true,
+        })
+        .collect();
+    let long_panel = MenubarPanel::from(MenubarInput {
+        services: many_brew,
+        proxy_status: "Stopped".to_string(),
+        proxy_port: 8443,
+        ..MenubarInput::default()
+    });
+    let long_entries = menubar_menu_entries(&long_panel);
+    assert_every_menu_entry_has_svg_icon(&long_entries);
+    let brew_submenu = long_entries.iter().find_map(|entry| match entry {
+        MenubarMenuEntry::Submenu { label, items, .. } if label == "Homebrew · 4/8" => Some(items),
+        _ => None,
+    });
+    assert_eq!(brew_submenu.map(Vec::len), Some(16));
+}
+
+struct FakeServiceProvider {
+    source: Source,
+    items: Mutex<Vec<ServiceItem>>,
+    calls: Mutex<Vec<String>>,
+}
+
+impl FakeServiceProvider {
+    fn new(source: Source, items: Vec<ServiceItem>) -> Arc<Self> {
+        Arc::new(Self {
+            source,
+            items: Mutex::new(items),
+            calls: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn calls(&self) -> Vec<String> {
+        self.calls
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
+impl ServiceProvider for FakeServiceProvider {
+    fn source(&self) -> Source {
+        self.source
+    }
+
+    fn list(&self) -> ServiceResult<Vec<ServiceItem>> {
+        Ok(self
+            .items
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone())
+    }
+
+    fn detail(&self, _item: &ServiceItem) -> ServiceResult<ServiceDetail> {
+        Ok(ServiceDetail::default())
+    }
+
+    fn actions(&self, item: &ServiceItem) -> Vec<ServiceAction> {
+        if item.up() {
+            vec![ServiceAction::Stop]
+        } else {
+            vec![ServiceAction::Start]
+        }
+    }
+
+    fn confirm(&self, _item: &ServiceItem, _action: ServiceAction) -> Option<String> {
+        None
+    }
+
+    fn do_action(&self, item: &ServiceItem, action: ServiceAction) -> ServiceResult<()> {
+        self.calls
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(format!("{action:?} {}", item.name));
+        let mut items = self
+            .items
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(found) = items.iter_mut().find(|existing| existing.id == item.id) {
+            found.state = match action {
+                ServiceAction::Start | ServiceAction::Load | ServiceAction::Restart => {
+                    ServiceState::Running
+                }
+                ServiceAction::Stop | ServiceAction::Unload => ServiceState::Stopped,
+                _ => found.state,
+            };
+        }
+        Ok(())
+    }
+}
+
+fn service_item(id: &str, source: Source, name: &str, state: ServiceState) -> ServiceItem {
+    ServiceItem {
+        id: id.to_string(),
+        source,
+        name: name.to_string(),
+        state,
+        pid: 0,
+        autostart: Autostart::Off,
+        owner: String::new(),
+        path: PathBuf::new(),
+        kind: None,
+        admin: false,
+        keep_alive: false,
+    }
+}
+
+#[component]
+fn PopoverWithServicesHarness() -> impl IntoElement {
+    nsh_app_devbase::testing::menubar_load();
+    refresh_services(Source::Brew);
+    refresh_services(Source::UserAgent);
+    view().size_full().flex_col().child(
+        view()
+            .flex_1()
+            .min_h(px(0.0))
+            .child(nsh_app_devbase::testing::menubar_popover()),
+    )
+}
+
+#[test]
+fn collapsible_service_sections_group_brew_and_login_agents_and_toggle_cleanly() {
+    let databases = FakeDatabases::new(database_fixture(&[("app", "Running")]));
+    let proxy = FakeProxy::new(proxy_snapshot(
+        vec![rule("app.test.devbase.localhost", false)],
+        "Stopped",
+    ));
+    let settings = FakeSettings::new(settings_snapshot());
+    let brew = FakeServiceProvider::new(
+        Source::Brew,
+        vec![
+            service_item("brew:redis", Source::Brew, "redis", ServiceState::Running),
+            service_item("brew:nginx", Source::Brew, "nginx", ServiceState::Stopped),
+        ],
+    );
+    let agents = FakeServiceProvider::new(
+        Source::UserAgent,
+        vec![
+            service_item(
+                "user-agent:com.example.sync",
+                Source::UserAgent,
+                "com.example.sync",
+                ServiceState::Running,
+            ),
+            service_item(
+                "user-agent:xyz.jyeu.devbase.dev.proxy",
+                Source::UserAgent,
+                "xyz.jyeu.devbase.dev.proxy",
+                ServiceState::Running,
+            ),
+        ],
+    );
+
+    let turn = serial();
+    use_fake_menubar();
+    use_fake_providers();
+    install_provider(Source::Brew, brew.clone() as Arc<dyn ServiceProvider>);
+    install_provider(Source::UserAgent, agents as Arc<dyn ServiceProvider>);
+    use_fake_databases();
+    install_databases_provider(databases as Arc<dyn DatabasesProvider>);
+    use_fake_proxy();
+    install_proxy_provider(proxy as Arc<dyn ProxyProvider>);
+    use_fake_system();
+    install_system_settings_provider(settings as Arc<dyn SystemSettingsProvider>);
+
+    let mut app =
+        Headless::start(EngineConfig::new(Root::of::<PopoverWithServicesHarness>())).unwrap();
+    app.set_viewport(Size::new(px(340.0), px(560.0))).unwrap();
+    app.wait_for("id:popover-section-brew-toggle").unwrap();
+    app.wait_for("id:popover-section-user-agent-toggle")
+        .unwrap();
+    app.wait_for("id:popover-service-redis").unwrap();
+    app.wait_for("id:popover-service-nginx").unwrap();
+    app.wait_for("id:popover-service-com.example.sync").unwrap();
+
+    assert!(contains(&app, "Homebrew"));
+    assert!(contains(&app, "Login Agents"));
+    assert!(contains(&app, "1/2"));
+    assert!(contains(&app, "1/1"));
+    assert!(!contains(&app, "xyz.jyeu.devbase.dev.proxy"));
+
+    // Collapsing Homebrew hides its rows while keeping Login Agents expanded.
+    app.press("id:popover-section-brew-toggle").unwrap();
+    app.wait_for_gone("id:popover-service-redis", Duration::from_secs(2))
+        .unwrap();
+    assert_eq!(app.screen().count("id:popover-service-nginx").unwrap(), 0);
+    assert_eq!(
+        app.screen()
+            .count("id:popover-service-com.example.sync")
+            .unwrap(),
+        1
+    );
+
+    // Expanding Homebrew brings its rows back and toggling a switch calls provider.
+    app.press("id:popover-section-brew-toggle").unwrap();
+    app.wait_for("id:popover-switch-service-nginx").unwrap();
+    app.press("id:popover-switch-service-nginx").unwrap();
+    wait_contains(&mut app, "2/2", Duration::from_secs(5)).unwrap();
+    assert!(brew.calls().iter().any(|call| call == "Start nginx"));
+    drop(turn);
+}
+
+#[test]
+fn popover_scroll_body_and_rows_stay_stable_across_switch_toggles_and_refresh() {
+    let databases = FakeDatabases::new(database_fixture(&[
+        ("app", "Stopped"),
+        ("cache", "Running"),
+    ]));
+    let proxy = FakeProxy::new(proxy_snapshot(
+        vec![rule("app.test.devbase.localhost", false)],
+        "Stopped",
+    ));
+    let settings = FakeSettings::new(settings_snapshot());
+
+    let turn = serial();
+    use_fake_menubar();
+    use_fake_providers();
+    use_fake_databases();
+    install_databases_provider(databases.clone() as Arc<dyn DatabasesProvider>);
+    use_fake_proxy();
+    install_proxy_provider(proxy.clone() as Arc<dyn ProxyProvider>);
+    use_fake_system();
+    install_system_settings_provider(settings as Arc<dyn SystemSettingsProvider>);
+
+    let mut app = Headless::start(EngineConfig::new(Root::of::<PopoverHarness>())).unwrap();
+    app.set_viewport(Size::new(px(340.0), px(520.0))).unwrap();
+    app.wait_for("id:menubar-popover-body").unwrap();
+    app.wait_for("id:popover-instance-app").unwrap();
+    app.wait_for("id:popover-instance-cache").unwrap();
+    app.wait_for("id:popover-proxy").unwrap();
+    app.wait_for("id:popover-shortcut-hint").unwrap();
+    assert!(contains(&app, MENUBAR_GLOBAL_SHORTCUT_LABEL));
+
+    let body_id = app.screen().id("id:menubar-popover-body").unwrap();
+    let app_row_id = app.screen().id("id:popover-instance-app").unwrap();
+    let cache_row_id = app.screen().id("id:popover-instance-cache").unwrap();
+    let proxy_row_id = app.screen().id("id:popover-proxy").unwrap();
+
+    // Toggle an instance switch, toggle proxy, and trigger Refresh.
+    app.press("id:popover-switch-instance-app").unwrap();
+    wait_contains(&mut app, "2 running", Duration::from_secs(5)).unwrap();
+
+    app.press("id:popover-switch-proxy").unwrap();
+    wait_contains(&mut app, "Proxy · Running", Duration::from_secs(5)).unwrap();
+
+    app.press("id:popover-refresh").unwrap();
+    app.wait(Duration::from_millis(200)).unwrap();
+
+    // Fine-grained reactivity: neither the scroll container nor keyed rows
+    // were torn down or recreated.
+    assert_eq!(app.screen().id("id:menubar-popover-body").unwrap(), body_id);
+    assert_eq!(
+        app.screen().id("id:popover-instance-app").unwrap(),
+        app_row_id
+    );
+    assert_eq!(
+        app.screen().id("id:popover-instance-cache").unwrap(),
+        cache_row_id
+    );
+    assert_eq!(app.screen().id("id:popover-proxy").unwrap(), proxy_row_id);
+    drop(turn);
 }

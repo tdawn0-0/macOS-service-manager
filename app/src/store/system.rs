@@ -40,7 +40,13 @@ use devcore::{
 };
 use nsh_core::prelude::*;
 
-use crate::store::software::{format_bytes, plural};
+use crate::{
+    store::{
+        Section,
+        software::{format_bytes, plural},
+    },
+    theme as tokens,
+};
 
 /// How a helper install ended: the freshly read status, and the error, if any.
 /// The status is refreshed on failure exactly as `settings.go:194-208` does.
@@ -193,6 +199,10 @@ fn take<T: ?Sized>(slot: &'static Mutex<Option<Arc<T>>>) -> Option<Arc<T>> {
 /// Makes every facet use test providers instead of devcore. Tests only.
 pub fn use_fake_provider() {
     FAKE_MODE.store(true, Ordering::Relaxed);
+}
+
+pub(crate) fn is_fake_mode() -> bool {
+    FAKE_MODE.load(Ordering::Relaxed)
 }
 
 /// Gives the diagnostics surface a provider of the test's own. Tests only.
@@ -608,7 +618,6 @@ struct OperationsState {
 
 #[derive(Debug, Clone, Default)]
 struct PortsState {
-    input: String,
     inspections: BTreeMap<i64, PortInspection>,
     checking: bool,
     suggesting: bool,
@@ -618,6 +627,21 @@ struct PortsState {
     error: Option<String>,
     notice: Option<String>,
     sequence: u64,
+}
+
+/// Dedicated signal for the Diagnostics port input so typing never invalidates
+/// unrelated `Workspace` readers (`runtime`, `checks`, `listening`, `operations`).
+#[derive(Debug, Clone)]
+struct PortInput(String);
+
+impl Default for PortInput {
+    fn default() -> Self {
+        PortInput("3000".to_string())
+    }
+}
+
+fn port_input_signal() -> Signal<PortInput> {
+    global::<PortInput>()
 }
 
 #[derive(Debug, Clone, Default)]
@@ -638,28 +662,13 @@ struct SettingsState {
     notice: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct Workspace {
     runtime: RuntimeState,
     report: ReportState,
     operations: OperationsState,
     ports: PortsState,
     settings: SettingsState,
-}
-
-impl Default for Workspace {
-    fn default() -> Self {
-        Workspace {
-            runtime: RuntimeState::default(),
-            report: ReportState::default(),
-            operations: OperationsState::default(),
-            ports: PortsState {
-                input: "3000".to_string(),
-                ..PortsState::default()
-            },
-            settings: SettingsState::default(),
-        }
-    }
 }
 
 fn workspace() -> Signal<Workspace> {
@@ -814,6 +823,7 @@ pub(crate) fn run_diagnostics() {
             Ok(answer) => answer,
             Err(error) => Err(format!("diagnostics did not finish: {error}")),
         };
+        let mut notify: Option<(bool, String)> = None;
         workspace().update(|state| {
             if state.report.sequence != sequence {
                 return;
@@ -826,12 +836,39 @@ pub(crate) fn run_diagnostics() {
                         .ok()
                         .and_then(|bytes| String::from_utf8(bytes).ok())
                         .unwrap_or_default();
+                    let failed = report
+                        .checks
+                        .iter()
+                        .filter(|check| check.status == "Failed")
+                        .count();
+                    let summary = if failed > 0 {
+                        format!(
+                            "Diagnostics finished with {} failed {}.",
+                            failed,
+                            if failed == 1 { "check" } else { "checks" }
+                        )
+                    } else {
+                        "Diagnostics finished cleanly.".to_string()
+                    };
+                    notify = Some((failed > 0, summary));
                     state.report.report = Some(report);
                     state.report.error = None;
                 }
-                Err(error) => state.report.error = Some(error),
+                Err(error) => {
+                    notify = Some((true, error.clone()));
+                    state.report.error = Some(error);
+                }
             }
         });
+        if let Some((failed, body)) = notify {
+            crate::notify_task(
+                "devbase.diagnostics",
+                "Diagnostics",
+                &body,
+                Section::Diagnostics,
+                failed,
+            );
+        }
     });
 }
 
@@ -1045,13 +1082,11 @@ pub(crate) fn dismiss_operation(id: &str) {
 // --- Ports -------------------------------------------------------------------
 
 pub(crate) fn port_input() -> String {
-    workspace().with(|state| state.ports.input.clone())
+    port_input_signal().with(|state| state.0.clone())
 }
 
 pub(crate) fn set_port_input(next: String) {
-    workspace().update(|state| {
-        state.ports.input = next;
-    });
+    port_input_signal().set(PortInput(next));
 }
 
 pub(crate) fn checking_port() -> bool {
@@ -1138,11 +1173,12 @@ pub(crate) fn find_free_port() {
             Ok(answer) => answer,
             Err(error) => Err(format!("no free port was suggested: {error}")),
         };
+        let mut suggested_port = None;
         workspace().update(|state| {
             state.ports.suggesting = false;
             match answer {
                 Ok(port) => {
-                    state.ports.input = port.to_string();
+                    suggested_port = Some(port);
                     state.ports.notice = Some(format!(
                         "Suggested port: {port}. An unchanged form is filled automatically. Review, save and retry; this does not reserve the port."
                     ));
@@ -1151,6 +1187,9 @@ pub(crate) fn find_free_port() {
                 Err(error) => state.ports.error = Some(error),
             }
         });
+        if let Some(port) = suggested_port {
+            set_port_input(port.to_string());
+        }
     });
 }
 
@@ -1863,114 +1902,186 @@ pub(crate) fn quit_dialog() -> impl IntoElement {
         .on_cancel(cancel_quit)
         .child(
             view()
-                .test_id("quit-dialog")
-                .w(px(520.0))
-                .p(px(20.0))
-                .flex_col()
-                .gap(px(12.0))
-                .rounded(move || theme().radius)
-                .bg(move || theme().card)
-                .border_1()
-                .border_color(move || theme().border)
+                .test_id("quit-dialog-backdrop")
+                .size_full()
+                .items_center()
+                .justify_center()
+                .bg(AdaptiveColor::rgb(0x000000, 0x000000).opacity(0.35))
                 .child(
-                    text("Quit Devbase?")
-                        .text_size(px(18.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().foreground),
-                )
-                .child(dynamic(|| {
-                    let state = quit_state().with(|state| state.clone());
-                    let instances = state
-                        .plan
-                        .as_ref()
-                        .map(|plan| plan.instances.len())
-                        .unwrap_or(0);
-                    let loading = state.loading;
-                    let stopping = state.stopping;
-                    let has_instances = instances > 0;
-                    let stop_disabled = loading || stopping || state.plan.is_none();
-                    let body = view()
+                    view()
+                        .test_id("quit-dialog")
+                        .w(px(520.0))
+                        .p(px(20.0))
                         .flex_col()
                         .gap(px(12.0))
+                        .rounded(tokens::panel_radius)
+                        .bg(tokens::panel)
+                        .border_1()
+                        .border_color(tokens::hairline)
+                        .shadow_xl()
                         .child(
-                            view().flex_col().gap(px(6.0)).children(
-                                [
-                                    loading.then(|| {
-                                        dialog_line(
-                                            "Reading managed service scope…".to_string(),
-                                            false,
-                                        )
-                                    }),
-                                    state.error.clone().map(|error| dialog_line(error, true)),
-                                    (!loading && state.error.is_none()).then(|| {
-                                        dialog_line(
-                                            if instances == 0 {
-                                                "No managed databases are running.".to_string()
-                                            } else {
-                                                format!(
-                                                    "Stop scope: {}",
-                                                    plural(instances, "managed database")
-                                                )
-                                            },
-                                            false,
-                                        )
-                                    }),
-                                    stopping.then(|| {
-                                        dialog_line(
-                                            "Stopping managed databases…".to_string(),
-                                            false,
-                                        )
-                                    }),
-                                ]
-                                .into_iter()
-                                .flatten(),
-                            ),
+                            text("Quit Devbase?")
+                                .text_size(px(18.0))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(move || theme().foreground),
                         )
-                        .child(
-                            view()
-                                .flex_row()
-                                .items_center()
-                                .gap(px(8.0))
-                                .child(action(
-                                    "Cancel quit",
-                                    "quit-cancel",
-                                    false,
-                                    stopping,
-                                    cancel_quit,
-                                ))
-                                .child(view().flex_1())
-                                .child(when(has_instances, move || {
+                        .child(dynamic(|| {
+                            let state = quit_state().with(|state| state.clone());
+                            let instance_ids: Vec<String> = state
+                                .plan
+                                .as_ref()
+                                .map(|plan| {
+                                    plan.instances
+                                        .iter()
+                                        .map(|item| {
+                                            if !item.id.is_empty() {
+                                                item.id.clone()
+                                            } else {
+                                                item.name.clone()
+                                            }
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            let instances = instance_ids.len();
+                            let loading = state.loading;
+                            let stopping = state.stopping;
+                            let has_instances = instances > 0;
+                            let show_instance_list =
+                                !loading && state.error.is_none() && has_instances;
+                            let stop_disabled = loading || stopping || state.plan.is_none();
+                            let body = view()
+                                .flex_col()
+                                .gap(px(12.0))
+                                .child(
+                                    view().flex_col().gap(px(6.0)).children(
+                                        [
+                                            loading.then(|| {
+                                                dialog_line(
+                                                    "Reading managed service scope…".to_string(),
+                                                    false,
+                                                )
+                                            }),
+                                            state
+                                                .error
+                                                .clone()
+                                                .map(|error| dialog_line(error, true)),
+                                            (!loading && state.error.is_none()).then(|| {
+                                                dialog_line(
+                                                    if instances == 0 {
+                                                        "No managed databases are running."
+                                                            .to_string()
+                                                    } else {
+                                                        format!(
+                                                            "Stop scope: {}",
+                                                            plural(instances, "managed database")
+                                                        )
+                                                    },
+                                                    false,
+                                                )
+                                            }),
+                                            stopping.then(|| {
+                                                dialog_line(
+                                                    "Stopping managed databases…".to_string(),
+                                                    false,
+                                                )
+                                            }),
+                                        ]
+                                        .into_iter()
+                                        .flatten(),
+                                    ),
+                                )
+                                .child(when(show_instance_list, move || {
+                                    scroll()
+                                        .test_id("quit-instance-list")
+                                        .w_full()
+                                        .max_h(px(140.0))
+                                        .rounded(move || theme().radius)
+                                        .bg(tokens::inset)
+                                        .border_1()
+                                        .border_color(tokens::hairline)
+                                        .child(
+                                            view()
+                                                .w_full()
+                                                .flex_col()
+                                                .gap(px(4.0))
+                                                .px(px(10.0))
+                                                .py(px(8.0))
+                                                .children(instance_ids.iter().cloned().map(|id| {
+                                                    view()
+                                                        .test_id(&format!("quit-instance-{id}"))
+                                                        .w_full()
+                                                        .flex_row()
+                                                        .items_center()
+                                                        .gap(px(8.0))
+                                                        .child(
+                                                            view()
+                                                                .w(px(6.0))
+                                                                .h(px(6.0))
+                                                                .flex_none()
+                                                                .rounded_full()
+                                                                .bg(tokens::success),
+                                                        )
+                                                        .child(
+                                                            text(id)
+                                                                .flex_1()
+                                                                .min_w(px(0.0))
+                                                                .font_family("monospace")
+                                                                .text_size(px(tokens::TEXT_SMALL))
+                                                                .text_color(move || {
+                                                                    theme().foreground
+                                                                })
+                                                                .truncate(),
+                                                        )
+                                                })),
+                                        )
+                                }))
+                                .child(
                                     view()
                                         .flex_row()
                                         .items_center()
                                         .gap(px(8.0))
                                         .child(action(
-                                            "Keep services and quit",
-                                            "quit-keep",
+                                            "Cancel quit",
+                                            "quit-cancel",
                                             false,
-                                            loading || stopping,
-                                            finish_quit,
+                                            stopping,
+                                            cancel_quit,
                                         ))
-                                        .child(action(
-                                            "Stop managed databases and quit",
-                                            "quit-stop",
-                                            true,
-                                            stop_disabled,
-                                            stop_for_quit,
-                                        ))
-                                }))
-                                .child(when(!has_instances, move || {
-                                    action(
-                                        "Quit",
-                                        "quit-confirm",
-                                        true,
-                                        loading || stopping,
-                                        finish_quit,
-                                    )
-                                })),
-                        );
-                    Some(body.into_element())
-                })),
+                                        .child(view().flex_1())
+                                        .child(when(has_instances, move || {
+                                            view()
+                                                .flex_row()
+                                                .items_center()
+                                                .gap(px(8.0))
+                                                .child(action(
+                                                    "Keep services and quit",
+                                                    "quit-keep",
+                                                    false,
+                                                    loading || stopping,
+                                                    finish_quit,
+                                                ))
+                                                .child(action(
+                                                    "Stop managed databases and quit",
+                                                    "quit-stop",
+                                                    true,
+                                                    stop_disabled,
+                                                    stop_for_quit,
+                                                ))
+                                        }))
+                                        .child(when(!has_instances, move || {
+                                            action(
+                                                "Quit",
+                                                "quit-confirm",
+                                                true,
+                                                loading || stopping,
+                                                finish_quit,
+                                            )
+                                        })),
+                                );
+                            Some(body.into_element())
+                        })),
+                ),
         )
 }
 
@@ -1995,14 +2106,17 @@ fn action(
     use nsh_base::theme;
     nsh_base::button()
         .test_id(test_id)
-        .h(px(26.0))
-        .px(px(10.0))
+        .h(px(28.0))
+        .px(px(12.0))
+        .flex_none()
+        .items_center()
+        .justify_center()
         .rounded(move || theme().radius)
         .bg(move || {
             if primary {
                 theme().primary
             } else {
-                theme().card
+                tokens::control()
             }
         })
         .border_1()
@@ -2010,9 +2124,17 @@ fn action(
             if primary {
                 theme().primary
             } else {
-                theme().border
+                tokens::hairline()
             }
         })
+        .hover(move |style| {
+            if primary {
+                style.bg(move || theme().primary.opacity(0.86))
+            } else {
+                style.bg(tokens::row_hover())
+            }
+        })
+        .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
         .disabled(disabled)
         .opacity(if disabled { 0.45 } else { 1.0 })
         .text_color(move || {
@@ -2023,5 +2145,5 @@ fn action(
             }
         })
         .on_press(on_press)
-        .child(text(label).text_size(px(12.0)))
+        .child(text(label).text_size(px(tokens::TEXT_SMALL)))
 }

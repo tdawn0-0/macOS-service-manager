@@ -1601,3 +1601,85 @@ fn popover_scroll_body_and_rows_stay_stable_across_switch_toggles_and_refresh() 
     assert_eq!(app.screen().id("id:popover-proxy").unwrap(), proxy_row_id);
     drop(turn);
 }
+
+#[component]
+fn PopoverNavigationHarness() -> impl IntoElement {
+    nsh_app_devbase::testing::menubar_load();
+    view()
+        .size_full()
+        .flex_row()
+        .child(
+            view()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex_col()
+                .child(nsh_app_devbase::app()),
+        )
+        .child(
+            view()
+                .w(px(340.0))
+                .flex_none()
+                .flex_col()
+                .child(
+                    nsh_base::button()
+                        .test_id("open-popover-shortcut")
+                        .on_press(nsh_app_devbase::testing::menubar_toggle_popover_shortcut)
+                        .child(text("Toggle Popover")),
+                )
+                .child(when(
+                    nsh_app_devbase::testing::menubar_popover_open,
+                    nsh_app_devbase::testing::menubar_popover,
+                )),
+        )
+}
+
+#[test]
+fn clicking_proxy_and_tunnel_rows_navigates_to_https_proxy_and_closes_popover() {
+    let databases = FakeDatabases::new(database_fixture(&[("app", "Running")]));
+    let mut snapshot = proxy_snapshot(vec![rule("app.test.devbase.localhost", true)], "Running");
+    snapshot.token_configured = true;
+    snapshot
+        .workers
+        .insert("app-test", "https://app-test.example.workers.dev");
+    snapshot
+        .statuses
+        .insert("tunnel".to_string(), "Stopped".to_string());
+    let proxy = FakeProxy::new(snapshot);
+    let settings = FakeSettings::new(settings_snapshot());
+
+    let turn = serial();
+    use_fake_menubar();
+    use_fake_providers();
+    use_fake_databases();
+    install_databases_provider(databases as Arc<dyn DatabasesProvider>);
+    use_fake_proxy();
+    install_proxy_provider(proxy as Arc<dyn ProxyProvider>);
+    use_fake_system();
+    install_system_settings_provider(settings as Arc<dyn SystemSettingsProvider>);
+    use_fake_guide();
+
+    let mut app =
+        Headless::start(EngineConfig::new(Root::of::<PopoverNavigationHarness>())).unwrap();
+    app.set_viewport(Size::new(px(1440.0), px(720.0))).unwrap();
+    app.wait_for("Services").unwrap();
+
+    // Open popover, click Proxy row -> closes popover & navigates to HTTPS Proxy.
+    app.press("id:open-popover-shortcut").unwrap();
+    app.wait_for("id:popover-open-proxy").unwrap();
+    app.press("id:popover-open-proxy").unwrap();
+    app.wait_for_gone("id:menubar-popover", Duration::from_secs(2))
+        .unwrap();
+    app.wait_for("HTTPS proxy rules").unwrap();
+
+    // Switch back to Services, reopen popover, click Tunnel row -> navigates to HTTPS Proxy.
+    app.press("role:button[Services]").unwrap();
+    app.wait_for("launchd jobs, their status and lifecycle controls.")
+        .unwrap();
+    app.press("id:open-popover-shortcut").unwrap();
+    app.wait_for("id:popover-open-tunnel").unwrap();
+    app.press("id:popover-open-tunnel").unwrap();
+    app.wait_for_gone("id:menubar-popover", Duration::from_secs(2))
+        .unwrap();
+    app.wait_for("HTTPS proxy rules").unwrap();
+    drop(turn);
+}

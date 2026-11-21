@@ -342,9 +342,16 @@ fn quit_dialog_updates_reactively_from_loading_to_loaded_scope() {
     app.wait_for("id:quit-dialog").unwrap();
     app.wait_for("Reading managed service scope…").unwrap();
 
-    // Once preview_shutdown resolves, dialog updates reactively to show scope and enabled actions.
+    // Once preview_shutdown resolves, dialog updates reactively to show scope,
+    // running instance IDs, and enabled actions.
     app.wait_for_within("Stop scope: 2 managed databases", Duration::from_secs(5))
         .unwrap();
+    app.wait_for("id:quit-dialog-backdrop").unwrap();
+    app.wait_for("id:quit-instance-list").unwrap();
+    app.wait_for("id:quit-instance-app").unwrap();
+    app.wait_for("id:quit-instance-cache").unwrap();
+    assert!(app.screen().shows("app"));
+    assert!(app.screen().shows("cache"));
     app.wait_for("Keep services and quit").unwrap();
     app.wait_for("Stop managed databases and quit").unwrap();
 

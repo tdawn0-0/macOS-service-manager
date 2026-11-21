@@ -85,6 +85,21 @@ pub fn use_fake_menubar() {
     FAKE_MODE.store(true, Ordering::Relaxed);
 }
 
+pub(crate) fn is_fake_mode() -> bool {
+    FAKE_MODE.load(Ordering::Relaxed)
+}
+
+/// Number of currently failed managed resources (databases, proxy, tunnel).
+pub(crate) fn failed_count() -> u32 {
+    let failed_instances = databases::instances()
+        .iter()
+        .filter(|inst| databases::status(&inst.id) == "Failed")
+        .count();
+    let failed_proxy = usize::from(proxy::proxy_status() == "Failed");
+    let failed_tunnel = usize::from(proxy::tunnel_status() == "Failed");
+    (failed_instances + failed_proxy + failed_tunnel).min(u32::MAX as usize) as u32
+}
+
 /// The icon `assets/icons/menubar.svg` draws, inline so a cargo run and a
 /// bundled app show the same template.
 const MENUBAR_ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
@@ -170,6 +185,8 @@ pub enum Action {
     ToggleProxy(bool),
     /// Start the Cloudflare tunnel, or stop it.
     ToggleTunnel(bool),
+    /// Show the HTTPS Proxy section.
+    OpenHttpsProxy,
     /// Show the Services section at a Homebrew or UserAgent item.
     OpenService { source: Source, id: String },
     /// Start or stop a Homebrew or UserAgent service item.
@@ -739,6 +756,11 @@ pub fn dispatch(action: Action) {
         }
         Action::ToggleProxy(on) => proxy::set_proxy_enabled(on),
         Action::ToggleTunnel(on) => proxy::set_tunnel_enabled(on),
+        Action::OpenHttpsProxy => {
+            close_popover();
+            store::select_section(Section::HttpsProxy);
+            show_window();
+        }
         Action::OpenService { source, id } => {
             close_popover();
             store::select_section(Section::Services);
@@ -1181,6 +1203,7 @@ fn section_heading(
         .child(
             text(move || detail.get())
                 .text_size(px(tokens::TEXT_CAPTION))
+                .tabular_nums()
                 .text_color(move || theme().muted_foreground),
         )
 }
@@ -1341,6 +1364,7 @@ fn popover_header() -> impl IntoElement {
                             text(move || header_status_summary().1)
                                 .test_id("popover-summary")
                                 .text_size(px(tokens::TEXT_CAPTION))
+                                .tabular_nums()
                                 .text_color(move || theme().muted_foreground),
                         ),
                 ),
@@ -1442,7 +1466,9 @@ fn popover_instance_row(row: ReadSignal<InstanceRow>) -> impl IntoElement {
                                 row.with(|r| format!("{} · :{} · {}", r.title, r.port, r.status))
                             })
                             .text_size(px(tokens::TEXT_CAPTION))
-                            .text_color(move || theme().muted_foreground),
+                            .tabular_nums()
+                            .text_color(move || theme().muted_foreground)
+                            .truncate(),
                         ),
                 ),
         )
@@ -1471,29 +1497,43 @@ fn popover_proxy_row() -> impl IntoElement {
         .py(px(5.0))
         .rounded(move || theme().radius)
         .hover(|s| s.bg(tokens::row_hover()))
-        .child(status_dot(proxy::proxy_status))
         .child(
-            view()
+            button()
+                .test_id("popover-open-proxy")
                 .flex_1()
                 .min_w(px(0.0))
-                .flex_col()
-                .gap(px(1.0))
+                .flex_row()
+                .items_center()
+                .justify_start()
+                .gap(px(8.0))
+                .on_press(|| dispatch(Action::OpenHttpsProxy))
+                .child(status_dot(proxy::proxy_status))
                 .child(
-                    text(move || format!("Proxy · {}", proxy::proxy_status()))
-                        .text_size(px(tokens::TEXT_BODY))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(move || theme().foreground),
-                )
-                .child(
-                    text(move || {
-                        format!(
-                            "{} · :{}",
-                            store::software::plural(proxy::saved_rules().len(), "rule"),
-                            proxy::listener_port()
+                    view()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .flex_col()
+                        .gap(px(1.0))
+                        .child(
+                            text(move || format!("Proxy · {}", proxy::proxy_status()))
+                                .text_size(px(tokens::TEXT_BODY))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(move || theme().foreground)
+                                .truncate(),
                         )
-                    })
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground),
+                        .child(
+                            text(move || {
+                                format!(
+                                    "{} · :{}",
+                                    store::software::plural(proxy::saved_rules().len(), "rule"),
+                                    proxy::listener_port()
+                                )
+                            })
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .tabular_nums()
+                            .text_color(move || theme().muted_foreground)
+                            .truncate(),
+                        ),
                 ),
         )
         .child(popover_switch(
@@ -1533,23 +1573,37 @@ fn popover_tunnel_row() -> impl IntoElement {
         .py(px(5.0))
         .rounded(move || theme().radius)
         .hover(|s| s.bg(tokens::row_hover()))
-        .child(status_dot(proxy::tunnel_status))
         .child(
-            view()
+            button()
+                .test_id("popover-open-tunnel")
                 .flex_1()
                 .min_w(px(0.0))
-                .flex_col()
-                .gap(px(1.0))
+                .flex_row()
+                .items_center()
+                .justify_start()
+                .gap(px(8.0))
+                .on_press(|| dispatch(Action::OpenHttpsProxy))
+                .child(status_dot(proxy::tunnel_status))
                 .child(
-                    text(move || format!("Tunnel · {}", proxy::tunnel_status()))
-                        .text_size(px(tokens::TEXT_BODY))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(move || theme().foreground),
-                )
-                .child(
-                    text(tunnel_row_detail)
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground),
+                    view()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .flex_col()
+                        .gap(px(1.0))
+                        .child(
+                            text(move || format!("Tunnel · {}", proxy::tunnel_status()))
+                                .text_size(px(tokens::TEXT_BODY))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(move || theme().foreground)
+                                .truncate(),
+                        )
+                        .child(
+                            text(tunnel_row_detail)
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .tabular_nums()
+                                .text_color(move || theme().muted_foreground)
+                                .truncate(),
+                        ),
                 ),
         )
         .child(popover_switch(
@@ -1703,6 +1757,7 @@ fn collapsible_service_section(source: Source, section_key: &'static str) -> imp
                     })
                     .test_id(&count_test_id)
                     .text_size(px(tokens::TEXT_CAPTION))
+                    .tabular_nums()
                     .text_color(move || theme().muted_foreground),
                 ),
         )
@@ -1726,13 +1781,17 @@ fn popover_status_row(
         .gap(px(8.0))
         .child(
             text(label)
+                .flex_none()
                 .text_size(px(tokens::TEXT_CAPTION))
                 .text_color(move || theme().muted_foreground),
         )
         .child(
             text(move || value.get())
+                .min_w(px(0.0))
                 .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().foreground),
+                .tabular_nums()
+                .text_color(move || theme().foreground)
+                .truncate(),
         )
 }
 

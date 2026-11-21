@@ -93,6 +93,12 @@ pub(crate) fn panel_radius() -> Points {
     px(theme().number("radius-panel").unwrap_or(12.0))
 }
 
+/// Subtle adaptive tint over macOS 26 Liquid Glass in the sidebar so navigation
+/// labels stay legible across bright or busy wallpapers.
+pub(crate) fn sidebar_glass_tint() -> AdaptiveColor {
+    theme().sidebar.opacity(0.18)
+}
+
 /// `name` from the app's theme, or `fallback` when a theme does not set it.
 fn color_or(name: &str, fallback: AdaptiveColor) -> AdaptiveColor {
     theme().color(name).unwrap_or(fallback)

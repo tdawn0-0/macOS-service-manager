@@ -256,6 +256,16 @@ pub fn start() {
     });
 }
 
+/// Opens the Full Disk Access guide on demand (from Help menu or Command Palette).
+pub fn open() {
+    guide().update(|state| {
+        state.open = true;
+        state.page = Page::Welcome;
+        state.settings_open = false;
+        state.sequence += 1;
+    });
+}
+
 /// Whether the overlay shows.
 pub fn visible() -> bool {
     guide().with(|state| state.open)
@@ -336,7 +346,8 @@ fn check_access() {
     });
 }
 
-const GUIDE_ICON: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z"/><path d="M6 16h.01"/><path d="M10 16h.01"/></svg>"#;
+/// Distinct Devbase stacked-toggle brand mark (tinted with `currentColor`).
+const GUIDE_ICON: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36"><path fill="currentColor" fill-rule="evenodd" d="M9.5 3h17a6.5 6.5 0 0 1 0 13h-17a6.5 6.5 0 0 1 0-13Zm17 2.9a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z"/><rect x="4.2" y="21.2" width="27.6" height="10.6" rx="5.3" fill="none" stroke="currentColor" stroke-width="2.4"/><circle cx="9.5" cy="26.5" r="2.7" fill="currentColor"/></svg>"#;
 
 const DISK_ICON: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/></svg>"#;
 
@@ -375,7 +386,14 @@ fn guide_button(
                 tokens::hairline()
             }
         })
-        .hover(move |style| style.bg(tokens::row_hover()))
+        .hover(move |style| {
+            if primary {
+                style.bg(move || theme().primary.opacity(0.86))
+            } else {
+                style.bg(tokens::row_hover())
+            }
+        })
+        .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
         .disabled(disabled)
         .opacity(if disabled { 0.5 } else { 1.0 })
         .text_color(move || {
@@ -411,7 +429,7 @@ pub(crate) fn guide_window() -> impl IntoElement {
         .id("guide")
         .kind(WindowKind::Panel)
         .title("Full Disk Access")
-        .default_size(size(px(420.0), px(340.0)))
+        .default_size(size(px(420.0), px(380.0)))
         .default_position(WindowPosition::Center)
         .attributes(attrs)
         .open(visible)
@@ -432,6 +450,7 @@ fn window_content() -> impl IntoElement {
         .text_color(move || theme().foreground)
         .child(
             view()
+                .test_id("guide-header-drag")
                 .w_full()
                 .flex_none()
                 .h(move || {
@@ -482,7 +501,7 @@ fn card() -> impl IntoElement {
     view()
         .test_id("guide-card")
         .w(px(420.0))
-        .h(px(340.0))
+        .h(px(380.0))
         .flex_none()
         .flex_col()
         .items_center()

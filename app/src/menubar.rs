@@ -14,6 +14,7 @@
 //! a platform. Nothing in a handler blocks: every switch calls the store, which
 //! runs its provider call on a blocking thread and writes its signals.
 
+use devcore::service::{Action as ServiceAction, Source, State as ServiceState};
 use nsh_base::{button, switch, theme};
 use nsh_core::{
     GlassEffect, PointerEvents,
@@ -29,7 +30,7 @@ use nsh_core::{
 };
 
 use crate::{
-    store::{self, Section, databases, proxy, software::SoftwareKind, system},
+    store::{self, Section, databases, proxy, services, software::SoftwareKind, system},
     theme as tokens,
 };
 
@@ -59,6 +60,7 @@ const REFRESH_BODY: &str =
     r#"<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>"#;
 const QUIT_BODY: &str = r#"<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>"#;
 const PLUS_BODY: &str = r#"<path d="M5 12h14"/><path d="M12 5v14"/>"#;
+const LAYERS_BODY: &str = r#"<path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/>"#;
 
 fn icon_src(body: &str) -> ImageSrc {
     ImageSrc::svg_markup(&format!("{ICON_OPEN}{body}{ICON_CLOSE}"))
@@ -81,6 +83,8 @@ pub enum RowKind {
     Proxy,
     /// The Cloudflare tunnel's switch, shown only once it is configured.
     Tunnel,
+    /// An optional Homebrew or UserAgent service row when loaded.
+    Service,
     /// Open Devbase, Refresh, Quit.
     Action,
     /// A line between groups.
@@ -96,6 +100,7 @@ impl RowKind {
             RowKind::Instance => "instance",
             RowKind::Proxy => "proxy",
             RowKind::Tunnel => "tunnel",
+            RowKind::Service => "service",
             RowKind::Action => "action",
             RowKind::Separator => "separator",
         }
@@ -115,6 +120,10 @@ pub enum Action {
     ToggleProxy(bool),
     /// Start the Cloudflare tunnel, or stop it.
     ToggleTunnel(bool),
+    /// Show the Services section at a Homebrew or UserAgent item.
+    OpenService { source: Source, id: String },
+    /// Start or stop a Homebrew or UserAgent service item.
+    ToggleService { id: String, start: bool },
     /// Bring the main window forward.
     OpenWindow,
     /// Read the workspace, proxy and settings again.
@@ -169,11 +178,24 @@ pub struct InstanceRow {
     pub status: String,
 }
 
+/// One optional Homebrew or UserAgent service in [`PanelInput`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceRow {
+    pub id: String,
+    pub source: Source,
+    pub name: String,
+    pub status: String,
+    pub running: bool,
+    pub busy: bool,
+    pub can_toggle: bool,
+}
+
 /// Everything the panel reads from the stores, in one value, so the labels
 /// can be built without a platform or a render.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PanelInput {
     pub instances: Vec<InstanceRow>,
+    pub services: Vec<ServiceRow>,
     pub proxy_status: String,
     pub proxy_rules: usize,
     pub proxy_port: i64,
@@ -186,6 +208,10 @@ pub struct PanelInput {
     pub helper: String,
     pub workspace_root: String,
     pub quit_open: bool,
+}
+
+fn is_internal_devbase_service(name: &str, id: &str) -> bool {
+    name.starts_with("xyz.jyeu.devbase.dev.") || id.contains("xyz.jyeu.devbase.dev.")
 }
 
 fn running_status(status: &str) -> bool {
@@ -393,6 +419,59 @@ impl Panel {
             });
         }
 
+        let visible_services: Vec<&ServiceRow> = input
+            .services
+            .iter()
+            .filter(|svc| !is_internal_devbase_service(&svc.name, &svc.id))
+            .collect();
+        if !visible_services.is_empty() {
+            let services_running = visible_services.iter().filter(|svc| svc.running).count();
+            rows.push(Row {
+                key: "services".to_string(),
+                kind: RowKind::Header,
+                label: "Services".to_string(),
+                detail: format!("{services_running}/{}", visible_services.len()),
+                state: String::new(),
+                checked: None,
+                enabled: false,
+                action: None,
+            });
+            for svc in visible_services {
+                rows.push(Row {
+                    key: format!("service:{}", svc.id),
+                    kind: RowKind::Service,
+                    label: svc.name.clone(),
+                    detail: format!("{} · {}", svc.source.title(), svc.status),
+                    state: svc.status.clone(),
+                    checked: None,
+                    enabled: true,
+                    action: Some(Action::OpenService {
+                        source: svc.source,
+                        id: svc.id.clone(),
+                    }),
+                });
+                if svc.can_toggle {
+                    rows.push(Row {
+                        key: format!("service:{}:toggle", svc.id),
+                        kind: RowKind::Service,
+                        label: if svc.running {
+                            format!("Stop {}", svc.name)
+                        } else {
+                            format!("Start {}", svc.name)
+                        },
+                        detail: svc.status.clone(),
+                        state: svc.status.clone(),
+                        checked: Some(svc.running),
+                        enabled: !input.quit_open && !svc.busy,
+                        action: Some(Action::ToggleService {
+                            id: svc.id.clone(),
+                            start: !svc.running,
+                        }),
+                    });
+                }
+            }
+        }
+
         rows.push(Row {
             key: "footer-separator".to_string(),
             kind: RowKind::Separator,
@@ -477,6 +556,52 @@ fn tunnel_configured(rules: &[devcore::model::ProxyRule]) -> bool {
         || rules.iter().any(|rule| rule.tunnel)
 }
 
+fn service_status_label(state: ServiceState) -> &'static str {
+    match state {
+        ServiceState::Running => "Running",
+        ServiceState::Scheduled => "Scheduled",
+        ServiceState::Failed => "Failed",
+        ServiceState::Loaded => "Idle",
+        ServiceState::Invalid => "Invalid",
+        ServiceState::Stopped | ServiceState::None => "Stopped",
+    }
+}
+
+fn loaded_service_rows() -> Vec<ServiceRow> {
+    let mut rows = Vec::new();
+    for source in [Source::Brew, Source::UserAgent] {
+        let provider = services::provider(source);
+        for item in services::loaded_items(source) {
+            if is_internal_devbase_service(&item.name, &item.id) {
+                continue;
+            }
+            let running = item.up();
+            let can_toggle = provider.as_ref().is_some_and(|p| {
+                let actions = p.actions(&item);
+                if running {
+                    actions
+                        .iter()
+                        .any(|a| matches!(a, ServiceAction::Stop | ServiceAction::Unload))
+                } else {
+                    actions
+                        .iter()
+                        .any(|a| matches!(a, ServiceAction::Start | ServiceAction::Load))
+                }
+            });
+            rows.push(ServiceRow {
+                busy: services::is_busy(&item.id),
+                status: service_status_label(item.state).to_string(),
+                id: item.id,
+                source,
+                name: item.name,
+                running,
+                can_toggle,
+            });
+        }
+    }
+    rows
+}
+
 /// Reads the stores the tray shows. Call inside a reactive context (a
 /// component or an effect); every read is tracked.
 pub fn panel() -> Panel {
@@ -489,12 +614,14 @@ pub fn panel() -> Panel {
             id: instance.id,
         })
         .collect();
+    let services = loaded_service_rows();
     let rules = proxy::saved_rules();
     let proxy_status = proxy::proxy_status();
     let tunnel_status = proxy::tunnel_status();
     let helper = system::helper_status();
     Panel::from(PanelInput {
         instances,
+        services,
         proxy_status,
         proxy_rules: rules.len(),
         proxy_port: proxy::listener_port(),
@@ -542,6 +669,32 @@ pub fn dispatch(action: Action) {
         }
         Action::ToggleProxy(on) => proxy::set_proxy_enabled(on),
         Action::ToggleTunnel(on) => proxy::set_tunnel_enabled(on),
+        Action::OpenService { source, id } => {
+            close_popover();
+            store::select_section(Section::Services);
+            services::open_item(source, &id);
+            show_window();
+        }
+        Action::ToggleService { id, start } => {
+            if let Some(item) = services::item_by_id(&id)
+                && let Some(provider) = services::provider(item.source)
+            {
+                let actions = provider.actions(&item);
+                let chosen = if start {
+                    actions
+                        .iter()
+                        .copied()
+                        .find(|action| matches!(action, ServiceAction::Start | ServiceAction::Load))
+                } else {
+                    actions.iter().copied().find(|action| {
+                        matches!(action, ServiceAction::Stop | ServiceAction::Unload)
+                    })
+                };
+                if let Some(service_action) = chosen {
+                    services::request_action(item, service_action);
+                }
+            }
+        }
         Action::OpenWindow => {
             close_popover();
             show_window();
@@ -554,11 +707,13 @@ pub fn dispatch(action: Action) {
     }
 }
 
-/// Reads the workspace, proxy and settings again.
+/// Reads the workspace, proxy, settings, and any loaded services again.
 pub fn refresh() {
     databases::refresh();
     proxy::refresh();
     system::refresh_settings();
+    services::refresh_if_loaded(Source::Brew);
+    services::refresh_if_loaded(Source::UserAgent);
 }
 
 /// Reads what the tray shows the first time the app starts.
@@ -653,9 +808,22 @@ fn estimated_popover_height(panel: &Panel) -> f32 {
         .filter(|row| row.kind == RowKind::Instance && row.checked.is_some())
         .count()
         .max(1);
+    let service_count = panel
+        .rows
+        .iter()
+        .filter(|row| row.kind == RowKind::Service && row.checked.is_none())
+        .count();
     let has_tunnel = panel.rows.iter().any(|row| row.kind == RowKind::Tunnel);
-    let height =
-        164.0 + (instance_count as f32 * 44.0) + if has_tunnel { 96.0 } else { 52.0 } + 76.0;
+    let services_height = if service_count > 0 {
+        26.0 + (service_count as f32 * 44.0)
+    } else {
+        0.0
+    };
+    let height = 164.0
+        + (instance_count as f32 * 44.0)
+        + if has_tunnel { 96.0 } else { 52.0 }
+        + services_height
+        + 76.0;
     height.clamp(POPOVER_MIN_HEIGHT, POPOVER_MAX_HEIGHT)
 }
 
@@ -1094,6 +1262,98 @@ fn popover_body() -> impl IntoElement {
         );
     }
 
+    if let Some(services_header) = current.rows.iter().find(|row| row.key == "services") {
+        column = column.child(section_heading(
+            "Services".to_string(),
+            services_header.detail.clone(),
+        ));
+        let mut s = 0;
+        while s < current.rows.len() {
+            let row = &current.rows[s];
+            if row.kind == RowKind::Service && row.checked.is_none() {
+                let toggle = current
+                    .rows
+                    .get(s + 1)
+                    .filter(|next| next.key == format!("{}:toggle", row.key));
+                let name = row.label.clone();
+                let detail = row.detail.clone();
+                let state = row.state.clone();
+                let open_action = row.action.clone();
+                let toggle_action = toggle.and_then(|t| t.action.clone());
+                let checked = toggle.and_then(|t| t.checked);
+                let enabled = toggle.is_some_and(|t| t.enabled);
+
+                let mut item_row = view()
+                    .test_id(&format!("popover-service-{name}"))
+                    .w_full()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.0))
+                    .px(px(6.0))
+                    .py(px(5.0))
+                    .rounded(move || theme().radius)
+                    .hover(|s| s.bg(tokens::row_hover()))
+                    .child(
+                        button()
+                            .test_id(&format!("popover-open-service-{name}"))
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .flex_row()
+                            .items_center()
+                            .justify_start()
+                            .gap(px(8.0))
+                            .on_press(move || {
+                                if let Some(action) = open_action.clone() {
+                                    dispatch(action);
+                                }
+                            })
+                            .child(status_dot(state))
+                            .child(
+                                view()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .flex_col()
+                                    .gap(px(1.0))
+                                    .child(
+                                        text(name.clone())
+                                            .text_size(px(tokens::TEXT_BODY))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(move || theme().foreground)
+                                            .truncate(),
+                                    )
+                                    .child(
+                                        text(detail)
+                                            .text_size(px(tokens::TEXT_CAPTION))
+                                            .text_color(move || theme().muted_foreground)
+                                            .truncate(),
+                                    ),
+                            ),
+                    );
+                if let (Some(checked), Some(Action::ToggleService { id, .. })) =
+                    (checked, toggle_action)
+                {
+                    item_row = item_row.child(popover_switch(
+                        checked,
+                        !enabled,
+                        format!("Toggle {name}"),
+                        format!("popover-switch-service-{name}"),
+                        move |start| {
+                            dispatch(Action::ToggleService {
+                                id: id.clone(),
+                                start,
+                            });
+                        },
+                    ));
+                }
+                column = column.child(item_row);
+                if toggle.is_some() {
+                    s += 1;
+                }
+            }
+            s += 1;
+        }
+    }
+
     let status_rows: Vec<&Row> = current
         .rows
         .iter()
@@ -1241,6 +1501,19 @@ fn menu_item_for(row: &Row) -> MenuItem {
         RowKind::Tunnel => {
             item = item.symbol("cloud").icon(icon_src(CLOUD_BODY));
         }
+        RowKind::Service if row.checked.is_some() => {
+            let symbol = if row.checked == Some(true) {
+                "stop.circle"
+            } else {
+                "play.circle"
+            };
+            item = item.symbol(symbol);
+        }
+        RowKind::Service => {
+            item = item
+                .symbol("square.stack.3d.up")
+                .icon(icon_src(LAYERS_BODY));
+        }
         RowKind::Action => match row.action {
             Some(Action::OpenWindow) => {
                 item = item.symbol("macwindow").icon(icon_src(WINDOW_BODY));
@@ -1305,6 +1578,21 @@ fn menu(panel: &Panel) -> Vec<MenuItem> {
                 .inline(true)
                 .symbol("lock.shield")
                 .icon(icon_src(SHIELD_BODY)),
+        );
+    }
+
+    let service_items: Vec<MenuItem> = panel
+        .rows
+        .iter()
+        .filter(|row| row.kind == RowKind::Service)
+        .map(menu_item_for)
+        .collect();
+    if !service_items.is_empty() {
+        items.push(
+            MenuItem::submenu("Services", service_items)
+                .inline(true)
+                .symbol("square.stack.3d.up")
+                .icon(icon_src(LAYERS_BODY)),
         );
     }
 

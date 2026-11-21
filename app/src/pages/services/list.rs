@@ -46,9 +46,59 @@ fn header() -> impl IntoElement {
                 .text_size(px(tokens::TEXT_CAPTION))
                 .text_color(move || theme().muted_foreground)
         }))
+        .child(when(
+            move || {
+                matches!(
+                    svc::active_source(),
+                    Source::UserAgent | Source::SystemAgent | Source::Daemon
+                )
+            },
+            || {
+                header_action_button("new-job", "New Job", || {
+                    crate::editor::open_new(svc::active_source())
+                })
+            },
+        ))
+        .child(when(
+            move || svc::active_source() == Source::LoginItem,
+            || header_action_button("add-login-item", "Add Login Item", svc::add_login_item),
+        ))
         .child(icon_button(icons::refresh(), "Refresh", || {
             svc::refresh_active()
         }))
+}
+
+fn header_action_button(
+    test_id: &'static str,
+    label: &'static str,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
+    nsh_base::button()
+        .test_id(test_id)
+        .h(px(26.0))
+        .flex_none()
+        .flex_row()
+        .items_center()
+        .gap(tokens::space(1.5))
+        .px(tokens::space(2.5))
+        .rounded(move || theme().radius)
+        .bg(tokens::control)
+        .border_1()
+        .border_color(tokens::hairline)
+        .hover(move |style| style.bg(tokens::row_hover()))
+        .on_press(on_press)
+        .child(
+            icons::plus()
+                .size(px(12.0))
+                .flex_none()
+                .text_color(move || theme().foreground),
+        )
+        .child(
+            text(label)
+                .text_size(px(tokens::TEXT_CAPTION))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(move || theme().foreground),
+        )
 }
 
 /// The search field and the three filters.
@@ -138,7 +188,8 @@ fn filter_button(filter: Filter) -> impl IntoElement {
         )
 }
 
-/// The load error, an action's error, and the note about system changes.
+/// The load error, an action's error, login-item restrictions, and the note
+/// about system changes.
 fn when_some_note() -> impl IntoElement {
     view()
         .flex_col()
@@ -148,6 +199,9 @@ fn when_some_note() -> impl IntoElement {
         }))
         .child(dynamic(move || {
             svc::action_error().map(|message| note(icons::warn(), message, true))
+        }))
+        .child(dynamic(move || {
+            svc::active_restriction().map(restriction_note)
         }))
         .child(when(
             move || {
@@ -162,6 +216,85 @@ fn when_some_note() -> impl IntoElement {
                 )
             },
         ))
+}
+
+fn restriction_note(restriction: devcore::service::Restriction) -> impl IntoElement {
+    let show_settings = restriction.settings;
+    view()
+        .test_id("login-item-restriction")
+        .flex_col()
+        .gap(tokens::space(2.0))
+        .px(tokens::space(4.0))
+        .py(tokens::space(2.5))
+        .border_b_1()
+        .border_color(tokens::hairline)
+        .bg(tokens::inset)
+        .child(
+            view()
+                .flex_row()
+                .items_start()
+                .gap(tokens::space(2.0))
+                .child(
+                    icons::lock()
+                        .size(px(14.0))
+                        .flex_none()
+                        .mt(px(1.0))
+                        .text_color(move || theme().muted_foreground),
+                )
+                .child(
+                    text(restriction.text)
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .text_size(px(tokens::TEXT_SMALL))
+                        .text_color(move || theme().muted_foreground),
+                ),
+        )
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(2.0))
+                .pl(px(22.0))
+                .child(when(show_settings, || {
+                    nsh_base::button()
+                        .test_id("open-full-disk-access")
+                        .h(px(24.0))
+                        .px(tokens::space(2.5))
+                        .items_center()
+                        .justify_center()
+                        .rounded(move || theme().radius)
+                        .bg(tokens::control)
+                        .border_1()
+                        .border_color(tokens::hairline)
+                        .hover(move |style| style.bg(tokens::row_hover()))
+                        .on_press(svc::open_restriction_settings)
+                        .child(
+                            text("Open Full Disk Access…")
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(move || theme().foreground),
+                        )
+                }))
+                .child(
+                    nsh_base::button()
+                        .test_id("read-login-items-once")
+                        .h(px(24.0))
+                        .px(tokens::space(2.5))
+                        .items_center()
+                        .justify_center()
+                        .rounded(move || theme().radius)
+                        .bg(tokens::control)
+                        .border_1()
+                        .border_color(tokens::hairline)
+                        .hover(move |style| style.bg(tokens::row_hover()))
+                        .on_press(svc::read_restricted_once)
+                        .child(
+                            text("Read Once…")
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .text_color(move || theme().foreground),
+                        ),
+                ),
+        )
 }
 
 fn list() -> impl IntoElement {

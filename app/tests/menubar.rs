@@ -27,10 +27,11 @@ use devcore::{
 };
 use nsh_app_devbase::testing::{
     AuthorityInfo, AuthorityStatus, CancelToken, DatabasesProvider, DatabasesSnapshot, GuideAccess,
-    GuidePersistence, ProxyProvider, ProxySnapshot, ProxyWorkers, SystemSettingsProvider,
-    SystemSettingsSnapshot, install_databases_provider, install_guide_access,
-    install_guide_persistence, install_proxy_provider, install_system_settings_provider,
-    use_fake_databases, use_fake_guide, use_fake_proxy, use_fake_system,
+    GuidePersistence, MenubarInput, MenubarPanel, MenubarRowKind, MenubarService, ProxyProvider,
+    ProxySnapshot, ProxyWorkers, Source, SystemSettingsProvider, SystemSettingsSnapshot,
+    install_databases_provider, install_guide_access, install_guide_persistence,
+    install_proxy_provider, install_system_settings_provider, use_fake_databases, use_fake_guide,
+    use_fake_providers, use_fake_proxy, use_fake_system,
 };
 use nsh_core::prelude::*;
 use nsh_engine::{EngineConfig, Root};
@@ -684,6 +685,7 @@ fn start_tray(
     settings: Arc<FakeSettings>,
 ) -> (MutexGuard<'static, ()>, Headless) {
     let turn = serial();
+    use_fake_providers();
     use_fake_databases();
     install_databases_provider(databases as Arc<dyn DatabasesProvider>);
     use_fake_proxy();
@@ -973,6 +975,7 @@ fn the_popover_ui_renders_status_and_toggles_switches() {
     let settings = FakeSettings::new(settings_snapshot());
 
     let turn = serial();
+    use_fake_providers();
     use_fake_databases();
     install_databases_provider(databases.clone() as Arc<dyn DatabasesProvider>);
     use_fake_proxy();
@@ -1028,4 +1031,46 @@ fn a_completed_guide_does_not_open_again() {
     app.wait(Duration::from_millis(500)).unwrap();
     assert_eq!(app.screen().count("id:guide-overlay").unwrap(), 0);
     assert!(!app.screen().shows("Allow Full Disk Access"));
+}
+
+#[test]
+fn panel_includes_optional_services_and_excludes_internal_devbase_jobs() {
+    let panel = MenubarPanel::from(MenubarInput {
+        services: vec![
+            MenubarService {
+                id: "brew:redis".to_string(),
+                source: Source::Brew,
+                name: "redis".to_string(),
+                status: "Running".to_string(),
+                running: true,
+                busy: false,
+                can_toggle: true,
+            },
+            MenubarService {
+                id: "user-agent:/Users/me/Library/LaunchAgents/xyz.jyeu.devbase.dev.proxy.plist"
+                    .to_string(),
+                source: Source::UserAgent,
+                name: "xyz.jyeu.devbase.dev.proxy".to_string(),
+                status: "Running".to_string(),
+                running: true,
+                busy: false,
+                can_toggle: true,
+            },
+        ],
+        proxy_status: "Stopped".to_string(),
+        proxy_port: 8443,
+        ..MenubarInput::default()
+    });
+    assert!(
+        panel
+            .rows
+            .iter()
+            .any(|row| row.kind == MenubarRowKind::Service && row.label == "redis")
+    );
+    assert!(
+        !panel
+            .rows
+            .iter()
+            .any(|row| row.label.contains("xyz.jyeu.devbase.dev."))
+    );
 }

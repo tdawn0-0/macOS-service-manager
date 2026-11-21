@@ -16,6 +16,12 @@ fn icon(body: &str) -> Svg {
 /// The icon of a source, as the Go sidebar drew it.
 pub(crate) fn source(source: Source) -> Svg {
     match source {
+        Source::Brew => icon(
+            r#"<path d="M17 11h1a3 3 0 0 1 0 6h-1"/><path d="M9 12v6"/><path d="M13 12v6"/><path d="M14 7.5c-1 0-1.44.5-3 .5s-2-.5-3-.5-1.72.5-2.5.5a2.5 2.5 0 0 1 0-5c.78 0 1.57.5 2.5.5S9.44 2 11 2s2 1.5 3 1.5 1.72-.5 2.5-.5a2.5 2.5 0 0 1 0 5c-.78 0-1.5-.5-2.5-.5Z"/><path d="M5 8v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8"/>"#,
+        ),
+        Source::LoginItem => icon(
+            r#"<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/>"#,
+        ),
         Source::UserAgent => icon(
             r#"<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>"#,
         ),
@@ -25,7 +31,6 @@ pub(crate) fn source(source: Source) -> Svg {
         Source::Daemon => icon(
             r#"<rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>"#,
         ),
-        _ => icon(r#"<circle cx="12" cy="12" r="9"/>"#),
     }
 }
 
@@ -89,4 +94,14 @@ pub(crate) fn external() -> Svg {
 
 pub(crate) fn check() -> Svg {
     icon(r#"<path d="M20 6 9 17l-5-5"/>"#)
+}
+
+pub(crate) fn plus() -> Svg {
+    icon(r#"<path d="M5 12h14"/><path d="M12 5v14"/>"#)
+}
+
+pub(crate) fn edit() -> Svg {
+    icon(
+        r#"<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>"#,
+    )
 }

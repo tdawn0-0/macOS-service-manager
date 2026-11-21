@@ -177,6 +177,17 @@ fn state_chip(id: String) -> impl IntoElement {
         )
 }
 
+fn is_editable_plist(item: &Item) -> bool {
+    matches!(
+        item.source,
+        Source::UserAgent | Source::SystemAgent | Source::Daemon
+    ) && !item.path.as_os_str().is_empty()
+        && item
+            .path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("plist"))
+}
+
 /// The actions an item is mostly used for, each with a place of its own, and
 /// a menu of the rest.
 fn action_row(id: String) -> impl IntoElement {
@@ -193,6 +204,7 @@ fn action_row(id: String) -> impl IntoElement {
         let restart = actions
             .contains(&Action::Restart)
             .then_some(Action::Restart);
+        let edit_target = is_editable_plist(&item).then(|| (item.source, item.path.clone()));
         Some(
             view()
                 .flex_row()
@@ -200,6 +212,34 @@ fn action_row(id: String) -> impl IntoElement {
                 .gap(tokens::space(2.0))
                 .child(primary.map(|action| action_button(&item, action, true, busy)))
                 .child(restart.map(|action| action_button(&item, action, false, busy)))
+                .child(edit_target.map(|(source, path)| {
+                    nsh_base::button()
+                        .test_id("edit-job")
+                        .h(px(26.0))
+                        .flex_none()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(1.0))
+                        .px(tokens::space(2.0))
+                        .rounded(move || theme().radius)
+                        .bg(tokens::control)
+                        .border_1()
+                        .border_color(tokens::hairline)
+                        .hover(move |style| style.bg(tokens::row_hover()))
+                        .on_press(move || crate::editor::open_edit(source, path.clone()))
+                        .child(
+                            icons::edit()
+                                .size(px(12.0))
+                                .flex_none()
+                                .text_color(move || theme().foreground),
+                        )
+                        .child(
+                            text("Edit")
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(move || theme().foreground),
+                        )
+                }))
                 .child(more_menu(&item, actions, busy)),
         )
     })

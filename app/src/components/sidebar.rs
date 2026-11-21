@@ -97,6 +97,7 @@ pub(crate) fn sidebar() -> impl IntoElement {
                         .child(Section::ALL.iter().map(|section| nav_item(*section))),
                 )
                 .child(view().flex_1().window_drag(true))
+                .child(logs_toggle())
                 .child(footer()),
         )
 }
@@ -170,6 +171,51 @@ fn nav_item(section: Section) -> impl IntoElement {
         )
         .child(
             text(section.label())
+                .text_sm()
+                .text_color(move || theme().sidebar_foreground),
+        )
+}
+
+/// Toggles the bottom workspace live log drawer.
+fn logs_toggle() -> impl IntoElement {
+    let terminal_icon = svg(ImageSrc::svg_markup(&format!(
+        r#"{ICON_OPEN}<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>{ICON_CLOSE}"#
+    )));
+    button()
+        .test_id("sidebar-logs-toggle")
+        .w_full()
+        .flex_row()
+        .items_center()
+        .justify_start()
+        .gap(tokens::space(2.5))
+        .px(tokens::space(2.5))
+        .py(tokens::space(1.5))
+        .rounded(move || theme().radius)
+        .selected(crate::dev_logs::is_open)
+        .bg(move || {
+            if crate::dev_logs::is_open() {
+                theme().sidebar_accent
+            } else {
+                AdaptiveColor::TRANSPARENT
+            }
+        })
+        .hover(|s| s.bg(tokens::row_hover()))
+        .active(|s| s.bg(move || theme().sidebar_accent))
+        .on_press(crate::dev_logs::toggle)
+        .child(
+            terminal_icon
+                .size(px(15.0))
+                .flex_none()
+                .text_color(move || {
+                    if crate::dev_logs::is_open() {
+                        theme().sidebar_primary
+                    } else {
+                        theme().muted_foreground
+                    }
+                }),
+        )
+        .child(
+            text("Logs")
                 .text_sm()
                 .text_color(move || theme().sidebar_foreground),
         )

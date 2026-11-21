@@ -14,6 +14,7 @@
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{
         Arc, LazyLock, Mutex,
@@ -31,7 +32,7 @@ use nsh_core::prelude::*;
 
 use crate::logs;
 
-pub(crate) use devcore::service::{Action, Item, LogFile, Provider, Row, Source};
+pub(crate) use devcore::service::{Action, Item, LogFile, Provider, Restriction, Row, Source};
 
 /// What the list shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -80,7 +81,13 @@ pub(crate) enum LogBodyMode {
 }
 
 /// The sources the inspector shows, in order.
-pub(crate) const SOURCES: [Source; 3] = [Source::UserAgent, Source::SystemAgent, Source::Daemon];
+pub(crate) const SOURCES: [Source; 5] = [
+    Source::Brew,
+    Source::LoginItem,
+    Source::UserAgent,
+    Source::SystemAgent,
+    Source::Daemon,
+];
 
 /// One source's last read.
 #[derive(Debug, Clone, Default)]
@@ -89,6 +96,7 @@ struct SourceLoad {
     loading: bool,
     loaded: bool,
     error: Option<String>,
+    restriction: Option<Restriction>,
     /// Bumped for every read, so an older answer never replaces a newer one.
     sequence: u64,
 }
@@ -220,10 +228,14 @@ fn later(delay: Duration, f: impl FnOnce() + 'static) {
 
 // --- Providers ---------------------------------------------------------------
 
+type LoginItemAdder = Arc<dyn Fn(&Path) -> Result<(), String> + Send + Sync>;
+
 /// Test providers, installed before the surface starts. The store never
-/// reaches launchd while a source has one.
+/// reaches launchd, Homebrew or login items while `FAKE_MODE` is on.
 static FAKES: LazyLock<Mutex<BTreeMap<Source, Arc<dyn Provider>>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
+static FAKE_LOGIN_ITEM_ADDER: LazyLock<Mutex<Option<LoginItemAdder>>> =
+    LazyLock::new(|| Mutex::new(None));
 static FAKE_MODE: AtomicBool = AtomicBool::new(false);
 
 fn fakes() -> &'static Mutex<BTreeMap<Source, Arc<dyn Provider>>> {
@@ -239,6 +251,14 @@ static LAUNCHD: LazyLock<Launchd> = LazyLock::new(|| {
     ));
     Launchd::new(context)
 });
+
+/// The machine's Homebrew services provider, made once.
+static BREW: LazyLock<Arc<devcore::brew::Provider>> =
+    LazyLock::new(|| Arc::new(devcore::brew::Provider::default_provider()));
+
+/// The machine's login items provider, made once.
+static LOGIN_ITEM: LazyLock<Arc<devcore::loginitem::Provider>> =
+    LazyLock::new(|| Arc::new(devcore::loginitem::Provider::default_provider()));
 
 /// Passively checks whether the privileged helper is installed without
 /// launching it or prompting for a password.
@@ -284,20 +304,27 @@ fn provider_of(source: Source) -> Option<Arc<dyn Provider>> {
     if FAKE_MODE.load(Ordering::Relaxed) {
         return None;
     }
-    LAUNCHD
-        .provider(source)
-        .map(|provider| Arc::clone(provider) as Arc<dyn Provider>)
+    match source {
+        Source::Brew => Some(Arc::clone(&*BREW) as Arc<dyn Provider>),
+        Source::LoginItem => Some(Arc::clone(&*LOGIN_ITEM) as Arc<dyn Provider>),
+        _ => LAUNCHD
+            .provider(source)
+            .map(|provider| Arc::clone(provider) as Arc<dyn Provider>),
+    }
 }
 
-/// Makes the surface use test providers instead of launchd. Call it before
-/// starting the headless surface, then [`install_provider`] for each source.
-/// Tests only.
+/// Makes the surface use test providers instead of launchd, Homebrew or login
+/// items. Call it before starting the headless surface, then
+/// [`install_provider`] for each source. Tests only.
 pub fn use_fake_providers() {
     FAKE_MODE.store(true, Ordering::Relaxed);
     fakes()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clear();
+    *FAKE_LOGIN_ITEM_ADDER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
 }
 
 /// Gives a source a provider of the test's own. Tests only.
@@ -307,6 +334,14 @@ pub fn install_provider(source: Source, provider: Arc<dyn Provider>) {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .insert(source, provider);
+}
+
+/// Installs a fake handler for adding login items. Tests only.
+pub fn install_login_item_adder(adder: LoginItemAdder) {
+    FAKE_MODE.store(true, Ordering::Relaxed);
+    *FAKE_LOGIN_ITEM_ADDER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(adder);
 }
 
 /// The provider of a source, for its pure [`Provider::actions`] and
@@ -355,13 +390,14 @@ pub(crate) fn load_active() {
 
 /// Reads `source` again.
 pub(crate) fn refresh(source: Source) {
-    if matches!(source, Source::SystemAgent | Source::Daemon) {
+    if matches!(source, Source::SystemAgent | Source::Daemon | Source::Brew) {
         refresh_helper_status();
     }
     let Some(provider) = provider_of(source) else {
         services().update(|state| {
             let load = state.loads.entry(source).or_default();
             load.loading = false;
+            load.restriction = None;
             load.error = Some("no provider is available for this source".to_string());
         });
         return;
@@ -375,11 +411,18 @@ pub(crate) fn refresh(source: Source) {
         load.error = None;
     });
     task(async move {
-        let answer =
-            match blocking(move || provider.list().map_err(|error| error.to_string())).await {
-                Ok(answer) => answer,
-                Err(error) => Err(format!("the source did not answer: {error}")),
-            };
+        let (answer, restriction) = match blocking(move || {
+            let answer = provider.list().map_err(|error| error.to_string());
+            let restriction = provider
+                .as_restricted()
+                .and_then(|restricted| restricted.restriction());
+            (answer, restriction)
+        })
+        .await
+        {
+            Ok(pair) => pair,
+            Err(error) => (Err(format!("the source did not answer: {error}")), None),
+        };
         let mut selection_cleared = false;
         services().update(|state| {
             let load = state.loads.entry(source).or_default();
@@ -388,6 +431,7 @@ pub(crate) fn refresh(source: Source) {
             }
             load.loading = false;
             load.loaded = true;
+            load.restriction = restriction;
             match answer {
                 Ok(items) => {
                     load.items = items;
@@ -395,7 +439,8 @@ pub(crate) fn refresh(source: Source) {
                 }
                 Err(error) => load.error = Some(error),
             }
-            if let Some(selected) = &state.selected
+            if state.active == source
+                && let Some(selected) = &state.selected
                 && !load.items.iter().any(|item| &item.id == selected)
             {
                 state.selected = None;
@@ -412,6 +457,70 @@ pub(crate) fn refresh(source: Source) {
 /// Reads the shown source again, on request.
 pub(crate) fn refresh_active() {
     refresh(active_source());
+}
+
+/// Reads `source` again only if it has already been loaded in this session.
+pub(crate) fn refresh_if_loaded(source: Source) {
+    let loaded = services().with(|state| state.loads.get(&source).is_some_and(|load| load.loaded));
+    if loaded {
+        refresh(source);
+    }
+}
+
+/// Items for `source` if it has been loaded, or an empty vector otherwise.
+pub(crate) fn loaded_items(source: Source) -> Vec<Item> {
+    services().with(|state| {
+        state
+            .loads
+            .get(&source)
+            .filter(|load| load.loaded)
+            .map(|load| load.items.clone())
+            .unwrap_or_default()
+    })
+}
+
+/// Selects `source` and focuses `id` if it is already loaded.
+pub(crate) fn open_item(source: Source, id: &str) {
+    if active_source() != source {
+        select_source(source);
+    }
+    select_item(id);
+}
+
+/// Refreshes the source modified by the plist editor and shows a notice.
+pub(crate) fn handle_editor_saved(saved: crate::editor::SavedEvent) {
+    let source = saved.source;
+    let label = saved.label.clone();
+    let saved_path = saved.path.clone();
+    let message = if saved.loaded {
+        format!("{label} saved and loaded")
+    } else {
+        format!("{label} saved")
+    };
+    let clear = message.clone();
+    services().update(|state| {
+        state.action_error = None;
+        state.notice = Some(message);
+    });
+    later(Duration::from_secs(3), move || {
+        services().update(|state| {
+            if state.notice.as_deref() == Some(clear.as_str()) {
+                state.notice = None;
+            }
+        });
+    });
+    refresh(source);
+    if let Some(selected) = selected_id()
+        && let Some(item) = item_by_id(&selected)
+        && item.source == source
+        && item.path == saved_path
+    {
+        later(Duration::from_millis(250), move || {
+            if is_selected(&item.id) {
+                load_detail(item.clone());
+            }
+        });
+    }
 }
 
 pub(crate) fn query() -> String {
@@ -482,6 +591,134 @@ pub(crate) fn active_error() -> Option<String> {
             .get(&state.active)
             .and_then(|load| load.error.clone())
     })
+}
+
+pub(crate) fn active_restriction() -> Option<Restriction> {
+    services().with(|state| {
+        state
+            .loads
+            .get(&state.active)
+            .and_then(|load| load.restriction.clone())
+    })
+}
+
+/// Opens System Settings for the active restricted source (e.g. Full Disk
+/// Access for Login Items). Never touches host TCC settings in `FAKE_MODE`
+/// unless a fake restricted provider is installed.
+pub(crate) fn open_restriction_settings() {
+    let source = active_source();
+    let Some(provider) = provider_of(source) else {
+        return;
+    };
+    task(async move {
+        let answer = match blocking(move || match provider.as_restricted() {
+            Some(restricted) => restricted.open_settings().map_err(|e| e.to_string()),
+            None => Ok(()),
+        })
+        .await
+        {
+            Ok(answer) => answer,
+            Err(error) => Err(format!("could not open settings: {error}")),
+        };
+        if let Err(error) = answer {
+            set_action_error(&error);
+        }
+    });
+}
+
+/// Runs a one-time authenticated read for the active restricted source (e.g.
+/// `sfltool dumpbtm` for Login Items) and refreshes the list when done.
+pub(crate) fn read_restricted_once() {
+    let source = active_source();
+    let Some(provider) = provider_of(source) else {
+        return;
+    };
+    task(async move {
+        let answer = match blocking(move || match provider.as_restricted() {
+            Some(restricted) => restricted.read_once().map_err(|e| e.to_string()),
+            None => Ok(()),
+        })
+        .await
+        {
+            Ok(answer) => answer,
+            Err(error) => Err(format!("could not read login items: {error}")),
+        };
+        match answer {
+            Ok(()) => refresh(source),
+            Err(error) => set_action_error(&error),
+        }
+    });
+}
+
+/// Opens a file dialog to choose an `.app` bundle and adds it to Login Items.
+pub(crate) fn add_login_item() {
+    task(async move {
+        let dialog = nsh_core::file_dialog::OpenDialog::files()
+            .title("Add Login Item")
+            .button_label("Add")
+            .directory("/Applications")
+            .filter(nsh_core::file_dialog::FileFilter::new(
+                "Applications",
+                ["app"],
+            ));
+        let answer = pick_paths(dialog).await;
+        if let Ok(Some(paths)) = answer
+            && let Some(path) = paths.into_iter().next()
+        {
+            add_login_item_path(path);
+        }
+    });
+}
+
+/// Adds the `.app` bundle at `path` to Login Items and refreshes the list.
+pub(crate) fn add_login_item_path(path: PathBuf) {
+    let fake_mode = FAKE_MODE.load(Ordering::Relaxed);
+    let fake_adder = FAKE_LOGIN_ITEM_ADDER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    if fake_mode && fake_adder.is_none() {
+        set_action_error("no login item provider is available");
+        return;
+    }
+    let display_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().trim_end_matches(".app").to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| path.display().to_string());
+    task(async move {
+        let answer = match blocking(move || {
+            if let Some(adder) = fake_adder {
+                adder(&path)
+            } else {
+                LOGIN_ITEM.add(&path).map_err(|error| error.to_string())
+            }
+        })
+        .await
+        {
+            Ok(answer) => answer,
+            Err(error) => Err(format!("could not add login item: {error}")),
+        };
+        match answer {
+            Ok(()) => {
+                let message = format!("{display_name} added");
+                let clear = message.clone();
+                services().update(|state| {
+                    state.action_error = None;
+                    state.notice = Some(message);
+                });
+                later(Duration::from_secs(3), move || {
+                    services().update(|state| {
+                        if state.notice.as_deref() == Some(clear.as_str()) {
+                            state.notice = None;
+                        }
+                    });
+                });
+                refresh(Source::LoginItem);
+            }
+            Err(error) => set_action_error(&error),
+        }
+    });
 }
 
 // --- Selection and detail ----------------------------------------------------

@@ -91,6 +91,10 @@ pub(crate) fn install_application_menu() {
                     MenuItem::new("Refresh")
                         .shortcut("mod+r")
                         .on_select(refresh_active_section),
+                    MenuItem::new("Toggle Logs")
+                        .shortcut("mod+l")
+                        .checked(crate::dev_logs::is_open())
+                        .on_select(crate::dev_logs::toggle),
                     MenuItem::separator(),
                     section_item(Section::Services, "mod+1"),
                     section_item(Section::Development, "mod+2"),
@@ -124,35 +128,43 @@ pub(crate) fn shell() -> impl IntoElement {
         .child(workspace())
 }
 
-/// The workspace: one opaque sheet, one page at a time, chosen by the rail.
+/// The workspace: one opaque sheet, one page at a time, chosen by the rail,
+/// plus the collapsible live log drawer at the bottom.
 fn workspace() -> impl IntoElement {
     view()
         .flex_1()
         .min_w(px(0.0))
         .flex_col()
         .bg(tokens::sheet)
-        .child(when(
-            move || store::active_section() == Section::Services,
-            pages::services,
-        ))
-        .child(when(
-            move || store::active_section() == Section::Development,
-            pages::development,
-        ))
-        .child(when(
-            move || store::active_section() == Section::Databases,
-            pages::databases,
-        ))
-        .child(when(
-            move || store::active_section() == Section::HttpsProxy,
-            pages::https_proxy,
-        ))
-        .child(when(
-            move || store::active_section() == Section::Diagnostics,
-            pages::diagnostics,
-        ))
-        .child(when(
-            move || store::active_section() == Section::Settings,
-            pages::settings,
-        ))
+        .child(
+            view()
+                .flex_1()
+                .min_h(px(0.0))
+                .flex_col()
+                .child(when(
+                    move || store::active_section() == Section::Services,
+                    pages::services,
+                ))
+                .child(when(
+                    move || store::active_section() == Section::Development,
+                    pages::development,
+                ))
+                .child(when(
+                    move || store::active_section() == Section::Databases,
+                    pages::databases,
+                ))
+                .child(when(
+                    move || store::active_section() == Section::HttpsProxy,
+                    pages::https_proxy,
+                ))
+                .child(when(
+                    move || store::active_section() == Section::Diagnostics,
+                    pages::diagnostics,
+                ))
+                .child(when(
+                    move || store::active_section() == Section::Settings,
+                    pages::settings,
+                )),
+        )
+        .child(when(crate::dev_logs::is_open, crate::dev_logs::drawer))
 }

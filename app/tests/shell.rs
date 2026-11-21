@@ -5,8 +5,8 @@
 use std::sync::{Mutex, MutexGuard};
 
 use nsh_app_devbase::testing::{
-    use_fake_databases, use_fake_development, use_fake_guide, use_fake_providers, use_fake_proxy,
-    use_fake_software, use_fake_system,
+    use_fake_databases, use_fake_dev_logs, use_fake_development, use_fake_editor, use_fake_guide,
+    use_fake_providers, use_fake_proxy, use_fake_software, use_fake_system,
 };
 use nsh_core::{
     desktop::{WindowMode, WindowState},
@@ -32,6 +32,8 @@ fn install_all_fakes() {
     use_fake_proxy();
     use_fake_system();
     use_fake_guide();
+    use_fake_dev_logs();
+    use_fake_editor();
 }
 
 fn start() -> (MutexGuard<'static, ()>, Headless) {
@@ -123,4 +125,30 @@ fn macos_sidebar_uses_liquid_glass_and_falls_back_in_full_screen() {
     .unwrap();
     app.wait_for("id:sidebar-glass").unwrap();
     app.wait_for("id:sidebar-title-bar").unwrap();
+}
+
+#[test]
+fn services_lists_all_five_sources_and_sidebar_toggles_log_drawer() {
+    let (_turn, mut app) = start();
+    for source in [
+        "Homebrew",
+        "Login Items",
+        "User Agents",
+        "System Agents",
+        "Daemons",
+    ] {
+        assert!(
+            app.screen().shows(source),
+            "Services rail lacks the {source} source"
+        );
+    }
+
+    assert_eq!(app.screen().count("id:dev-log-drawer").unwrap(), 0);
+    app.press("id:sidebar-logs-toggle").unwrap();
+    app.wait_for("id:dev-log-drawer").unwrap();
+    assert_eq!(app.screen().count("id:dev-log-drawer").unwrap(), 1);
+
+    app.press("id:sidebar-logs-toggle").unwrap();
+    app.wait_for_gone("id:dev-log-drawer", std::time::Duration::from_secs(2))
+        .unwrap();
 }

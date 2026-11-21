@@ -97,10 +97,11 @@ pub(super) fn hint_tooltip(label: impl Into<String>) -> nsh_base::TooltipElement
 fn source_row(source: Source) -> impl IntoElement {
     nsh_base::button()
         .test_id(match source {
+            Source::Brew => "source-brew",
+            Source::LoginItem => "source-login-item",
             Source::UserAgent => "source-user-agent",
             Source::SystemAgent => "source-system-agent",
             Source::Daemon => "source-daemon",
-            _ => "source",
         })
         .w_full()
         .flex_row()

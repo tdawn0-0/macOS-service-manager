@@ -47,9 +47,9 @@ pub mod testing {
     pub use crate::menubar::{
         Action as MenubarAction, InstanceRow as MenubarInstance, Panel as MenubarPanel,
         PanelInput as MenubarInput, Row as MenubarRow, RowKind as MenubarRowKind,
-        close_popover as menubar_close_popover, dispatch as menubar_dispatch, load as menubar_load,
-        panel as menubar_panel, popover_content as menubar_popover,
-        popover_open as menubar_popover_open,
+        ServiceRow as MenubarService, close_popover as menubar_close_popover,
+        dispatch as menubar_dispatch, load as menubar_load, panel as menubar_panel,
+        popover_content as menubar_popover, popover_open as menubar_popover_open,
     };
     pub use crate::store::databases::{
         CancelToken, Provider as DatabasesProvider, Snapshot as DatabasesSnapshot,
@@ -69,7 +69,9 @@ pub mod testing {
         Workers as ProxyWorkers, install_provider as install_proxy_provider,
         use_fake_provider as use_fake_proxy,
     };
-    pub use crate::store::services::{install_provider, use_fake_providers};
+    pub use crate::store::services::{
+        install_login_item_adder, install_provider, use_fake_providers,
+    };
     pub use crate::store::software::{
         Provider as SoftwareProvider, Snapshot as SoftwareSnapshot, SoftwareKind,
         install_provider as install_software_provider, use_fake_provider as use_fake_software,
@@ -146,6 +148,20 @@ fn configure_main_window() {
 pub fn App() -> impl IntoElement {
     let desktop = os().is_desktop();
     store::system::install_quit_handler();
+    {
+        let seen_editor_rev = std::cell::Cell::new(untracked(editor::revision));
+        effect(move || {
+            let rev = editor::revision();
+            if rev != seen_editor_rev.get() {
+                seen_editor_rev.set(rev);
+                if let Some(saved) = untracked(editor::last_saved) {
+                    store::services::handle_editor_saved(saved);
+                } else {
+                    store::services::refresh_active();
+                }
+            }
+        });
+    }
     if desktop {
         configure_main_window();
         shell::install_application_menu();
@@ -165,6 +181,7 @@ pub fn App() -> impl IntoElement {
         .text_color(move || theme().foreground)
         .child(shell::shell())
         .child(when(store::system::quit_open, store::system::quit_dialog))
+        .child(editor::editor_window())
         .child(when(desktop, menubar::popover_window))
         .child(when(desktop, guide::guide_window))
         .child(when(move || !desktop && guide::visible(), guide::overlay))

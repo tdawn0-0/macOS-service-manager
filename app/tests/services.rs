@@ -16,16 +16,19 @@ use std::{
 };
 
 use devcore::service::{
-    Action, Autostart, BoxError, Detail, Item, LogFile, Provider, Row, Source, State,
+    Action, Autostart, BoxError, Detail, Item, LogFile, Provider, Restricted, Restriction, Row,
+    Source, State,
 };
 use nsh_core::{Checked, prelude::*};
 use nsh_engine::{EngineConfig, Root};
 use nsh_testing::{DialogAnswer, Headless};
 
 use nsh_app_devbase::testing::{
-    SystemCacheClear, SystemCacheInfo, SystemCliChange, SystemCliStatus, SystemHelperChange,
-    SystemHelperStatus, SystemLoginChange, SystemSettingsProvider, SystemSettingsSnapshot,
-    install_provider, install_system_settings_provider, use_fake_providers, use_fake_system,
+    EditorProvider, EditorSaveResult, SystemCacheClear, SystemCacheInfo, SystemCliChange,
+    SystemCliStatus, SystemHelperChange, SystemHelperStatus, SystemLoginChange,
+    SystemSettingsProvider, SystemSettingsSnapshot, install_editor_provider, install_provider,
+    install_system_settings_provider, use_fake_dev_logs, use_fake_editor, use_fake_providers,
+    use_fake_system,
 };
 
 /// The service tests share one fake-provider registry, so they take turns.
@@ -275,6 +278,8 @@ fn start(
 ) -> (MutexGuard<'static, ()>, Headless) {
     let turn = serial();
     use_fake_providers();
+    use_fake_dev_logs();
+    use_fake_editor();
     install_provider(Source::UserAgent, user);
     install_provider(Source::SystemAgent, system);
     install_provider(Source::Daemon, daemon);
@@ -773,4 +778,199 @@ fn autostart_switch_and_filter_controls_use_native_roles() {
             .checked,
         Some(Checked::False)
     );
+}
+
+struct FakeRestrictedLoginItems {
+    items: Vec<Item>,
+    settings_opened: AtomicU64,
+}
+
+impl Provider for FakeRestrictedLoginItems {
+    fn source(&self) -> Source {
+        Source::LoginItem
+    }
+
+    fn list(&self) -> Result<Vec<Item>, BoxError> {
+        Ok(self.items.clone())
+    }
+
+    fn detail(&self, _item: &Item) -> Result<Detail, BoxError> {
+        Ok(Detail::default())
+    }
+
+    fn actions(&self, _item: &Item) -> Vec<Action> {
+        vec![Action::Remove]
+    }
+
+    fn confirm(&self, _item: &Item, _action: Action) -> Option<String> {
+        None
+    }
+
+    fn do_action(&self, _item: &Item, _action: Action) -> Result<(), BoxError> {
+        Ok(())
+    }
+
+    fn as_restricted(&self) -> Option<&dyn Restricted> {
+        Some(self)
+    }
+}
+
+impl Restricted for FakeRestrictedLoginItems {
+    fn restriction(&self) -> Option<Restriction> {
+        Some(Restriction {
+            text: "Helpers that apps registered are not listed: Full Disk Access required."
+                .to_string(),
+            settings: true,
+        })
+    }
+
+    fn needs_access(&self) -> bool {
+        true
+    }
+
+    fn open_settings(&self) -> Result<(), BoxError> {
+        self.settings_opened.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn read_once(&self) -> Result<(), BoxError> {
+        Ok(())
+    }
+}
+
+struct FakeEditor {
+    saved_items: Arc<Mutex<Vec<Item>>>,
+}
+
+impl EditorProvider for FakeEditor {
+    fn load(&self, path: &std::path::Path) -> Result<devcore::launchd::Spec, String> {
+        Ok(devcore::launchd::Spec {
+            label: path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "com.example.loaded".to_string()),
+            args: vec!["/usr/bin/true".to_string()],
+            ..devcore::launchd::Spec::default()
+        })
+    }
+
+    fn read_raw(&self, _path: &std::path::Path) -> Result<Vec<u8>, String> {
+        Ok(Vec::new())
+    }
+
+    fn save(
+        &self,
+        source: Source,
+        spec: devcore::launchd::Spec,
+        _existing: Option<PathBuf>,
+        _load: bool,
+    ) -> Result<EditorSaveResult, String> {
+        let path = PathBuf::from(format!("/tmp/devbase-tests/{}.plist", spec.label));
+        let mut items = self
+            .saved_items
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !items.iter().any(|existing| existing.name == spec.label) {
+            items.push(item(
+                source,
+                &spec.label,
+                State::Loaded,
+                Autostart::On,
+                false,
+            ));
+        }
+        Ok(EditorSaveResult {
+            path,
+            load_error: None,
+        })
+    }
+
+    fn home_dir(&self) -> Option<PathBuf> {
+        Some(PathBuf::from("/tmp/devbase-tests"))
+    }
+}
+
+#[test]
+fn brew_login_item_restriction_and_plist_editor_wire_into_services() {
+    let turn = serial();
+    use_fake_providers();
+    use_fake_dev_logs();
+    use_fake_editor();
+
+    let brew = FakeProvider::new(
+        Source::Brew,
+        vec![item(
+            Source::Brew,
+            "redis",
+            State::Running,
+            Autostart::On,
+            false,
+        )],
+        Behaviour::Normal,
+    );
+    let login = Arc::new(FakeRestrictedLoginItems {
+        items: vec![item(
+            Source::LoginItem,
+            "Raycast",
+            State::Running,
+            Autostart::On,
+            false,
+        )],
+        settings_opened: AtomicU64::new(0),
+    });
+    let user = user_agents(Behaviour::Normal);
+    let saved_items = Arc::new(Mutex::new(
+        user.items
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone(),
+    ));
+    let _ = saved_items;
+    install_editor_provider(Arc::new(FakeEditor {
+        saved_items: Arc::new(Mutex::new(Vec::new())),
+    }));
+
+    install_provider(Source::Brew, brew);
+    install_provider(Source::LoginItem, login.clone());
+    install_provider(Source::UserAgent, user);
+    install_provider(Source::SystemAgent, system_agents());
+    install_provider(Source::Daemon, daemons(Behaviour::Normal));
+
+    let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
+    app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    app.wait_for("com.example.alpha").unwrap();
+
+    // New Job opens the plist editor overlay.
+    app.press("id:new-job").unwrap();
+    app.wait_for("id:plist-editor").unwrap();
+    app.press("id:editor-cancel").unwrap();
+    app.wait_for_gone("id:plist-editor", Duration::from_secs(2))
+        .unwrap();
+
+    // Selecting a launchd item exposes Edit, which opens the plist editor.
+    app.press("id:item-com.example.alpha").unwrap();
+    app.wait_for("id:edit-job").unwrap();
+    app.press("id:edit-job").unwrap();
+    app.wait_for("id:plist-editor").unwrap();
+    app.press("id:editor-cancel").unwrap();
+    app.wait_for_gone("id:plist-editor", Duration::from_secs(2))
+        .unwrap();
+
+    // Switching to Homebrew lists Brew services.
+    app.press("id:source-brew").unwrap();
+    app.wait_for("redis").unwrap();
+
+    // Switching to Login Items shows the Add Login Item button, restriction note,
+    // and Open Full Disk Access… button backed by the fake restricted provider.
+    app.press("id:source-login-item").unwrap();
+    app.wait_for("Raycast").unwrap();
+    app.wait_for("id:add-login-item").unwrap();
+    app.wait_for("id:login-item-restriction").unwrap();
+    app.wait_for("id:open-full-disk-access").unwrap();
+    app.press("id:open-full-disk-access").unwrap();
+    app.wait(Duration::from_millis(200)).unwrap();
+    assert_eq!(login.settings_opened.load(Ordering::Relaxed), 1);
+
+    drop(app);
+    drop(turn);
 }

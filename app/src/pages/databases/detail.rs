@@ -154,31 +154,35 @@ fn header() -> AnyElement {
                 .items_center()
                 .gap(tokens::space(2.0))
                 .child(ui::status_tag(&status))
-                .child(ui::action_button(
-                    "Start",
-                    if running {
-                        Tone::Default
-                    } else {
-                        Tone::Primary
-                    },
-                    "db-start",
-                    db::operations_busy,
-                    move || db::start_instance(&start_id),
-                ))
-                .child(ui::action_button(
-                    "Restart",
-                    Tone::Default,
-                    "db-restart",
-                    db::operations_busy,
-                    move || db::restart_instance(&restart_id),
-                ))
-                .child(ui::action_button(
-                    "Stop",
-                    Tone::Default,
-                    "db-stop",
-                    db::operations_busy,
-                    move || db::stop_instance(&stop_id),
-                ))
+                .child((!running).then(|| {
+                    ui::action_button(
+                        "Start",
+                        Tone::Primary,
+                        "db-start",
+                        db::operations_busy,
+                        move || db::start_instance(&start_id),
+                    )
+                }))
+                .child(running.then(|| {
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(1.5))
+                        .child(ui::action_button(
+                            "Restart",
+                            Tone::Default,
+                            "db-restart",
+                            db::operations_busy,
+                            move || db::restart_instance(&restart_id),
+                        ))
+                        .child(ui::action_button(
+                            "Stop",
+                            Tone::Default,
+                            "db-stop",
+                            db::operations_busy,
+                            move || db::stop_instance(&stop_id),
+                        ))
+                }))
                 .child(ui::action_button(
                     "Logs",
                     Tone::Default,
@@ -393,6 +397,7 @@ fn connection_actions(id: String, kind: String, can_copy: bool, admin: bool) -> 
     let jdbc = kind == "postgresql" || kind == "mysql";
     let cli = kind != "mongodb";
 
+    let id_preview = id.clone();
     let id_uri = id.clone();
     let id_docker = id.clone();
     let id_env = id.clone();
@@ -406,81 +411,162 @@ fn connection_actions(id: String, kind: String, can_copy: bool, admin: bool) -> 
     let copy_disabled = move || db::operations_busy() || !can_copy || db::profile_dirty();
 
     view()
-        .flex_row()
+        .flex_col()
+        .gap(tokens::space(2.5))
+        .child(dynamic(move || {
+            let uri = db::preview_uri(&id_preview)?;
+            Some(
+                view()
+                    .test_id("connection-uri-preview")
+                    .min_h(px(32.0))
+                    .flex_row()
+                    .items_center()
+                    .gap(tokens::space(2.0))
+                    .px(tokens::space(2.5))
+                    .py(tokens::space(1.5))
+                    .rounded(move || theme().radius)
+                    .bg(tokens::inset)
+                    .border_1()
+                    .border_color(tokens::hairline)
+                    .child(
+                        icons::link()
+                            .size(px(13.0))
+                            .flex_none()
+                            .text_color(move || theme().muted_foreground),
+                    )
+                    .child(
+                        text(uri)
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .font_family("monospace")
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().foreground)
+                            .selectable(true)
+                            .truncate(),
+                    )
+                    .into_element(),
+            )
+        }))
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .flex_wrap()
+                .gap(tokens::space(2.0))
+                .child(ui::action_button(
+                    "Copy connection URI",
+                    Tone::Primary,
+                    "connection-uri-copy",
+                    copy_disabled,
+                    move || db::copy_uri(&id_uri),
+                ))
+                .child(cli.then(|| {
+                    ui::action_button(
+                        "Open CLI in Terminal",
+                        Tone::Default,
+                        "connection-cli",
+                        copy_disabled,
+                        move || db::open_cli(&id_cli),
+                    )
+                }))
+                .child(ui::action_button(
+                    "Open in client",
+                    Tone::Default,
+                    "connection-client",
+                    copy_disabled,
+                    move || db::open_client(&id_client),
+                )),
+        )
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .flex_wrap()
+                .gap(tokens::space(1.0))
+                .pt(tokens::space(1.0))
+                .border_t_1()
+                .border_color(tokens::hairline)
+                .child(quiet_connection_button(
+                    "Copy Docker URI",
+                    "connection-docker-uri-copy",
+                    copy_disabled,
+                    move || db::copy_docker_uri(&id_docker),
+                ))
+                .child(quiet_connection_button(
+                    "Copy .env",
+                    "connection-env-copy",
+                    copy_disabled,
+                    move || db::copy_env(&id_env),
+                ))
+                .child(jdbc.then(|| {
+                    quiet_connection_button(
+                        "Copy JDBC URL",
+                        "connection-jdbc-copy",
+                        copy_disabled,
+                        move || db::copy_jdbc(&id_jdbc),
+                    )
+                }))
+                .child(quiet_connection_button(
+                    "Copy CLI command",
+                    "connection-cli-copy",
+                    copy_disabled,
+                    move || db::copy_cli_command(&id_cli_copy),
+                ))
+                .child(admin.then(|| {
+                    quiet_connection_button(
+                        "Copy database password",
+                        "connection-password-copy",
+                        db::operations_busy,
+                        move || db::copy_password(&id_password),
+                    )
+                }))
+                .child(admin.then(|| {
+                    quiet_connection_button(
+                        "Details",
+                        "connection-details",
+                        db::operations_busy,
+                        move || db::show_connection_details(&id_details),
+                    )
+                })),
+        )
+}
+
+/// Low-emphasis secondary action button inside the Connections card so
+/// secondary copy/inspect formats recede cleanly beneath the primary CTA row.
+fn quiet_connection_button(
+    label: &'static str,
+    test_id: &'static str,
+    disabled: impl IntoReactive<bool> + 'static,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
+    let disabled = disabled.into_reactive();
+    let disabled_opacity = disabled.clone();
+    nsh_base::button()
+        .test_id(test_id)
+        .h(px(24.0))
+        .flex_none()
         .items_center()
-        .flex_wrap()
-        .gap(tokens::space(1.5))
-        .child(ui::action_button(
-            "Copy connection URI",
-            Tone::Default,
-            "connection-uri-copy",
-            copy_disabled,
-            move || db::copy_uri(&id_uri),
-        ))
-        .child(ui::action_button(
-            "Copy Docker URI",
-            Tone::Default,
-            "connection-docker-uri-copy",
-            copy_disabled,
-            move || db::copy_docker_uri(&id_docker),
-        ))
-        .child(ui::action_button(
-            "Copy .env",
-            Tone::Default,
-            "connection-env-copy",
-            copy_disabled,
-            move || db::copy_env(&id_env),
-        ))
-        .child(jdbc.then(|| {
-            ui::action_button(
-                "Copy JDBC URL",
-                Tone::Default,
-                "connection-jdbc-copy",
-                copy_disabled,
-                move || db::copy_jdbc(&id_jdbc),
-            )
-        }))
-        .child(ui::action_button(
-            "Copy CLI command",
-            Tone::Default,
-            "connection-cli-copy",
-            copy_disabled,
-            move || db::copy_cli_command(&id_cli_copy),
-        ))
-        .child(admin.then(|| {
-            ui::action_button(
-                "Copy database password",
-                Tone::Default,
-                "connection-password-copy",
-                db::operations_busy,
-                move || db::copy_password(&id_password),
-            )
-        }))
-        .child(ui::action_button(
-            "Open in client",
-            Tone::Default,
-            "connection-client",
-            copy_disabled,
-            move || db::open_client(&id_client),
-        ))
-        .child(cli.then(|| {
-            ui::action_button(
-                "Open CLI in Terminal",
-                Tone::Default,
-                "connection-cli",
-                copy_disabled,
-                move || db::open_cli(&id_cli),
-            )
-        }))
-        .child(admin.then(|| {
-            ui::action_button(
-                "Details",
-                Tone::Default,
-                "connection-details",
-                db::operations_busy,
-                move || db::show_connection_details(&id_details),
-            )
-        }))
+        .justify_center()
+        .px(tokens::space(2.0))
+        .rounded(move || theme().radius)
+        .bg(AdaptiveColor::TRANSPARENT)
+        .hover(move |style| style.bg(tokens::row_hover()))
+        .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
+        .disabled(move || disabled.get())
+        .opacity(move || {
+            if disabled_opacity.get() {
+                0.45_f32
+            } else {
+                1.0_f32
+            }
+        })
+        .on_press(on_press)
+        .child(
+            text(label)
+                .text_size(px(tokens::TEXT_CAPTION))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(move || theme().muted_foreground),
+        )
 }
 
 fn pending_switch_notice() -> impl IntoElement {
@@ -656,7 +742,7 @@ fn endpoint_body(
         data_directory.clone()
     };
     let endpoint = format!("127.0.0.1:{port}");
-    let summary = format!("{} {} · {endpoint}", rail::instance_title(&kind), version);
+    let summary = format!("{} {}", rail::instance_title(&kind), version);
     let external = !data_directory.is_empty();
 
     let id_upgrade = id.clone();

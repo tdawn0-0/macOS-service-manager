@@ -30,33 +30,16 @@ pub(crate) fn software() -> impl IntoElement {
         .child(detail::detail_pane())
 }
 
-/// The runtimes and engines, grouped as the Go master list grouped them.
+/// The runtimes and engines, as a clean 176px vertical source list starting
+/// directly below the unified 52pt Development toolbar.
 fn rail() -> impl IntoElement {
     view()
-        .w(px(188.0))
+        .w(px(176.0))
         .flex_none()
         .flex_col()
         .bg(move || theme().background)
         .border_r_1()
         .border_color(tokens::hairline)
-        .child(
-            view()
-                .h(px(tokens::TITLE_BAR_HEIGHT))
-                .flex_none()
-                .flex_row()
-                .items_center()
-                .px(tokens::space(4.0))
-                .border_b_1()
-                .border_color(tokens::hairline)
-                .window_drag(true)
-                .child(
-                    text("Software")
-                        .text_size(px(15.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().foreground)
-                        .truncate(),
-                ),
-        )
         .child(
             view()
                 .flex_1()

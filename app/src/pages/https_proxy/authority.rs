@@ -69,11 +69,10 @@ fn header() -> impl IntoElement {
         ),
         "Local certificates",
         None::<&str>,
-        Some(ui::action_button(
-            "Refresh",
-            Tone::Default,
+        Some(ui::toolbar_icon_button(
+            icons::refresh(),
+            "Refresh local certificates",
             "ca-refresh",
-            proxy::busy,
             proxy::refresh_authority,
         )),
     )
@@ -122,7 +121,7 @@ fn cards() -> impl IntoElement {
             ))
             .child(ui::action_button(
                 "Remove CA trust",
-                Tone::Default,
+                Tone::Danger,
                 "ca-active-remove",
                 move || proxy::busy() || active_no_fingerprint,
                 proxy::remove_active_trust,
@@ -434,7 +433,7 @@ fn archive_card(info: &AuthorityInfo, previous_id: &str, prepared: bool) -> AnyE
                     ))
                     .child(ui::action_button(
                         "Remove trust",
-                        Tone::Default,
+                        Tone::Danger,
                         format!("ca-archive-remove-trust-{short}"),
                         proxy::busy,
                         move || {

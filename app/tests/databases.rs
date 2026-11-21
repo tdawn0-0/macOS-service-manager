@@ -717,6 +717,12 @@ fn fixture_with_packages() -> Fixture {
 /// Installs the fake provider and starts the surface on the Databases page,
 /// holding the tests' turn for as long as the returned guard lives.
 fn start(fake: Arc<FakeDatabases>) -> (MutexGuard<'static, ()>, Headless) {
+    let has_instances = !fake
+        .fixture
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .instances
+        .is_empty();
     let turn = serial();
     use_fake_menubar();
     use_fake_providers();
@@ -732,8 +738,13 @@ fn start(fake: Arc<FakeDatabases>) -> (MutexGuard<'static, ()>, Headless) {
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
     app.wait_for("Services").unwrap();
     app.press("role:button[Databases]").unwrap();
-    app.wait_for("id:db-create-form").unwrap();
-    app.wait_for("PostgreSQL · 17.11").unwrap();
+    app.wait_for("id:db-new").unwrap();
+    if has_instances {
+        app.wait_for("id:database-detail").unwrap();
+    } else {
+        app.wait_for("id:db-create-form").unwrap();
+        app.wait_for("PostgreSQL · 17.11").unwrap();
+    }
     (turn, app)
 }
 
@@ -771,7 +782,7 @@ fn instances_list_their_engine_state_and_port() {
     app.press("id:db-instance-app").unwrap();
     app.wait_for("127.0.0.1:5432").unwrap();
     assert!(app.screen().shows("Running"));
-    assert!(app.screen().shows("PostgreSQL 17.11 · 127.0.0.1:5432"));
+    assert!(app.screen().shows("PostgreSQL 17.11"));
 
     app.press("id:db-instance-cache").unwrap();
     app.wait_for("127.0.0.1:6379").unwrap();
@@ -1238,15 +1249,15 @@ fn rail_nav_rows_reactively_update_selection_and_unfinished_counts() {
     let fake = FakeDatabases::new(fixture, Behaviour::Normal);
     let (_turn, mut app) = start(fake);
 
-    // Initial selection is "New instance", and unfinished counts populate live after db::load().
-    assert!(app.screen().selected("id:db-new").unwrap());
-    assert!(!app.screen().selected("id:db-work").unwrap());
-    assert!(!app.screen().selected("id:db-initializations").unwrap());
-    assert!(!app.screen().selected("id:db-deletions").unwrap());
-
+    // Initial selection auto-selects the existing instance, and unfinished counts populate live.
     app.wait_for("id:db-work >> text:1").unwrap();
     app.wait_for("id:db-initializations >> text:2").unwrap();
     app.wait_for("id:db-deletions >> text:1").unwrap();
+    assert!(app.screen().selected("id:db-instance-app").unwrap());
+    assert!(!app.screen().selected("id:db-new").unwrap());
+    assert!(!app.screen().selected("id:db-work").unwrap());
+    assert!(!app.screen().selected("id:db-initializations").unwrap());
+    assert!(!app.screen().selected("id:db-deletions").unwrap());
 
     // Switching to Database tasks highlights it immediately; resolving updates the count to 0.
     app.press("id:db-work").unwrap();
@@ -1257,11 +1268,12 @@ fn rail_nav_rows_reactively_update_selection_and_unfinished_counts() {
     app.press("id:work-resolve-work-1").unwrap();
     app.wait_for("id:db-work >> text:0").unwrap();
 
-    // Switching across Initializations, Pending deletions, and back to New instance tracks selection.
+    // Switching across Initializations, Pending deletions, and back to New instance tracks selection;
+    // the resolved 0-count Database tasks row hides once navigated away from.
     app.press("id:db-initializations").unwrap();
     app.wait_for("id:db-initializations-page").unwrap();
     assert!(app.screen().selected("id:db-initializations").unwrap());
-    assert!(!app.screen().selected("id:db-work").unwrap());
+    assert!(!app.screen().matches("id:db-work").unwrap());
 
     app.press("id:db-deletions").unwrap();
     app.wait_for("id:db-pending-deletions").unwrap();
@@ -1485,6 +1497,8 @@ fn inline_port_conflict_diagnosis_and_suggested_port_in_new_and_detail() {
     let (_turn, mut app) = start(fake.clone());
 
     // 1. New-instance form: typing occupied port 5432 shows inline conflict + "Use :5433".
+    app.press("id:db-new").unwrap();
+    app.wait_for("id:db-create-form").unwrap();
     app.clear("id:db-port").unwrap();
     app.type_text("id:db-port", "5432").unwrap();
     app.wait_for("id:db-port-conflict").unwrap();
@@ -1665,4 +1679,49 @@ fn docker_uri_and_cli_command_copy_are_password_free() {
             "mongosh 'mongodb://devmanager@127.0.0.1:27017/admin?authSource=admin&directConnection=true'"
         )
     );
+}
+
+#[test]
+fn auto_selects_first_running_instance_hides_zero_rail_rows_and_shows_uri_preview() {
+    let mut fixture = fixture_with_packages();
+    fixture.instances.push(instance("idle", "mysql", 3306, ""));
+    fixture
+        .instances
+        .push(instance("primary", "postgresql", 5432, ""));
+    fixture
+        .statuses
+        .insert("idle".to_string(), "Stopped".to_string());
+    fixture
+        .statuses
+        .insert("primary".to_string(), "Running".to_string());
+    let fake = FakeDatabases::new(fixture, Behaviour::Normal);
+    let (_turn, mut app) = start(fake);
+
+    // First running instance is auto-selected over the earlier stopped one.
+    assert!(app.screen().selected("id:db-instance-primary").unwrap());
+    assert!(!app.screen().matches("id:db-create-form").unwrap());
+
+    // Zero-count unfinished rows stay hidden in the rail.
+    assert!(!app.screen().matches("id:db-work").unwrap());
+    assert!(!app.screen().matches("id:db-initializations").unwrap());
+    assert!(!app.screen().matches("id:db-deletions").unwrap());
+
+    // Detail header shows contextual Stop + Restart for running instances (no Start).
+    assert!(app.screen().matches("id:db-stop").unwrap());
+    assert!(app.screen().matches("id:db-restart").unwrap());
+    assert!(!app.screen().matches("id:db-start").unwrap());
+
+    // Connections card displays a password-free monospaced URI preview.
+    app.wait_for("id:connection-uri-preview").unwrap();
+    assert!(
+        app.screen()
+            .shows("postgresql://devmanager@127.0.0.1:5432/postgres")
+    );
+    assert!(!app.screen().shows("secret-not-in-the-store"));
+
+    // Switching to the stopped instance flips contextual actions to Start only.
+    app.press("id:db-instance-idle").unwrap();
+    app.wait_for("id:db-start").unwrap();
+    assert!(!app.screen().matches("id:db-stop").unwrap());
+    assert!(!app.screen().matches("id:db-restart").unwrap());
 }

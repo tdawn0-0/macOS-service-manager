@@ -829,6 +829,9 @@ impl DraftSignals {
 #[derive(Debug, Clone, Default)]
 struct Workspace {
     mode: Mode,
+    /// True once the user (or another screen) explicitly picked a mode/instance,
+    /// so initial snapshot auto-selection never overrides an explicit navigation.
+    user_chose_mode: bool,
     /// The instance the detail or the deletion review shows.
     selected: Option<String>,
     snapshot: Snapshot,
@@ -1009,6 +1012,7 @@ pub(crate) fn refresh() {
         };
         let mut default_package: Option<String> = None;
         let mut telemetry_target: Option<String> = None;
+        let mut auto_selected: Option<String> = None;
         let mut sync_edit_port: Option<String> = None;
         let d = drafts();
         let draft_kind = d.draft_kind.get_untracked();
@@ -1023,6 +1027,31 @@ pub(crate) fn refresh() {
                 Ok(snapshot) => {
                     state.snapshot = snapshot;
                     state.load.error = None;
+                    if !state.user_chose_mode
+                        && state.selected.is_none()
+                        && !state.snapshot.instances.is_empty()
+                        && let Some(chosen) = state
+                            .snapshot
+                            .instances
+                            .iter()
+                            .find(|inst| {
+                                matches!(
+                                    state.snapshot.statuses.get(&inst.id).map(String::as_str),
+                                    Some("Running" | "Healthy")
+                                )
+                            })
+                            .or_else(|| state.snapshot.instances.first())
+                            .cloned()
+                    {
+                        state.mode = Mode::Instance;
+                        state.selected = Some(chosen.id.clone());
+                        state.edit_port = EditPortState {
+                            instance_id: chosen.id.clone(),
+                            port: PortState::default(),
+                        };
+                        sync_edit_port = Some(chosen.port.to_string());
+                        auto_selected = Some(chosen.id);
+                    }
                     if state.mode == Mode::New && draft_package_empty {
                         let package = state
                             .snapshot
@@ -1034,7 +1063,8 @@ pub(crate) fn refresh() {
                             .unwrap_or_default();
                         default_package = Some(package);
                     }
-                    if state.mode == Mode::Instance
+                    if auto_selected.is_none()
+                        && state.mode == Mode::Instance
                         && let Some(selected) = state.selected.clone()
                         && let Some(inst) = state
                             .snapshot
@@ -1074,7 +1104,12 @@ pub(crate) fn refresh() {
         if let Some(port) = sync_edit_port {
             d.edit_port.set(port);
         }
-        if let Some(id) = telemetry_target {
+        if let Some(id) = auto_selected {
+            load_profile_for(&id);
+            load_catalog(&id);
+            load_backups(&id);
+            refresh_telemetry(&id);
+        } else if let Some(id) = telemetry_target {
             refresh_telemetry(&id);
         }
     });
@@ -1285,6 +1320,7 @@ fn show_instance(id: &str) {
     }
     workspace().update(|state| {
         state.mode = Mode::Instance;
+        state.user_chose_mode = true;
         state.selected = Some(id.to_string());
         state.preview = None;
         state.action_error = None;
@@ -1358,6 +1394,7 @@ fn show_new_with(kind: &'static str, package_id: &str) {
     d.clear_instance_inputs();
     workspace().update(|state| {
         state.mode = Mode::New;
+        state.user_chose_mode = true;
         state.selected = None;
         state.preview = None;
         state.action_error = None;
@@ -3277,6 +3314,68 @@ fn selected_database_for(instance_id: &str, kind: &str) -> Option<String> {
     }
 }
 
+/// Builds a password-free preview URI for the currently selected connection
+/// (administrator or saved profile). Never reads or exposes credentials.
+pub(crate) fn preview_uri(id: &str) -> Option<String> {
+    let inst = instance(id)?;
+    let selected = selected_profile();
+    if selected == "new" {
+        return None;
+    }
+    let port = inst.port;
+    if selected.is_empty() {
+        let database = selected_database_for(id, &inst.kind);
+        let uri = match inst.kind.as_str() {
+            "redis" => {
+                let db = database.unwrap_or_else(|| "0".to_string());
+                format!("redis://default@127.0.0.1:{port}/{db}")
+            }
+            "mysql" => {
+                let db = database.unwrap_or_default();
+                format!("mysql://root@127.0.0.1:{port}/{db}")
+            }
+            "mongodb" => {
+                let db = database.unwrap_or_else(|| "admin".to_string());
+                format!(
+                    "mongodb://devmanager@127.0.0.1:{port}/{db}?authSource=admin&directConnection=true"
+                )
+            }
+            _ => {
+                let db = database.unwrap_or_else(|| "postgres".to_string());
+                format!("postgresql://devmanager@127.0.0.1:{port}/{db}")
+            }
+        };
+        return Some(uri);
+    }
+
+    let profile = profiles(id)
+        .into_iter()
+        .find(|entry| entry.id == selected)?;
+    let uri = match inst.kind.as_str() {
+        "redis" => format!("redis://default@127.0.0.1:{port}/{}", profile.redis_db),
+        "mysql" => format!(
+            "mysql://{}@127.0.0.1:{port}/{}",
+            profile.username, profile.database
+        ),
+        "mongodb" => {
+            let auth = if profile.mongo_auth_source.is_empty() {
+                "admin"
+            } else {
+                profile.mongo_auth_source.as_str()
+            };
+            format!(
+                "mongodb://{}@127.0.0.1:{port}/{}?authSource={auth}&directConnection=true",
+                profile.username, profile.database
+            )
+        }
+        _ => format!(
+            "postgresql://{}@127.0.0.1:{port}/{}",
+            profile.username, profile.database
+        ),
+    };
+    Some(uri)
+}
+
 /// Copies the credential-free URI of the chosen connection.
 pub(crate) fn copy_uri(id: &str) {
     let Some(provider) = provider_of() else {
@@ -3633,6 +3732,7 @@ pub(crate) fn open_deletion_preview(id: &str) {
     drafts().confirmation.set(String::new());
     workspace().update(|state| {
         state.mode = Mode::DeletionPreview;
+        state.user_chose_mode = true;
         state.selected = Some(id.to_string());
         state.preview = Some(PreviewState {
             instance_id: id.to_string(),
@@ -3817,6 +3917,7 @@ pub(crate) fn open_deletions() {
     drafts().confirmation.set(String::new());
     workspace().update(|state| {
         state.mode = Mode::Deletions;
+        state.user_chose_mode = true;
         state.preview = None;
         state.action_error = None;
     });
@@ -3944,6 +4045,7 @@ pub(crate) fn open_initializations() {
     drafts().confirmation.set(String::new());
     workspace().update(|state| {
         state.mode = Mode::Initializations;
+        state.user_chose_mode = true;
         state.preview = None;
         state.action_error = None;
     });
@@ -4034,6 +4136,7 @@ pub(crate) fn open_work() {
     drafts().confirmation.set(String::new());
     workspace().update(|state| {
         state.mode = Mode::Work;
+        state.user_chose_mode = true;
         state.preview = None;
         state.action_error = None;
     });

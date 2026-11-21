@@ -84,7 +84,8 @@ fn instance_body() -> impl IntoElement {
         .child(dynamic(|| Some(engine_row())))
         .child(dynamic(|| {
             let kind = db::draft_kind();
-            Some(version_row(kind, db::packages(kind)))
+            let packages = db::packages(kind);
+            (!packages.is_empty()).then(|| version_row(kind, packages))
         }))
         .child(
             view()
@@ -394,11 +395,15 @@ fn storage_body() -> impl IntoElement {
 }
 
 fn create_row() -> impl IntoElement {
-    ui::action_button(
-        "Create instance",
-        Tone::Primary,
-        "db-create",
-        db::operations_busy,
-        db::create_instance,
-    )
+    view()
+        .flex_row()
+        .items_center()
+        .justify_end()
+        .child(ui::action_button(
+            "Create instance",
+            Tone::Primary,
+            "db-create",
+            db::operations_busy,
+            db::create_instance,
+        ))
 }

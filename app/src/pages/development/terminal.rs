@@ -21,6 +21,7 @@ pub(super) fn terminal_page() -> impl IntoElement {
         .min_w(px(0.0))
         .flex_col()
         .child(header())
+        .child(super::notes())
         .child(
             scroll().flex_1().min_h(px(0.0)).child(
                 view()

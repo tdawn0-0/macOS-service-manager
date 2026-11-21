@@ -535,18 +535,21 @@ fn the_saved_rules_render_from_the_provider() {
 
     app.wait_for("id:proxy-rule-0").unwrap();
     app.wait_for("id:proxy-rule-1").unwrap();
-    assert!(app.screen().shows("2 rules · listener :443"));
+    assert!(app.screen().shows("2 rules · :443"));
     assert!(app.screen().shows("Published"));
     assert_eq!(
         app.screen().input_text("id:proxy-domain-0").unwrap(),
         Some("app")
     );
     assert_eq!(
+        app.screen().input_text("id:proxy-domain-1").unwrap(),
+        Some("api")
+    );
+    assert_eq!(
         app.screen().input_text("id:proxy-port-0").unwrap(),
         Some("3000")
     );
-    assert!(app.screen().shows("app.devbase.localhost"));
-    assert!(app.screen().shows("api.devbase.localhost"));
+    assert!(app.screen().shows(".devbase.localhost"));
     // The tunnel sub-row is only there for the tunneled rule.
     assert!(app.screen().matches("id:proxy-mode-workers-1").unwrap());
     assert_eq!(
@@ -1244,4 +1247,24 @@ fn explicit_logs_buttons_open_live_log_drawer_for_proxy_and_tunnel() {
     app.press("id:tunnel-open-logs").unwrap();
     app.wait_for("tunnel live log line").unwrap();
     assert!(logs_provider.requested().iter().any(|job| job == "tunnel"));
+}
+
+#[test]
+fn top_status_bar_hides_trust_action_when_ca_is_trusted_and_removes_duplicates() {
+    let mut status = not_created();
+    status.active = info("active-1", "Ready", TrustState::Trusted, true, 'a');
+    let fake = Fake::new(snapshot(
+        vec![rule("app.devbase.localhost", 3000, false)],
+        443,
+    ))
+    .with_authority(status);
+    let (_turn, mut app) = start(fake);
+
+    app.wait_for("id:ca-trust-label").unwrap();
+    assert!(app.screen().shows("Trusted"));
+    assert!(app.screen().matches("id:ca-open").unwrap());
+    assert!(!app.screen().matches("id:ca-trust").unwrap());
+    assert!(!app.screen().matches("id:ca-remove-trust").unwrap());
+    assert!(!app.screen().matches("id:proxy-logs").unwrap());
+    assert!(app.screen().matches("id:proxy-open-logs").unwrap());
 }

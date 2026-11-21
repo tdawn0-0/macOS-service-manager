@@ -21,7 +21,6 @@ pub(super) fn detail_pane() -> impl IntoElement {
         .flex_1()
         .min_w(px(0.0))
         .flex_col()
-        .child(header())
         .child(notes())
         .child(
             scroll().flex_1().min_h(px(0.0)).child(
@@ -29,13 +28,14 @@ pub(super) fn detail_pane() -> impl IntoElement {
                     .w_full()
                     .items_center()
                     .px(tokens::space(5.0))
-                    .py(tokens::space(5.0))
+                    .py(tokens::space(4.0))
                     .child(
                         view()
                             .w_full()
                             .max_w(px(840.0))
                             .flex_col()
                             .gap(tokens::space(4.0))
+                            .child(engine_heading())
                             .child(installed_card())
                             .child(install_card())
                             .child(cache_card()),
@@ -44,28 +44,42 @@ pub(super) fn detail_pane() -> impl IntoElement {
         )
 }
 
-/// The software's name and a fresh read.
-fn header() -> impl IntoElement {
-    ui::page_header(
-        move || sw::active_software().title().to_string(),
-        None::<&str>,
-        view()
-            .flex_none()
-            .flex_row()
-            .items_center()
-            .gap(tokens::space(2.0))
-            .child(when(sw::loading, || {
-                text("Loading…")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground)
-            }))
-            .child(ui::toolbar_icon_button(
-                icons::refresh(),
-                "Refresh software",
-                "software-refresh",
-                sw::refresh,
-            )),
-    )
+/// Lightweight inline heading inside the detail scroll sheet (no second 52pt bar).
+fn engine_heading() -> impl IntoElement {
+    dynamic(|| {
+        let kind = sw::active_software();
+        let count = sw::installed_count(kind);
+        let subtitle = if count == 0 {
+            "Not installed".to_string()
+        } else {
+            format!("{} installed", sw::plural(count, "version"))
+        };
+        Some(
+            view()
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(2.0))
+                .child(
+                    icons::software(kind)
+                        .size(px(16.0))
+                        .flex_none()
+                        .text_color(move || theme().muted_foreground),
+                )
+                .child(
+                    text(kind.title())
+                        .text_size(px(16.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(move || theme().foreground),
+                )
+                .child(
+                    text(subtitle)
+                        .text_size(px(tokens::TEXT_SMALL))
+                        .tabular_nums()
+                        .text_color(move || theme().muted_foreground),
+                )
+                .into_element(),
+        )
+    })
 }
 
 /// The read error and an operation's error.

@@ -22,12 +22,7 @@ pub(crate) fn rail() -> impl IntoElement {
         .bg(move || theme().background)
         .border_r_1()
         .border_color(tokens::hairline)
-        .child(ui::page_header_with_leading(
-            None::<AnyElement>,
-            "Databases",
-            None::<&str>,
-            Some(new_instance_button()),
-        ))
+        .child(rail_header())
         .child(
             view()
                 .flex_1()
@@ -35,65 +30,106 @@ pub(crate) fn rail() -> impl IntoElement {
                 .flex_col()
                 .px(tokens::space(2.0))
                 .py(tokens::space(2.5))
-                .child(when(
-                    || db::running_count() > 0,
-                    || {
-                        view()
-                            .flex_row()
-                            .items_center()
-                            .justify_end()
-                            .pb(tokens::space(1.5))
-                            .child(
-                                nsh_base::button()
-                                    .test_id("db-stop-all")
-                                    .px(tokens::space(1.5))
-                                    .py(tokens::space(0.5))
-                                    .rounded(move || theme().radius)
-                                    .hover(move |style| style.bg(tokens::row_hover()))
-                                    .focus_visible(|style| {
-                                        style.ring(px(2.0)).ring_color(move || theme().ring)
-                                    })
-                                    .on_press(db::stop_all_running)
-                                    .child(
-                                        text("Stop all")
-                                            .text_size(px(tokens::TEXT_CAPTION))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(move || theme().muted_foreground),
-                                    ),
-                            )
-                    },
-                ))
                 .child(dynamic(|| Some(rows())))
                 .child(view().flex_1())
-                .child(
-                    view()
-                        .flex_col()
-                        .gap(tokens::space(0.5))
-                        .pt(tokens::space(2.0))
-                        .child(view().pb(tokens::space(1.5)).child(ui::hairline()))
-                        .child(nav_row(
-                            "Database tasks",
-                            "db-work",
-                            || db::database_work().len().to_string(),
-                            || db::mode() == db::Mode::Work,
-                            db::open_work,
-                        ))
-                        .child(nav_row(
-                            "Initializations",
-                            "db-initializations",
-                            || db::pending_initializations().len().to_string(),
-                            || db::mode() == db::Mode::Initializations,
-                            db::open_initializations,
-                        ))
-                        .child(nav_row(
-                            "Pending deletions",
-                            "db-deletions",
-                            || db::pending_deletions().len().to_string(),
-                            || db::mode() == db::Mode::Deletions,
-                            db::open_deletions,
-                        )),
-                ),
+                .child(unfinished_section()),
         )
+}
+
+fn rail_header() -> impl IntoElement {
+    view()
+        .h(px(tokens::TITLE_BAR_HEIGHT))
+        .flex_none()
+        .flex_row()
+        .items_center()
+        .gap(tokens::space(1.5))
+        .px(tokens::space(3.5))
+        .border_b_1()
+        .border_color(tokens::hairline)
+        .window_drag(true)
+        .child(
+            text("Databases")
+                .flex_1()
+                .min_w(px(0.0))
+                .text_size(px(15.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(move || theme().foreground)
+                .truncate(),
+        )
+        .child(when(
+            || db::running_count() > 0,
+            || {
+                view()
+                    .flex_none()
+                    .tooltip(ui::tooltip("Stop all running databases"))
+                    .child(
+                        nsh_base::button()
+                            .test_id("db-stop-all")
+                            .h(px(24.0))
+                            .flex_none()
+                            .items_center()
+                            .justify_center()
+                            .px(tokens::space(1.5))
+                            .rounded(move || theme().radius)
+                            .hover(move |style| style.bg(tokens::row_hover()))
+                            .focus_visible(|style| {
+                                style.ring(px(2.0)).ring_color(move || theme().ring)
+                            })
+                            .on_press(db::stop_all_running)
+                            .child(
+                                text("Stop all")
+                                    .text_size(px(tokens::TEXT_CAPTION))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(move || theme().muted_foreground),
+                            ),
+                    )
+            },
+        ))
+        .child(new_instance_button())
+}
+
+fn unfinished_section() -> impl IntoElement {
+    let show_work = || !db::database_work().is_empty() || db::mode() == db::Mode::Work;
+    let show_inits =
+        || !db::pending_initializations().is_empty() || db::mode() == db::Mode::Initializations;
+    let show_deletions =
+        || !db::pending_deletions().is_empty() || db::mode() == db::Mode::Deletions;
+    let show_any = move || show_work() || show_inits() || show_deletions();
+
+    when(show_any, move || {
+        view()
+            .flex_col()
+            .gap(tokens::space(0.5))
+            .pt(tokens::space(2.0))
+            .child(view().pb(tokens::space(1.5)).child(ui::hairline()))
+            .child(when(show_work, || {
+                nav_row(
+                    "Database tasks",
+                    "db-work",
+                    || db::database_work().len().to_string(),
+                    || db::mode() == db::Mode::Work,
+                    db::open_work,
+                )
+            }))
+            .child(when(show_inits, || {
+                nav_row(
+                    "Initializations",
+                    "db-initializations",
+                    || db::pending_initializations().len().to_string(),
+                    || db::mode() == db::Mode::Initializations,
+                    db::open_initializations,
+                )
+            }))
+            .child(when(show_deletions, || {
+                nav_row(
+                    "Pending deletions",
+                    "db-deletions",
+                    || db::pending_deletions().len().to_string(),
+                    || db::mode() == db::Mode::Deletions,
+                    db::open_deletions,
+                )
+            }))
+    })
 }
 
 fn new_instance_button() -> impl IntoElement {

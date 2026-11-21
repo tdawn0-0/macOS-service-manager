@@ -104,8 +104,8 @@ fn notes() -> impl IntoElement {
 fn status_strip() -> impl IntoElement {
     view()
         .flex_col()
-        .gap(tokens::space(2.5))
-        .p(tokens::space(3.5))
+        .px(tokens::space(4.0))
+        .py(tokens::space(2.5))
         .rounded(tokens::panel_radius)
         .bg(tokens::panel)
         .border_1()
@@ -115,9 +115,10 @@ fn status_strip() -> impl IntoElement {
                 .flex_row()
                 .items_center()
                 .flex_wrap()
-                .gap(tokens::space(3.0))
+                .gap(tokens::space(2.5))
                 .child(
                     view()
+                        .flex_none()
                         .flex_row()
                         .items_center()
                         .gap(tokens::space(1.5))
@@ -135,6 +136,7 @@ fn status_strip() -> impl IntoElement {
                         ))
                         .child(
                             text("Proxy")
+                                .flex_none()
                                 .text_size(px(tokens::TEXT_SMALL))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(move || theme().foreground),
@@ -147,21 +149,23 @@ fn status_strip() -> impl IntoElement {
                         .child(
                             text(move || {
                                 format!(
-                                    "{} · listener :{}",
+                                    "{} · :{}",
                                     proxy::plural(proxy::saved_rules().len(), "rule"),
                                     proxy::listener_port()
                                 )
                             })
+                            .flex_none()
                             .text_size(px(tokens::TEXT_CAPTION))
                             .tabular_nums()
                             .text_color(move || theme().muted_foreground),
                         ),
                 )
                 .child(strip_divider())
-                .child(dynamic(|| Some(ca_strip_pill())))
+                .child(dynamic(|| Some(ca_strip_group())))
                 .child(strip_divider())
                 .child(
                     view()
+                        .flex_none()
                         .flex_row()
                         .items_center()
                         .gap(tokens::space(1.5))
@@ -179,6 +183,7 @@ fn status_strip() -> impl IntoElement {
                         ))
                         .child(
                             text("Tunnel")
+                                .flex_none()
                                 .text_size(px(tokens::TEXT_SMALL))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(move || theme().foreground),
@@ -188,60 +193,31 @@ fn status_strip() -> impl IntoElement {
                             (status != "Running" && status != "Stopped")
                                 .then(|| ui::status_tag(status))
                         })),
+                )
+                .child(view().flex_1())
+                .child(
+                    view()
+                        .flex_none()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(1.5))
+                        .child(ui::action_button(
+                            "Restart",
+                            Tone::Default,
+                            "proxy-restart",
+                            || proxy::busy() || proxy::dirty(),
+                            proxy::restart_proxy,
+                        ))
+                        .child(ui::action_button(
+                            "Logs",
+                            Tone::Default,
+                            "proxy-open-logs",
+                            false,
+                            || crate::dev_logs::open("proxy"),
+                        )),
                 ),
         )
         .child(dynamic(ca_untrusted_warning))
-        .child(ui::hairline())
-        .child(
-            view()
-                .flex_row()
-                .items_center()
-                .flex_wrap()
-                .gap(tokens::space(1.5))
-                .child(ui::action_button(
-                    "Trust local CA",
-                    Tone::Default,
-                    "ca-trust",
-                    || proxy::busy() || proxy::dirty(),
-                    proxy::trust_active,
-                ))
-                .child(ui::action_button(
-                    "Remove CA trust",
-                    Tone::Default,
-                    "ca-remove-trust",
-                    || proxy::busy() || proxy::dirty(),
-                    proxy::remove_active_trust,
-                ))
-                .child(ui::action_button(
-                    "Local certificates",
-                    Tone::Default,
-                    "ca-open",
-                    proxy::busy,
-                    proxy::open_authority,
-                ))
-                .child(view().flex_1())
-                .child(ui::action_button(
-                    "Restart",
-                    Tone::Default,
-                    "proxy-restart",
-                    || proxy::busy() || proxy::dirty(),
-                    proxy::restart_proxy,
-                ))
-                .child(ui::action_button(
-                    "Read logs",
-                    Tone::Default,
-                    "proxy-logs",
-                    proxy::busy,
-                    || proxy::read_logs("proxy"),
-                ))
-                .child(ui::action_button(
-                    "Logs",
-                    Tone::Default,
-                    "proxy-open-logs",
-                    false,
-                    || crate::dev_logs::open("proxy"),
-                )),
-        )
 }
 
 fn strip_divider() -> impl IntoElement {
@@ -252,25 +228,29 @@ fn strip_divider() -> impl IntoElement {
         .bg(tokens::hairline)
 }
 
-fn ca_strip_pill() -> impl IntoElement {
-    let label = proxy::authority()
+fn ca_strip_group() -> impl IntoElement {
+    let (label, trusted) = proxy::authority()
         .as_ref()
         .map(|status| {
-            if status.active.status == "Not created" {
+            let trusted = status.active.trust == TrustState::Trusted;
+            let text = if status.active.status == "Not created" {
                 "Not created".to_string()
-            } else if status.active.trust == TrustState::Trusted {
+            } else if trusted {
                 "Trusted".to_string()
             } else {
                 "Not trusted".to_string()
-            }
+            };
+            (text, trusted)
         })
-        .unwrap_or_default();
+        .unwrap_or_else(|| (String::new(), false));
     view()
+        .flex_none()
         .flex_row()
         .items_center()
         .gap(tokens::space(1.5))
         .child(
             text("Local CA")
+                .flex_none()
                 .text_size(px(tokens::TEXT_SMALL))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(move || theme().foreground),
@@ -280,9 +260,40 @@ fn ca_strip_pill() -> impl IntoElement {
             move || {
                 view()
                     .test_id("ca-trust-label")
+                    .flex_none()
                     .child(ui::status_tag(label.clone()))
             }
         }))
+        .child(when(!trusted, || {
+            ui::action_button(
+                "Trust local CA",
+                Tone::Default,
+                "ca-trust",
+                || proxy::busy() || proxy::dirty(),
+                proxy::trust_active,
+            )
+        }))
+        .child(
+            nsh_base::button()
+                .test_id("ca-open")
+                .h(px(24.0))
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .px(tokens::space(1.5))
+                .rounded(move || theme().radius)
+                .hover(move |style| style.bg(tokens::row_hover()))
+                .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
+                .disabled(proxy::busy)
+                .opacity(move || if proxy::busy() { 0.45_f32 } else { 1.0_f32 })
+                .on_press(proxy::open_authority)
+                .child(
+                    text("Local certificates")
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(move || theme().muted_foreground),
+                ),
+        )
 }
 
 fn ca_untrusted_warning() -> Option<AnyElement> {
@@ -291,16 +302,21 @@ fn ca_untrusted_warning() -> Option<AnyElement> {
             .as_ref()
             .is_some_and(|status| status.active.trust != TrustState::Trusted);
     warning.then(|| {
-        note(
-            icons::warn(),
-            "Proxy is running, but the local CA is not trusted yet.",
-            false,
-        )
-        .into_element()
+        view()
+            .pt(tokens::space(2.0))
+            .child(ui::plain_note(
+                "Proxy is running, but the local CA is not trusted yet.",
+                false,
+            ))
+            .into_element()
     })
 }
 
 // --- Rules -------------------------------------------------------------------
+
+const DOMAIN_COL_W: f32 = 288.0;
+const ARROW_COL_W: f32 = 14.0;
+const TARGET_COL_W: f32 = 228.0;
 
 fn rules_card() -> impl IntoElement {
     ui::card(
@@ -318,15 +334,16 @@ fn rules_card() -> impl IntoElement {
                         .px(tokens::space(3.0))
                         .child(
                             text("Domain")
-                                .flex_1()
-                                .min_w(px(200.0))
+                                .w(px(DOMAIN_COL_W))
+                                .flex_none()
                                 .text_size(px(tokens::TEXT_CAPTION))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(move || theme().muted_foreground),
                         )
+                        .child(view().w(px(ARROW_COL_W)).flex_none())
                         .child(
                             text("Target")
-                                .w(px(276.0))
+                                .w(px(TARGET_COL_W))
                                 .flex_none()
                                 .text_size(px(tokens::TEXT_CAPTION))
                                 .font_weight(FontWeight::MEDIUM)
@@ -355,7 +372,6 @@ fn rule_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoEl
     view()
         .test_id(&format!("proxy-rule-{id}"))
         .flex_col()
-        .gap(tokens::space(2.0))
         .p(tokens::space(3.0))
         .rounded(move || theme().radius)
         .bg(tokens::inset)
@@ -367,27 +383,14 @@ fn rule_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoEl
         })
         .child(top_row(row, index))
         .child(when(move || row.get().tunnel, {
-            move || tunnel_row(index, row)
+            move || view().pt(tokens::space(2.0)).child(tunnel_row(index, row))
         }))
-        .child(
-            view()
-                .flex_row()
-                .items_center()
-                .flex_wrap()
-                .gap(tokens::space(2.0))
-                .child(
-                    text(move || devcore::model::local_domain(&row.get().domain))
-                        .font_family("monospace")
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground)
-                        .selectable(true),
-                )
-                .child(view().flex_1().min_w(px(0.0)).child(dynamic(move || {
-                    (!proxy::dirty()).then(|| {
-                        activation(devcore::model::local_domain(&row.get().domain)).into_element()
-                    })
-                }))),
-        )
+        .child(dynamic(move || {
+            if proxy::dirty() {
+                return None;
+            }
+            activation_results(devcore::model::local_domain(&row.get().domain))
+        }))
 }
 
 fn rule_context_menu_items(
@@ -428,6 +431,10 @@ fn rule_context_menu_items(
         DesktopMenuItem::new("View Proxy Logs")
             .icon(icons::image_src(Icon::FileText))
             .on_select(|| crate::dev_logs::open("proxy")),
+        DesktopMenuItem::new("Read Proxy Log Snapshot")
+            .icon(icons::image_src(Icon::FileText))
+            .disabled(busy)
+            .on_select(|| proxy::read_logs("proxy")),
         DesktopMenuItem::separator(),
         DesktopMenuItem::new("Remove")
             .icon(icons::image_src(Icon::Trash))
@@ -441,55 +448,84 @@ fn top_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoEle
     view()
         .flex_row()
         .items_center()
-        .flex_wrap()
         .gap(tokens::space(2.0))
         .child(
             view()
-                .flex_1()
-                .min_w(px(200.0))
-                .flex_row()
-                .items_center()
-                .gap(px(2.0))
-                .child(ui::text_field(
-                    format!("proxy-domain-{id}"),
-                    "app",
-                    move || row.get().domain,
-                    move |value| proxy::set_domain(index.get(), value),
-                ))
-                .child(
-                    text(proxy::LOCAL_DOMAIN_SUFFIX)
-                        .font_family("monospace")
-                        .text_size(px(tokens::TEXT_SMALL))
-                        .text_color(move || theme().muted_foreground),
-                ),
-        )
-        .child(
-            view()
-                .w(px(276.0))
+                .w(px(DOMAIN_COL_W))
+                .h(px(28.0))
                 .flex_none()
                 .flex_row()
                 .items_center()
-                .gap(tokens::space(1.5))
+                .rounded(move || theme().radius)
+                .bg(tokens::control)
+                .border_1()
+                .border_color(tokens::hairline)
+                .focus_within(|style| style.border_color(move || theme().ring))
+                .overflow_hidden()
                 .child(
-                    icons::arrow_right()
-                        .size(px(14.0))
+                    nsh_base::input()
+                        .test_id(&format!("proxy-domain-{id}"))
+                        .w(px(136.0))
                         .flex_none()
-                        .text_color(move || theme().muted_foreground),
+                        .h(px(26.0))
+                        .px(tokens::space(2.0))
+                        .text_size(px(tokens::TEXT_SMALL))
+                        .text_color(move || theme().foreground)
+                        .placeholder("app")
+                        .value(move || row.get().domain)
+                        .on_change(move |value: &str| {
+                            proxy::set_domain(index.get(), value.to_owned())
+                        }),
                 )
-                .child(ui::text_field(
+                .child(
+                    view()
+                        .flex_1()
+                        .h_full()
+                        .flex_row()
+                        .items_center()
+                        .px(tokens::space(1.5))
+                        .bg(tokens::inset)
+                        .border_l_1()
+                        .border_color(tokens::hairline)
+                        .child(
+                            text(proxy::LOCAL_DOMAIN_SUFFIX)
+                                .flex_none()
+                                .font_family("monospace")
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .text_color(move || theme().muted_foreground)
+                                .number_of_lines(1),
+                        ),
+                ),
+        )
+        .child(
+            icons::arrow_right()
+                .size(px(ARROW_COL_W))
+                .flex_none()
+                .text_color(move || theme().muted_foreground),
+        )
+        .child(
+            view()
+                .w(px(TARGET_COL_W))
+                .flex_none()
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(1.0))
+                .child(ui::narrow_field(
                     format!("proxy-upstream-{id}"),
+                    116.0,
                     "127.0.0.1",
                     move || row.get().upstream_host,
                     move |value| proxy::set_upstream(index.get(), value),
                 ))
                 .child(
                     text(":")
+                        .flex_none()
                         .text_size(px(tokens::TEXT_SMALL))
                         .text_color(move || theme().muted_foreground),
                 )
                 .child(ui::narrow_field(
                     format!("proxy-port-{id}"),
-                    72.0,
+                    68.0,
                     "3000",
                     move || row.get().local_port,
                     move |value| proxy::set_local_port(index.get(), value),
@@ -498,6 +534,7 @@ fn top_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoEle
         )
         .child(
             view()
+                .flex_none()
                 .flex_row()
                 .items_center()
                 .gap(tokens::space(1.5))
@@ -510,28 +547,38 @@ fn top_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoEle
                 ))
                 .child(
                     text("Tunnel")
+                        .flex_none()
                         .text_size(px(tokens::TEXT_CAPTION))
                         .text_color(move || theme().muted_foreground),
                 ),
         )
-        .child(view().flex_1())
+        .child(view().flex_1().min_w(px(4.0)))
         .child(
             view()
+                .flex_none()
                 .flex_row()
                 .items_center()
-                .gap(tokens::space(1.0))
+                .gap(px(2.0))
                 .child(dynamic({
                     move || {
                         if proxy::dirty() {
                             return None;
                         }
-                        let url = proxy::rule_url(index.get());
+                        let idx = index.get();
+                        let domain = devcore::model::local_domain(&row.get().domain);
+                        let key = domain.replace('.', "-");
+                        let url = proxy::rule_url(idx);
                         let copy_url = url.clone();
+                        let check_domain = domain.clone();
+                        let busy = proxy::busy();
+                        let checking = proxy::checking_proxy(&domain);
                         Some(
                             view()
+                                .test_id(&format!("proxy-activation-{key}"))
+                                .flex_none()
                                 .flex_row()
                                 .items_center()
-                                .gap(tokens::space(1.0))
+                                .gap(px(2.0))
                                 .child(link_icon_button(
                                     icons::copy(),
                                     "Copy HTTPS URL",
@@ -543,6 +590,13 @@ fn top_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoEle
                                     "Open HTTPS URL",
                                     format!("proxy-open-url-{id}"),
                                     move || open_url_async(url.clone()),
+                                ))
+                                .child(ui::row_icon_button(
+                                    icons::activity(),
+                                    "Check HTTPS response",
+                                    format!("proxy-check-https-{key}"),
+                                    busy || checking,
+                                    move || proxy::check_proxy(check_domain.clone()),
                                 ))
                                 .into_element(),
                         )
@@ -773,6 +827,10 @@ fn tunnel_row(index: ReadSignal<usize>, row: ReadSignal<RuleDraft>) -> impl Into
                         let qr_url = preview;
                         let qr_domain = devcore::model::local_domain(&draft.domain);
                         let qr_protected = draft.tunnel_auth;
+                        let key = qr_domain.replace('.', "-");
+                        let has_tunnel_url = proxy::tunnel_url_available(&qr_domain);
+                        let tunnel_checking = proxy::checking_tunnel(&qr_domain);
+                        let check_domain = qr_domain.clone();
                         Some(
                             view()
                                 .flex_row()
@@ -795,6 +853,15 @@ fn tunnel_row(index: ReadSignal<usize>, row: ReadSignal<RuleDraft>) -> impl Into
                                         qr_domain.clone(),
                                         qr_url.clone(),
                                         qr_protected,
+                                    )
+                                }))
+                                .child(has_tunnel_url.then(|| {
+                                    ui::row_icon_button(
+                                        icons::activity(),
+                                        "Check tunnel response",
+                                        format!("proxy-check-tunnel-{key}"),
+                                        proxy::busy() || tunnel_checking,
+                                        move || proxy::check_tunnel(check_domain.clone()),
                                     )
                                 }))
                                 .into_element(),
@@ -903,12 +970,9 @@ fn host_menu_items(index: ReadSignal<usize>) -> impl IntoElement {
     view().flex_col().children(entries)
 }
 
-/// `devProxyActivation`: tags from the explicit observations only. The Go
-/// diagnostic report is not part of this screen yet; the HTTP and tunnel
-/// checks are.
-fn activation(domain: String) -> impl IntoElement {
-    let busy = proxy::busy();
-    let dirty = proxy::dirty();
+/// Compact probe/tunnel status tags and failure hints below a rule row,
+/// rendered only when observations or errors exist.
+fn activation_results(domain: String) -> Option<AnyElement> {
     let local_port = proxy::saved_rule_port(&domain);
     let live_tunnel = proxy::live_tunnel(&domain);
     let mut tags: Vec<AnyElement> = Vec::new();
@@ -982,76 +1046,54 @@ fn activation(domain: String) -> impl IntoElement {
         }
     }
 
-    let has_tunnel_url = proxy::tunnel_url_available(&domain);
-    let activation_id = format!("proxy-activation-{key}");
-    let tunnel_check_id = format!("proxy-check-tunnel-{key}");
-    let https_check_id = format!("proxy-check-https-{key}");
-    let check_domain = domain.clone();
-    let tunnel_domain = domain.clone();
-    view()
-        .test_id(&activation_id)
-        .flex_col()
-        .gap(tokens::space(1.0))
-        .child(
-            view()
-                .flex_row()
-                .items_center()
-                .flex_wrap()
-                .gap(tokens::space(1.5))
-                .children(tags)
-                .child(view().flex_1())
-                .child(when(has_tunnel_url, move || {
-                    view().child(ui::action_button(
-                        "Check tunnel response",
-                        Tone::Default,
-                        tunnel_check_id.clone(),
-                        busy || dirty || tunnel_checking,
-                        {
-                            let domain = tunnel_domain.clone();
-                            move || proxy::check_tunnel(domain.clone())
-                        },
-                    ))
-                }))
-                .child(ui::action_button(
-                    "Check HTTPS response",
-                    Tone::Default,
-                    https_check_id.clone(),
-                    busy || dirty || proxy_checking,
-                    {
-                        let domain = check_domain.clone();
-                        move || proxy::check_proxy(domain.clone())
-                    },
-                )),
-        )
-        .child(problems.into_iter().map(|(hint_id, problem, hint)| {
-            view()
-                .flex_col()
-                .gap(px(2.0))
-                .child(
-                    text(problem)
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground),
-                )
-                .child(hint.map(move |diagnosis_hint| {
-                    view()
-                        .test_id(&hint_id)
-                        .flex_row()
-                        .items_center()
-                        .gap(tokens::space(1.0))
-                        .child(
-                            icons::warn()
-                                .size(px(12.0))
-                                .flex_none()
-                                .text_color(move || theme().destructive),
-                        )
-                        .child(
-                            text(diagnosis_hint)
-                                .text_size(px(tokens::TEXT_CAPTION))
-                                .text_color(move || theme().foreground)
-                                .selectable(true),
-                        )
-                }))
-        }))
+    if tags.is_empty() && problems.is_empty() {
+        return None;
+    }
+
+    Some(
+        view()
+            .flex_col()
+            .gap(tokens::space(1.0))
+            .pt(tokens::space(2.0))
+            .child((!tags.is_empty()).then(|| {
+                view()
+                    .flex_row()
+                    .items_center()
+                    .flex_wrap()
+                    .gap(tokens::space(1.5))
+                    .children(tags)
+            }))
+            .child(problems.into_iter().map(|(hint_id, problem, hint)| {
+                view()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .child(
+                        text(problem)
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().muted_foreground),
+                    )
+                    .child(hint.map(move |diagnosis_hint| {
+                        view()
+                            .test_id(&hint_id)
+                            .flex_row()
+                            .items_center()
+                            .gap(tokens::space(1.0))
+                            .child(
+                                icons::warn()
+                                    .size(px(12.0))
+                                    .flex_none()
+                                    .text_color(move || theme().destructive),
+                            )
+                            .child(
+                                text(diagnosis_hint)
+                                    .text_size(px(tokens::TEXT_CAPTION))
+                                    .text_color(move || theme().foreground)
+                                    .selectable(true),
+                            )
+                    }))
+            }))
+            .into_element(),
+    )
 }
 
 // --- Footer ------------------------------------------------------------------
@@ -1320,13 +1362,6 @@ fn tunnel_actions_row() -> impl IntoElement {
                 "tunnel-restart",
                 busy || !on,
                 proxy::restart_tunnel,
-            ))
-            .child(ui::action_button(
-                "Read logs",
-                Tone::Default,
-                "tunnel-logs",
-                busy,
-                || proxy::read_logs("tunnel"),
             ))
             .child(ui::action_button(
                 "Logs",

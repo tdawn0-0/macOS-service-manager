@@ -24,14 +24,17 @@ use super::auth::{PeerAuth, SystemPeerAuth};
 use super::http::{self, ReadError, Request, Response};
 use super::paths::{clean_path, dir_path, lstat_error, validate_clean_target_file};
 use super::protocol::{
-    ErrorResponse, LaunchdControlRequest, LaunchdRemoveRequest, LaunchdSaveRequest,
-    LaunchdSaveResponse, OkResponse, PortInspectRequest, PortInspectResponse,
+    CaInstallRequest, CaRemoveRequest, ErrorResponse, LaunchdControlRequest, LaunchdRemoveRequest,
+    LaunchdSaveRequest, LaunchdSaveResponse, LinuxProxySocketInstallRequest,
+    LinuxProxySocketStopRequest, OkResponse, PortInspectRequest, PortInspectResponse,
     ProxySocketInstallRequest, ProxySocketKickstartRequest, ProxySocketStopRequest, StatusResponse,
-    encode_server_json,
+    SystemdControlRequest, SystemdRemoveRequest, SystemdSaveRequest, encode_server_json,
 };
 use super::validate::{
-    path_basename, targets_helper, validate_domain, validate_launchctl_command,
-    validate_launchd_target, validate_proxy_socket_request, validate_proxy_socket_target,
+    path_basename, targets_helper, targets_linux_helper, validate_ca_name, validate_ca_pem,
+    validate_domain, validate_launchctl_command, validate_launchd_target,
+    validate_linux_proxy_unit_names, validate_proxy_socket_request, validate_proxy_socket_target,
+    validate_systemctl_command, validate_systemd_unit_file, validate_systemd_unit_name,
     validate_xml_plist,
 };
 use super::{MAX_REQUEST_BYTES, PEER_REJECTED_MESSAGE, PROTOCOL_VERSION};
@@ -48,6 +51,56 @@ pub const DEFAULT_MANAGED_LAUNCHD_DIRS: [&str; 2] =
 
 /// The directories launchd socket jobs live in.
 pub const DEFAULT_SOCKET_JOB_DIRS: [&str; 1] = ["/Library/LaunchDaemons"];
+
+/// The directories root-managed systemd unit files live in on Linux.
+pub const DEFAULT_MANAGED_SYSTEMD_DIRS: [&str; 1] = ["/etc/systemd/system"];
+
+/// Describes a Linux distribution's system CA trust anchor directory and update command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaTrustTarget {
+    pub anchor_dir: PathBuf,
+    pub extension: String,
+    pub update_program: String,
+    pub update_args: Vec<String>,
+}
+
+/// Detects the active Linux distribution's system CA trust anchor store.
+pub fn detect_linux_ca_trust_target() -> Result<CaTrustTarget, String> {
+    let candidates = [
+        // Arch / CachyOS / p11-kit
+        (
+            "/etc/ca-certificates/trust-source/anchors",
+            "crt",
+            "update-ca-trust",
+            vec![],
+        ),
+        // Fedora / RHEL / CentOS / Rocky / Alma
+        (
+            "/etc/pki/ca-trust/source/anchors",
+            "pem",
+            "update-ca-trust",
+            vec!["extract"],
+        ),
+        // Debian / Ubuntu
+        (
+            "/usr/local/share/ca-certificates",
+            "crt",
+            "update-ca-certificates",
+            vec![],
+        ),
+    ];
+    for (dir, ext, prog, args) in candidates {
+        if Path::new(dir).is_dir() {
+            return Ok(CaTrustTarget {
+                anchor_dir: PathBuf::from(dir),
+                extension: ext.to_string(),
+                update_program: prog.to_string(),
+                update_args: args.into_iter().map(String::from).collect(),
+            });
+        }
+    }
+    Err("could not locate a supported Linux CA trust anchor directory".to_string())
+}
 
 /// The result of running one command: combined output and why it failed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -139,6 +192,8 @@ pub struct ServerConfig {
     pub idle_timeout: Duration,
     pub managed_launchd_dirs: Vec<String>,
     pub socket_job_dirs: Vec<String>,
+    pub managed_systemd_dirs: Vec<String>,
+    pub ca_trust_target: Option<CaTrustTarget>,
     pub runner: Arc<dyn CommandRunner>,
     pub peer_auth: Arc<dyn PeerAuth>,
     pub chown: Arc<dyn Chowner>,
@@ -157,6 +212,11 @@ impl Default for ServerConfig {
                 .iter()
                 .map(|dir| (*dir).to_string())
                 .collect(),
+            managed_systemd_dirs: DEFAULT_MANAGED_SYSTEMD_DIRS
+                .iter()
+                .map(|dir| (*dir).to_string())
+                .collect(),
+            ca_trust_target: None,
             runner: Arc::new(SystemCommandRunner),
             peer_auth: Arc::new(SystemPeerAuth),
             chown: Arc::new(SystemChown),
@@ -218,6 +278,12 @@ impl Server {
         }
         if cfg.socket_job_dirs.is_empty() {
             cfg.socket_job_dirs = DEFAULT_SOCKET_JOB_DIRS
+                .iter()
+                .map(|dir| (*dir).to_string())
+                .collect();
+        }
+        if cfg.managed_systemd_dirs.is_empty() {
+            cfg.managed_systemd_dirs = DEFAULT_MANAGED_SYSTEMD_DIRS
                 .iter()
                 .map(|dir| (*dir).to_string())
                 .collect();
@@ -393,7 +459,7 @@ impl Server {
     }
 
     fn route(&self, request: &Request) -> Response {
-        const ROUTES: [(&str, &str); 8] = [
+        const ROUTES: [(&str, &str); 15] = [
             ("GET", "/v1/status"),
             ("POST", "/v1/proxy-socket/install"),
             ("POST", "/v1/proxy-socket/stop"),
@@ -402,6 +468,13 @@ impl Server {
             ("POST", "/v1/launchd/control"),
             ("POST", "/v1/launchd/save"),
             ("POST", "/v1/launchd/remove"),
+            ("POST", "/v1/systemd/control"),
+            ("POST", "/v1/systemd/save"),
+            ("POST", "/v1/systemd/remove"),
+            ("POST", "/v1/ca/install"),
+            ("POST", "/v1/ca/remove"),
+            ("POST", "/v1/systemd/proxy-socket/install"),
+            ("POST", "/v1/systemd/proxy-socket/stop"),
         ];
         let Some((allowed, _)) = ROUTES
             .iter()
@@ -423,6 +496,13 @@ impl Server {
             "/v1/launchd/control" => self.handle_launchd_control(request),
             "/v1/launchd/save" => self.handle_launchd_save(request),
             "/v1/launchd/remove" => self.handle_launchd_remove(request),
+            "/v1/systemd/control" => self.handle_systemd_control(request),
+            "/v1/systemd/save" => self.handle_systemd_save(request),
+            "/v1/systemd/remove" => self.handle_systemd_remove(request),
+            "/v1/ca/install" => self.handle_ca_install(request),
+            "/v1/ca/remove" => self.handle_ca_remove(request),
+            "/v1/systemd/proxy-socket/install" => self.handle_linux_proxy_socket_install(request),
+            "/v1/systemd/proxy-socket/stop" => self.handle_linux_proxy_socket_stop(request),
             _ => Response::text(404, "404 page not found\n"),
         }
     }
@@ -716,6 +796,279 @@ impl Server {
             .cfg
             .chown
             .chown(&destination, self.cfg.owner_uid.max(0) as u32, -1);
+        json_response(200, &OkResponse::success())
+    }
+
+    fn handle_systemd_control(&self, request: &Request) -> Response {
+        let req: SystemdControlRequest = match decode_json(request) {
+            Ok(req) => req,
+            Err(response) => return response,
+        };
+        if req.commands.is_empty() {
+            return error_response(400, "no commands specified");
+        }
+        for command in &req.commands {
+            if let Err(message) = validate_systemctl_command(command) {
+                return error_response(400, message);
+            }
+        }
+        for command in &req.commands {
+            let args: Vec<&str> = command.iter().map(String::as_str).collect();
+            let output = self.run("systemctl", &args);
+            if output.failed() {
+                return error_response(500, cmd_error(&output));
+            }
+        }
+        json_response(200, &OkResponse::success())
+    }
+
+    fn handle_systemd_save(&self, request: &Request) -> Response {
+        let req: SystemdSaveRequest = match decode_json(request) {
+            Ok(req) => req,
+            Err(response) => return response,
+        };
+        if req.unit_content.is_empty() {
+            return error_response(400, "unit content is empty");
+        }
+        if let Err(message) = validate_systemd_unit_name(&req.unit_name) {
+            return error_response(400, message);
+        }
+        let path = match validate_systemd_unit_file(&req.path, &self.cfg.managed_systemd_dirs) {
+            Ok(path) => path,
+            Err(message) => return error_response(400, message),
+        };
+        if targets_linux_helper(&req.unit_name) || targets_linux_helper(&path) {
+            return error_response(403, "cannot modify privileged helper unit");
+        }
+        if path_basename(&path) != req.unit_name {
+            return error_response(400, "unit path basename does not match unit name");
+        }
+        if let Err(error) = std::fs::create_dir_all(dir_path(&path)) {
+            return error_response(500, error.to_string());
+        }
+        if let Err(error) = atomic_write_file(Path::new(&path), &req.unit_content, 0o644) {
+            return error_response(500, error.to_string());
+        }
+        self.chown_root(&path);
+
+        if req.reload {
+            let output = self.run("systemctl", &["daemon-reload"]);
+            if output.failed() {
+                return error_response(500, cmd_error(&output));
+            }
+        }
+        if req.enable {
+            let output = self.run("systemctl", &["enable", &req.unit_name]);
+            if output.failed() {
+                return error_response(500, cmd_error(&output));
+            }
+        }
+        if req.start {
+            let output = self.run("systemctl", &["start", &req.unit_name]);
+            if output.failed() {
+                return error_response(500, cmd_error(&output));
+            }
+        }
+        json_response(200, &OkResponse::success())
+    }
+
+    fn handle_systemd_remove(&self, request: &Request) -> Response {
+        let req: SystemdRemoveRequest = match decode_json(request) {
+            Ok(req) => req,
+            Err(response) => return response,
+        };
+        if let Err(message) = validate_systemd_unit_name(&req.unit_name) {
+            return error_response(400, message);
+        }
+        let path = match validate_systemd_unit_file(&req.path, &self.cfg.managed_systemd_dirs) {
+            Ok(path) => path,
+            Err(message) => return error_response(400, message),
+        };
+        if targets_linux_helper(&req.unit_name) || targets_linux_helper(&path) {
+            return error_response(403, "cannot remove privileged helper unit");
+        }
+        let trash_dir = match self.validate_trash_dir(&req.trash_dir) {
+            Ok(dir) => dir,
+            Err(message) => return error_response(400, message),
+        };
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_file() => {}
+            _ => {
+                return error_response(400, format!("unit {path} is not a regular file"));
+            }
+        }
+        let destination = Path::new(&trash_dir).join(path_basename(&path));
+        if !matches!(
+            std::fs::symlink_metadata(&destination),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        ) {
+            return error_response(
+                409,
+                format!("destination {} already exists", destination.display()),
+            );
+        }
+        let _ = self.run("systemctl", &["stop", &req.unit_name]);
+        let _ = self.run("systemctl", &["disable", &req.unit_name]);
+        if let Err(error) = move_file(Path::new(&path), &destination) {
+            return error_response(500, error.to_string());
+        }
+        let _ = self
+            .cfg
+            .chown
+            .chown(&destination, self.cfg.owner_uid.max(0) as u32, -1);
+        let _ = self.run("systemctl", &["daemon-reload"]);
+        json_response(200, &OkResponse::success())
+    }
+
+    fn ca_trust_target(&self) -> Result<CaTrustTarget, String> {
+        match &self.cfg.ca_trust_target {
+            Some(target) => Ok(target.clone()),
+            None => detect_linux_ca_trust_target(),
+        }
+    }
+
+    fn handle_ca_install(&self, request: &Request) -> Response {
+        let req: CaInstallRequest = match decode_json(request) {
+            Ok(req) => req,
+            Err(response) => return response,
+        };
+        let name = match validate_ca_name(&req.name) {
+            Ok(name) => name,
+            Err(message) => return error_response(400, message),
+        };
+        if let Err(message) = validate_ca_pem(&req.cert_pem) {
+            return error_response(400, message);
+        }
+        let target = match self.ca_trust_target() {
+            Ok(target) => target,
+            Err(message) => return error_response(500, message),
+        };
+        let filename = if name.ends_with(&format!(".{}", target.extension)) {
+            name
+        } else {
+            format!("{name}.{}", target.extension)
+        };
+        let anchor_path = target.anchor_dir.join(&filename);
+        if let Err(error) = atomic_write_file(&anchor_path, &req.cert_pem, 0o644) {
+            return error_response(500, error.to_string());
+        }
+        self.chown_root(&anchor_path.to_string_lossy());
+        let args: Vec<&str> = target.update_args.iter().map(String::as_str).collect();
+        let output = self.run(&target.update_program, &args);
+        if output.failed() {
+            return error_response(500, cmd_error(&output));
+        }
+        json_response(200, &OkResponse::success())
+    }
+
+    fn handle_ca_remove(&self, request: &Request) -> Response {
+        let req: CaRemoveRequest = match decode_json(request) {
+            Ok(req) => req,
+            Err(response) => return response,
+        };
+        let name = match validate_ca_name(&req.name) {
+            Ok(name) => name,
+            Err(message) => return error_response(400, message),
+        };
+        let target = match self.ca_trust_target() {
+            Ok(target) => target,
+            Err(message) => return error_response(500, message),
+        };
+        let filename = if name.ends_with(&format!(".{}", target.extension)) {
+            name
+        } else {
+            format!("{name}.{}", target.extension)
+        };
+        let anchor_path = target.anchor_dir.join(&filename);
+        match std::fs::remove_file(&anchor_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return error_response(500, error.to_string()),
+        }
+        let args: Vec<&str> = target.update_args.iter().map(String::as_str).collect();
+        let output = self.run(&target.update_program, &args);
+        if output.failed() {
+            return error_response(500, cmd_error(&output));
+        }
+        json_response(200, &OkResponse::success())
+    }
+
+    fn handle_linux_proxy_socket_install(&self, request: &Request) -> Response {
+        let req: LinuxProxySocketInstallRequest = match decode_json(request) {
+            Ok(req) => req,
+            Err(response) => return response,
+        };
+        if let Err(message) =
+            validate_linux_proxy_unit_names(&req.socket_unit_name, &req.service_unit_name)
+        {
+            return error_response(400, message);
+        }
+        if req.socket_content.is_empty() || req.service_content.is_empty() {
+            return error_response(400, "proxy socket and service unit content are required");
+        }
+        let dir = &self.cfg.managed_systemd_dirs[0];
+        let socket_path = Path::new(dir).join(&req.socket_unit_name);
+        let service_path = Path::new(dir).join(&req.service_unit_name);
+        let socket_str = socket_path.to_string_lossy().into_owned();
+        let service_str = service_path.to_string_lossy().into_owned();
+        if let Err(message) =
+            validate_systemd_unit_file(&socket_str, &self.cfg.managed_systemd_dirs)
+        {
+            return error_response(400, message);
+        }
+        if let Err(message) =
+            validate_systemd_unit_file(&service_str, &self.cfg.managed_systemd_dirs)
+        {
+            return error_response(400, message);
+        }
+        if let Err(error) = std::fs::create_dir_all(dir) {
+            return error_response(500, error.to_string());
+        }
+        if let Err(error) = atomic_write_file(&socket_path, &req.socket_content, 0o644) {
+            return error_response(500, error.to_string());
+        }
+        if let Err(error) = atomic_write_file(&service_path, &req.service_content, 0o644) {
+            return error_response(500, error.to_string());
+        }
+        self.chown_root(&socket_str);
+        self.chown_root(&service_str);
+
+        let reload = self.run("systemctl", &["daemon-reload"]);
+        if reload.failed() {
+            return error_response(500, cmd_error(&reload));
+        }
+        let _ = self.run("systemctl", &["stop", &req.service_unit_name]);
+        let _ = self.run("systemctl", &["stop", &req.socket_unit_name]);
+        let enable = self.run("systemctl", &["enable", "--now", &req.socket_unit_name]);
+        if enable.failed() {
+            return error_response(500, cmd_error(&enable));
+        }
+        json_response(200, &OkResponse::success())
+    }
+
+    fn handle_linux_proxy_socket_stop(&self, request: &Request) -> Response {
+        let req: LinuxProxySocketStopRequest = match decode_json(request) {
+            Ok(req) => req,
+            Err(response) => return response,
+        };
+        if let Err(message) =
+            validate_linux_proxy_unit_names(&req.socket_unit_name, &req.service_unit_name)
+        {
+            return error_response(400, message);
+        }
+        let dir = &self.cfg.managed_systemd_dirs[0];
+        let socket_path = Path::new(dir).join(&req.socket_unit_name);
+        let service_path = Path::new(dir).join(&req.service_unit_name);
+        let _ = self.run("systemctl", &["disable", "--now", &req.socket_unit_name]);
+        let _ = self.run("systemctl", &["stop", &req.service_unit_name]);
+        for path in [&socket_path, &service_path] {
+            match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return error_response(500, error.to_string()),
+            }
+        }
+        let _ = self.run("systemctl", &["daemon-reload"]);
         json_response(200, &OkResponse::success())
     }
 

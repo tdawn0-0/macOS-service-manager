@@ -110,15 +110,38 @@ impl<'a> Shutdown<'a> {
                             StateError::invalid(format!("stop database {id}: {error}"))
                         })?;
                 }
-                // A failed launchctl read is not proof that a job is absent.
+                // A failed backend read is not proof that a job is absent.
                 // Verify the whole chosen scope before the GUI may finish
                 // quitting.
                 for id in state.instances.keys() {
-                    let target = format!("{}/{}", self.engine.domain(), self.engine.label(&format!("db-{id}")));
-                    self.verify_target(&target, cancelled)?;
+                    self.verify_job_stopped(&format!("db-{id}"), cancelled)?;
                 }
                 Ok(Tx::new(()))
             })
+    }
+
+    /// Check that a managed job is no longer registered through [`Engine::verify_stopped`].
+    pub fn verify_job_stopped(
+        &self,
+        job_id: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), StateError> {
+        if cancelled() {
+            return Err(StateError::Cancelled);
+        }
+        let label = self.engine.target(job_id);
+        match self.engine.verify_stopped(job_id) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(StateError::invalid(format!(
+                "managed service is still registered: {label}"
+            ))),
+            Err(error) if error.to_string().contains("context deadline exceeded") => Err(
+                StateError::invalid(format!("could not verify stopped service: {error}")),
+            ),
+            Err(error) => Err(StateError::invalid(format!(
+                "could not verify stopped service {label}: {error}"
+            ))),
+        }
     }
 
     /// Check that a managed job is no longer registered. A launchd read that

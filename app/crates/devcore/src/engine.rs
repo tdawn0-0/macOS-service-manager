@@ -327,11 +327,649 @@ impl From<EngineError> for StateError {
 /// The database slices use this to record job digests.
 pub type JobSavedHook = Arc<dyn Fn(&str, &Path) -> Result<(), StateError> + Send + Sync + 'static>;
 
-/// One development home's launchd job engine.
+/// Runtime state observed from the platform job backend (`launchd` or `systemd --user`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct JobRuntimeState {
+    pub loaded: bool,
+    pub running: bool,
+    pub pid: i32,
+    pub runs: i32,
+    pub last_exit_status: Option<i32>,
+    pub last_signal: String,
+    pub exit_reason: bool,
+}
+
+impl JobRuntimeState {
+    /// Converts this runtime observation into [`crate::health::JobState`].
+    pub fn to_job_state(&self) -> crate::health::JobState {
+        crate::health::JobState {
+            running: self.running,
+            pid: self.pid,
+            runs: self.runs,
+            last_exit_code: self.last_exit_status,
+            last_signal: self.last_signal.clone(),
+            exit_reason: self.exit_reason,
+        }
+    }
+}
+
+impl From<JobRuntimeState> for crate::health::JobState {
+    fn from(value: JobRuntimeState) -> Self {
+        value.to_job_state()
+    }
+}
+
+/// Platform job management backend plugged into [`Engine`].
+///
+/// macOS uses [`LaunchdBackend`] (`launchctl` + `.plist` files); Linux uses
+/// [`SystemdUserBackend`] (`systemctl --user` + `.service`/`.timer` units).
+pub trait JobBackend: Send + Sync {
+    /// Path to the primary job definition file under `$root/jobs/`.
+    fn job_path(&self, engine: &Engine, id: &str) -> PathBuf;
+
+    /// Start (or kickstart) a managed job. Returns `Ok(false)` when already running.
+    fn start_job_policy(
+        &self,
+        engine: &Engine,
+        job: &JobSpec,
+        throttle: i32,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<bool, EngineError>;
+
+    /// Stop a managed job and wait until its record and owned PID are gone.
+    fn stop_job(
+        &self,
+        engine: &Engine,
+        id: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), EngineError>;
+
+    /// Observe runtime state. `Ok(None)` means the job is definitively absent/stopped.
+    fn job_state(&self, engine: &Engine, id: &str) -> Result<Option<JobRuntimeState>, EngineError>;
+
+    /// Verify a job is definitively stopped/absent.
+    fn verify_stopped(&self, engine: &Engine, id: &str) -> Result<bool, EngineError> {
+        match self.job_state(engine, id)? {
+            None => Ok(true),
+            Some(state) => Ok(!state.loaded && !state.running),
+        }
+    }
+
+    /// Write and register a periodic background job (launchd `StartInterval` or
+    /// systemd `.service` + `.timer`).
+    fn ensure_periodic_job(
+        &self,
+        engine: &Engine,
+        id: &str,
+        program_args: &[String],
+        interval_secs: u64,
+        log_path: &Path,
+    ) -> Result<(), EngineError>;
+
+    /// Stop a periodic job and remove its generated job/timer files.
+    fn stop_periodic_job(
+        &self,
+        engine: &Engine,
+        id: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), EngineError> {
+        self.stop_job(engine, id, cancelled)?;
+        let path = self.job_path(engine, id);
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+/// macOS `launchd` backend: writes `$root/jobs/<label>.plist` and drives `launchctl`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LaunchdBackend;
+
+impl JobBackend for LaunchdBackend {
+    fn job_path(&self, engine: &Engine, id: &str) -> PathBuf {
+        engine
+            .jobs_directory()
+            .join(format!("{}.plist", engine.label(id)))
+    }
+
+    fn start_job_policy(
+        &self,
+        engine: &Engine,
+        job: &JobSpec,
+        throttle: i32,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<bool, EngineError> {
+        if !JOB_ID_RE.is_match(&job.id) {
+            return Err(EngineError::Invalid("invalid job identifier".into()));
+        }
+        let target = engine.target(&job.id);
+        if let Ok(output) = engine.run_command("launchctl", &["print", &target], cancelled) {
+            if output.contains("state = running") {
+                return Ok(false);
+            }
+            engine.run_command("launchctl", &["kickstart", &target], cancelled)?;
+            return Ok(true);
+        }
+        if cancelled() {
+            return Err(EngineError::Cancelled);
+        }
+
+        create_private_dir_all(&engine.jobs_directory())?;
+        let path = self.job_path(engine, &job.id);
+        let existing = if std::fs::metadata(&path).is_ok() {
+            Some(std::fs::read(&path)?)
+        } else {
+            None
+        };
+        let mut spec = Spec {
+            label: engine.label(&job.id),
+            args: job.args.clone(),
+            working_dir: job.working_dir.clone(),
+            run_at_load: true,
+            keep_alive: job.restart,
+            env: job.env.clone(),
+            stdout: engine
+                .root
+                .join("logs")
+                .join(format!("{}.log", job.id))
+                .to_string_lossy()
+                .into_owned(),
+            stderr: engine
+                .root
+                .join("logs")
+                .join(format!("{}.err.log", job.id))
+                .to_string_lossy()
+                .into_owned(),
+            ..Spec::default()
+        };
+        if throttle > 0 {
+            spec.throttle_interval = Some(throttle);
+        }
+        spec.validate()?;
+        let data = spec.marshal(existing.as_deref())?;
+        atomic_write(&path, &data, PRIVATE_FILE)?;
+        if let Some(hook) = &engine.job_saved {
+            hook(&job.id, &path)?;
+        }
+        engine.run_command(
+            "launchctl",
+            &["bootstrap", &engine.domain(), path_str(&path)],
+            cancelled,
+        )?;
+        Ok(true)
+    }
+
+    fn stop_job(
+        &self,
+        engine: &Engine,
+        id: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), EngineError> {
+        if cancelled() {
+            return Err(EngineError::Cancelled);
+        }
+        let deadline = Instant::now() + engine.stop_timeout;
+        let target = engine.target(id);
+        let output = match engine.run_deadline("launchctl", &["print", &target], deadline) {
+            Ok(output) => output,
+            Err(error) if error.timed_out() => {
+                return Err(EngineError::Timeout(format!("waiting for {id} to stop")));
+            }
+            Err(EngineError::Command(_)) => return Ok(()),
+            Err(other) => return Err(other),
+        };
+        let pid = crate::health::parse_job_state(&output).pid;
+        engine.run_deadline("launchctl", &["bootout", &target], deadline)?;
+        loop {
+            if cancelled() {
+                return Err(EngineError::Cancelled);
+            }
+            let print = engine.run_deadline("launchctl", &["print", &target], deadline);
+            let process_gone = pid == 0 || !process_alive(pid);
+            match print {
+                Err(EngineError::Command(_)) if process_gone => return Ok(()),
+                Err(EngineError::Timeout(_)) => {
+                    return Err(EngineError::Timeout(format!("waiting for {id} to stop")));
+                }
+                _ => {}
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(EngineError::Timeout(format!("waiting for {id} to stop")));
+            }
+            std::thread::sleep(engine.poll.min(remaining));
+        }
+    }
+
+    fn job_state(&self, engine: &Engine, id: &str) -> Result<Option<JobRuntimeState>, EngineError> {
+        let target = engine.target(id);
+        match engine.run_with_timeout("launchctl", &["print", &target], engine.state_timeout) {
+            Ok(output) => {
+                let parsed = crate::health::parse_job_state(&output);
+                Ok(Some(JobRuntimeState {
+                    loaded: true,
+                    running: parsed.running,
+                    pid: parsed.pid,
+                    runs: parsed.runs,
+                    last_exit_status: parsed.last_exit_code,
+                    last_signal: parsed.last_signal,
+                    exit_reason: parsed.exit_reason,
+                }))
+            }
+            Err(EngineError::Command(error)) if is_launchd_not_found(&error.message()) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn ensure_periodic_job(
+        &self,
+        engine: &Engine,
+        id: &str,
+        program_args: &[String],
+        interval_secs: u64,
+        log_path: &Path,
+    ) -> Result<(), EngineError> {
+        if !JOB_ID_RE.is_match(id) {
+            return Err(EngineError::Invalid("invalid job identifier".into()));
+        }
+        create_private_dir_all(&engine.jobs_directory())?;
+        let path = self.job_path(engine, id);
+        let existing = if path.exists() {
+            Some(std::fs::read(&path)?)
+        } else {
+            None
+        };
+        let log_str = if log_path.as_os_str().is_empty() {
+            String::new()
+        } else {
+            log_path.to_string_lossy().into_owned()
+        };
+        let spec = Spec {
+            label: engine.label(id),
+            args: program_args.to_vec(),
+            working_dir: engine.root.to_string_lossy().into_owned(),
+            start_interval: i32::try_from(interval_secs.max(1)).unwrap_or(i32::MAX),
+            run_at_load: true,
+            stdout: log_str.clone(),
+            stderr: log_str,
+            ..Spec::default()
+        };
+        let data = spec.marshal(existing.as_deref())?;
+        atomic_write(&path, &data, PRIVATE_FILE)?;
+        if matches!(self.job_state(engine, id), Ok(Some(_))) {
+            return Ok(());
+        }
+        engine.run_command(
+            "launchctl",
+            &["bootstrap", &engine.domain(), path_str(&path)],
+            &|| false,
+        )?;
+        Ok(())
+    }
+}
+
+fn is_launchd_not_found(message: &str) -> bool {
+    message.contains("Could not find service")
+        || message.contains("Could not find specified service")
+}
+
+/// Linux `systemd --user` backend: writes `$root/jobs/devbase-<prefix>-<id>.service`
+/// (plus `.timer` for periodic jobs), links into the user unit directory, and drives
+/// `systemctl --user`.
+#[derive(Debug, Clone, Default)]
+pub struct SystemdUserBackend {
+    /// Override directory where unit symlinks are placed (isolated in tests).
+    unit_dir: Option<PathBuf>,
+}
+
+impl SystemdUserBackend {
+    pub fn new() -> Self {
+        SystemdUserBackend { unit_dir: None }
+    }
+
+    /// Configures an explicit user systemd unit directory (used in tests to
+    /// guarantee isolation from `~/.config/systemd/user`).
+    pub fn with_unit_dir(unit_dir: impl Into<PathBuf>) -> Self {
+        SystemdUserBackend {
+            unit_dir: Some(unit_dir.into()),
+        }
+    }
+
+    /// The systemd service unit name for `id` in `engine`.
+    pub fn unit_name(&self, engine: &Engine, id: &str) -> String {
+        format!("devbase-{}-{id}.service", label_prefix(&engine.root))
+    }
+
+    /// The systemd timer unit name for `id` in `engine`.
+    pub fn timer_name(&self, engine: &Engine, id: &str) -> String {
+        format!("devbase-{}-{id}.timer", label_prefix(&engine.root))
+    }
+
+    fn effective_unit_dir(&self, engine: &Engine) -> PathBuf {
+        if let Some(dir) = &self.unit_dir {
+            return dir.clone();
+        }
+        if cfg!(test) {
+            return engine.root.join("systemd-user");
+        }
+        let home = crate::state::home_from_environment();
+        crate::platform::linux::paths::systemd_user_unit_dir(&home)
+    }
+
+    fn ensure_unit_link(&self, engine: &Engine, unit_name: &str, target: &Path) -> io::Result<()> {
+        let dir = self.effective_unit_dir(engine);
+        std::fs::create_dir_all(&dir)?;
+        let link_path = dir.join(unit_name);
+        if std::fs::symlink_metadata(&link_path).is_ok() {
+            let _ = std::fs::remove_file(&link_path);
+        }
+        std::os::unix::fs::symlink(target, &link_path)
+    }
+
+    fn remove_unit_link(&self, engine: &Engine, unit_name: &str) {
+        let link_path = self.effective_unit_dir(engine).join(unit_name);
+        let _ = std::fs::remove_file(&link_path);
+    }
+
+    fn show_unit(
+        &self,
+        engine: &Engine,
+        unit: &str,
+        timeout: Duration,
+    ) -> Result<Option<JobRuntimeState>, EngineError> {
+        let args = [
+            "--user",
+            "show",
+            "--no-pager",
+            "-p",
+            "LoadState,ActiveState,SubState,MainPID,ExecMainCode,ExecMainStatus,NRestarts",
+            unit,
+        ];
+        match engine.run_with_timeout("systemctl", &args, timeout) {
+            Ok(output) => {
+                let show = crate::systemd::parse_show(&output);
+                if show.load_state == "not-found" {
+                    return Ok(None);
+                }
+                let parsed = crate::systemd::show_to_job_state(&show);
+                let cleanly_inactive = show.active_state == "inactive"
+                    && show.sub_state == "dead"
+                    && show.main_pid == 0
+                    && parsed.last_exit_code.is_none()
+                    && parsed.last_signal.is_empty()
+                    && !parsed.exit_reason;
+                if cleanly_inactive {
+                    return Ok(None);
+                }
+                Ok(Some(JobRuntimeState {
+                    loaded: true,
+                    running: parsed.running,
+                    pid: parsed.pid,
+                    runs: parsed.runs,
+                    last_exit_status: parsed.last_exit_code,
+                    last_signal: parsed.last_signal,
+                    exit_reason: parsed.exit_reason,
+                }))
+            }
+            Err(EngineError::Command(error)) if is_systemd_not_found(&error.message()) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+fn is_systemd_not_found(message: &str) -> bool {
+    message.contains("could not be found")
+        || message.contains("not-found")
+        || message.contains("No such unit")
+}
+
+impl JobBackend for SystemdUserBackend {
+    fn job_path(&self, engine: &Engine, id: &str) -> PathBuf {
+        engine.jobs_directory().join(self.unit_name(engine, id))
+    }
+
+    fn start_job_policy(
+        &self,
+        engine: &Engine,
+        job: &JobSpec,
+        throttle: i32,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<bool, EngineError> {
+        if !JOB_ID_RE.is_match(&job.id) {
+            return Err(EngineError::Invalid("invalid job identifier".into()));
+        }
+        if cancelled() {
+            return Err(EngineError::Cancelled);
+        }
+        if let Ok(Some(state)) = self.job_state(engine, &job.id)
+            && state.running
+        {
+            return Ok(false);
+        }
+
+        create_private_dir_all(&engine.jobs_directory())?;
+        create_private_dir_all(&engine.root.join("logs"))?;
+        let unit_name = self.unit_name(engine, &job.id);
+        let path = self.job_path(engine, &job.id);
+        let spec = crate::systemd::UnitSpec {
+            name: unit_name.clone(),
+            description: format!("Devbase managed job {}", job.id),
+            exec_start: job.args.clone(),
+            working_directory: job.working_dir.clone(),
+            environment: job.env.clone(),
+            restart: if job.restart {
+                "on-failure".to_string()
+            } else {
+                "no".to_string()
+            },
+            restart_sec: if throttle > 0 {
+                Some(throttle as u32)
+            } else if job.restart {
+                Some(2)
+            } else {
+                None
+            },
+            wanted_by: Vec::new(),
+            user: String::new(),
+            group: String::new(),
+            stdout_path: engine
+                .root
+                .join("logs")
+                .join(format!("{}.log", job.id))
+                .to_string_lossy()
+                .into_owned(),
+            stderr_path: engine
+                .root
+                .join("logs")
+                .join(format!("{}.err.log", job.id))
+                .to_string_lossy()
+                .into_owned(),
+            on_calendar: String::new(),
+            on_unit_active_sec: None,
+        };
+        spec.validate()
+            .map_err(|error| EngineError::Invalid(error.to_string()))?;
+        let content = spec.render_unit();
+        atomic_write(&path, content.as_bytes(), PRIVATE_FILE)?;
+        if let Some(hook) = &engine.job_saved {
+            hook(&job.id, &path)?;
+        }
+        self.ensure_unit_link(engine, &unit_name, &path)?;
+        engine.run_command("systemctl", &["--user", "daemon-reload"], cancelled)?;
+        engine.run_command("systemctl", &["--user", "start", &unit_name], cancelled)?;
+        Ok(true)
+    }
+
+    fn stop_job(
+        &self,
+        engine: &Engine,
+        id: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), EngineError> {
+        if cancelled() {
+            return Err(EngineError::Cancelled);
+        }
+        let deadline = Instant::now() + engine.stop_timeout;
+        let unit_name = self.unit_name(engine, id);
+        let timer_name = self.timer_name(engine, id);
+        let timer_path = engine.jobs_directory().join(&timer_name);
+
+        if timer_path.exists() {
+            let _ = engine.run_deadline("systemctl", &["--user", "stop", &timer_name], deadline);
+            self.remove_unit_link(engine, &timer_name);
+        }
+
+        let initial = match self.show_unit(
+            engine,
+            &unit_name,
+            deadline.saturating_duration_since(Instant::now()),
+        ) {
+            Ok(Some(state)) => state,
+            Ok(None) => {
+                self.remove_unit_link(engine, &unit_name);
+                return Ok(());
+            }
+            Err(error) if error.timed_out() => {
+                return Err(EngineError::Timeout(format!("waiting for {id} to stop")));
+            }
+            Err(EngineError::Command(_)) => {
+                self.remove_unit_link(engine, &unit_name);
+                return Ok(());
+            }
+            Err(other) => return Err(other),
+        };
+        let pid = initial.pid;
+        engine.run_deadline("systemctl", &["--user", "stop", &unit_name], deadline)?;
+        self.remove_unit_link(engine, &unit_name);
+        let _ = engine.run_deadline(
+            "systemctl",
+            &["--user", "reset-failed", &unit_name],
+            deadline,
+        );
+        let _ = engine.run_deadline("systemctl", &["--user", "daemon-reload"], deadline);
+
+        loop {
+            if cancelled() {
+                return Err(EngineError::Cancelled);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(EngineError::Timeout(format!("waiting for {id} to stop")));
+            }
+            let observed = self.show_unit(engine, &unit_name, remaining);
+            let process_gone = pid == 0 || !process_alive(pid);
+            match observed {
+                Ok(None) if process_gone => return Ok(()),
+                Ok(Some(state)) if !state.running && process_gone => return Ok(()),
+                Err(EngineError::Timeout(_)) => {
+                    return Err(EngineError::Timeout(format!("waiting for {id} to stop")));
+                }
+                _ => {}
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(EngineError::Timeout(format!("waiting for {id} to stop")));
+            }
+            std::thread::sleep(engine.poll.min(remaining));
+        }
+    }
+
+    fn job_state(&self, engine: &Engine, id: &str) -> Result<Option<JobRuntimeState>, EngineError> {
+        let unit_name = self.unit_name(engine, id);
+        self.show_unit(engine, &unit_name, engine.state_timeout)
+    }
+
+    fn ensure_periodic_job(
+        &self,
+        engine: &Engine,
+        id: &str,
+        program_args: &[String],
+        interval_secs: u64,
+        log_path: &Path,
+    ) -> Result<(), EngineError> {
+        if !JOB_ID_RE.is_match(id) {
+            return Err(EngineError::Invalid("invalid job identifier".into()));
+        }
+        create_private_dir_all(&engine.jobs_directory())?;
+        let unit_name = self.unit_name(engine, id);
+        let timer_name = self.timer_name(engine, id);
+        let service_path = self.job_path(engine, id);
+        let timer_path = engine.jobs_directory().join(&timer_name);
+        let log_str = if log_path.as_os_str().is_empty() {
+            String::new()
+        } else {
+            log_path.to_string_lossy().into_owned()
+        };
+        let spec = crate::systemd::UnitSpec {
+            name: unit_name.clone(),
+            description: format!("Devbase periodic job {id}"),
+            exec_start: program_args.to_vec(),
+            working_directory: engine.root.to_string_lossy().into_owned(),
+            stdout_path: log_str.clone(),
+            stderr_path: log_str,
+            on_unit_active_sec: Some(interval_secs.max(1)),
+            ..crate::systemd::UnitSpec::default()
+        };
+        spec.validate()
+            .map_err(|error| EngineError::Invalid(error.to_string()))?;
+        atomic_write(&service_path, spec.render_unit().as_bytes(), PRIVATE_FILE)?;
+        if let Some(timer_content) = spec.render_timer() {
+            atomic_write(&timer_path, timer_content.as_bytes(), PRIVATE_FILE)?;
+            self.ensure_unit_link(engine, &timer_name, &timer_path)?;
+        }
+        self.ensure_unit_link(engine, &unit_name, &service_path)?;
+        engine.run_command("systemctl", &["--user", "daemon-reload"], &|| false)?;
+        if !matches!(
+            self.show_unit(engine, &timer_name, engine.state_timeout),
+            Ok(Some(state)) if state.running
+        ) {
+            engine.run_command("systemctl", &["--user", "start", &timer_name], &|| false)?;
+        }
+        Ok(())
+    }
+
+    fn stop_periodic_job(
+        &self,
+        engine: &Engine,
+        id: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), EngineError> {
+        self.stop_job(engine, id, cancelled)?;
+        for path in [
+            self.job_path(engine, id),
+            engine.jobs_directory().join(self.timer_name(engine, id)),
+        ] {
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Returns the default platform [`JobBackend`]: [`LaunchdBackend`] on macOS,
+/// [`SystemdUserBackend`] on Linux.
+pub fn default_job_backend() -> Arc<dyn JobBackend> {
+    #[cfg(target_os = "macos")]
+    {
+        Arc::new(LaunchdBackend)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Arc::new(SystemdUserBackend::new())
+    }
+}
+
+/// One development home's managed job engine.
 #[derive(Clone)]
 pub struct Engine {
     root: PathBuf,
     runner: Arc<dyn CommandRunner>,
+    backend: Arc<dyn JobBackend>,
     uid: u32,
     command_timeout: Duration,
     stop_timeout: Duration,
@@ -364,6 +1002,7 @@ impl Engine {
         Engine {
             root: root.into(),
             runner,
+            backend: default_job_backend(),
             uid: unsafe { libc::getuid() },
             command_timeout: COMMAND_TIMEOUT,
             stop_timeout: STOP_TIMEOUT,
@@ -371,6 +1010,13 @@ impl Engine {
             poll: POLL_INTERVAL,
             job_saved: None,
         }
+    }
+
+    /// Replaces the job backend (e.g. to test [`SystemdUserBackend`] or
+    /// [`LaunchdBackend`] explicitly).
+    pub fn with_backend(mut self, backend: Arc<dyn JobBackend>) -> Self {
+        self.backend = backend;
+        self
     }
 
     pub fn with_uid(mut self, uid: u32) -> Self {
@@ -450,8 +1096,97 @@ impl Engine {
     }
 
     pub fn job_path(&self, id: &str) -> PathBuf {
-        self.jobs_directory()
-            .join(format!("{}.plist", self.label(id)))
+        self.backend.job_path(self, id)
+    }
+
+    /// Observe the runtime state of a managed job.
+    ///
+    /// Returns `Ok(None)` when the job is definitively absent/stopped,
+    /// `Ok(Some(state))` when loaded/running/failed, and `Err(_)` if the job
+    /// manager could not be queried.
+    pub fn job_state(&self, id: &str) -> Result<Option<JobRuntimeState>, EngineError> {
+        self.backend.job_state(self, id)
+    }
+
+    /// Verify that a managed job is definitively stopped/absent.
+    ///
+    /// Returns `Err(_)` when the platform job manager cannot be queried (an
+    /// observation failure is never proof that a job has stopped).
+    pub fn verify_stopped(&self, id: &str) -> Result<bool, EngineError> {
+        self.backend.verify_stopped(self, id)
+    }
+
+    /// Write and register a periodic background job (launchd `StartInterval`
+    /// on macOS; systemd `.service` + `.timer` on Linux).
+    pub fn ensure_periodic_job(
+        &self,
+        id: &str,
+        program_args: &[String],
+        interval_secs: u64,
+        log_path: &Path,
+    ) -> Result<(), EngineError> {
+        self.backend
+            .ensure_periodic_job(self, id, program_args, interval_secs, log_path)
+    }
+
+    /// Stop a periodic background job and remove its generated files.
+    pub fn stop_periodic_job(
+        &self,
+        id: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), EngineError> {
+        self.backend.stop_periodic_job(self, id, cancelled)
+    }
+
+    /// Lists managed job IDs in `$root/jobs/` whose definition files reference
+    /// `path` (supports both `.plist` and `.service` definitions).
+    pub fn jobs_referencing(&self, path: &Path) -> Result<Vec<String>, EngineError> {
+        let dir = self.jobs_directory();
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error.into()),
+        };
+        let target_raw = path.to_string_lossy();
+        let target_clean = clean_path(path);
+        let target_clean_str = target_clean.to_string_lossy();
+        let prefix = label_prefix(&self.root);
+        let launchd_prefix = format!("xyz.jyeu.devbase.dev.{prefix}.");
+        let systemd_prefix = format!("devbase-{prefix}-");
+
+        let mut matched = Vec::new();
+        for entry in entries.flatten() {
+            let file_path = entry.path();
+            if !file_path.is_file() {
+                continue;
+            }
+            let Some(name) = file_path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let id = if let Some(rest) = name.strip_prefix(&launchd_prefix)
+                && let Some(id) = rest.strip_suffix(".plist")
+            {
+                id.to_string()
+            } else if let Some(rest) = name.strip_prefix(&systemd_prefix)
+                && let Some(id) = rest.strip_suffix(".service")
+            {
+                id.to_string()
+            } else {
+                continue;
+            };
+            let Ok(bytes) = std::fs::read(&file_path) else {
+                continue;
+            };
+            let text = String::from_utf8_lossy(&bytes);
+            if (!target_raw.is_empty() && text.contains(target_raw.as_ref()))
+                || (!target_clean_str.is_empty() && text.contains(target_clean_str.as_ref()))
+            {
+                matched.push(id);
+            }
+        }
+        matched.sort();
+        matched.dedup();
+        Ok(matched)
     }
 
     /// Run `program` with the five-minute default deadline.
@@ -504,110 +1239,21 @@ impl Engine {
         self.start_job_policy(spec, 0, cancelled)
     }
 
-    /// [`Engine::start_job`] with a custom `ThrottleInterval`.
+    /// [`Engine::start_job`] with a custom throttle / restart delay in seconds.
     pub fn start_job_policy(
         &self,
         job: &JobSpec,
         throttle: i32,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<bool, EngineError> {
-        if !JOB_ID_RE.is_match(&job.id) {
-            return Err(EngineError::Invalid("invalid job identifier".into()));
-        }
-        let target = self.target(&job.id);
-        if let Ok(output) = self.run_command("launchctl", &["print", &target], cancelled) {
-            if output.contains("state = running") {
-                return Ok(false);
-            }
-            self.run_command("launchctl", &["kickstart", &target], cancelled)?;
-            return Ok(true);
-        }
-        if cancelled() {
-            return Err(EngineError::Cancelled);
-        }
-
-        create_private_dir_all(&self.jobs_directory())?;
-        let path = self.job_path(&job.id);
-        let existing = if std::fs::metadata(&path).is_ok() {
-            Some(std::fs::read(&path)?)
-        } else {
-            None
-        };
-        let mut spec = Spec {
-            label: self.label(&job.id),
-            args: job.args.clone(),
-            working_dir: job.working_dir.clone(),
-            run_at_load: true,
-            keep_alive: job.restart,
-            env: job.env.clone(),
-            stdout: self
-                .root
-                .join("logs")
-                .join(format!("{}.log", job.id))
-                .to_string_lossy()
-                .into_owned(),
-            stderr: self
-                .root
-                .join("logs")
-                .join(format!("{}.err.log", job.id))
-                .to_string_lossy()
-                .into_owned(),
-            ..Spec::default()
-        };
-        if throttle > 0 {
-            spec.throttle_interval = Some(throttle);
-        }
-        spec.validate()?;
-        let data = spec.marshal(existing.as_deref())?;
-        atomic_write(&path, &data, PRIVATE_FILE)?;
-        if let Some(hook) = &self.job_saved {
-            hook(&job.id, &path)?;
-        }
-        self.run_command(
-            "launchctl",
-            &["bootstrap", &self.domain(), path_str(&path)],
-            cancelled,
-        )?;
-        Ok(true)
+        self.backend
+            .start_job_policy(self, job, throttle, cancelled)
     }
 
-    /// Stop a managed job and wait until its launchd record and owned process
+    /// Stop a managed job and wait until its job record and owned process
     /// are both gone. An absent job is success.
     pub fn stop_job(&self, id: &str, cancelled: &dyn Fn() -> bool) -> Result<(), EngineError> {
-        if cancelled() {
-            return Err(EngineError::Cancelled);
-        }
-        let deadline = Instant::now() + self.stop_timeout;
-        let target = self.target(id);
-        let output = match self.run_deadline("launchctl", &["print", &target], deadline) {
-            Ok(output) => output,
-            Err(error) if error.timed_out() => {
-                return Err(EngineError::Timeout(format!("waiting for {id} to stop")));
-            }
-            Err(EngineError::Command(_)) => return Ok(()),
-            Err(other) => return Err(other),
-        };
-        let pid = crate::health::parse_job_state(&output).pid;
-        self.run_deadline("launchctl", &["bootout", &target], deadline)?;
-        loop {
-            if cancelled() {
-                return Err(EngineError::Cancelled);
-            }
-            let print = self.run_deadline("launchctl", &["print", &target], deadline);
-            let process_gone = pid == 0 || !process_alive(pid);
-            match print {
-                Err(EngineError::Command(_)) if process_gone => return Ok(()),
-                Err(EngineError::Timeout(_)) => {
-                    return Err(EngineError::Timeout(format!("waiting for {id} to stop")));
-                }
-                _ => {}
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err(EngineError::Timeout(format!("waiting for {id} to stop")));
-            }
-            std::thread::sleep(self.poll.min(remaining));
-        }
+        self.backend.stop_job(self, id, cancelled)
     }
 
     fn run_deadline(

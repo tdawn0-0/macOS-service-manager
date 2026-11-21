@@ -135,6 +135,7 @@ fn status_reports_the_owner_uid_after_authorization() {
     );
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn the_real_audit_token_identifies_this_process() {
     let (stream, _peer) = pair();
@@ -144,6 +145,7 @@ fn the_real_audit_token_identifies_this_process() {
     super::auth::peer_runs_helper_code(&stream).expect("self must satisfy our requirement");
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn self_requirement_accepts_self_and_rejects_foreign_code() {
     let pid = std::process::id() as i32;
@@ -159,6 +161,18 @@ fn self_requirement_accepts_self_and_rejects_foreign_code() {
         foreign.is_err(),
         "/bin/sleep must not satisfy the test binary"
     );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_so_peercred_authorizes_self_over_unix_socket() {
+    let (stream, _peer) = pair();
+    let cred = super::auth::peer_ucred(&stream).expect("SO_PEERCRED");
+    assert_eq!(cred.uid, euid());
+    assert_eq!(cred.pid, std::process::id() as libc::pid_t);
+    super::auth::LinuxPeerAuth::new()
+        .peer_authorized(&stream)
+        .expect("self must match /proc/self/exe digest");
 }
 
 #[test]

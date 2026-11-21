@@ -25,6 +25,7 @@
 //! install/uninstall client with the single administrator prompt, the helper
 //! and proxy-socket property lists, and an in-process helper for tests.
 
+pub mod autostart;
 pub mod brew;
 pub mod databases;
 pub mod diagnostics;
@@ -36,11 +37,13 @@ pub mod launchd;
 pub mod loginitem;
 pub mod model;
 pub mod operations;
+pub mod platform;
 pub mod service;
 pub mod shell;
 pub mod shutdown;
 pub mod software;
 pub mod state;
+pub mod systemd;
 
 #[cfg(test)]
 pub(crate) mod test_support_engine;

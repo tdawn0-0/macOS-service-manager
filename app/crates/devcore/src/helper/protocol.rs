@@ -207,6 +207,86 @@ pub struct LaunchdRemoveRequest {
     pub trash_dir: String,
 }
 
+/// Sent to `POST /v1/systemd/control` on Linux.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemdControlRequest {
+    #[serde(default)]
+    pub commands: Vec<Vec<String>>,
+}
+
+/// Sent to `POST /v1/systemd/save` on Linux.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemdSaveRequest {
+    #[serde(with = "base64_bytes", default)]
+    pub unit_content: Vec<u8>,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub unit_name: String,
+    #[serde(default)]
+    pub reload: bool,
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default)]
+    pub start: bool,
+}
+
+/// Sent to `POST /v1/systemd/remove` on Linux.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemdRemoveRequest {
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub unit_name: String,
+    #[serde(default)]
+    pub trash_dir: String,
+}
+
+/// Sent to `POST /v1/ca/install` on Linux.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaInstallRequest {
+    #[serde(with = "base64_bytes", default)]
+    pub cert_pem: Vec<u8>,
+    #[serde(default)]
+    pub name: String,
+}
+
+/// Sent to `POST /v1/ca/remove` on Linux.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaRemoveRequest {
+    #[serde(default)]
+    pub name: String,
+}
+
+/// Sent to `POST /v1/systemd/proxy-socket/install` on Linux.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinuxProxySocketInstallRequest {
+    #[serde(default)]
+    pub socket_unit_name: String,
+    #[serde(default)]
+    pub service_unit_name: String,
+    #[serde(with = "base64_bytes", default)]
+    pub socket_content: Vec<u8>,
+    #[serde(with = "base64_bytes", default)]
+    pub service_content: Vec<u8>,
+}
+
+/// Sent to `POST /v1/systemd/proxy-socket/stop` on Linux.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinuxProxySocketStopRequest {
+    #[serde(default)]
+    pub socket_unit_name: String,
+    #[serde(default)]
+    pub service_unit_name: String,
+}
+
 /// The `{"ok":true}` success body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OkResponse {

@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use super::admin::{AdminRunner, OsascriptAdmin};
+use super::admin::{AdminRunner, default_admin_runner};
 use super::http;
 use super::paths::{io_reason, shell_quote_path};
 use super::plist_doc::{
@@ -26,13 +26,22 @@ use super::plist_doc::{
     has_owner_arg, parse_helper_plist,
 };
 use super::protocol::{
-    ErrorResponse, LaunchdControlRequest, PortInspectRequest, PortInspectResponse,
-    ProxySocketInstallRequest, ProxySocketKickstartRequest, ProxySocketStopRequest, StatusResponse,
-    encode_request_json,
+    CaInstallRequest, CaRemoveRequest, ErrorResponse, LaunchdControlRequest,
+    LinuxProxySocketInstallRequest, LinuxProxySocketStopRequest, PortInspectRequest,
+    PortInspectResponse, ProxySocketInstallRequest, ProxySocketKickstartRequest,
+    ProxySocketStopRequest, StatusResponse, SystemdControlRequest, SystemdRemoveRequest,
+    SystemdSaveRequest, encode_request_json,
 };
+#[cfg(not(target_os = "macos"))]
+use super::systemd_unit::{LINUX_HELPER_DIR, LINUX_HELPER_SERVICE_UNIT, LINUX_HELPER_SOCKET};
+use super::systemd_unit::{
+    build_helper_service_unit, build_helper_socket_unit, install_linux_helper_script,
+    parse_linux_helper_units, uninstall_linux_helper_script,
+};
+#[cfg(target_os = "macos")]
+use super::{HELPER_DIR, PLIST_PATH, SOCKET_PATH};
 use super::{
-    HELPER_DIR, HelperError, HelperState, HelperStatus, LABEL, MAX_REQUEST_BYTES,
-    PEER_REJECTED_MESSAGE, PLIST_PATH, SOCKET_PATH,
+    HelperError, HelperState, HelperStatus, LABEL, MAX_REQUEST_BYTES, PEER_REJECTED_MESSAGE,
 };
 use crate::launchd::{
     HelperApi, LaunchdError, LaunchdRemoveRequest as HostRemoveRequest,
@@ -83,14 +92,47 @@ pub struct ClientConfig {
     pub health_poll_interval: Duration,
 }
 
+fn default_socket_path() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        PathBuf::from(SOCKET_PATH)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        PathBuf::from(LINUX_HELPER_SOCKET)
+    }
+}
+
+fn default_unit_or_plist_path() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        PathBuf::from(PLIST_PATH)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        PathBuf::from(LINUX_HELPER_SERVICE_UNIT)
+    }
+}
+
+fn default_helper_staging_dir() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        PathBuf::from(HELPER_DIR)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        PathBuf::from(LINUX_HELPER_DIR)
+    }
+}
+
 impl Default for ClientConfig {
     fn default() -> Self {
         ClientConfig {
-            socket_path: PathBuf::from(SOCKET_PATH),
-            plist_path: PathBuf::from(PLIST_PATH),
-            helper_dir: PathBuf::from(HELPER_DIR),
+            socket_path: default_socket_path(),
+            plist_path: default_unit_or_plist_path(),
+            helper_dir: default_helper_staging_dir(),
             expected: BinaryInfo::current(),
-            admin: Arc::new(OsascriptAdmin),
+            admin: default_admin_runner(),
             health_timeout: DEFAULT_HEALTH_TIMEOUT,
             health_poll_interval: DEFAULT_HEALTH_POLL_INTERVAL,
         }
@@ -139,13 +181,13 @@ impl Client {
     /// Creates a client, filling the path and timeout defaults.
     pub fn new(mut cfg: ClientConfig) -> Self {
         if cfg.socket_path.as_os_str().is_empty() {
-            cfg.socket_path = PathBuf::from(SOCKET_PATH);
+            cfg.socket_path = default_socket_path();
         }
         if cfg.plist_path.as_os_str().is_empty() {
-            cfg.plist_path = PathBuf::from(PLIST_PATH);
+            cfg.plist_path = default_unit_or_plist_path();
         }
         if cfg.helper_dir.as_os_str().is_empty() {
-            cfg.helper_dir = PathBuf::from(HELPER_DIR);
+            cfg.helper_dir = default_helper_staging_dir();
         }
         if cfg.health_timeout.is_zero() {
             cfg.health_timeout = DEFAULT_HEALTH_TIMEOUT;
@@ -196,7 +238,7 @@ impl Client {
         let socket = std::env::var_os("MSM_PRIVHELPER_SOCKET")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(SOCKET_PATH));
+            .unwrap_or_else(default_socket_path);
         Arc::new(Client::new(ClientConfig {
             socket_path: socket,
             ..ClientConfig::default()
@@ -215,13 +257,95 @@ impl Client {
         DefaultClientGuard { previous }
     }
 
-    /// Passively inspects the installed helper plist and staged artifact.
+    fn uses_systemd_units(&self) -> bool {
+        self.cfg.plist_path.extension() == Some(std::ffi::OsStr::new("service"))
+    }
+
+    fn linux_socket_unit_path(&self) -> PathBuf {
+        self.cfg.plist_path.with_extension("socket")
+    }
+
+    fn status_systemd(&self) -> HelperStatus {
+        let service_raw = match std::fs::read_to_string(&self.cfg.plist_path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return HelperStatus {
+                    state: HelperState::NotInstalled,
+                    message: "Not installed. Root operations need it; installing asks for your administrator password once."
+                        .to_string(),
+                };
+            }
+            Err(error) => {
+                return HelperStatus {
+                    state: HelperState::NotInstalled,
+                    message: format!(
+                        "Could not inspect helper configuration: open {}: {}",
+                        self.cfg.plist_path.display(),
+                        io_reason(&error)
+                    ),
+                };
+            }
+        };
+        let socket_unit = self.linux_socket_unit_path();
+        let socket_raw = match std::fs::read_to_string(&socket_unit) {
+            Ok(raw) => raw,
+            Err(_) => {
+                return HelperStatus {
+                    state: HelperState::NotInstalled,
+                    message: "Installed helper socket unit is missing and needs to be reinstalled."
+                        .to_string(),
+                };
+            }
+        };
+        let doc = parse_linux_helper_units(&service_raw, &socket_raw);
+        let staged = expected_staged_executable(&self.cfg.helper_dir, &self.cfg.expected);
+        if doc.exec_start.len() < 4 || doc.exec_start[0] != path_text(&staged) {
+            return HelperStatus {
+                state: HelperState::NotInstalled,
+                message:
+                    "Installed helper points to a different location and needs to be reinstalled."
+                        .to_string(),
+            };
+        }
+        if !has_owner_arg(&doc.exec_start, self.cfg.expected.owner_uid) {
+            return HelperStatus {
+                state: HelperState::NotInstalled,
+                message: "Installed helper is configured for a different user and needs to be reinstalled."
+                    .to_string(),
+            };
+        }
+        if doc.listen_stream != path_text(&self.cfg.socket_path) {
+            return HelperStatus {
+                state: HelperState::NotInstalled,
+                message:
+                    "Installed helper socket configuration is invalid and needs to be reinstalled."
+                        .to_string(),
+            };
+        }
+        if std::fs::metadata(&staged).is_err() {
+            return HelperStatus {
+                state: HelperState::NotInstalled,
+                message: "Installed helper binary is missing and needs to be reinstalled."
+                    .to_string(),
+            };
+        }
+        HelperStatus {
+            state: HelperState::Installed,
+            message: "Installed. Root operations run through it without password prompts."
+                .to_string(),
+        }
+    }
+
+    /// Passively inspects the installed helper configuration and staged artifact.
     pub fn status(&self) -> HelperStatus {
         if self.disabled {
             return HelperStatus {
                 state: HelperState::NotInstalled,
                 message: "Privileged helper is disabled in this environment.".to_string(),
             };
+        }
+        if self.uses_systemd_units() {
+            return self.status_systemd();
         }
         let raw = match std::fs::read(&self.cfg.plist_path) {
             Ok(raw) => raw,
@@ -327,6 +451,42 @@ impl Client {
             ));
         }
         let staged = expected_staged_executable(&self.cfg.helper_dir, expected);
+        if self.uses_systemd_units() {
+            let service_unit = build_helper_service_unit(&staged, expected.owner_uid)
+                .map_err(HelperError::Message)?;
+            let socket_unit = build_helper_socket_unit(&path_text(&self.cfg.socket_path));
+            let socket_unit_path = self.linux_socket_unit_path();
+            let tmp_dir = install_temp_dir();
+            let result = (|| {
+                let tmp_socket = tmp_dir.join("devbase-helper.socket");
+                let tmp_service = tmp_dir.join("devbase-helper.service");
+                std::fs::write(&tmp_socket, socket_unit.as_bytes()).map_err(io_helper_error)?;
+                std::fs::write(&tmp_service, service_unit.as_bytes()).map_err(io_helper_error)?;
+                let script = install_linux_helper_script(
+                    &expected.executable,
+                    &self.cfg.helper_dir,
+                    &staged,
+                    &socket_unit_path,
+                    &self.cfg.plist_path,
+                    &tmp_socket,
+                    &tmp_service,
+                    &self.cfg.socket_path,
+                );
+                let (output, error) = self.cfg.admin.run_admin("/bin/sh", &["-c", &script]);
+                if let Some(error) = error {
+                    let message = output.trim();
+                    if !message.is_empty() {
+                        return Err(HelperError::Message(format!(
+                            "helper install failed: {message}: {error}"
+                        )));
+                    }
+                    return Err(HelperError::Message(error.to_string()));
+                }
+                self.wait_for_healthy()
+            })();
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return result;
+        }
         let plist = build_helper_plist(
             &staged,
             expected.owner_uid,
@@ -411,11 +571,20 @@ impl Client {
                 "privileged helper is disabled".to_string(),
             ));
         }
-        let script = uninstall_helper_script(
-            &self.cfg.plist_path,
-            &self.cfg.helper_dir,
-            &self.cfg.socket_path,
-        );
+        let script = if self.uses_systemd_units() {
+            uninstall_linux_helper_script(
+                &self.linux_socket_unit_path(),
+                &self.cfg.plist_path,
+                &self.cfg.helper_dir,
+                &self.cfg.socket_path,
+            )
+        } else {
+            uninstall_helper_script(
+                &self.cfg.plist_path,
+                &self.cfg.helper_dir,
+                &self.cfg.socket_path,
+            )
+        };
         let (output, error) = self.cfg.admin.run_admin("/bin/sh", &["-c", &script]);
         if let Some(error) = error {
             let message = output.trim();
@@ -495,6 +664,52 @@ impl Client {
         request: &super::protocol::LaunchdRemoveRequest,
     ) -> Result<(), HelperError> {
         self.post_ok("/v1/launchd/remove", request)
+    }
+
+    /// Runs validated `systemctl` commands as root on Linux.
+    pub fn systemd_control(&self, commands: &[Vec<String>]) -> Result<(), HelperError> {
+        self.post_ok(
+            "/v1/systemd/control",
+            &SystemdControlRequest {
+                commands: commands.to_vec(),
+            },
+        )
+    }
+
+    /// Writes a system unit file and optionally reloads/enables/starts it on Linux.
+    pub fn systemd_save(&self, request: &SystemdSaveRequest) -> Result<(), HelperError> {
+        self.post_ok("/v1/systemd/save", request)
+    }
+
+    /// Stops/disables a system unit and moves its file into `trash_dir` on Linux.
+    pub fn systemd_remove(&self, request: &SystemdRemoveRequest) -> Result<(), HelperError> {
+        self.post_ok("/v1/systemd/remove", request)
+    }
+
+    /// Installs a PEM root CA anchor into the Linux system trust store.
+    pub fn ca_install(&self, request: &CaInstallRequest) -> Result<(), HelperError> {
+        self.post_ok("/v1/ca/install", request)
+    }
+
+    /// Removes a root CA anchor from the Linux system trust store.
+    pub fn ca_remove(&self, request: &CaRemoveRequest) -> Result<(), HelperError> {
+        self.post_ok("/v1/ca/remove", request)
+    }
+
+    /// Installs and starts Linux systemd proxy socket-activation units for ports `< 1024`.
+    pub fn linux_proxy_socket_install(
+        &self,
+        request: &LinuxProxySocketInstallRequest,
+    ) -> Result<(), HelperError> {
+        self.post_ok("/v1/systemd/proxy-socket/install", request)
+    }
+
+    /// Stops and removes Linux systemd proxy socket-activation units.
+    pub fn linux_proxy_socket_stop(
+        &self,
+        request: &LinuxProxySocketStopRequest,
+    ) -> Result<(), HelperError> {
+        self.post_ok("/v1/systemd/proxy-socket/stop", request)
     }
 
     fn post<Request: Serialize>(

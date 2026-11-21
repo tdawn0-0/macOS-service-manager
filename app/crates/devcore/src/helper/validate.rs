@@ -209,3 +209,142 @@ pub fn path_basename(path: &str) -> String {
 pub fn path_parent(path: &str) -> String {
     dir_path(path)
 }
+
+// ---------------------------------------------------------------------------
+// Linux systemd & CA trust helper validators
+// ---------------------------------------------------------------------------
+
+/// Whether a systemd unit name or path targets the Linux privileged helper itself.
+pub fn targets_linux_helper(unit_or_path: &str) -> bool {
+    if unit_or_path.is_empty() {
+        return false;
+    }
+    let base = base_name(&clean_path(unit_or_path));
+    if matches!(
+        base.as_str(),
+        "devbase-helper" | "devbase-helper.service" | "devbase-helper.socket"
+    ) {
+        return true;
+    }
+    let clean = clean_path(unit_or_path);
+    clean == super::systemd_unit::LINUX_HELPER_SOCKET_UNIT
+        || clean == super::systemd_unit::LINUX_HELPER_SERVICE_UNIT
+        || clean.starts_with(super::systemd_unit::LINUX_HELPER_DIR)
+}
+
+/// Validates a `systemctl` command vector accepted by `/v1/systemd/control`.
+pub fn validate_systemctl_command(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("systemctl command requires arguments".to_string());
+    }
+    for argument in args {
+        if argument.is_empty() || argument.contains('\0') {
+            return Err(format!("invalid systemctl argument {argument:?}"));
+        }
+        if targets_linux_helper(argument) {
+            return Err("cannot target privileged helper".to_string());
+        }
+    }
+    match args[0].as_str() {
+        "daemon-reload" => {
+            if args.len() != 1 {
+                return Err("daemon-reload takes no arguments".to_string());
+            }
+            Ok(())
+        }
+        "start" | "stop" | "restart" | "enable" | "disable" | "reset-failed" | "is-active" => {
+            if args.len() != 2 {
+                return Err(format!("{} expects a single unit name", args[0]));
+            }
+            validate_systemd_unit_name(&args[1])
+        }
+        other => Err(format!("unsupported systemctl subcommand {other:?}")),
+    }
+}
+
+/// Validates a systemd unit name (no slashes, no leading `-`, not the helper).
+pub fn validate_systemd_unit_name(name: &str) -> Result<(), String> {
+    crate::systemd::validate_any_unit_name(name).map_err(|error| error.to_string())?;
+    if targets_linux_helper(name) {
+        return Err("cannot target privileged helper".to_string());
+    }
+    if !(name.ends_with(".service") || name.ends_with(".socket") || name.ends_with(".timer")) {
+        return Err(format!(
+            "unit name {name:?} must end with .service, .socket, or .timer"
+        ));
+    }
+    Ok(())
+}
+
+/// Validates a target systemd unit file path inside `allowed_dirs`.
+pub fn validate_systemd_unit_file(path: &str, allowed_dirs: &[String]) -> Result<String, String> {
+    let suffix = if path.ends_with(".service") {
+        ".service"
+    } else if path.ends_with(".socket") {
+        ".socket"
+    } else if path.ends_with(".timer") {
+        ".timer"
+    } else {
+        return Err(format!(
+            "path {path:?} must end with .service, .socket, or .timer"
+        ));
+    };
+    let clean = validate_clean_target_file(path, allowed_dirs, suffix)?;
+    if targets_linux_helper(&clean) {
+        return Err("cannot target privileged helper".to_string());
+    }
+    Ok(clean)
+}
+
+/// Validates a CA anchor base name (alphanumeric + `._-`, no slashes or `..`).
+pub fn validate_ca_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > 128
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains("..")
+        || trimmed.starts_with('.')
+        || !trimmed
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    {
+        return Err(format!("invalid CA anchor name {name:?}"));
+    }
+    Ok(trimmed.to_string())
+}
+
+/// Validates that `pem` contains a PEM-encoded X.509 certificate block.
+pub fn validate_ca_pem(pem: &[u8]) -> Result<(), String> {
+    if pem.is_empty() || pem.len() > 256 * 1024 {
+        return Err("CA certificate PEM has invalid size".to_string());
+    }
+    let text = std::str::from_utf8(pem)
+        .map_err(|_| "CA certificate PEM must be valid UTF-8".to_string())?;
+    if !text.contains("-----BEGIN CERTIFICATE-----") || !text.contains("-----END CERTIFICATE-----")
+    {
+        return Err("CA certificate data is not a PEM certificate".to_string());
+    }
+    Ok(())
+}
+
+/// Validates a Linux proxy socket + service unit pair.
+pub fn validate_linux_proxy_unit_names(
+    socket_unit: &str,
+    service_unit: &str,
+) -> Result<(), String> {
+    validate_systemd_unit_name(socket_unit)?;
+    validate_systemd_unit_name(service_unit)?;
+    let Some(sock_stem) = socket_unit.strip_suffix(".socket") else {
+        return Err(format!("expected .socket unit, got {socket_unit:?}"));
+    };
+    let Some(svc_stem) = service_unit.strip_suffix(".service") else {
+        return Err(format!("expected .service unit, got {service_unit:?}"));
+    };
+    if !sock_stem.starts_with("devbase-proxy-") || sock_stem != svc_stem {
+        return Err(format!(
+            "proxy socket units must match devbase-proxy-* stem: {socket_unit:?} / {service_unit:?}"
+        ));
+    }
+    Ok(())
+}

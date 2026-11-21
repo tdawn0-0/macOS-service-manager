@@ -13,6 +13,9 @@ use std::fmt;
 use std::io;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
+
+use sha2::{Digest, Sha256};
 
 /// The peer identity checks the server runs before routing a request.
 pub trait PeerAuth: Send + Sync + fmt::Debug {
@@ -37,7 +40,140 @@ impl PeerAuth for SystemPeerAuth {
     }
 }
 
-/// The connected peer's effective UID via `getpeereid`.
+/// Linux peer authentication using `SO_PEERCRED` (`libc::ucred`) and
+/// `/proc/<pid>/exe` SHA-256 verification against the helper's own binary.
+#[derive(Debug, Clone, Default)]
+pub struct LinuxPeerAuth {
+    /// Optional explicit binary path to compare against `/proc/<pid>/exe`
+    /// (defaults to `/proc/self/exe` / `std::env::current_exe()`).
+    pub expected_exe: Option<PathBuf>,
+}
+
+impl LinuxPeerAuth {
+    pub fn new() -> Self {
+        LinuxPeerAuth { expected_exe: None }
+    }
+
+    pub fn with_expected_exe(path: impl Into<PathBuf>) -> Self {
+        LinuxPeerAuth {
+            expected_exe: Some(path.into()),
+        }
+    }
+}
+
+impl PeerAuth for LinuxPeerAuth {
+    fn peer_uid(&self, stream: &UnixStream) -> io::Result<u32> {
+        #[cfg(target_os = "linux")]
+        {
+            Ok(peer_ucred(stream)?.uid)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = stream;
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "SO_PEERCRED is only available on Linux",
+            ))
+        }
+    }
+
+    fn peer_authorized(&self, stream: &UnixStream) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
+        {
+            let cred = peer_ucred(stream).map_err(|error| error.to_string())?;
+            if cred.pid <= 0 {
+                return Err("peer did not report a valid PID".to_string());
+            }
+            let peer_exe = PathBuf::from(format!("/proc/{}/exe", cred.pid));
+            let self_exe = match &self.expected_exe {
+                Some(path) => path.clone(),
+                None => std::env::current_exe().map_err(|error| error.to_string())?,
+            };
+            verify_peer_exe_hash(&peer_exe, &self_exe)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = stream;
+            Err("Linux SO_PEERCRED peer verification is only available on Linux".to_string())
+        }
+    }
+}
+
+/// Reads `libc::ucred` (`pid`, `uid`, `gid`) from a connected Unix domain socket
+/// via `getsockopt(SOL_SOCKET, SO_PEERCRED)`.
+#[cfg(target_os = "linux")]
+pub fn peer_ucred(stream: &UnixStream) -> io::Result<libc::ucred> {
+    let mut cred = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: `stream` is a live Unix socket fd and `cred` is properly sized.
+    let rc = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut cred as *mut libc::ucred).cast(),
+            &mut len,
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if len as usize != std::mem::size_of::<libc::ucred>() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "unexpected ucred length {len}, want {}",
+                std::mem::size_of::<libc::ucred>()
+            ),
+        ));
+    }
+    Ok(cred)
+}
+
+/// Verifies that the executable at `peer_exe` has the exact same SHA-256 digest
+/// as `self_exe` (matching a staged helper binary to the Devbase build it came from).
+pub fn verify_peer_exe_hash(peer_exe: &Path, self_exe: &Path) -> Result<(), String> {
+    let peer_digest = file_sha256(peer_exe).map_err(|error| {
+        format!(
+            "could not read peer executable {}: {error}",
+            peer_exe.display()
+        )
+    })?;
+    let self_digest = file_sha256(self_exe).map_err(|error| {
+        format!(
+            "could not read helper executable {}: {error}",
+            self_exe.display()
+        )
+    })?;
+    if peer_digest != self_digest {
+        return Err("peer executable digest does not match helper binary".to_string());
+    }
+    Ok(())
+}
+
+fn file_sha256(path: &Path) -> io::Result<[u8; 32]> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let digest = hasher.finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
+    Ok(out)
+}
+
+/// The connected peer's effective UID via `getpeereid` (macOS) or `SO_PEERCRED` (Linux).
 pub fn peer_effective_uid(stream: &UnixStream) -> io::Result<u32> {
     #[cfg(target_os = "macos")]
     {
@@ -58,12 +194,16 @@ pub fn peer_effective_uid(stream: &UnixStream) -> io::Result<u32> {
         }
         Ok(euid)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        LinuxPeerAuth::new().peer_uid(stream)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = stream;
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "getpeereid is only available on macOS",
+            "peer UID inspection is not available on this platform",
         ))
     }
 }
@@ -95,8 +235,7 @@ pub fn peer_audit_token(stream: &UnixStream) -> io::Result<[u8; 32]> {
     Ok(token)
 }
 
-/// Reports nil only when the peer runs validly signed code that satisfies this
-/// process's own designated requirement.
+/// Reports Ok only when the peer runs code matching this helper build.
 pub fn peer_runs_helper_code(stream: &UnixStream) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -108,10 +247,14 @@ pub fn peer_runs_helper_code(stream: &UnixStream) -> Result<(), String> {
         api.release(data);
         result
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        LinuxPeerAuth::new().peer_authorized(stream)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = stream;
-        Err("peer code checks are only available on macOS".to_string())
+        Err("peer code checks are not available on this platform".to_string())
     }
 }
 
@@ -422,6 +565,7 @@ pub fn pid_satisfies_self(pid: i32) -> Result<(), String> {
     result
 }
 
-// Keep the unused import warning away on non-macOS targets.
-#[cfg(not(target_os = "macos"))]
+// Keep the unused import warning away on non-macOS/non-Linux targets.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[allow(dead_code)]
 fn _unused(_: &UnixStream) {}

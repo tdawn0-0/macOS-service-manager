@@ -5,7 +5,7 @@
 //! [`super::Context`] instead, so tests never spawn a real process and never
 //! touch the real LaunchAgents directories or Trash.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -187,9 +187,17 @@ fn exit_code(status: ExitStatus) -> Option<i32> {
 }
 
 fn child_path() -> OsString {
+    #[cfg(target_os = "macos")]
     let mut paths = vec![
         PathBuf::from("/opt/homebrew/bin"),
         PathBuf::from("/usr/local/bin"),
+    ];
+    #[cfg(not(target_os = "macos"))]
+    let mut paths = vec![
+        PathBuf::from("/home/linuxbrew/.linuxbrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
     ];
     if let Some(existing) = std::env::var_os("PATH") {
         for path in std::env::split_paths(&existing) {
@@ -261,23 +269,32 @@ impl Host for SystemHost {
 
     fn trash(&self, path: &Path) -> Result<(), LaunchdError> {
         let home = self.home_dir()?;
-        let trash = home.join(".Trash");
-        let name = path
-            .file_name()
-            .ok_or_else(|| LaunchdError::io("the file has no name"))?;
-        let mut destination = trash.join(name);
-        if std::fs::symlink_metadata(&destination).is_ok() {
-            destination = with_time_suffix(&destination, &local_hms());
+        #[cfg(target_os = "macos")]
+        {
+            let trash = home.join(".Trash");
+            let name = path
+                .file_name()
+                .ok_or_else(|| LaunchdError::io("the file has no name"))?;
+            let mut destination = trash.join(name);
+            if std::fs::symlink_metadata(&destination).is_ok() {
+                destination = with_time_suffix(&destination, &local_hms());
+            }
+            std::fs::rename(path, &destination).map_err(|error| LaunchdError::io(error.to_string()))
         }
-        std::fs::rename(path, &destination).map_err(|error| LaunchdError::io(error.to_string()))
+        #[cfg(not(target_os = "macos"))]
+        {
+            crate::platform::linux::trash_path_in_home(path, &home)
+                .map_err(|error| LaunchdError::io(error.to_string()))
+        }
     }
 }
 
 /// Inserts `" HH.MM.SS"` before the extension, as `system.Trash` does.
+#[cfg(any(target_os = "macos", test))]
 fn with_time_suffix(path: &Path, suffix: &str) -> PathBuf {
     let name = path
         .file_name()
-        .unwrap_or_else(|| OsStr::new(""))
+        .unwrap_or_else(|| std::ffi::OsStr::new(""))
         .to_string_lossy();
     let (stem, extension) = match name.rfind('.') {
         Some(index) => name.split_at(index),
@@ -290,7 +307,7 @@ fn with_time_suffix(path: &Path, suffix: &str) -> PathBuf {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn local_hms() -> String {
     // SAFETY: `t` is a valid time value and `tm` is a properly sized buffer.
     unsafe {
@@ -301,11 +318,6 @@ fn local_hms() -> String {
         }
         format!("{:02}.{:02}.{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
     }
-}
-
-#[cfg(not(unix))]
-fn local_hms() -> String {
-    "00.00.00".to_string()
 }
 
 /// A save request: the property list, where the helper writes it, and whether

@@ -301,3 +301,155 @@ fn read_job_state_reports_observation_failures() {
     assert_eq!(state, JobState::default());
     assert!(result.is_err());
 }
+
+#[test]
+fn systemd_user_backend_starts_stops_verifies_and_schedules_periodic_jobs() {
+    let root = temp_root();
+    let unit_dir = root.path().join("xdg-systemd-user");
+    let active_units: Arc<Mutex<BTreeMap<String, bool>>> = Arc::new(Mutex::new(BTreeMap::new()));
+    let state_ref = active_units.clone();
+
+    let runner = Arc::new(FakeCommands::new(move |program, args| {
+        assert_eq!(program, "systemctl");
+        assert_eq!(args.first().map(String::as_str), Some("--user"));
+        match args.get(1).map(String::as_str) {
+            Some("show") => {
+                let unit = args.last().cloned().unwrap_or_default();
+                let is_active = state_ref
+                    .lock()
+                    .unwrap()
+                    .get(&unit)
+                    .copied()
+                    .unwrap_or(false);
+                if is_active {
+                    Ok("LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=0\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n".into())
+                } else {
+                    Ok("LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n".into())
+                }
+            }
+            Some("start") => {
+                let unit = args.get(2).cloned().unwrap_or_default();
+                state_ref.lock().unwrap().insert(unit, true);
+                Ok(String::new())
+            }
+            Some("stop") => {
+                let unit = args.get(2).cloned().unwrap_or_default();
+                state_ref.lock().unwrap().remove(&unit);
+                Ok(String::new())
+            }
+            Some("daemon-reload") | Some("reset-failed") => Ok(String::new()),
+            other => panic!("unexpected systemctl call {other:?}: {args:?}"),
+        }
+    }));
+
+    let backend = Arc::new(SystemdUserBackend::with_unit_dir(&unit_dir));
+    let engine = Engine::new(root.path(), runner.clone())
+        .with_backend(backend.clone())
+        .with_poll_interval(std::time::Duration::from_millis(1));
+
+    let job = JobSpec {
+        id: "db-pg".into(),
+        args: vec![
+            "/opt/pg/bin/postgres".into(),
+            "-D".into(),
+            "/data/pg".into(),
+        ],
+        working_dir: root.path().to_string_lossy().into_owned(),
+        env: BTreeMap::from([("PGDATA".into(), "/data/pg".into())]),
+        restart: true,
+    };
+
+    assert!(engine.verify_stopped("db-pg").unwrap());
+    assert!(engine.start_job(&job, &|| false).unwrap());
+    // Starting an already-running job is a no-op.
+    assert!(!engine.start_job(&job, &|| false).unwrap());
+
+    let unit_path = engine.job_path("db-pg");
+    assert!(unit_path.exists());
+    let mode = std::os::unix::fs::PermissionsExt::mode(
+        &std::fs::metadata(&unit_path).unwrap().permissions(),
+    );
+    assert_eq!(mode & 0o777, 0o600);
+    let link = unit_dir.join(backend.unit_name(&engine, "db-pg"));
+    assert!(std::fs::symlink_metadata(&link).is_ok());
+
+    let observed = engine.job_state("db-pg").unwrap().expect("running");
+    assert!(observed.loaded);
+    assert!(observed.running);
+    assert!(!engine.verify_stopped("db-pg").unwrap());
+
+    // jobs_referencing finds the systemd service referencing `/opt/pg`.
+    assert_eq!(
+        engine.jobs_referencing(Path::new("/opt/pg")).unwrap(),
+        vec!["db-pg".to_string()]
+    );
+
+    engine.stop_job("db-pg", &|| false).unwrap();
+    assert!(engine.verify_stopped("db-pg").unwrap());
+    assert!(std::fs::symlink_metadata(&link).is_err());
+
+    // Periodic job writes both .service and .timer and starts the .timer.
+    engine
+        .ensure_periodic_job(
+            "maintenance",
+            &["/usr/bin/devbase".into(), "--dev".into(), "maintain".into()],
+            60,
+            Path::new(""),
+        )
+        .unwrap();
+    let timer_path = engine
+        .jobs_directory()
+        .join(backend.timer_name(&engine, "maintenance"));
+    assert!(engine.job_path("maintenance").exists());
+    assert!(timer_path.exists());
+    let timer_body = std::fs::read_to_string(&timer_path).unwrap();
+    assert!(timer_body.contains("OnUnitActiveSec=60s"));
+    assert!(
+        active_units
+            .lock()
+            .unwrap()
+            .get(&backend.timer_name(&engine, "maintenance"))
+            .copied()
+            .unwrap_or(false)
+    );
+
+    engine.stop_periodic_job("maintenance", &|| false).unwrap();
+    assert!(!engine.job_path("maintenance").exists());
+    assert!(!timer_path.exists());
+}
+
+#[test]
+fn jobs_referencing_scans_launchd_plists_and_systemd_units() {
+    let root = temp_root();
+    let runner = Arc::new(FakeCommands::new(|_, _| Ok(String::new())));
+    let engine = Engine::new(root.path(), runner);
+    std::fs::create_dir_all(engine.jobs_directory()).unwrap();
+    let prefix = label_prefix(root.path());
+    std::fs::write(
+        engine
+            .jobs_directory()
+            .join(format!("xyz.jyeu.devbase.dev.{prefix}.db-a.plist")),
+        "<string>/packages/postgres@17/bin/postgres</string>",
+    )
+    .unwrap();
+    std::fs::write(
+        engine
+            .jobs_directory()
+            .join(format!("devbase-{prefix}-db-b.service")),
+        "ExecStart=/packages/postgres@17/bin/postgres\n",
+    )
+    .unwrap();
+    std::fs::write(
+        engine
+            .jobs_directory()
+            .join(format!("devbase-{prefix}-db-c.service")),
+        "ExecStart=/packages/redis@8/bin/redis-server\n",
+    )
+    .unwrap();
+    assert_eq!(
+        engine
+            .jobs_referencing(Path::new("/packages/postgres@17"))
+            .unwrap(),
+        vec!["db-a".to_string(), "db-b".to_string()]
+    );
+}

@@ -29,21 +29,35 @@ pub mod plist_doc;
 pub mod protocol;
 pub mod server;
 pub mod socket_job;
+pub mod systemd_unit;
 pub mod testenv;
 pub mod validate;
 
-pub use activate::{SocketActivator, SystemSocketActivator, run_activated, serve_activated};
+pub use activate::{
+    LinuxSocketActivator, SD_LISTEN_FDS_START, SocketActivator, SystemSocketActivator,
+    parse_sd_listen_fds, run_activated, serve_activated,
+};
+pub use admin::{AdminError, AdminRunner, OsascriptAdmin, PkexecAdmin, default_admin_runner};
+pub use auth::{LinuxPeerAuth, PeerAuth, SystemPeerAuth, verify_peer_exe_hash};
 pub use client::{BinaryInfo, Client, ClientConfig, DefaultClientGuard, DefaultHelper};
 pub use plist_doc::{
     HelperPlistDoc, app_bundle_for_executable, build_helper_plist, current_binary_info,
     expected_staged_executable, has_owner_arg, parse_helper_plist,
 };
 pub use protocol::{
-    ErrorResponse, LaunchdControlRequest, LaunchdRemoveRequest, LaunchdSaveRequest,
-    LaunchdSaveResponse, OkResponse, PortInspectRequest, PortInspectResponse,
+    CaInstallRequest, CaRemoveRequest, ErrorResponse, LaunchdControlRequest, LaunchdRemoveRequest,
+    LaunchdSaveRequest, LaunchdSaveResponse, LinuxProxySocketInstallRequest,
+    LinuxProxySocketStopRequest, OkResponse, PortInspectRequest, PortInspectResponse,
     ProxySocketInstallRequest, ProxySocketKickstartRequest, ProxySocketStopRequest, StatusResponse,
+    SystemdControlRequest, SystemdRemoveRequest, SystemdSaveRequest,
 };
-pub use server::{Server, ServerConfig};
+pub use server::{CaTrustTarget, Server, ServerConfig, detect_linux_ca_trust_target};
+pub use systemd_unit::{
+    LINUX_HELPER_BIN, LINUX_HELPER_DIR, LINUX_HELPER_SERVICE_UNIT, LINUX_HELPER_SERVICE_UNIT_NAME,
+    LINUX_HELPER_SOCKET, LINUX_HELPER_SOCKET_UNIT, LINUX_HELPER_SOCKET_UNIT_NAME,
+    LINUX_SYSTEMD_DIR, LinuxProxySocketUnits, build_helper_service_unit, build_helper_socket_unit,
+    build_linux_proxy_socket_units, install_linux_helper_script, uninstall_linux_helper_script,
+};
 
 #[cfg(test)]
 mod test_support;
@@ -59,6 +73,8 @@ mod tests_endpoints;
 mod tests_idle;
 #[cfg(test)]
 mod tests_install;
+#[cfg(test)]
+mod tests_linux;
 #[cfg(test)]
 mod tests_paths;
 #[cfg(test)]

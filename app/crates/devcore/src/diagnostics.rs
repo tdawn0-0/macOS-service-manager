@@ -23,7 +23,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::{Engine, EngineError};
 use crate::health::read_job_state;
-use crate::launchd::Spec;
 use crate::model::State;
 use crate::software::Software;
 use crate::state::{StateError, Store};
@@ -311,7 +310,7 @@ impl Diagnostics {
             engine,
             software,
             dial: std::sync::Arc::new(TcpDialProbe),
-            program: PathBuf::from("/Applications/Devbase.app/Contents/MacOS/Devbase"),
+            program: crate::platform::paths::default_program_path(),
             databases: None,
         }
     }
@@ -418,38 +417,32 @@ impl Diagnostics {
         if self.remaining(deadline).is_none() {
             return "Unknown".into();
         }
-        let (job, error) = read_job_state(&self.engine, id, &|| self.now() >= deadline);
+        let observed = self.engine.job_state(id);
         if self.now() >= deadline {
             return "Unknown".into();
         }
         let socket_loaded = socket && self.socket_loaded();
-        match error {
-            Ok(()) => {
+        match observed {
+            Ok(Some(job)) => {
                 if job.running || socket_loaded {
                     "Running".into()
                 } else {
                     "Failed".into()
                 }
             }
-            Err(error) => {
-                let message = error.to_string();
-                if message.contains("Could not find service")
-                    || message.contains("Could not find specified service")
-                {
-                    if socket_loaded {
-                        "Running".into()
-                    } else {
-                        "Stopped".into()
-                    }
+            Ok(None) => {
+                if socket_loaded {
+                    "Running".into()
                 } else {
-                    "Unknown".into()
+                    "Stopped".into()
                 }
             }
+            Err(_) => "Unknown".into(),
         }
     }
 
     fn socket_loaded(&self) -> bool {
-        read_job_state(&self.engine, "socket", &|| false).1.is_ok()
+        matches!(self.engine.job_state("socket"), Ok(Some(_)))
     }
 
     /// Phase 2 diagnosis: installed-package verification plus database
@@ -757,60 +750,25 @@ impl Diagnostics {
         }
     }
 
-    fn maintenance_job_path(&self) -> PathBuf {
-        self.engine.job_path("maintenance")
-    }
-
     /// Write the scheduled maintenance job and load it if needed.
     pub fn ensure_log_maintenance(&self) -> Result<(), DiagnosticError> {
         if self.store.read()?.log_rotation_disabled {
             return Ok(());
         }
-        let path = self.maintenance_job_path();
-        let exists = path.exists();
-        let spec = Spec {
-            label: self.engine.label("maintenance"),
-            args: vec![
-                self.program.to_string_lossy().into_owned(),
-                "--dev".into(),
-                "maintain".into(),
-                self.store.root().to_string_lossy().into_owned(),
-            ],
-            working_dir: self.store.root().to_string_lossy().into_owned(),
-            start_interval: 60,
-            run_at_load: true,
-            ..Spec::default()
-        };
-        let current = if exists {
-            Some(std::fs::read(&path)?)
-        } else {
-            None
-        };
-        let data = spec
-            .marshal(current.as_deref())
-            .map_err(|error| DiagnosticError::invalid(error.to_string()))?;
-        crate::fs::atomic_write(&path, &data, 0o600)?;
-        if read_job_state(&self.engine, "maintenance", &|| false)
-            .1
-            .is_ok()
-        {
-            return Ok(());
-        }
-        self.engine.run_command(
-            "launchctl",
-            &["bootstrap", &self.engine.domain(), &path.to_string_lossy()],
-            &|| false,
-        )?;
+        let args = vec![
+            self.program.to_string_lossy().into_owned(),
+            "--dev".into(),
+            "maintain".into(),
+            self.store.root().to_string_lossy().into_owned(),
+        ];
+        self.engine
+            .ensure_periodic_job("maintenance", &args, 60, Path::new(""))?;
         Ok(())
     }
 
     fn stop_log_maintenance(&self) -> Result<(), DiagnosticError> {
-        self.engine.stop_job("maintenance", &|| false)?;
-        match std::fs::remove_file(self.maintenance_job_path()) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.into()),
-        }
+        self.engine.stop_periodic_job("maintenance", &|| false)?;
+        Ok(())
     }
 
     /// Copy/truncate oversized logs using an exclusive `logs.rotate.lock`.

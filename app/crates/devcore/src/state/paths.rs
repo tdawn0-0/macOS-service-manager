@@ -17,15 +17,13 @@ pub const DEV_HOME_ENV: &str = "MSM_DEV_HOME";
 /// The directory-name marker proving a Java bundle belongs to this install.
 pub const JAVA_OWNER_FILE: &str = ".devbase-java-owner";
 
-/// The production Homebrew Cellar on Apple Silicon.
-pub const DEFAULT_BREW_CELLAR: &str = "/opt/homebrew/Cellar";
+/// The production Homebrew Cellar for the host platform.
+pub const DEFAULT_BREW_CELLAR: &str = crate::platform::paths::DEFAULT_BREW_CELLAR;
 
-/// `~/Library/Application Support/Devbase/Development`.
+/// The default user storage root: `~/Library/Application Support/Devbase/Development`
+/// on macOS, or `$XDG_DATA_HOME/devbase` (`~/.local/share/devbase`) on Linux.
 pub fn default_storage_root(home: &Path) -> PathBuf {
-    home.join("Library")
-        .join("Application Support")
-        .join("Devbase")
-        .join("Development")
+    crate::platform::paths::default_storage_root(home)
 }
 
 /// The root the app opens by default: `$MSM_DEV_HOME`, else the storage root
@@ -55,11 +53,7 @@ pub fn is_user_storage(root: &Path, home: &Path) -> bool {
 /// The catalog/download cache directory.
 pub fn cache_directory(root: &Path, home: &Path) -> PathBuf {
     if is_user_storage(root, home) {
-        return home
-            .join("Library")
-            .join("Caches")
-            .join("Devbase")
-            .join("Development");
+        return crate::platform::paths::user_cache_directory(home);
     }
     root.join("cache")
 }
@@ -75,10 +69,7 @@ pub fn download_directory(root: &Path, home: &Path) -> PathBuf {
 /// The user-level JVM directory, or the private one under an explicit root.
 pub fn java_directory(root: &Path, home: &Path) -> PathBuf {
     if is_user_storage(root, home) {
-        return home
-            .join("Library")
-            .join("Java")
-            .join("JavaVirtualMachines");
+        return crate::platform::paths::user_java_directory(home);
     }
     root.join("JavaVirtualMachines")
 }

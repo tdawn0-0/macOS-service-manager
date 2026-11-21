@@ -8,7 +8,7 @@
 use std::fmt;
 use std::io::Read;
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 /// A command run as root waits for the user to authenticate.
@@ -48,7 +48,7 @@ pub trait AdminRunner: Send + Sync + fmt::Debug {
     fn run_admin(&self, program: &str, args: &[&str]) -> (String, Option<AdminError>);
 }
 
-/// The production runner: `osascript -e <do shell script …>` with a five-minute
+/// The macOS production runner: `osascript -e <do shell script …>` with a five-minute
 /// timeout.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OsascriptAdmin;
@@ -56,6 +56,92 @@ pub struct OsascriptAdmin;
 impl AdminRunner for OsascriptAdmin {
     fn run_admin(&self, program: &str, args: &[&str]) -> (String, Option<AdminError>) {
         run_admin(program, args)
+    }
+}
+
+/// The Linux production runner: `pkexec <program> <args…>` via PolicyKit with a
+/// five-minute timeout. Maps exit code 126 to [`AdminError::Canceled`] and exit
+/// code 127 to a clear polkit unavailability/not-authorized error.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PkexecAdmin;
+
+impl AdminRunner for PkexecAdmin {
+    fn run_admin(&self, program: &str, args: &[&str]) -> (String, Option<AdminError>) {
+        run_pkexec_admin(program, args)
+    }
+}
+
+/// Returns the default platform [`AdminRunner`]: [`OsascriptAdmin`] on macOS,
+/// [`PkexecAdmin`] on Linux.
+pub fn default_admin_runner() -> Arc<dyn AdminRunner> {
+    #[cfg(target_os = "macos")]
+    {
+        Arc::new(OsascriptAdmin)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Arc::new(PkexecAdmin)
+    }
+}
+
+/// Runs `program args…` as root through `pkexec`.
+pub fn run_pkexec_admin(program: &str, args: &[&str]) -> (String, Option<AdminError>) {
+    let mut full = Vec::with_capacity(args.len() + 1);
+    full.push(program);
+    full.extend_from_slice(args);
+    match run_for_status(ADMIN_TIMEOUT, "pkexec", &full, ADMIN_TIMEOUT_LABEL) {
+        Ok(stdout) => (stdout, None),
+        Err(RunForError::Timeout(message)) => (String::new(), Some(AdminError::Message(message))),
+        Err(RunForError::Spawn(message)) => (
+            String::new(),
+            Some(AdminError::Message(format!(
+                "pkexec is unavailable ({message}); install polkit to authorize root actions"
+            ))),
+        ),
+        Err(RunForError::Exit {
+            code,
+            stdout,
+            stderr,
+        }) => {
+            let err = translate_pkexec_exit(code, &stderr, &stdout);
+            (stdout, Some(err))
+        }
+    }
+}
+
+/// Translates `pkexec` exit codes into [`AdminError`].
+///
+/// Per `pkexec(1)`:
+/// - `126`: user dismissed the authentication dialog -> [`AdminError::Canceled`]
+/// - `127`: authorization failed or no authentication agent available
+pub fn translate_pkexec_exit(code: Option<i32>, stderr: &str, stdout: &str) -> AdminError {
+    match code {
+        Some(126) => AdminError::Canceled,
+        Some(127) => {
+            let detail = if !stderr.trim().is_empty() {
+                stderr.trim().to_string()
+            } else if !stdout.trim().is_empty() {
+                stdout.trim().to_string()
+            } else {
+                "pkexec authorization failed or polkit authentication agent is unavailable"
+                    .to_string()
+            };
+            AdminError::Message(detail)
+        }
+        other => {
+            let trimmed_err = stderr.trim();
+            if !trimmed_err.is_empty() {
+                return AdminError::Message(trimmed_err.to_string());
+            }
+            let trimmed_out = stdout.trim();
+            if !trimmed_out.is_empty() {
+                return AdminError::Message(trimmed_out.to_string());
+            }
+            let code_label = other
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".to_string());
+            AdminError::Message(format!("pkexec: exit status {code_label}"))
+        }
     }
 }
 
@@ -111,21 +197,29 @@ pub fn run_osascript(script: &str) -> Result<String, String> {
     )
 }
 
-/// A faithful port of `system.RunFor`: stdout on success, the trimmed stderr
-/// (then stdout) on failure, and a fixed message on timeout.
-pub fn run_for(
+enum RunForError {
+    Spawn(String),
+    Timeout(String),
+    Exit {
+        code: Option<i32>,
+        stdout: String,
+        stderr: String,
+    },
+}
+
+fn run_for_status(
     timeout: Duration,
     program: &str,
     args: &[&str],
     timeout_label: &str,
-) -> Result<String, String> {
+) -> Result<String, RunForError> {
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| format!("{program}: {error}"))?;
+        .map_err(|error| RunForError::Spawn(format!("{program}: {error}")))?;
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
     let (out_tx, out_rx) = mpsc::channel();
@@ -157,19 +251,45 @@ pub fn run_for(
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            Err(error) => return Err(format!("{program}: {error}")),
+            Err(error) => return Err(RunForError::Spawn(format!("{program}: {error}"))),
         }
     };
     let out = out_rx.recv_timeout(WAIT_DELAY).unwrap_or_default();
     let err = err_rx.recv_timeout(WAIT_DELAY).unwrap_or_default();
     if timed_out {
-        return Err(format!("{program} did not answer in {timeout_label}"));
+        return Err(RunForError::Timeout(format!(
+            "{program} did not answer in {timeout_label}"
+        )));
     }
     let stdout = String::from_utf8_lossy(&out).into_owned();
     let stderr = String::from_utf8_lossy(&err).into_owned();
     match status {
         Some(status) if status.success() => Ok(stdout),
-        Some(status) => {
+        Some(status) => Err(RunForError::Exit {
+            code: status.code(),
+            stdout,
+            stderr,
+        }),
+        None => unreachable!("the timeout path returned already"),
+    }
+}
+
+/// A faithful port of `system.RunFor`: stdout on success, the trimmed stderr
+/// (then stdout) on failure, and a fixed message on timeout.
+pub fn run_for(
+    timeout: Duration,
+    program: &str,
+    args: &[&str],
+    timeout_label: &str,
+) -> Result<String, String> {
+    match run_for_status(timeout, program, args, timeout_label) {
+        Ok(stdout) => Ok(stdout),
+        Err(RunForError::Spawn(message) | RunForError::Timeout(message)) => Err(message),
+        Err(RunForError::Exit {
+            code,
+            stdout,
+            stderr,
+        }) => {
             let stderr = stderr.trim();
             if !stderr.is_empty() {
                 return Err(stderr.to_string());
@@ -178,12 +298,10 @@ pub fn run_for(
             if !stdout.is_empty() {
                 return Err(stdout.to_string());
             }
-            let code = status
-                .code()
+            let code = code
                 .map(|code| code.to_string())
                 .unwrap_or_else(|| "signal".to_string());
             Err(format!("{program}: exit status {code}"))
         }
-        None => unreachable!("the timeout path returned already"),
     }
 }

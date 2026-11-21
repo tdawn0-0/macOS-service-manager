@@ -165,7 +165,8 @@ fn https_probe(address: &str, timeout: Duration) -> Result<(), String> {
     // Go uses net/http with the system trust store. This crate links no TLS
     // client, so the system curl performs the same bounded request. Its output
     // is never surfaced: the error text is fixed, like the HTTP probe.
-    let result = std::process::Command::new("/usr/bin/curl")
+    let curl = crate::platform::resolve_curl();
+    let result = std::process::Command::new(curl)
         .args([
             "-fsS",
             "--max-time",
@@ -372,8 +373,10 @@ pub fn parse_job_state(output: &str) -> JobState {
     state
 }
 
-/// Observe a job with a one-second deadline. The parsed state is returned even
-/// when launchd could not be read, so callers can still see a recorded exit.
+/// Observe a job with a one-second deadline through [`Engine::job_state`].
+///
+/// The parsed state is returned when loaded; absent jobs return an error
+/// containing `"Could not find service"` so existing callers keep matching.
 pub fn read_job_state(
     engine: &Engine,
     id: &str,
@@ -382,10 +385,15 @@ pub fn read_job_state(
     if cancelled() {
         return (JobState::default(), Err(EngineError::Cancelled));
     }
-    let target = engine.target(id);
-    let result = engine.run_with_timeout("launchctl", &["print", &target], engine.state_timeout());
-    match result {
-        Ok(output) => (parse_job_state(&output), Ok(())),
+    match engine.job_state(id) {
+        Ok(Some(runtime)) => (runtime.to_job_state(), Ok(())),
+        Ok(None) => (
+            JobState::default(),
+            Err(EngineError::Invalid(format!(
+                "Could not find service: {}",
+                engine.target(id)
+            ))),
+        ),
         Err(error) => (JobState::default(), Err(error)),
     }
 }

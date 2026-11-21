@@ -26,8 +26,7 @@ use tokio_rustls::TlsAcceptor;
 
 use crate::ca::material::LeafCertificate;
 use crate::ca::service::AuthorityService;
-use crate::ca::{AlwaysStopped, AuthorityStore, CaError, SecurityTrust};
-use devcore::launchd::SystemRunner;
+use crate::ca::{AlwaysStopped, AuthorityStore, CaError, default_trust_store};
 
 use super::forward::{ProxyBody, forward, inbound_host};
 use super::routes::LiveRoutes;
@@ -61,12 +60,13 @@ impl CertificateAuthority for AuthorityService {
     }
 }
 
-/// Obtains an already-bound listener from launchd.
+/// Obtains an already-bound listener from launchd (macOS) or systemd (Linux).
 pub trait SocketActivation: Send + Sync {
     fn take(&self, name: &str) -> io::Result<StdTcpListener>;
 }
 
-/// The real `launch_activate_socket` implementation.
+/// The real socket activation implementation (`launch_activate_socket` on
+/// macOS, `sd_listen_fds` on Linux).
 pub struct SystemSocketActivation;
 
 impl SocketActivation for SystemSocketActivation {
@@ -75,13 +75,114 @@ impl SocketActivation for SystemSocketActivation {
         {
             activate_launchd_socket(name)
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
+        {
+            activate_systemd_socket(name)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             let _ = name;
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "launchd socket activation is only available on macOS",
+                "socket activation is only available on macOS and Linux",
             ))
+        }
+    }
+}
+
+/// Resolves a systemd `sd_listen_fds` descriptor for `want_name` (such as
+/// `HTTPS-443`) using `LISTEN_PID`, `LISTEN_FDS`, and optional
+/// `LISTEN_FDNAMES`.
+///
+/// - When `LISTEN_FDS == 1`, returns FD 3 (`SD_LISTEN_FDS_START`).
+/// - When `LISTEN_FDNAMES` names `want_name` explicitly, returns that exact FD.
+/// - When multiple FDs are passed without matching `HTTPS-<port>` names, falls
+///   back to matching the parsed port via `fd_port`.
+pub fn select_sd_listen_fd(
+    current_pid: u32,
+    listen_pid: Option<&str>,
+    listen_fds: Option<&str>,
+    listen_fdnames: Option<&str>,
+    want_name: &str,
+    fd_port: impl Fn(i32) -> Option<u16>,
+) -> io::Result<i32> {
+    let (parsed_fd, extras) = devcore::helper::parse_sd_listen_fds(
+        current_pid,
+        listen_pid,
+        listen_fds,
+        listen_fdnames,
+        want_name,
+    )?;
+    if extras.is_empty() {
+        return Ok(parsed_fd);
+    }
+    if let Some(names) = listen_fdnames.filter(|value| !value.is_empty())
+        && names.split(':').any(|candidate| candidate == want_name)
+    {
+        return Ok(parsed_fd);
+    }
+    let want_port: Option<u16> = want_name
+        .strip_prefix("HTTPS-")
+        .unwrap_or(want_name)
+        .parse()
+        .ok();
+    if let Some(port) = want_port {
+        for fd in std::iter::once(parsed_fd).chain(extras.iter().copied()) {
+            if fd_port(fd) == Some(port) {
+                return Ok(fd);
+            }
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        format!("no systemd socket matched {want_name:?}"),
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn activate_systemd_socket(name: &str) -> io::Result<StdTcpListener> {
+    use std::os::fd::FromRawFd;
+
+    let listen_pid = std::env::var("LISTEN_PID").ok();
+    let listen_fds = std::env::var("LISTEN_FDS").ok();
+    let listen_fdnames = std::env::var("LISTEN_FDNAMES").ok();
+    let fd = select_sd_listen_fd(
+        std::process::id(),
+        listen_pid.as_deref(),
+        listen_fds.as_deref(),
+        listen_fdnames.as_deref(),
+        name,
+        fd_local_port,
+    )?;
+    // SAFETY: systemd passed this listening socket descriptor to our PID, and
+    // each distinct `HTTPS-<port>` is taken once by `serve_with_activation`.
+    let listener = unsafe { StdTcpListener::from_raw_fd(fd) };
+    listener.set_nonblocking(true)?;
+    Ok(listener)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn fd_local_port(fd: i32) -> Option<u16> {
+    // SAFETY: `getsockname` writes into `storage` bounded by `len`, and
+    // `read_unaligned` avoids any alignment assumptions across sockaddr types.
+    unsafe {
+        let mut storage: libc::sockaddr_storage = std::mem::zeroed();
+        let mut len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        if libc::getsockname(fd, (&raw mut storage).cast::<libc::sockaddr>(), &mut len) != 0 {
+            return None;
+        }
+        match i32::from(storage.ss_family) {
+            libc::AF_INET => {
+                let addr =
+                    std::ptr::read_unaligned((&raw const storage).cast::<libc::sockaddr_in>());
+                Some(u16::from_be(addr.sin_port))
+            }
+            libc::AF_INET6 => {
+                let addr =
+                    std::ptr::read_unaligned((&raw const storage).cast::<libc::sockaddr_in6>());
+                Some(u16::from_be(addr.sin6_port))
+            }
+            _ => None,
         }
     }
 }
@@ -180,7 +281,7 @@ impl ResolvesServerCert for SniResolver {
 pub fn default_authority(root: &std::path::Path) -> Arc<dyn CertificateAuthority> {
     let service = AuthorityService::new(
         AuthorityStore::new(root),
-        Arc::new(SecurityTrust::new(Arc::new(SystemRunner::new()))),
+        default_trust_store(),
         Arc::new(AlwaysStopped),
     );
     Arc::new(service)
@@ -408,5 +509,112 @@ mod tests {
     #[test]
     fn pinned_alpn_is_http11_only() {
         assert_eq!(b"http/1.1", &b"http/1.1"[..]);
+    }
+
+    #[test]
+    fn sd_listen_fds_takes_fd_3_for_single_socket() {
+        let fd = select_sd_listen_fd(1234, Some("1234"), Some("1"), None, "HTTPS-443", |_| None)
+            .unwrap();
+        assert_eq!(fd, devcore::helper::SD_LISTEN_FDS_START);
+
+        // Systemd sets LISTEN_FDNAMES to the .socket unit name by default.
+        let fd = select_sd_listen_fd(
+            1234,
+            Some("1234"),
+            Some("1"),
+            Some("devbase-proxy-abcd1234.socket"),
+            "HTTPS-443",
+            |_| None,
+        )
+        .unwrap();
+        assert_eq!(fd, devcore::helper::SD_LISTEN_FDS_START);
+    }
+
+    #[test]
+    fn sd_listen_fds_matches_named_https_ports_and_port_fallback() {
+        let fd_443 = select_sd_listen_fd(
+            42,
+            Some("42"),
+            Some("2"),
+            Some("HTTPS-8443:HTTPS-443"),
+            "HTTPS-443",
+            |_| None,
+        )
+        .unwrap();
+        assert_eq!(fd_443, devcore::helper::SD_LISTEN_FDS_START + 1);
+
+        let fd_8443 = select_sd_listen_fd(
+            42,
+            Some("42"),
+            Some("2"),
+            Some("HTTPS-8443:HTTPS-443"),
+            "HTTPS-8443",
+            |_| None,
+        )
+        .unwrap();
+        assert_eq!(fd_8443, devcore::helper::SD_LISTEN_FDS_START);
+
+        // Multi-socket unit without per-port FileDescriptorName uses getsockname port lookup.
+        let fd_by_port = select_sd_listen_fd(
+            42,
+            Some("42"),
+            Some("2"),
+            Some("devbase-proxy-abcd.socket:devbase-proxy-abcd.socket"),
+            "HTTPS-8443",
+            |fd| match fd {
+                3 => Some(443),
+                4 => Some(8443),
+                _ => None,
+            },
+        )
+        .unwrap();
+        assert_eq!(fd_by_port, 4);
+
+        // Rejects unknown port when multi-socket lookup finds no match.
+        let err = select_sd_listen_fd(
+            42,
+            Some("42"),
+            Some("2"),
+            Some("devbase-proxy-abcd.socket:devbase-proxy-abcd.socket"),
+            "HTTPS-9443",
+            |fd| match fd {
+                3 => Some(443),
+                4 => Some(8443),
+                _ => None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn fd_local_port_reads_bound_tcp_listener_port() {
+        use std::os::fd::AsRawFd;
+
+        let listener = StdTcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let expected = listener.local_addr().unwrap().port();
+        assert_eq!(fd_local_port(listener.as_raw_fd()), Some(expected));
+    }
+
+    #[test]
+    fn sd_listen_fds_rejects_mismatched_pid_or_missing_env() {
+        assert_eq!(
+            select_sd_listen_fd(42, Some("99"), Some("1"), None, "HTTPS-443", |_| None)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(
+            select_sd_listen_fd(42, Some("42"), Some("0"), None, "HTTPS-443", |_| None)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+        assert_eq!(
+            select_sd_listen_fd(42, None, Some("1"), None, "HTTPS-443", |_| None)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
     }
 }

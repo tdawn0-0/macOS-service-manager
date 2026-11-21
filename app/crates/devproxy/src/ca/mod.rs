@@ -23,7 +23,10 @@ pub use service::{
 pub use store::{
     ALIASES, AuthorityStore, CURRENT_POINTER, PREPARED_POINTER, PREVIOUS_POINTER, valid_id,
 };
-pub use trust::{SecurityTrust, TrustStore, keychain_item_missing};
+pub use trust::{
+    LINUX_CA_ANCHOR_NAME, LinuxCaHelper, LinuxTrustStore, SecurityTrust, TrustStore,
+    default_trust_store, keychain_item_missing,
+};
 
 /// Everything the authority state machine can fail with.
 #[derive(Debug, thiserror::Error)]

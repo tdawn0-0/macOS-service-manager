@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use devcore::engine::{Engine, EngineError, JobSpec, ProcessRunnerAdapter};
-use devcore::health::parse_job_state;
 use devcore::launchd::ProcessRunner;
 use devcore::state::{StateError, Store};
 
@@ -47,25 +46,25 @@ pub struct TunnelJobs {
     root: PathBuf,
     store: Store,
     engine: Engine,
-    runner: Arc<dyn ProcessRunner>,
     executable: Arc<dyn ExecutableSource>,
     api_base: String,
 }
 
 impl TunnelJobs {
     pub fn new(store: Store, runner: Arc<dyn ProcessRunner>) -> Self {
-        let engine = Engine::new(
-            store.root(),
-            Arc::new(ProcessRunnerAdapter::new(Arc::clone(&runner))),
-        );
+        let engine = Engine::new(store.root(), Arc::new(ProcessRunnerAdapter::new(runner)));
         TunnelJobs {
             root: store.root().to_path_buf(),
             store,
             engine,
-            runner,
             executable: Arc::new(CurrentExecutable),
             api_base: DEFAULT_API_BASE.to_string(),
         }
+    }
+
+    pub fn with_engine(mut self, engine: Engine) -> Self {
+        self.engine = engine;
+        self
     }
 
     pub fn with_executable(mut self, executable: Arc<dyn ExecutableSource>) -> Self {
@@ -82,11 +81,7 @@ impl TunnelJobs {
         TunnelService::new(self.store.clone(), self.api_base.clone()).with_jobs(Arc::new(Self {
             root: self.root.clone(),
             store: self.store.clone(),
-            engine: Engine::new(
-                self.store.root(),
-                Arc::new(ProcessRunnerAdapter::new(Arc::clone(&self.runner))),
-            ),
-            runner: Arc::clone(&self.runner),
+            engine: self.engine.clone(),
             executable: Arc::clone(&self.executable),
             api_base: self.api_base.clone(),
         }))
@@ -98,17 +93,11 @@ impl TunnelJobs {
     }
 
     fn loaded(&self) -> bool {
-        self.runner
-            .run("/bin/launchctl", &["print", &self.engine.target("tunnel")])
-            .is_ok()
+        matches!(self.engine.job_state("tunnel"), Ok(Some(state)) if state.loaded)
     }
 
     fn running_pid(&self) -> Option<i32> {
-        let output = self
-            .runner
-            .run("/bin/launchctl", &["print", &self.engine.target("tunnel")])
-            .ok()?;
-        let state = parse_job_state(&output);
+        let state = self.engine.job_state("tunnel").ok().flatten()?;
         (state.running && state.pid > 0).then_some(state.pid)
     }
 
@@ -207,4 +196,117 @@ fn home_env() -> std::collections::BTreeMap<String, String> {
         env.insert("HOME".into(), home.to_string_lossy().into_owned());
     }
     env
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    use devcore::engine::{LaunchdBackend, SystemdUserBackend};
+    use devcore::launchd::CommandError;
+    use tempfile::TempDir;
+
+    use super::*;
+
+    struct FakeRunner {
+        calls: Mutex<Vec<Vec<String>>>,
+        responses: Mutex<VecDeque<Result<String, CommandError>>>,
+    }
+
+    impl FakeRunner {
+        fn with(responses: Vec<Result<String, CommandError>>) -> Arc<Self> {
+            Arc::new(FakeRunner {
+                calls: Mutex::new(Vec::new()),
+                responses: Mutex::new(responses.into()),
+            })
+        }
+    }
+
+    impl ProcessRunner for FakeRunner {
+        fn run(&self, program: &str, args: &[&str]) -> Result<String, CommandError> {
+            let mut call = vec![program.to_string()];
+            call.extend(args.iter().map(|arg| arg.to_string()));
+            self.calls.lock().unwrap().push(call);
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Err(CommandError::new(program, vec![], "not found")))
+        }
+    }
+
+    #[test]
+    fn tunnel_jobs_loaded_and_running_pid_work_with_launchd_backend() {
+        let dir = TempDir::new().unwrap();
+        let store = Store::new(dir.path());
+        let runner = FakeRunner::with(vec![
+            Ok("state = running\npid = 777\n".into()),
+            Ok("state = running\npid = 777\n".into()),
+            Err(CommandError::new(
+                "launchctl",
+                vec![],
+                "Could not find service",
+            )),
+            Err(CommandError::new(
+                "launchctl",
+                vec![],
+                "Could not find service",
+            )),
+        ]);
+        let engine = Engine::new(
+            dir.path(),
+            Arc::new(ProcessRunnerAdapter::new(runner.clone())),
+        )
+        .with_backend(Arc::new(LaunchdBackend));
+        let jobs = TunnelJobs::new(store, runner.clone()).with_engine(engine);
+
+        assert!(jobs.loaded());
+        assert_eq!(jobs.running_pid(), Some(777));
+        assert!(!jobs.loaded());
+        assert_eq!(jobs.running_pid(), None);
+        assert!(
+            runner
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|call| call[0] == "launchctl" && call[1] == "print")
+        );
+    }
+
+    #[test]
+    fn tunnel_jobs_loaded_and_running_pid_work_with_systemd_user_backend() {
+        let dir = TempDir::new().unwrap();
+        let store = Store::new(dir.path());
+        let running = "LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=5150\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n";
+        let inactive = "LoadState=loaded\nActiveState=inactive\nSubState=dead\nMainPID=0\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n";
+        let runner = FakeRunner::with(vec![
+            Ok(running.into()),
+            Ok(running.into()),
+            Ok(inactive.into()),
+            Ok(inactive.into()),
+        ]);
+        let engine = Engine::new(
+            dir.path(),
+            Arc::new(ProcessRunnerAdapter::new(runner.clone())),
+        )
+        .with_backend(Arc::new(SystemdUserBackend::with_unit_dir(
+            dir.path().join("systemd-user"),
+        )));
+        let jobs = TunnelJobs::new(store, runner.clone()).with_engine(engine);
+
+        assert!(jobs.loaded());
+        assert_eq!(jobs.running_pid(), Some(5150));
+        assert!(!jobs.loaded());
+        assert_eq!(jobs.running_pid(), None);
+        assert!(
+            runner
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|call| call[0] == "systemctl" && call[1] == "--user" && call[2] == "show")
+        );
+    }
 }

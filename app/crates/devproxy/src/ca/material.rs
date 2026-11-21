@@ -347,7 +347,7 @@ pub fn sha1_fingerprint(der: &[u8]) -> String {
     hex::encode(sha1::Sha1::digest(der)).to_uppercase()
 }
 
-fn decode_cert_der(pem: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn decode_cert_der(pem: &[u8]) -> Option<Vec<u8>> {
     let mut reader = Cursor::new(pem);
     let certs: Vec<_> = rustls_pemfile::certs(&mut reader)
         .collect::<Result<_, _>>()

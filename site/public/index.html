@@ -3,19 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Devbase — Your local stack, native to macOS</title>
-  <meta name="description" content="Runtimes, databases, local HTTPS, and system services in one 17.9 MB pure-Rust app for Apple Silicon macOS 26+.">
+  <title>Devbase — Your local stack, native to macOS &amp; Linux</title>
+  <meta name="description" content="Runtimes, databases, local HTTPS, and native launchd / systemd services in one pure-Rust app for macOS 26+ and Linux.">
   <meta name="theme-color" content="#fcfcfb" id="meta-theme-color">
   <link rel="canonical" href="https://devbase.jyeu.xyz/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Devbase">
-  <meta property="og:title" content="Devbase — Your local stack, native to macOS">
-  <meta property="og:description" content="Runtimes, databases, local HTTPS, and system services in one 17.9 MB pure-Rust app for Apple Silicon macOS 26+.">
+  <meta property="og:title" content="Devbase — Your local stack, native to macOS &amp; Linux">
+  <meta property="og:description" content="Runtimes, databases, local HTTPS, and native launchd / systemd services in one pure-Rust app for macOS 26+ and Linux.">
   <meta property="og:url" content="https://devbase.jyeu.xyz/">
   <meta property="og:image" content="https://devbase.jyeu.xyz/icon.png">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Devbase — Your local stack, native to macOS">
-  <meta name="twitter:description" content="Runtimes, databases, local HTTPS, and system services in one 17.9 MB pure-Rust app for Apple Silicon macOS 26+.">
+  <meta name="twitter:title" content="Devbase — Your local stack, native to macOS &amp; Linux">
+  <meta name="twitter:description" content="Runtimes, databases, local HTTPS, and native launchd / systemd services in one pure-Rust app for macOS 26+ and Linux.">
   <meta name="twitter:image" content="https://devbase.jyeu.xyz/icon.png">
   <link rel="icon" type="image/svg+xml" href="/icon.svg">
   <link rel="icon" type="image/png" href="/icon.png">
@@ -36,7 +36,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Geist:wght@400..700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=20261121c">
+  <link rel="stylesheet" href="/styles.css?v=20261122a">
 </head>
 <body>
 
@@ -74,7 +74,7 @@
           <svg class="ic theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-moon"/></svg>
           <svg class="ic theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sun"/></svg>
         </button>
-        <a href="https://github.com/tdawn0-0/macOS-service-manager/releases/latest/download/Devbase.dmg" class="nav-cta">Download</a>
+        <a href="#download" class="nav-cta">Download</a>
         <button type="button" id="mobile-menu-btn" class="icon-btn nav-mobile-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-menu">
           <svg class="ic" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
         </button>
@@ -91,17 +91,21 @@
 
   <main id="top">
 
-    <!-- 1. Hero + Interactive macOS 26 Demo -->
+    <!-- 1. Hero + Interactive Desktop Demo -->
     <section class="hero">
       <div class="container">
         <div class="hero-text">
-          <h1 class="display hero-title">Your local stack, native to macOS.</h1>
-          <p class="hero-lede">Runtimes, databases, local HTTPS, and system services in one pure-Rust app.</p>
+          <h1 class="display hero-title">Your local stack, native to macOS &amp; Linux.</h1>
+          <p class="hero-lede">Runtimes, databases, local HTTPS, and native launchd / systemd services in one pure-Rust app.</p>
 
           <div class="hero-cta">
             <a href="https://github.com/tdawn0-0/macOS-service-manager/releases/latest/download/Devbase.dmg" class="btn-primary">
-              <span>Download Devbase</span>
+              <span>Download for macOS</span>
               <span class="btn-dot" aria-hidden="true"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><use href="#i-dl"/></svg></span>
+            </a>
+            <a href="https://github.com/tdawn0-0/macOS-service-manager/releases/latest" target="_blank" rel="noopener noreferrer" class="btn-ghost">
+              <svg class="ic" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-dl"/></svg>
+              <span>Linux (.tar.gz)</span>
             </a>
             <a href="https://github.com/tdawn0-0/macOS-service-manager" target="_blank" rel="noopener noreferrer" class="btn-ghost">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.63 22.42c.58.1.79-.25.79-.55v-2.16c-3.2.7-3.88-1.36-3.88-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.47.11-3.06 0 0 .97-.31 3.17 1.18a10.95 10.95 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.77.11 3.06.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.4-5.27 5.69.42.36.79 1.06.79 2.14v3.18c0 .31.21.66.8.55A11.5 11.5 0 0 0 12 .5Z"/></svg>
@@ -111,9 +115,8 @@
 
           <div class="hero-meta tabular-nums" aria-label="Release specifications">
             <span class="meta-item">v2.1.0</span><span class="sep" aria-hidden="true">·</span>
-            <span class="meta-item">17.9 MB DMG</span><span class="sep" aria-hidden="true">·</span>
-            <span class="meta-item">Apple Silicon</span><span class="sep" aria-hidden="true">·</span>
-            <span class="meta-item">macOS 26+</span><span class="sep" aria-hidden="true">·</span>
+            <span class="meta-item">macOS 26+ (arm64)</span><span class="sep" aria-hidden="true">·</span>
+            <span class="meta-item">Linux (GTK4 / systemd)</span><span class="sep" aria-hidden="true">·</span>
             <span class="meta-item">MIT</span>
           </div>
         </div>
@@ -121,7 +124,7 @@
         <div class="demo-stage">
           <div class="ambient-spill" aria-hidden="true"></div>
 
-          <div class="demo-frame" id="demo-frame" role="region" aria-label="Interactive Devbase macOS preview">
+          <div class="demo-frame" id="demo-frame" role="region" aria-label="Interactive Devbase preview">
             <div class="macos-menubar">
               <div class="mb-left">
                 <svg width="11" height="13" viewBox="0 0 170 200" fill="currentColor" aria-hidden="true"><path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.19-2.12-9.97-3.17-14.34-3.17-4.58 0-9.49 1.05-14.75 3.17-5.26 2.13-9.5 3.24-12.74 3.35-4.35.13-9.13-1.9-14.34-6.08-3.69-3.03-7.61-7.82-11.77-14.37-5.93-9.36-10.72-20.11-14.37-32.26C2.36 101.21.5 90.02.5 79.35c0-13.67 3.46-25.09 10.39-34.25 6.92-9.16 15.65-13.86 26.18-14.11 5.03 0 10.95 1.56 17.77 4.69 6.81 3.13 11.19 4.71 13.13 4.71 1.45 0 6.34-1.85 14.66-5.54 8.32-3.69 15.35-5.22 21.09-4.59 15.58 1.26 27.3 7.42 35.15 18.48-13.94 8.46-20.82 20.3-20.64 35.51.18 11.86 4.44 21.74 12.78 29.62 3.81 3.63 8.18 6.45 13.11 8.46-1.05 3.16-2.29 6.13-3.75 8.92ZM119.22 3.43c0 9.25-3.38 17.89-10.14 25.91-8.15 9.51-18.01 15-28.7 14.14-.14-1.1-.22-2.26-.22-3.48 0-8.88 3.87-18.39 10.74-26.17 3.44-3.95 7.81-7.24 13.12-9.86 5.31-2.61 10.33-4.05 15.05-4.3.1 1.27.15 2.53.15 3.76Z"/></svg>
@@ -286,7 +289,7 @@
                     </div>
 
                     <div class="app-view" id="app-view-software" role="tabpanel">
-                      <div class="ws-section-label">Apple Silicon runtimes</div>
+                      <div class="ws-section-label">Managed runtimes</div>
                       <div class="ws-list">
                         <div class="ws-row">
                           <div class="ws-row-main">
@@ -298,7 +301,7 @@
                         <div class="ws-row">
                           <div class="ws-row-main">
                             <div class="ws-row-title"><span class="status-dot"></span><span>Java</span><span class="ws-badge">21.0.6</span></div>
-                            <div class="ws-row-sub">JetBrains arm64 JDK · JAVA_HOME</div>
+                            <div class="ws-row-sub">JetBrains JDK · JAVA_HOME</div>
                           </div>
                           <div class="ws-row-controls"><span class="ws-tag">Default</span></div>
                         </div>
@@ -380,7 +383,7 @@
 
                     <div class="app-view" id="app-view-services" role="tabpanel">
                       <div class="svc-bar">
-                        <input type="search" id="demo-svc-search" class="svc-search" placeholder="Filter services…" aria-label="Filter macOS services">
+                        <input type="search" id="demo-svc-search" class="svc-search" placeholder="Filter services…" aria-label="Filter system services">
                         <div class="svc-pills">
                           <button type="button" class="svc-pill active" data-svc-source="all">All</button>
                           <button type="button" class="svc-pill" data-svc-source="user-agent">User Agents</button>
@@ -470,7 +473,7 @@
       <div class="container">
         <div class="section-head">
           <h2 class="display section-title">Four pillars. <span class="muted">Zero bloat.</span></h2>
-          <p class="section-sub">Everything a local macOS environment needs — native binaries, isolated data, and zero VM tax.</p>
+          <p class="section-sub">Everything a local macOS or Linux environment needs — native binaries, isolated data, and zero VM tax.</p>
         </div>
 
         <div class="bento-grid">
@@ -479,7 +482,7 @@
               <span class="bento-icon" aria-hidden="true"><svg class="ic" width="16" height="16" viewBox="0 0 24 24"><use href="#i-box"/></svg></span>
               <div>
                 <h3>Software</h3>
-                <p>SHA-256 verified Node.js, arm64 JetBrains JDK, and Python via uv with reversible shell hooks.</p>
+                <p>SHA-256 verified Node.js, JDK, and Python via uv (arm64 &amp; x86_64) with reversible zsh, bash, and fish hooks.</p>
               </div>
             </div>
 
@@ -491,13 +494,13 @@
               </div>
               <div class="mini-bar-row">
                 <span class="mono">zsh · bash · fish</span>
-                <span class="mini-ok"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-check"/></svg>SHA-256 arm64</span>
+                <span class="mini-ok"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-check"/></svg>SHA-256 arm64 &amp; x86_64</span>
               </div>
             </div>
 
             <div class="bento-specs">
               <div class="bento-spec"><span class="bento-k">Version files</span><span class="bento-v">.node-version · .nvmrc</span></div>
-              <div class="bento-spec"><span class="bento-k">App bundle</span><span class="bento-v">17.9 MB Rust · notarized</span></div>
+              <div class="bento-spec"><span class="bento-k">Packaging</span><span class="bento-v">17.9 MB DMG · Linux tar.gz</span></div>
             </div>
           </article>
 
@@ -506,7 +509,7 @@
               <span class="bento-icon" aria-hidden="true"><svg class="ic" width="16" height="16" viewBox="0 0 24 24"><use href="#i-db"/></svg></span>
               <div>
                 <h3>Databases</h3>
-                <p>Isolated PostgreSQL, MySQL, Redis, and MongoDB instances with scheduled backups and external data safety.</p>
+                <p>Isolated PostgreSQL, MySQL, Redis, and MongoDB instances with scheduled launchd / systemd backups and external data safety.</p>
               </div>
             </div>
 
@@ -530,8 +533,8 @@
             </div>
 
             <div class="bento-specs">
-              <div class="bento-spec"><span class="bento-k">Exports</span><span class="bento-v">Password-free profiles</span></div>
-              <div class="bento-spec"><span class="bento-k">Ports</span><span class="bento-v">Inline PID conflict check</span></div>
+              <div class="bento-spec"><span class="bento-k">Schedules</span><span class="bento-v">launchd · systemd timers</span></div>
+              <div class="bento-spec"><span class="bento-k">Exports &amp; ports</span><span class="bento-v">Password-free · PID check</span></div>
             </div>
           </article>
 
@@ -540,7 +543,7 @@
               <span class="bento-icon" aria-hidden="true"><svg class="ic" width="16" height="16" viewBox="0 0 24 24"><use href="#i-lock"/></svg></span>
               <div>
                 <h3>HTTPS</h3>
-                <p>Local TLS on *.devbase.localhost without editing /etc/hosts, plus one-click Cloudflare Workers tunnels.</p>
+                <p>Zero-/etc/hosts *.devbase.localhost TLS with macOS Keychain &amp; Linux CA trust, plus Cloudflare Workers tunnels.</p>
               </div>
             </div>
 
@@ -557,7 +560,7 @@
             </div>
 
             <div class="bento-specs">
-              <div class="bento-spec"><span class="bento-k">Local CA</span><span class="bento-v">Development/proxy/ca.pem</span></div>
+              <div class="bento-spec"><span class="bento-k">OS trust</span><span class="bento-v">Keychain · update-ca-trust / certs</span></div>
               <div class="bento-spec"><span class="bento-k">Tunnel</span><span class="bento-v">Cloudflare Durable Object</span></div>
             </div>
           </article>
@@ -567,26 +570,26 @@
               <span class="bento-icon" aria-hidden="true"><svg class="ic" width="16" height="16" viewBox="0 0 24 24"><use href="#i-list"/></svg></span>
               <div>
                 <h3>Services</h3>
-                <p>Unified launchd, Homebrew, and Login Items inspector with structured plist editing and Liquid Glass controls.</p>
+                <p>launchd, Homebrew &amp; Login Items on macOS — systemd user/system units, journalctl logs &amp; XDG Autostart on Linux.</p>
               </div>
             </div>
 
             <div class="bento-visual" aria-hidden="true">
               <div class="mini-chips">
-                <span class="mini-chip">User Agents</span>
-                <span class="mini-chip">Daemons</span>
-                <span class="mini-chip">Brew</span>
-                <span class="mini-chip">Login Items</span>
+                <span class="mini-chip">launchd</span>
+                <span class="mini-chip">systemd</span>
+                <span class="mini-chip">Homebrew</span>
+                <span class="mini-chip">XDG Autostart</span>
               </div>
               <div class="mini-bar-row">
-                <span class="mono">KeepAlive · RunAtLoad</span>
-                <span class="mini-ok"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-check"/></svg>Validated plist</span>
+                <span class="mono">Plist · Unit files · journalctl</span>
+                <span class="mini-ok"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-check"/></svg>Validated config</span>
               </div>
             </div>
 
             <div class="bento-specs">
-              <div class="bento-spec"><span class="bento-k">Menu bar</span><span class="bento-v">NSGlassEffectView · Stop all</span></div>
-              <div class="bento-spec"><span class="bento-k">Logs</span><span class="bento-v">Cross-stream live drawer</span></div>
+              <div class="bento-spec"><span class="bento-k">Native UI</span><span class="bento-v">Liquid Glass · GTK4 / D-Bus tray</span></div>
+              <div class="bento-spec"><span class="bento-k">Logs</span><span class="bento-v">Cross-stream · journalctl live</span></div>
             </div>
           </article>
         </div>
@@ -599,7 +602,7 @@
         <div class="cli-wrap">
           <div class="section-head">
             <h2 class="display section-title">Built for terminals <span class="muted">and AI agents.</span></h2>
-            <p class="section-sub">Same signed binary. Structured JSON, stdin-only secrets, and 7 read-only stdio MCP tools.</p>
+            <p class="section-sub">Same native binary on macOS &amp; Linux. Structured JSON, stdin-only secrets, and 7 read-only stdio MCP tools.</p>
           </div>
 
           <div class="terminal">
@@ -676,7 +679,7 @@
       <div class="container">
         <div class="section-head">
           <h2 class="display section-title">Native Rust, <span class="muted">not another VM.</span></h2>
-          <p class="section-sub">How Devbase 2.1 compares to containers, manual scripts, and Electron-based stacks.</p>
+          <p class="section-sub">How Devbase 2.1 compares to containers, manual scripts, and Electron-based stacks on macOS &amp; Linux.</p>
         </div>
 
         <div class="compare-card">
@@ -693,22 +696,22 @@
               </thead>
               <tbody>
                 <tr>
-                  <th scope="row">Footprint &amp; engine</th>
-                  <td class="col-devbase"><strong>17.9 MB pure Rust</strong></td>
+                  <th scope="row">Footprint &amp; UI</th>
+                  <td class="col-devbase"><strong>Pure Rust · macOS (Liquid Glass) + Linux (GTK4)</strong></td>
                   <td>Linux VM + GBs RAM</td>
                   <td>CLI only, ad-hoc</td>
                   <td>Electron / heavy bundles</td>
                 </tr>
                 <tr>
                   <th scope="row">Isolated DBs &amp; backups</th>
-                  <td class="col-devbase">Native instances + schedules</td>
+                  <td class="col-devbase">Native instances + launchd / systemd timers</td>
                   <td>Manual Compose &amp; volumes</td>
                   <td>Single shared data dir</td>
                   <td>Partial / manual</td>
                 </tr>
                 <tr>
                   <th scope="row">Zero <code>/etc/hosts</code> HTTPS</th>
-                  <td class="col-devbase"><code>*.devbase.localhost</code> SNI</td>
+                  <td class="col-devbase"><code>*.devbase.localhost</code> SNI + OS CA trust</td>
                   <td>Manual reverse proxy</td>
                   <td>mkcert + <code>/etc/hosts</code></td>
                   <td>Mutates <code>/etc/hosts</code></td>
@@ -721,10 +724,10 @@
                   <td>Third-party / paid</td>
                 </tr>
                 <tr>
-                  <th scope="row">Services &amp; Plist inspector</th>
-                  <td class="col-devbase">launchd, Brew, Login + editor</td>
+                  <th scope="row">Services &amp; unit editor</th>
+                  <td class="col-devbase"><code>launchd</code> + <code>systemd</code> editor &amp; <code>journalctl</code></td>
                   <td>Containers only</td>
-                  <td><code>brew services</code> only</td>
+                  <td><code>brew</code> / <code>systemctl</code> CLI only</td>
                   <td>None</td>
                 </tr>
                 <tr>
@@ -761,16 +764,16 @@
 
           <div class="faq-list">
             <details class="faq-item" open>
-              <summary><span>Why macOS 26+ on Apple Silicon only?</span><span class="faq-plus" aria-hidden="true">+</span></summary>
-              <div class="faq-answer">Devbase targets <code>darwin/arm64</code> and the two latest macOS releases (26 and 27) using native <code>NSGlassEffectView</code> APIs. That keeps the notarized Rust app at 17.9 MB with zero legacy fallback or Intel binary weight.</div>
+              <summary><span>Which macOS and Linux platforms are supported?</span><span class="faq-plus" aria-hidden="true">+</span></summary>
+              <div class="faq-answer">Devbase ships natively for <code>macOS 26+</code> on Apple Silicon (<code>arm64</code>) using <code>NSGlassEffectView</code> Liquid Glass APIs, and for <code>Linux</code> (<code>x86_64</code> &amp; <code>arm64</code>) with a native GTK4 UI, D-Bus system tray, and <code>systemd</code> integration. Both are pure Rust with zero Electron or VM overhead.</div>
             </details>
             <details class="faq-item">
               <summary><span>How does local HTTPS work without editing <code>/etc/hosts</code>?</span><span class="faq-plus" aria-hidden="true">+</span></summary>
-              <div class="faq-answer">Every rule uses <code>&lt;name&gt;.devbase.localhost</code>, which macOS resolves directly to <code>127.0.0.1</code> per RFC 6761. Devbase routes TLS via SNI on port 443 without modifying <code>/etc/hosts</code> or system DNS.</div>
+              <div class="faq-answer">Every rule uses <code>&lt;name&gt;.devbase.localhost</code>, which macOS and Linux resolve directly to <code>127.0.0.1</code> per RFC 6761. Devbase routes TLS via SNI on port 443 without modifying <code>/etc/hosts</code> or system DNS.</div>
             </details>
             <details class="faq-item">
-              <summary><span>How do Node.js and CLI tools trust the local CA?</span><span class="faq-plus" aria-hidden="true">+</span></summary>
-              <div class="faq-answer">Browsers trust the generational root once confirmed in macOS Keychain. Reversible shell hooks export <code>NODE_EXTRA_CA_CERTS</code> and CLI CA variables pointing to <code>Development/proxy/ca.pem</code>.</div>
+              <summary><span>How do browsers, Node.js, and CLI tools trust the local CA?</span><span class="faq-plus" aria-hidden="true">+</span></summary>
+              <div class="faq-answer">On macOS, browsers trust the generational root once confirmed in the Login Keychain. On Linux, Devbase updates system CA trust stores (<code>update-ca-trust</code> / <code>update-ca-certificates</code>) and browser NSS databases. On both platforms, reversible shell hooks export <code>NODE_EXTRA_CA_CERTS</code> and <code>SSL_CERT_FILE</code> pointing to <code>Development/proxy/ca.pem</code>.</div>
             </details>
             <details class="faq-item">
               <summary><span>What happens to external database directories on remove?</span><span class="faq-plus" aria-hidden="true">+</span></summary>
@@ -782,7 +785,7 @@
             </details>
             <details class="faq-item">
               <summary><span>Why does Devbase use a privileged helper?</span><span class="faq-plus" aria-hidden="true">+</span></summary>
-              <div class="faq-answer">Port 443 binding, system launchd daemons, and root Homebrew services run through a small idle-exit helper bound strictly to the exact Devbase build and user that installed it.</div>
+              <div class="faq-answer">Port 443 binding and system services run through a minimal privileged helper bound strictly to the exact installing user and build — an idle-exit LaunchDaemon elevated via <code>osascript</code> on macOS, or a <code>systemd</code> socket-activated helper using <code>pkexec</code>, <code>SO_PEERCRED</code>, and <code>sd_listen_fds</code> on Linux.</div>
             </details>
           </div>
         </div>
@@ -793,18 +796,21 @@
     <section class="closing" id="download">
       <div class="container">
         <div class="cta-halo"><img src="/icon.svg" alt="Devbase" width="84" height="84"></div>
-        <h2 class="display closing-title">Ready for your Mac.</h2>
+        <h2 class="display closing-title">Ready for macOS &amp; Linux.</h2>
         <div class="hero-cta">
           <a href="https://github.com/tdawn0-0/macOS-service-manager/releases/latest/download/Devbase.dmg" class="btn-primary">
-            <span>Download Devbase</span>
+            <span>Download for macOS</span>
             <span class="btn-dot" aria-hidden="true"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><use href="#i-dl"/></svg></span>
+          </a>
+          <a href="https://github.com/tdawn0-0/macOS-service-manager/releases/latest" target="_blank" rel="noopener noreferrer" class="btn-ghost">
+            <svg class="ic" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-dl"/></svg>
+            <span>Linux (.tar.gz)</span>
           </a>
         </div>
         <div class="hero-meta tabular-nums">
           <span class="meta-item">v2.1.0</span><span class="sep" aria-hidden="true">·</span>
-          <span class="meta-item">17.9 MB notarized DMG</span><span class="sep" aria-hidden="true">·</span>
-          <span class="meta-item">Apple Silicon</span><span class="sep" aria-hidden="true">·</span>
-          <span class="meta-item">macOS 26+</span><span class="sep" aria-hidden="true">·</span>
+          <span class="meta-item">macOS 26+ (arm64)</span><span class="sep" aria-hidden="true">·</span>
+          <span class="meta-item">Linux (GTK4 / systemd)</span><span class="sep" aria-hidden="true">·</span>
           <span class="meta-item">MIT</span>
         </div>
       </div>
@@ -841,6 +847,6 @@
     </div>
   </footer>
 
-  <script src="/app.js?v=20261121c" defer></script>
+  <script src="/app.js?v=20261122a" defer></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-/* Devbase — Native Apple Silicon macOS Promotional Site */
+/* Devbase — Native macOS & Linux Promotional Site */
 
 :root {
   --paper: #fcfcfb;
@@ -298,15 +298,15 @@ button { cursor: pointer; border: 0; background: transparent; }
 
 .hero-text {
   text-align: center;
-  max-width: 920px;
+  max-width: 980px;
   margin-inline: auto;
   position: relative;
   z-index: 2;
 }
 
 .hero-title {
-  font-size: clamp(34px, 4.3vw, 56px);
-  letter-spacing: -0.035em;
+  font-size: clamp(32px, 3.8vw, 52px);
+  letter-spacing: -0.036em;
   line-height: 1.06;
   text-wrap: balance;
   animation: rise 0.6s var(--ease) both;
@@ -314,8 +314,8 @@ button { cursor: pointer; border: 0; background: transparent; }
 
 .hero-lede {
   margin: 14px auto 0;
-  max-width: 44rem;
-  font-size: clamp(15.5px, 1.3vw, 17.5px);
+  max-width: 48rem;
+  font-size: clamp(15px, 1.25vw, 17px);
   line-height: 1.5;
   color: var(--ink-2);
   text-wrap: balance;

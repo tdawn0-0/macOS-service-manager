@@ -72,7 +72,7 @@
     return Promise.resolve();
   };
 
-  /* Interactive macOS 26 Demo */
+  /* Interactive Desktop Preview */
   const state = {
     'pg-main': true,
     'redis-cache': true,
@@ -125,7 +125,7 @@
     if (!el) return;
     const dbRunning = ['pg-main', 'redis-cache', 'mysql-analytics'].filter((k) => state[k]).length;
     if (activeTab === 'databases') el.textContent = `${dbRunning} of 3 running`;
-    else if (activeTab === 'software') el.textContent = '3 runtimes · arm64';
+    else if (activeTab === 'software') el.textContent = '3 runtimes · arm64 & x86_64';
     else if (activeTab === 'https') el.textContent = state['https-proxy'] ? 'Proxy :443 · 3 routes' : 'Proxy stopped';
     else if (activeTab === 'services') el.textContent = '5 discovered';
   };

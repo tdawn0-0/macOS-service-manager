@@ -167,6 +167,7 @@ The SHA-256 inventory is in [manifest.json](manifest.json). No local cache paths
 | lock_api | 0.4.14 | MIT OR Apache-2.0 | 2 |
 | log | 0.4.35 | MIT OR Apache-2.0 | 2 |
 | lru-slab | 0.1.3 | MIT OR Apache-2.0 OR Zlib | 3 |
+| lzma-sys | 0.1.20 | MIT/Apache-2.0 | 7 |
 | mac | 0.1.1 | MIT/Apache-2.0 | 0 |
 | markdown | 1.0.0 | MIT | 1 |
 | markup5ever | 0.12.1 | MIT OR Apache-2.0 | 2 |
@@ -376,6 +377,7 @@ The SHA-256 inventory is in [manifest.json](manifest.json). No local cache paths
 | xattr | 1.7.0 | MIT OR Apache-2.0 | 2 |
 | xml5ever | 0.18.1 | MIT OR Apache-2.0 | 2 |
 | xmlwriter | 0.1.0 | MIT | 1 |
+| xz2 | 0.1.7 | MIT/Apache-2.0 | 2 |
 | yasna | 0.6.0 | MIT OR Apache-2.0 | 2 |
 | yoke | 0.8.4 | Unicode-3.0 | 1 |
 | yoke-derive | 0.8.4 | Unicode-3.0 | 1 |

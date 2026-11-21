@@ -643,6 +643,9 @@ fn source_badge(source: Source) -> impl IntoElement {
             Source::UserAgent => "source-badge-user-agent",
             Source::SystemAgent => "source-badge-system-agent",
             Source::Daemon => "source-badge-daemon",
+            Source::SystemdUser => "source-badge-systemd-user",
+            Source::SystemdSystem => "source-badge-systemd-system",
+            Source::Autostart => "source-badge-autostart",
         })
         .flex_none()
         .flex_row()
@@ -668,6 +671,9 @@ fn source_badge_label(source: Source) -> &'static str {
         Source::UserAgent => "User Agent",
         Source::SystemAgent => "System Agent",
         Source::Daemon => "Daemon",
+        Source::SystemdUser => "User Service",
+        Source::SystemdSystem => "System Service",
+        Source::Autostart => "Autostart",
     }
 }
 

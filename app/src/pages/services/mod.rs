@@ -229,6 +229,9 @@ fn source_row(source: Source) -> impl IntoElement {
             Source::UserAgent => "source-user-agent",
             Source::SystemAgent => "source-system-agent",
             Source::Daemon => "source-daemon",
+            Source::SystemdUser => "source-systemd-user",
+            Source::SystemdSystem => "source-systemd-system",
+            Source::Autostart => "source-autostart",
         })
         .w_full()
         .flex_row()

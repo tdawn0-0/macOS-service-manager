@@ -220,10 +220,10 @@ pub(crate) fn render(icon: Icon) -> Svg {
 pub(crate) fn source(source: Source) -> Svg {
     render(match source {
         Source::Brew => Icon::Brew,
-        Source::LoginItem => Icon::LoginItem,
-        Source::UserAgent => Icon::UserAgent,
+        Source::LoginItem | Source::Autostart => Icon::LoginItem,
+        Source::UserAgent | Source::SystemdUser => Icon::UserAgent,
         Source::SystemAgent => Icon::SystemAgent,
-        Source::Daemon => Icon::Daemon,
+        Source::Daemon | Source::SystemdSystem => Icon::Daemon,
     })
 }
 

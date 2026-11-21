@@ -31,8 +31,8 @@ use std::{
 use devcore::{
     model::Package,
     shell::{
-        InstalledNode, NODE_BLOCK_BEGIN, NODE_BLOCK_END, NodeRelease, Shell, node::installed_nodes,
-        runtime_block,
+        CA_ENV_BLOCK_BEGIN, CA_ENV_BLOCK_END, InstalledNode, NODE_BLOCK_BEGIN, NODE_BLOCK_END,
+        NodeRelease, Shell, node::installed_nodes, runtime_block,
     },
     software::Software,
     state::Store,
@@ -128,6 +128,7 @@ pub struct ShellRow {
     pub files: Vec<String>,
     pub node_applied: bool,
     pub java_applied: bool,
+    pub ca_env_applied: bool,
 }
 
 /// One read of the development home.
@@ -147,6 +148,11 @@ pub struct Snapshot {
     pub shells: Vec<ShellRow>,
     pub node_shell_enabled: bool,
     pub java_shell_enabled: bool,
+    pub ca_env_enabled: bool,
+    pub ca_cert_path: String,
+    pub ca_cert_exists: bool,
+    pub ca_env_preview: String,
+    pub ca_env_preview_fish: String,
     pub bash_command: String,
 }
 
@@ -224,6 +230,7 @@ pub trait Provider: Send + Sync {
 
     fn node_shell(&self, enable: bool) -> Result<(), String>;
     fn java_shell(&self, enable: bool) -> Result<(), String>;
+    fn ca_env_shell(&self, enable: bool) -> Result<(), String>;
 
     fn select_node(&self, dir: &str, override_spec: Option<&str>) -> Result<Selection, String>;
     fn launch_terminal(&self, selection: &Selection) -> Result<(), String>;
@@ -252,12 +259,14 @@ impl Facade {
         let files = shell.shell_startup_files(false).unwrap_or_default();
         let node = (NODE_BLOCK_BEGIN.to_string(), NODE_BLOCK_END.to_string());
         let java = runtime_block("java");
+        let ca_env = (CA_ENV_BLOCK_BEGIN.to_string(), CA_ENV_BLOCK_END.to_string());
         ["zsh", "bash", "fish"]
             .into_iter()
             .map(|name| {
                 let mut paths: Vec<String> = Vec::new();
                 let mut node_applied = false;
                 let mut java_applied = false;
+                let mut ca_env_applied = false;
                 for file in &files {
                     let path = file.path.to_string_lossy().into_owned();
                     let shell_of = if file.fish {
@@ -291,6 +300,9 @@ impl Facade {
                     if contains(&java.0) && contains(&java.1) {
                         java_applied = true;
                     }
+                    if contains(&ca_env.0) && contains(&ca_env.1) {
+                        ca_env_applied = true;
+                    }
                 }
                 ShellRow {
                     shell: name.to_string(),
@@ -303,6 +315,7 @@ impl Facade {
                     files: paths,
                     node_applied,
                     java_applied,
+                    ca_env_applied,
                 }
             })
             .collect()
@@ -404,6 +417,11 @@ impl Provider for Facade {
             shells,
             node_shell_enabled: shell.node_shell_enabled(),
             java_shell_enabled: shell.runtime_shell_enabled("java"),
+            ca_env_enabled: shell.ca_env_shell_enabled(),
+            ca_cert_path: shell.local_ca_cert_path().to_string_lossy().into_owned(),
+            ca_cert_exists: shell.local_ca_cert_exists(),
+            ca_env_preview: shell.ca_env_preview(),
+            ca_env_preview_fish: shell.ca_env_preview_fish(),
             bash_command: shell.bash_command(),
         })
     }
@@ -482,6 +500,13 @@ impl Provider for Facade {
     fn java_shell(&self, enable: bool) -> Result<(), String> {
         self.shell()
             .configure_runtime_shell("java", enable)
+            .map_err(|error| error.to_string())
+    }
+
+    fn ca_env_shell(&self, enable: bool) -> Result<(), String> {
+        self.shell()
+            .configure_ca_env_shell(enable)
+            .map(|_| ())
             .map_err(|error| error.to_string())
     }
 
@@ -975,6 +1000,22 @@ pub(crate) fn java_shell_enabled() -> bool {
     workspace().with(|state| state.load.snapshot.java_shell_enabled)
 }
 
+pub(crate) fn ca_env_enabled() -> bool {
+    workspace().with(|state| state.load.snapshot.ca_env_enabled)
+}
+
+pub(crate) fn ca_cert_exists() -> bool {
+    workspace().with(|state| state.load.snapshot.ca_cert_exists)
+}
+
+pub(crate) fn ca_env_preview() -> String {
+    workspace().with(|state| state.load.snapshot.ca_env_preview.clone())
+}
+
+pub(crate) fn ca_env_preview_fish() -> String {
+    workspace().with(|state| state.load.snapshot.ca_env_preview_fish.clone())
+}
+
 pub(crate) fn bash_command() -> String {
     workspace().with(|state| state.load.snapshot.bash_command.clone())
 }
@@ -1380,6 +1421,19 @@ pub(crate) fn request_java_shell(enable: bool) {
         perform("java-shell", notice.to_string(), move |provider| {
             provider.java_shell(enable)
         });
+    });
+}
+
+/// Enables or disables the reversible Local HTTPS CA environment block across
+/// detected zsh, Bash and fish startup files.
+pub(crate) fn set_ca_env_shell(enable: bool) {
+    let notice = if enable {
+        "Enabled local HTTPS CA environment for detected shells. Start a new terminal or AI session."
+    } else {
+        "Removed the Devbase Local CA block from all supported shells."
+    };
+    perform("ca-env-shell", notice.to_string(), move |provider| {
+        provider.ca_env_shell(enable)
     });
 }
 

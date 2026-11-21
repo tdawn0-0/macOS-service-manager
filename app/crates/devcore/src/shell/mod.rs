@@ -12,6 +12,7 @@
 //! `uv` or touches the network.
 
 pub mod block;
+pub mod ca_env;
 pub mod java;
 pub mod node;
 pub mod uv;
@@ -28,6 +29,10 @@ use crate::software::{HttpTransport, Software, SoftwareError};
 use crate::state::{StateError, Store};
 
 pub use block::update_shell_block;
+pub use ca_env::{
+    CA_ENV_BLOCK_BEGIN, CA_ENV_BLOCK_END, ShellCaEnvConfig, ca_env_block_fish, ca_env_block_posix,
+    ca_env_exports_fish, ca_env_exports_posix,
+};
 pub use java::{JavaCatalog, java_catalog, resolve_java};
 pub use node::{
     InstalledNode, NodeRelease, NodeSelection, NodeVersionFile, node_index_path, parse_range,

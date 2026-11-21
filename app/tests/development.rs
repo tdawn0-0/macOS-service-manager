@@ -253,6 +253,21 @@ impl DevelopmentProvider for FakeDevelopment {
         Ok(())
     }
 
+    fn ca_env_shell(&self, enable: bool) -> Result<(), String> {
+        self.record(format!("ca env shell {enable}"));
+        self.slow();
+        if self.behaviour == Behaviour::ShellError {
+            return Err("duplicate local CA shell blocks; review this file".to_string());
+        }
+        self.with(|snapshot| {
+            snapshot.ca_env_enabled = enable;
+            for shell in &mut snapshot.shells {
+                shell.ca_env_applied = enable && shell.available;
+            }
+        });
+        Ok(())
+    }
+
     fn select_node(
         &self,
         dir: &str,
@@ -383,6 +398,7 @@ fn shell(name: &str, available: bool, node: bool, java: bool) -> DevelopmentShel
         files: vec![format!("/Users/test/.{name}rc")],
         node_applied: node,
         java_applied: java,
+        ca_env_applied: false,
     }
 }
 
@@ -417,6 +433,11 @@ fn fixture() -> Fixture {
             ],
             node_shell_enabled: false,
             java_shell_enabled: false,
+            ca_env_enabled: false,
+            ca_cert_path: "/tmp/devbase-tests/proxy/ca.pem".to_string(),
+            ca_cert_exists: true,
+            ca_env_preview: "export NODE_EXTRA_CA_CERTS='/tmp/devbase-tests/proxy/ca.pem'\nexport SSL_CERT_FILE='/tmp/devbase-tests/proxy/ca.pem'\nexport REQUESTS_CA_BUNDLE='/tmp/devbase-tests/proxy/ca.pem'\nexport CURL_CA_BUNDLE='/tmp/devbase-tests/proxy/ca.pem'".to_string(),
+            ca_env_preview_fish: "set -gx NODE_EXTRA_CA_CERTS '/tmp/devbase-tests/proxy/ca.pem'\nset -gx SSL_CERT_FILE '/tmp/devbase-tests/proxy/ca.pem'\nset -gx REQUESTS_CA_BUNDLE '/tmp/devbase-tests/proxy/ca.pem'\nset -gx CURL_CA_BUNDLE '/tmp/devbase-tests/proxy/ca.pem'".to_string(),
             bash_command:
                 "BASH_ENV='/tmp/devbase-tests/shell/bash-env.sh' /bin/bash -c 'YOUR_COMMAND'"
                     .to_string(),
@@ -768,4 +789,70 @@ fn typing_uv_path_and_terminal_dir_keeps_sibling_cards_mounted() {
     );
     assert_eq!(node_id(&app, "terminal-dir"), dir_input_id);
     assert_eq!(node_id(&app, "terminal-selection"), selection_id);
+}
+
+#[test]
+fn local_ca_env_card_renders_preview_and_toggles_switch() {
+    let fake = FakeDevelopment::new(fixture(), Behaviour::Slow);
+    let (_turn, mut app) = start(fake.clone());
+
+    app.press("id:dev-tab-shell").unwrap();
+    app.wait_for("id:shell-ca-env-card").unwrap();
+    app.wait_for("Local HTTPS CA environment").unwrap();
+    app.wait_for("id:shell-ca-env-switch").unwrap();
+    app.wait_for("id:shell-ca-env-preview").unwrap();
+
+    assert!(app.screen().matches("text:/NODE_EXTRA_CA_CERTS/").unwrap());
+    assert!(app.screen().matches("text:/SSL_CERT_FILE/").unwrap());
+    assert!(app.screen().matches("text:/REQUESTS_CA_BUNDLE/").unwrap());
+    assert!(app.screen().matches("text:/CURL_CA_BUNDLE/").unwrap());
+    assert!(app.screen().shows("Local CA not applied"));
+    assert!(app.screen().enabled("id:shell-ca-env-switch").unwrap());
+
+    let switch_id = node_id(&app, "shell-ca-env-switch");
+
+    // Toggle on: shows busy state, disables switch while running, then updates state.
+    app.press("id:shell-ca-env-switch").unwrap();
+    app.wait_for("id:dev-busy").unwrap();
+    assert!(!app.screen().enabled("id:shell-ca-env-switch").unwrap());
+    app.wait_for_within(
+        "Enabled local HTTPS CA environment for detected shells. Start a new terminal or AI session.",
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    assert!(fake.calls().iter().any(|call| call == "ca env shell true"));
+    app.wait_for("Local CA applied").unwrap();
+    assert!(app.screen().enabled("id:shell-ca-env-switch").unwrap());
+    assert_eq!(node_id(&app, "shell-ca-env-switch"), switch_id);
+
+    // Toggle off: removes the block cleanly.
+    app.press("id:shell-ca-env-switch").unwrap();
+    app.wait_for_within(
+        "Removed the Devbase Local CA block from all supported shells.",
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    assert!(fake.calls().iter().any(|call| call == "ca env shell false"));
+    app.wait_for("Local CA not applied").unwrap();
+    assert_eq!(node_id(&app, "shell-ca-env-switch"), switch_id);
+}
+
+#[test]
+fn local_ca_env_switch_disables_without_ca_cert_and_shows_fish_preview() {
+    let mut data = fixture();
+    data.snapshot.ca_cert_exists = false;
+    data.snapshot.shells[2].available = true;
+    let fake = FakeDevelopment::new(data, Behaviour::Normal);
+    let (_turn, mut app) = start(fake);
+
+    app.press("id:dev-tab-shell").unwrap();
+    app.wait_for("id:shell-ca-env-card").unwrap();
+    app.wait_for("CA not created").unwrap();
+    assert!(!app.screen().enabled("id:shell-ca-env-switch").unwrap());
+    app.wait_for("id:shell-ca-env-preview-fish").unwrap();
+    assert!(
+        app.screen()
+            .matches("text:/set -gx NODE_EXTRA_CA_CERTS/")
+            .unwrap()
+    );
 }

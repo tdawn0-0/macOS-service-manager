@@ -558,3 +558,188 @@ fn uv_refuses_non_executable_selection() {
         .with_uv_candidates(vec![uv.clone()]);
     assert!(shell.uv_path().is_err());
 }
+
+fn write_generational_ca_cert(root: &Path) -> PathBuf {
+    let proxy = root.join("proxy");
+    let generation = proxy.join("ca-generations").join("0123456789abcdef");
+    std::fs::create_dir_all(&generation).unwrap();
+    std::fs::write(
+        generation.join("ca.pem"),
+        b"-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        Path::new("ca-generations").join("0123456789abcdef"),
+        proxy.join("ca-current"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(Path::new("ca-current").join("ca.pem"), proxy.join("ca.pem"))
+        .unwrap();
+    proxy.join("ca.pem")
+}
+
+#[test]
+fn ca_env_shell_defaults_disabled_and_requires_existing_ca_cert() {
+    let (temp, store) = temp_root();
+    let home = temp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let zshrc = home.join(".zshrc");
+    std::fs::write(&zshrc, b"export EXISTING=1\n").unwrap();
+
+    let shell = shell_with(
+        store,
+        Arc::new(FakeRunner::default()),
+        Arc::new(FakeHttp::default()),
+        &home,
+    )
+    .with_shell_available(Arc::new(|_| true));
+
+    assert!(!shell.ca_env_config().ca_env_enabled);
+    assert!(!shell.ca_env_shell_enabled());
+    assert!(!shell.local_ca_cert_exists());
+
+    // Enabling without a local CA certificate must fail and leave dotfiles untouched.
+    let err = shell.enable_ca_env_shell().unwrap_err();
+    assert!(matches!(err, ShellError::Missing(_)));
+    assert!(!shell.ca_env_config().ca_env_enabled);
+    assert_eq!(std::fs::read(&zshrc).unwrap(), b"export EXISTING=1\n");
+
+    // Disabling when never enabled is a clean no-op.
+    shell.disable_ca_env_shell().unwrap();
+    assert!(!shell.ca_env_config_path().exists());
+    assert_eq!(std::fs::read(&zshrc).unwrap(), b"export EXISTING=1\n");
+}
+
+#[test]
+fn ca_env_shell_writes_zsh_bash_and_fish_idempotently_and_reversibly() {
+    let (temp, store) = temp_root();
+    let home = temp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let cert_path = write_generational_ca_cert(store.root());
+
+    let zshrc = home.join(".zshrc");
+    let bashrc = home.join(".bashrc");
+    let fish_rc = home.join(".config/fish/conf.d/devbase.fish");
+    std::fs::create_dir_all(fish_rc.parent().unwrap()).unwrap();
+    let original_zshrc = b"# user zsh config\nexport FOO=bar\n".to_vec();
+    let original_bashrc = b"# user bash config\nexport BAZ=1\n".to_vec();
+    let original_fish = b"# user fish config\nset -gx FOO bar\n".to_vec();
+    std::fs::write(&zshrc, &original_zshrc).unwrap();
+    std::fs::write(&bashrc, &original_bashrc).unwrap();
+    std::fs::write(&fish_rc, &original_fish).unwrap();
+
+    let shell = shell_with(
+        store,
+        Arc::new(FakeRunner::default()),
+        Arc::new(FakeHttp::default()),
+        &home,
+    )
+    .with_shell_available(Arc::new(|_| true))
+    .with_program("/Applications/Devbase.app/Contents/MacOS/Devbase");
+
+    assert!(shell.local_ca_cert_exists());
+    assert_eq!(shell.local_ca_cert_path(), cert_path);
+
+    // Coexisting Node.js shell block must survive CA env enable and disable untouched.
+    shell.enable_node_shell().unwrap();
+    let zshrc_with_node = std::fs::read(&zshrc).unwrap();
+    let bashrc_with_node = std::fs::read(&bashrc).unwrap();
+    let fish_with_node = std::fs::read(&fish_rc).unwrap();
+
+    shell.enable_ca_env_shell().unwrap();
+    assert!(shell.ca_env_config().ca_env_enabled);
+    assert!(shell.ca_env_shell_enabled());
+
+    let quoted_posix = shell_quote(&cert_path.to_string_lossy());
+    let quoted_fish = fish_quote(&cert_path.to_string_lossy());
+
+    for posix_path in [
+        home.join(".zshenv"),
+        home.join(".zprofile"),
+        zshrc.clone(),
+        bashrc.clone(),
+        home.join(".bash_profile"),
+        shell.bash_env_path(),
+    ] {
+        let content = std::fs::read_to_string(&posix_path).unwrap();
+        assert!(content.contains(CA_ENV_BLOCK_BEGIN), "{posix_path:?}");
+        assert!(content.contains(CA_ENV_BLOCK_END), "{posix_path:?}");
+        assert!(content.contains(&format!("export NODE_EXTRA_CA_CERTS={quoted_posix}")));
+        assert!(content.contains(&format!("export SSL_CERT_FILE={quoted_posix}")));
+        assert!(content.contains(&format!("export REQUESTS_CA_BUNDLE={quoted_posix}")));
+        assert!(content.contains(&format!("export CURL_CA_BUNDLE={quoted_posix}")));
+    }
+
+    let fish_content = std::fs::read_to_string(&fish_rc).unwrap();
+    assert!(fish_content.contains(CA_ENV_BLOCK_BEGIN));
+    assert!(fish_content.contains(CA_ENV_BLOCK_END));
+    assert!(fish_content.contains(&format!("set -gx NODE_EXTRA_CA_CERTS {quoted_fish}")));
+    assert!(fish_content.contains(&format!("set -gx SSL_CERT_FILE {quoted_fish}")));
+    assert!(fish_content.contains(&format!("set -gx REQUESTS_CA_BUNDLE {quoted_fish}")));
+    assert!(fish_content.contains(&format!("set -gx CURL_CA_BUNDLE {quoted_fish}")));
+
+    // Enabling a second time must be byte-for-byte idempotent.
+    let files = shell.shell_startup_files(true).unwrap();
+    let mut paths: Vec<PathBuf> = files.iter().map(|file| file.path.clone()).collect();
+    paths.push(shell.bash_env_path());
+    let before: Vec<Vec<u8>> = paths
+        .iter()
+        .map(|path| std::fs::read(path).unwrap())
+        .collect();
+    shell.enable_ca_env_shell().unwrap();
+    let after: Vec<Vec<u8>> = paths
+        .iter()
+        .map(|path| std::fs::read(path).unwrap())
+        .collect();
+    assert_eq!(before, after);
+
+    // Even if the CA cert is removed later, disabling must succeed cleanly and restore prior content.
+    std::fs::remove_file(&cert_path).unwrap();
+    assert!(!shell.local_ca_cert_exists());
+    shell.disable_ca_env_shell().unwrap();
+    assert!(!shell.ca_env_config().ca_env_enabled);
+    assert!(!shell.ca_env_shell_enabled());
+
+    assert_eq!(std::fs::read(&zshrc).unwrap(), zshrc_with_node);
+    assert_eq!(std::fs::read(&bashrc).unwrap(), bashrc_with_node);
+    assert_eq!(std::fs::read(&fish_rc).unwrap(), fish_with_node);
+    assert!(shell.node_shell_enabled());
+
+    // Removing the Node.js block too returns every user file to its exact original bytes.
+    shell.disable_node_shell().unwrap();
+    assert_eq!(std::fs::read(&zshrc).unwrap(), original_zshrc);
+    assert_eq!(std::fs::read(&bashrc).unwrap(), original_bashrc);
+    assert_eq!(std::fs::read(&fish_rc).unwrap(), original_fish);
+}
+
+#[test]
+fn ca_env_exports_quote_spaces_and_single_quotes() {
+    let path = Path::new("/tmp/dev base/o'reilly/proxy/ca.pem");
+    let posix = ca_env_block_posix(path);
+    assert!(posix.contains("export NODE_EXTRA_CA_CERTS='/tmp/dev base/o'\\''reilly/proxy/ca.pem'"));
+    assert!(posix.contains("export CURL_CA_BUNDLE='/tmp/dev base/o'\\''reilly/proxy/ca.pem'"));
+    let fish = ca_env_block_fish(path);
+    assert!(fish.contains("set -gx NODE_EXTRA_CA_CERTS '/tmp/dev base/o\\'reilly/proxy/ca.pem'"));
+    assert!(fish.contains("set -gx CURL_CA_BUNDLE '/tmp/dev base/o\\'reilly/proxy/ca.pem'"));
+}
+
+#[test]
+fn ca_env_shell_refuses_damaged_markers() {
+    let (temp, store) = temp_root();
+    let home = temp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    write_generational_ca_cert(store.root());
+    let zshrc = home.join(".zshrc");
+    std::fs::write(&zshrc, format!("{CA_ENV_BLOCK_BEGIN}\nexport A=1\n")).unwrap();
+
+    let shell = shell_with(
+        store,
+        Arc::new(FakeRunner::default()),
+        Arc::new(FakeHttp::default()),
+        &home,
+    )
+    .with_shell_available(Arc::new(|name| name == "zsh"));
+
+    assert!(shell.enable_ca_env_shell().is_err());
+    assert!(!shell.ca_env_config().ca_env_enabled);
+}

@@ -7,7 +7,9 @@ use nsh_base::theme;
 use nsh_core::prelude::*;
 
 use crate::{
-    components::controls::{TagTone, Tone, action_button, card, field_label, hairline, tag},
+    components::controls::{
+        self as ui, TagTone, Tone, action_button, card, field_label, hairline, tag,
+    },
     store::development as dev,
     theme as tokens,
 };
@@ -21,6 +23,7 @@ pub(super) fn shell_integration() -> impl IntoElement {
             .px(tokens::space(5.0))
             .py(tokens::space(4.0))
             .child(shells_card())
+            .child(ca_env_card())
             .child(runtime_card("node"))
             .child(runtime_card("java")),
     )
@@ -68,6 +71,7 @@ fn shell_row(row: dev::ShellRow) -> impl IntoElement {
     let available = row.available;
     let node = shell_state(row.node_applied, available);
     let java = shell_state(row.java_applied, available);
+    let ca_env = shell_state(row.ca_env_applied, available);
     view()
         .test_id(&format!("shell-row-{}", row.shell))
         .flex_col()
@@ -91,7 +95,8 @@ fn shell_row(row: dev::ShellRow) -> impl IntoElement {
                     tag("Not installed", TagTone::Warning)
                 })
                 .child(status_text("Node.js", node, row.node_applied))
-                .child(status_text("Java", java, row.java_applied)),
+                .child(status_text("Java", java, row.java_applied))
+                .child(status_text("Local CA", ca_env, row.ca_env_applied)),
         )
         .child(
             text(files.join(", "))
@@ -142,6 +147,99 @@ fn status_text(name: &'static str, state: &'static str, applied: bool) -> impl I
                     }
                 }),
         )
+}
+
+fn ca_env_card() -> impl IntoElement {
+    view().test_id("shell-ca-env-card").child(card(
+        "Local HTTPS CA environment",
+        view()
+            .flex_col()
+            .gap(tokens::space(2.5))
+            .child(
+                text("Node.js, Python, and curl do not automatically read macOS Keychain trust roots. Enabling this writes a reversible Devbase block in zsh, Bash, and fish startup files so local HTTPS requests trust the Devbase local CA.")
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .text_color(move || theme().muted_foreground),
+            )
+            .child(
+                view()
+                    .flex_row()
+                    .items_center()
+                    .gap(tokens::space(2.0))
+                    .child(ui::switch(
+                        "shell-ca-env-switch",
+                        dev::ca_env_enabled,
+                        || {
+                            dev::is_busy("ca-env-shell")
+                                || (!dev::ca_cert_exists() && !dev::ca_env_enabled())
+                        },
+                        "Local HTTPS CA environment",
+                        dev::set_ca_env_shell,
+                    ))
+                    .child(
+                        text("Export local CA environment variables in detected shells")
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .text_size(px(tokens::TEXT_SMALL))
+                            .text_color(move || theme().foreground),
+                    )
+                    .child(dynamic(|| {
+                        let enabled = dev::ca_env_enabled();
+                        let exists = dev::ca_cert_exists();
+                        Some(if enabled {
+                            tag("Enabled", TagTone::Success).into_element()
+                        } else if !exists {
+                            tag("CA not created", TagTone::Warning).into_element()
+                        } else {
+                            tag("Not enabled", TagTone::Neutral).into_element()
+                        })
+                    })),
+            )
+            .child(when(
+                || !dev::ca_cert_exists(),
+                || {
+                    text("Local CA certificate not found yet. Create or trust the local CA in HTTPS Proxy first.")
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .text_color(tokens::warning)
+                },
+            ))
+            .child(field_label("Generated shell exports (zsh / Bash)"))
+            .child(
+                ui::inset(
+                    text(dev::ca_env_preview)
+                        .test_id("shell-ca-env-preview")
+                        .font_family("monospace")
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .text_color(move || theme().foreground)
+                        .selectable(true),
+                ),
+            )
+            .child(dynamic(|| {
+                let fish_available = dev::shells()
+                    .iter()
+                    .any(|row| row.shell == "fish" && row.available);
+                let preview = dev::ca_env_preview_fish();
+                (fish_available && !preview.is_empty()).then(move || {
+                    view()
+                        .flex_col()
+                        .gap(tokens::space(1.5))
+                        .child(field_label("Generated shell exports (fish)"))
+                        .child(ui::inset(
+                            text(preview)
+                                .test_id("shell-ca-env-preview-fish")
+                                .font_family("monospace")
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .text_color(move || theme().foreground)
+                                .selectable(true),
+                        ))
+                        .into_element()
+                })
+            }))
+            .child(
+                text("Start a new terminal or AI session after changing this.")
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .text_color(move || theme().muted_foreground),
+            ),
+    ))
 }
 
 fn runtime_card(runtime: &'static str) -> impl IntoElement {

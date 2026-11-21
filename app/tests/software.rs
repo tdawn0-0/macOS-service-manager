@@ -23,7 +23,8 @@ use nsh_engine::{EngineConfig, Root};
 use nsh_testing::{DialogAnswer, Headless};
 
 use nsh_app_devbase::testing::{
-    SoftwareProvider, SoftwareSnapshot, install_software_provider, use_fake_software,
+    SoftwareProvider, SoftwareSnapshot, install_software_provider, use_fake_databases,
+    use_fake_software,
 };
 
 /// The software tests share one fake-provider registry, so they take turns.
@@ -248,6 +249,7 @@ fn mysql(version: &str) -> Package {
 /// holding the tests' turn for as long as the returned guard lives.
 fn start(fake: Arc<FakeSoftware>) -> (MutexGuard<'static, ()>, Headless) {
     let turn = serial();
+    use_fake_databases();
     use_fake_software();
     install_software_provider(fake as Arc<dyn SoftwareProvider>);
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
@@ -484,4 +486,45 @@ fn typing_version_draft_keeps_cards_and_preview_mounted() {
     assert_eq!(node_id(&app, "software-install"), install_id);
     assert_eq!(node_id(&app, "software-preview"), preview_id);
     assert_eq!(node_id(&app, "clear-cache"), cache_id);
+}
+
+#[test]
+fn installed_database_engines_offer_create_database_instance_cta() {
+    let fake = FakeSoftware::new(
+        vec![
+            node("22.14.0"),
+            mysql("8.4.13"),
+            package("postgresql", "17.11"),
+            package("redis", "7.4.2"),
+            package("mongodb", "8.0.4"),
+        ],
+        "node@22.14.0-arm64",
+        Behaviour::Normal,
+    );
+    let (_turn, mut app) = start(fake);
+
+    // Node.js is a runtime, not a database engine: no database CTA.
+    app.wait_for("id:installed-node-22.14.0").unwrap();
+    assert!(
+        !app.screen().matches("id:software-create-instance").unwrap(),
+        "Node.js must not show a Create database instance CTA"
+    );
+
+    // Every installed database engine shows the CTA beside its installed row.
+    for (engine, installed_id) in [
+        ("mysql", "id:installed-mysql-8.4.13"),
+        ("postgresql", "id:installed-postgresql-17.11"),
+        ("redis", "id:installed-redis-7.4.2"),
+        ("mongodb", "id:installed-mongodb-8.0.4"),
+    ] {
+        app.press(&format!("id:software-{engine}")).unwrap();
+        app.wait_for(installed_id).unwrap();
+        app.wait_for("id:software-create-instance").unwrap();
+        assert!(app.screen().shows("Create database instance"));
+    }
+
+    // Pressing the CTA navigates to Databases and opens the New Instance form.
+    app.press("id:software-create-instance").unwrap();
+    app.wait_for("id:db-create-form").unwrap();
+    app.wait_for("New instance").unwrap();
 }

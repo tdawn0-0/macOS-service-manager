@@ -101,11 +101,11 @@ fn installed_body() -> impl IntoElement {
     let packages = sw::installed(sw::active_software());
     let empty = packages.is_empty();
     let mut rows: Vec<AnyElement> = Vec::new();
-    for package in packages {
+    for (index, package) in packages.into_iter().enumerate() {
         if !rows.is_empty() {
             rows.push(hairline().into_element());
         }
-        rows.push(installed_row(package).into_element());
+        rows.push(installed_row(package, index).into_element());
     }
     view()
         .flex_col()
@@ -117,7 +117,7 @@ fn installed_body() -> impl IntoElement {
         .child(rows)
 }
 
-fn installed_row(package: devcore::model::Package) -> impl IntoElement {
+fn installed_row(package: devcore::model::Package, index: usize) -> impl IntoElement {
     let id = package.id();
     let key = format!("{}-{}", package.name, package.version);
     let title = sw::title_of(&package.name);
@@ -125,6 +125,12 @@ fn installed_row(package: devcore::model::Package) -> impl IntoElement {
     let license = package.license.clone();
     let formula = package.formula.clone();
     let homebrew = !formula.is_empty();
+    let is_database = SoftwareKind::from_key(&package.name).is_some_and(SoftwareKind::is_database);
+    let create_instance_id = if index == 0 {
+        "software-create-instance".to_string()
+    } else {
+        format!("software-create-instance-{key}")
+    };
     let default = sw::is_default(&package);
     let unused = sw::is_unused(&id);
     let (status, checked) = sw::integrity(&id);
@@ -224,6 +230,18 @@ fn installed_row(package: devcore::model::Package) -> impl IntoElement {
                 .items_center()
                 .flex_wrap()
                 .gap(tokens::space(1.5))
+                .child(is_database.then(|| {
+                    action_button(
+                        "Create database instance",
+                        Tone::Primary,
+                        create_instance_id,
+                        busy,
+                        || {
+                            crate::store::select_section(crate::store::Section::Databases);
+                            crate::store::databases::open_new();
+                        },
+                    )
+                }))
                 .child(action_button(
                     "Check files",
                     Tone::Default,

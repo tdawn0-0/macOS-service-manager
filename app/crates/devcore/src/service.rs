@@ -289,6 +289,39 @@ pub trait Provider: Send + Sync {
 
     /// Runs an action.
     fn do_action(&self, item: &Item, action: Action) -> Result<()>;
+
+    /// Returns this provider as [`Restricted`] if macOS may keep it from
+    /// listing all of its items, or `None` otherwise.
+    fn as_restricted(&self) -> Option<&dyn Restricted> {
+        None
+    }
+}
+
+/// What macOS keeps a provider from listing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Restriction {
+    /// What the list leaves out, and why.
+    pub text: String,
+    /// Whether System Settings can lift it.
+    pub settings: bool,
+}
+
+/// A provider that macOS may let read only part of its items.
+pub trait Restricted: Send + Sync {
+    /// What the last `list` left out, or `None` if nothing.
+    fn restriction(&self) -> Option<Restriction>;
+
+    /// Reports whether macOS refuses what the setting allows. It asks the user
+    /// nothing, and is quick enough to run every second.
+    fn needs_access(&self) -> bool;
+
+    /// Opens the setting that lifts the restriction.
+    fn open_settings(&self) -> Result<()>;
+
+    /// Reads what is left out for the next `list`, after macOS asks the user
+    /// to authenticate. Only the user's asking may start it.
+    fn read_once(&self) -> Result<()>;
 }
 
 /// A provider that runs an action on several items at once: one request to the

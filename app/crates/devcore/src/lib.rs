@@ -25,6 +25,7 @@
 //! install/uninstall client with the single administrator prompt, the helper
 //! and proxy-socket property lists, and an in-process helper for tests.
 
+pub mod brew;
 pub mod databases;
 pub mod diagnostics;
 pub mod engine;
@@ -32,6 +33,7 @@ pub mod fs;
 pub mod health;
 pub mod helper;
 pub mod launchd;
+pub mod loginitem;
 pub mod model;
 pub mod operations;
 pub mod service;

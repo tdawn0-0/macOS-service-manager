@@ -320,6 +320,7 @@ fn identity() -> impl IntoElement {
 /// the workspace's, plus right-aligned live status indicators where applicable.
 fn nav_item(section: Section) -> impl IntoElement {
     button()
+        .accessibility_label(section.label())
         .w_full()
         .flex_row()
         .items_center()
@@ -374,6 +375,7 @@ fn logs_toggle() -> impl IntoElement {
     )));
     button()
         .test_id("sidebar-logs-toggle")
+        .accessibility_label("Logs")
         .w_full()
         .flex_row()
         .items_center()

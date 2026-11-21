@@ -532,8 +532,7 @@ fn runtimes_show_each_default_and_a_refreshed_release_list() {
     app.wait_for("Default JDK 21.0.5").unwrap();
     app.wait_for("uv global pin: cpython-3.12.7").unwrap();
     // The release index is read once when the tab first shows.
-    app.wait_for("3 tracked · install a version in Software")
-        .unwrap();
+    app.wait_for("3 tracked").unwrap();
     app.wait_for("24.2.0").unwrap();
     assert!(fake.calls().iter().any(|call| call == "releases false"));
 

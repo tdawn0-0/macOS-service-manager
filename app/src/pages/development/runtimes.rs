@@ -20,13 +20,20 @@ pub(super) fn runtimes() -> impl IntoElement {
     dev::load_java_catalog();
     scroll().flex_1().min_h(px(0.0)).child(
         view()
-            .flex_col()
-            .gap(tokens::space(4.0))
+            .w_full()
+            .items_center()
             .px(tokens::space(5.0))
-            .py(tokens::space(4.0))
-            .child(node_card())
-            .child(java_card())
-            .child(python_card()),
+            .py(tokens::space(5.0))
+            .child(
+                view()
+                    .w_full()
+                    .max_w(px(840.0))
+                    .flex_col()
+                    .gap(tokens::space(4.0))
+                    .child(node_card())
+                    .child(java_card())
+                    .child(python_card()),
+            ),
     )
 }
 
@@ -55,7 +62,7 @@ fn node_body() -> impl IntoElement {
                         .text_color(move || theme().foreground),
                 )
                 .child(action_button(
-                    "Refresh available versions",
+                    "Refresh releases",
                     Tone::Default,
                     "dev-refresh-releases",
                     dev::releases_loading(),
@@ -70,13 +77,14 @@ fn node_body() -> impl IntoElement {
                 )),
         )
         .child(installed_nodes())
+        .child(hairline())
         .child(releases_block())
 }
 
 fn node_summary() -> String {
     let version = dev::node_default_version();
     if version.is_empty() {
-        "No default Node.js version".to_string()
+        "No default Node.js".to_string()
     } else {
         format!("Default Node.js {version}")
     }
@@ -95,9 +103,10 @@ fn installed_nodes() -> impl IntoElement {
     view()
         .test_id("node-installed")
         .flex_col()
-        .child(field_label("Installed versions"))
+        .gap(tokens::space(1.0))
+        .child(field_label("Installed"))
         .child(when(empty, || {
-            text("No Node.js versions installed. Install one in Software.")
+            text("None installed")
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
         }))
@@ -114,11 +123,15 @@ fn node_row(node: dev::NodeVersion) -> impl IntoElement {
     let default_id = id.clone();
     view()
         .test_id(&key)
-        .flex_col()
-        .gap(tokens::space(1.5))
-        .py(tokens::space(2.0))
+        .flex_row()
+        .items_center()
+        .flex_wrap()
+        .gap(tokens::space(2.0))
+        .py(tokens::space(1.5))
         .child(
             view()
+                .flex_1()
+                .min_w(px(160.0))
                 .flex_row()
                 .items_center()
                 .flex_wrap()
@@ -138,7 +151,6 @@ fn node_row(node: dev::NodeVersion) -> impl IntoElement {
             view()
                 .flex_row()
                 .items_center()
-                .flex_wrap()
                 .gap(tokens::space(1.5))
                 .child(action_button(
                     "Set default",
@@ -147,9 +159,9 @@ fn node_row(node: dev::NodeVersion) -> impl IntoElement {
                     default || dev::is_busy("node-default"),
                     move || dev::set_node_default(&default_id),
                 ))
-                .child(action_button(
+                .child(ui::row_icon_button(
+                    icons::copy(),
                     "Copy executable path",
-                    Tone::Default,
                     format!("node-copy-{id}"),
                     false,
                     move || dev::copy_node_binary(&copy_id),
@@ -166,7 +178,7 @@ fn releases_block() -> impl IntoElement {
         .gap(tokens::space(1.5))
         .child(field_label("Available releases"))
         .child(when(loading, || {
-            text("Loading releases…")
+            text("Loading…")
                 .text_size(px(tokens::TEXT_CAPTION))
                 .text_color(move || theme().muted_foreground)
         }))
@@ -181,18 +193,15 @@ fn releases_block() -> impl IntoElement {
                 .flex_col()
                 .gap(tokens::space(1.5))
                 .child(when(list.stale, || {
-                    text("nodejs.org could not be reached. Showing the last release list.")
+                    text("Offline — showing cached release list.")
                         .text_size(px(tokens::TEXT_CAPTION))
                         .text_color(tokens::warning)
                 }))
                 .child(
-                    text(format!(
-                        "{} tracked · install a version in Software",
-                        list.releases.len()
-                    ))
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .tabular_nums()
-                    .text_color(move || theme().muted_foreground),
+                    text(format!("{} tracked", list.releases.len()))
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .tabular_nums()
+                        .text_color(move || theme().muted_foreground),
                 )
                 .child(
                     view()
@@ -247,17 +256,17 @@ fn java_body() -> impl IntoElement {
                 .tabular_nums()
                 .text_color(move || theme().foreground),
         )
-        .child(field_label("Installed JDKs"))
-        .child(when(empty, || {
-            text("No JDKs installed. Install one from the Software tab.")
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground)
-        }))
-        .child(rows)
         .child(
-            text("Java follows .java-version and .sdkmanrc in each folder once terminal integration is enabled.")
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground),
+            view()
+                .flex_col()
+                .gap(tokens::space(1.0))
+                .child(field_label("Installed"))
+                .child(when(empty, || {
+                    text("None installed")
+                        .text_size(px(tokens::TEXT_SMALL))
+                        .text_color(move || theme().muted_foreground)
+                }))
+                .child(rows),
         )
         .child(hairline())
         .child(java_catalog_block())
@@ -272,15 +281,16 @@ fn java_catalog_block() -> impl IntoElement {
     let choices: Vec<_> = catalog.into_iter().take(20).collect();
     view()
         .flex_col()
-        .gap(tokens::space(1.5))
+        .gap(tokens::space(2.0))
         .child(
             view()
                 .flex_row()
                 .items_center()
+                .justify_between()
                 .gap(tokens::space(1.5))
-                .child(field_label("Install a JDK from JetBrains"))
+                .child(field_label("JetBrains JDK catalog"))
                 .child(action_button(
-                    "Refresh available JDKs",
+                    "Refresh",
                     Tone::Default,
                     "java-refresh-catalog",
                     loading,
@@ -288,7 +298,7 @@ fn java_catalog_block() -> impl IntoElement {
                 )),
         )
         .child(when(loading, || {
-            text("Loading the JetBrains catalog…")
+            text("Loading…")
                 .text_size(px(tokens::TEXT_CAPTION))
                 .text_color(move || theme().muted_foreground)
         }))
@@ -299,7 +309,7 @@ fn java_catalog_block() -> impl IntoElement {
                 .selectable(true)
         }))
         .child(when(empty && !loading, || {
-            text("No catalog versions were listed.")
+            text("No versions listed")
                 .text_size(px(tokens::TEXT_CAPTION))
                 .text_color(move || theme().muted_foreground)
         }))
@@ -326,25 +336,13 @@ fn java_catalog_block() -> impl IntoElement {
                     )
                 })),
         )
-        .child(
-            view()
-                .flex_row()
-                .items_center()
-                .flex_wrap()
-                .gap(tokens::space(1.5))
-                .child(action_button(
-                    "Install JDK",
-                    Tone::Primary,
-                    "java-install",
-                    empty || loading || dev::is_busy("java-install"),
-                    dev::install_java,
-                ))
-                .child(
-                    text("Downloads from JetBrains and installs a Devbase-managed JDK.")
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground),
-                ),
-        )
+        .child(view().flex_row().items_center().child(action_button(
+            "Install JDK",
+            Tone::Primary,
+            "java-install",
+            empty || loading || dev::is_busy("java-install"),
+            dev::install_java,
+        )))
 }
 
 fn java_row(jdk: dev::JavaVersion) -> impl IntoElement {
@@ -355,11 +353,15 @@ fn java_row(jdk: dev::JavaVersion) -> impl IntoElement {
     let default_id = id.clone();
     view()
         .test_id(&format!("java-{id}"))
-        .flex_col()
-        .gap(tokens::space(1.5))
-        .py(tokens::space(2.0))
+        .flex_row()
+        .items_center()
+        .flex_wrap()
+        .gap(tokens::space(2.0))
+        .py(tokens::space(1.5))
         .child(
             view()
+                .flex_1()
+                .min_w(px(160.0))
                 .flex_row()
                 .items_center()
                 .flex_wrap()
@@ -399,7 +401,7 @@ fn python_card() -> impl IntoElement {
                 text(move || {
                     let description = dev::uv_description();
                     if description.is_empty() {
-                        "uv was not found".to_string()
+                        "uv not found".to_string()
                     } else {
                         description
                     }
@@ -418,6 +420,7 @@ fn python_card() -> impl IntoElement {
                 })
             }))
             .child(uv_input())
+            .child(hairline())
             .child(dynamic(|| Some(python_body().into_element()))),
     )
 }
@@ -427,26 +430,26 @@ fn uv_input() -> impl IntoElement {
         .flex_col()
         .gap(tokens::space(1.0))
         .child(field_label("uv executable"))
-        .child(ui::text_field(
-            "uv-path-input",
-            "/absolute/path/to/uv (optional)",
-            dev::uv_path,
-            dev::set_uv_path_draft,
-        ))
         .child(
             view()
                 .flex_row()
                 .items_center()
                 .gap(tokens::space(1.5))
+                .child(view().flex_1().min_w(px(0.0)).child(ui::text_field(
+                    "uv-path-input",
+                    "/path/to/uv",
+                    dev::uv_path,
+                    dev::set_uv_path_draft,
+                )))
                 .child(action_button(
-                    "Use uv executable",
+                    "Use",
                     Tone::Default,
                     "uv-use-path",
                     false,
                     dev::use_uv_path,
                 ))
                 .child(action_button(
-                    "Refresh Python versions",
+                    "Refresh",
                     Tone::Default,
                     "uv-refresh",
                     false,
@@ -473,55 +476,65 @@ fn python_body() -> impl IntoElement {
     view()
         .flex_col()
         .gap(tokens::space(3.0))
-        .child(field_label("Installed by uv"))
-        .child(when(empty, || {
-            text("None installed")
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground)
-        }))
-        .child(rows)
-        .child(hairline())
-        .child(field_label("Install a version"))
-        .child(when(no_choices, || {
-            text("No downloadable macOS arm64 versions were listed.")
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground)
-        }))
         .child(
             view()
-                .flex_row()
-                .items_center()
-                .flex_wrap()
+                .flex_col()
                 .gap(tokens::space(1.0))
-                .child(choices.into_iter().map(|python| {
-                    let choice = python.key.clone();
-                    ui::chip(
-                        python.key.clone(),
-                        dev::python_choice() == python.key,
-                        format!("python-available-{}", python.key),
-                        false,
-                        move || dev::select_python(&choice),
-                    )
-                })),
+                .child(field_label("Installed"))
+                .child(when(empty, || {
+                    text("None installed")
+                        .text_size(px(tokens::TEXT_SMALL))
+                        .text_color(move || theme().muted_foreground)
+                }))
+                .child(rows),
         )
+        .child(hairline())
         .child(
             view()
-                .flex_row()
-                .items_center()
-                .gap(tokens::space(1.5))
-                .child(action_button(
-                    "Install Python with uv",
-                    Tone::Primary,
-                    "python-install",
-                    no_choices || dev::is_busy("python-install"),
-                    dev::install_python,
-                ))
-                .child(when(!pin.is_empty(), move || {
-                    text(format!("uv global pin: {pin}"))
+                .flex_col()
+                .gap(tokens::space(2.0))
+                .child(field_label("Install a version"))
+                .child(when(no_choices, || {
+                    text("No versions listed")
                         .text_size(px(tokens::TEXT_CAPTION))
-                        .tabular_nums()
                         .text_color(move || theme().muted_foreground)
-                })),
+                }))
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .flex_wrap()
+                        .gap(tokens::space(1.0))
+                        .child(choices.into_iter().map(|python| {
+                            let choice = python.key.clone();
+                            ui::chip(
+                                python.key.clone(),
+                                dev::python_choice() == python.key,
+                                format!("python-available-{}", python.key),
+                                false,
+                                move || dev::select_python(&choice),
+                            )
+                        })),
+                )
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(2.0))
+                        .child(action_button(
+                            "Install Python",
+                            Tone::Primary,
+                            "python-install",
+                            no_choices || dev::is_busy("python-install"),
+                            dev::install_python,
+                        ))
+                        .child(when(!pin.is_empty(), move || {
+                            text(format!("uv global pin: {pin}"))
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .tabular_nums()
+                                .text_color(move || theme().muted_foreground)
+                        })),
+                ),
         )
 }
 
@@ -535,38 +548,46 @@ fn python_row(python: dev::PythonVersion) -> impl IntoElement {
     let copy_path = path.clone();
     view()
         .test_id(&format!("python-{}", python.key))
-        .flex_col()
-        .gap(tokens::space(1.5))
-        .py(tokens::space(2.0))
+        .flex_row()
+        .items_center()
+        .flex_wrap()
+        .gap(tokens::space(2.0))
+        .py(tokens::space(1.5))
         .child(
             view()
-                .flex_row()
-                .items_center()
-                .flex_wrap()
-                .gap(tokens::space(1.5))
+                .flex_1()
+                .min_w(px(180.0))
+                .flex_col()
+                .gap(px(2.0))
                 .child(
-                    text(format!("Python · {}", python.version))
-                        .text_size(px(tokens::TEXT_BODY))
-                        .font_weight(FontWeight::MEDIUM)
-                        .tabular_nums()
-                        .text_color(move || theme().foreground)
-                        .truncate(),
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .flex_wrap()
+                        .gap(tokens::space(1.5))
+                        .child(
+                            text(format!("Python · {}", python.version))
+                                .text_size(px(tokens::TEXT_BODY))
+                                .font_weight(FontWeight::MEDIUM)
+                                .tabular_nums()
+                                .text_color(move || theme().foreground)
+                                .truncate(),
+                        )
+                        .child(python.pin.then(|| tag("Default", TagTone::Success))),
                 )
-                .child(python.pin.then(|| tag("Default", TagTone::Success))),
+                .child(when(has_path, move || {
+                    text(path.clone())
+                        .font_family("monospace")
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .text_color(move || theme().muted_foreground)
+                        .selectable(true)
+                        .truncate()
+                })),
         )
-        .child(when(has_path, move || {
-            text(path.clone())
-                .font_family("monospace")
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground)
-                .selectable(true)
-                .truncate()
-        }))
         .child(
             view()
                 .flex_row()
                 .items_center()
-                .flex_wrap()
                 .gap(tokens::space(1.5))
                 .child(action_button(
                     "Set default",

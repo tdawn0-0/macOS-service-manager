@@ -5,7 +5,7 @@ use nsh_base::theme;
 use nsh_core::prelude::*;
 
 use crate::{
-    components::controls::{Tone, action_button, card},
+    components::controls::{Tone, action_button, card, hairline},
     store::development as dev,
     theme as tokens,
 };
@@ -16,15 +16,22 @@ pub(super) fn overview() -> impl IntoElement {
     dev::load();
     scroll().flex_1().min_h(px(0.0)).child(
         view()
-            .flex_col()
-            .gap(tokens::space(4.0))
+            .w_full()
+            .items_center()
             .px(tokens::space(5.0))
-            .py(tokens::space(4.0))
-            .child(defaults::node_defaults())
-            .child(defaults::java_defaults())
-            .child(defaults::python_defaults())
-            .child(shell_card())
-            .child(resolution_card()),
+            .py(tokens::space(5.0))
+            .child(
+                view()
+                    .w_full()
+                    .max_w(px(840.0))
+                    .flex_col()
+                    .gap(tokens::space(4.0))
+                    .child(defaults::node_defaults())
+                    .child(defaults::java_defaults())
+                    .child(defaults::python_defaults())
+                    .child(shell_card())
+                    .child(resolution_card()),
+            ),
     )
 }
 
@@ -35,19 +42,23 @@ fn shell_card() -> impl IntoElement {
             .flex_col()
             .gap(tokens::space(2.0))
             .child(shell_line("Node.js", dev::node_shell_enabled))
+            .child(hairline())
             .child(shell_line("Java", dev::java_shell_enabled))
+            .child(hairline())
             .child(
-                text("The startup block makes each folder's .node-version, .nvmrc or package.json engines.node the folder's Node.js, else the default.")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground),
-            )
-            .child(action_button(
-                "Change shell integration",
-                Tone::Default,
-                "overview-shell",
-                false,
-                || dev::select_tab(dev::Tab::ShellIntegration),
-            )),
+                view()
+                    .flex_row()
+                    .items_center()
+                    .justify_end()
+                    .pt(tokens::space(1.0))
+                    .child(action_button(
+                        "Configure shells",
+                        Tone::Default,
+                        "overview-shell",
+                        false,
+                        || dev::select_tab(dev::Tab::ShellIntegration),
+                    )),
+            ),
     )
 }
 
@@ -58,23 +69,22 @@ fn shell_line(
     view()
         .flex_row()
         .items_center()
+        .justify_between()
         .gap(tokens::space(2.0))
+        .py(tokens::space(0.5))
         .child(
             text(label)
-                .w(px(80.0))
-                .flex_none()
                 .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground),
+                .text_color(move || theme().foreground),
         )
         .child(
             text(move || {
                 if enabled() {
-                    "Enabled for detected shells".to_string()
+                    "Enabled".to_string()
                 } else {
                     "Not enabled".to_string()
                 }
             })
-            .flex_1()
             .text_size(px(tokens::TEXT_SMALL))
             .text_color(move || {
                 if enabled() {
@@ -90,17 +100,14 @@ fn resolution_card() -> impl IntoElement {
     card(
         "Runtime terminal",
         view()
-            .flex_col()
-            .gap(tokens::space(2.0))
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(tokens::space(3.0))
             .child(
-                text("Pick a folder, see which Node.js version it resolves, then open Terminal with that version first on PATH.")
+                text("Node.js on PATH")
                     .text_size(px(tokens::TEXT_SMALL))
                     .text_color(move || theme().foreground),
-            )
-            .child(
-                text("Resolution walks up from the folder: .node-version, .nvmrc, then package.json engines.node, then the default. The terminal is the developer's; Devbase does not start project servers.")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground),
             )
             .child(action_button(
                 "Open runtime terminal",

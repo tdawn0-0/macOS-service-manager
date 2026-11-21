@@ -7,7 +7,7 @@ use nsh_base::theme;
 use nsh_core::prelude::*;
 
 use crate::{
-    components::controls::{self as ui, TagTone, Tone, action_button, card, tag},
+    components::controls::{self as ui, Tone, action_button, card},
     store::development as dev,
     theme as tokens,
 };
@@ -17,44 +17,36 @@ pub(super) fn node_defaults() -> impl IntoElement {
         "Node.js default",
         view()
             .flex_col()
-            .gap(tokens::space(2.0))
-            .child(
-                text(move || {
-                    let version = dev::node_default_version();
-                    if version.is_empty() {
-                        "No default Node.js version".to_string()
-                    } else {
-                        format!("Each folder runs Node.js {version} unless it asks for another.")
-                    }
-                })
-                .text_size(px(tokens::TEXT_SMALL))
-                .tabular_nums()
-                .text_color(move || theme().foreground),
-            )
-            .child(
-                text("A folder overrides the default with .node-version, .nvmrc or package.json engines.node. The nearest file wins.")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground),
-            )
-            .child(dynamic(|| Some(node_chips().into_element())))
+            .gap(tokens::space(2.5))
             .child(
                 view()
                     .flex_row()
                     .items_center()
-                    .gap(tokens::space(1.5))
+                    .justify_between()
+                    .gap(tokens::space(2.0))
+                    .child(
+                        text(move || {
+                            let version = dev::node_default_version();
+                            if version.is_empty() {
+                                "None".to_string()
+                            } else {
+                                format!("Node.js {version}")
+                            }
+                        })
+                        .text_size(px(tokens::TEXT_SMALL))
+                        .font_weight(FontWeight::MEDIUM)
+                        .tabular_nums()
+                        .text_color(move || theme().foreground),
+                    )
                     .child(action_button(
                         "Open runtime terminal",
                         Tone::Default,
                         "defaults-open-terminal",
                         false,
                         dev::open_terminal,
-                    ))
-                    .child(
-                        text("Check a folder's version against these rules.")
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .text_color(move || theme().muted_foreground),
-                    ),
-            ),
+                    )),
+            )
+            .child(dynamic(|| Some(node_chips().into_element()))),
     )
 }
 
@@ -65,7 +57,7 @@ fn node_chips() -> impl IntoElement {
         .flex_col()
         .gap(tokens::space(1.5))
         .child(when(empty, || {
-            text("No Node.js versions installed. Install one in Software.")
+            text("None installed")
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
         }))
@@ -94,26 +86,22 @@ pub(super) fn java_defaults() -> impl IntoElement {
         "Java default",
         view()
             .flex_col()
-            .gap(tokens::space(2.0))
+            .gap(tokens::space(2.5))
             .child(
                 text(move || {
                     let version = dev::java_default_version();
                     if version.is_empty() {
-                        "No default JDK".to_string()
+                        "None".to_string()
                     } else {
-                        format!("Each folder runs JDK {version} unless .java-version or .sdkmanrc asks for another.")
+                        format!("JDK {version}")
                     }
                 })
                 .text_size(px(tokens::TEXT_SMALL))
+                .font_weight(FontWeight::MEDIUM)
                 .tabular_nums()
                 .text_color(move || theme().foreground),
             )
-            .child(dynamic(|| Some(java_chips().into_element())))
-            .child(
-                text("Enable terminal integration in the Shell integration tab to use the default.")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground),
-            ),
+            .child(dynamic(|| Some(java_chips().into_element()))),
     )
 }
 
@@ -124,7 +112,7 @@ fn java_chips() -> impl IntoElement {
         .flex_col()
         .gap(tokens::space(1.5))
         .child(when(empty, || {
-            text("No JDKs installed. Install one from the Software tab.")
+            text("None installed")
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
         }))
@@ -157,33 +145,22 @@ pub(super) fn python_defaults() -> impl IntoElement {
         "Python default (uv)",
         view()
             .flex_col()
-            .gap(tokens::space(2.0))
+            .gap(tokens::space(2.5))
             .child(
                 text(move || {
                     let pin = dev::python_pin();
                     if pin.is_empty() {
-                        "No uv global pin".to_string()
+                        "None".to_string()
                     } else {
-                        format!("uv pins Python {pin} globally.")
+                        format!("Python {pin}")
                     }
                 })
                 .text_size(px(tokens::TEXT_SMALL))
+                .font_weight(FontWeight::MEDIUM)
                 .tabular_nums()
                 .text_color(move || theme().foreground),
             )
-            .child(dynamic(|| Some(python_chips().into_element())))
-            .child(
-                view()
-                    .flex_row()
-                    .items_center()
-                    .gap(tokens::space(1.5))
-                    .child(tag("uv manages its own PATH", TagTone::Neutral))
-                    .child(
-                        text("Install or uninstall Python versions in Runtimes.")
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .text_color(move || theme().muted_foreground),
-                    ),
-            ),
+            .child(dynamic(|| Some(python_chips().into_element()))),
     )
 }
 
@@ -194,7 +171,7 @@ fn python_chips() -> impl IntoElement {
         .flex_col()
         .gap(tokens::space(1.5))
         .child(when(empty, || {
-            text("No Python versions installed by uv.")
+            text("None installed")
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
         }))

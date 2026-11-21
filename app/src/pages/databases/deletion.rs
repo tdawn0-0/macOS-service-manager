@@ -16,8 +16,6 @@ use crate::{
     theme as tokens,
 };
 
-use super::rail;
-
 pub(crate) fn deletion_preview() -> impl IntoElement {
     view()
         .test_id("db-deletion-preview")
@@ -31,26 +29,25 @@ fn preview_body() -> AnyElement {
         return view().into_element();
     };
     let id = instance.id.clone();
-    let title = rail::instance_title(&instance.kind);
     view()
         .flex_col()
         .flex_1()
         .child(ui::page_header(
             format!("Delete {id}"),
-            Some(title),
+            None::<&str>,
             view()
                 .flex_row()
                 .items_center()
                 .gap(tokens::space(2.0))
                 .child(ui::action_button(
-                    "Refresh deletion preview",
+                    "Refresh",
                     Tone::Default,
                     "deletion-refresh",
                     db::operations_busy,
                     db::refresh_deletion_preview,
                 ))
                 .child(ui::action_button(
-                    "Cancel deletion preview",
+                    "Cancel",
                     Tone::Default,
                     "deletion-cancel",
                     db::operations_busy,
@@ -63,39 +60,45 @@ fn preview_body() -> AnyElement {
         .child(
             scroll().flex_1().min_h(px(0.0)).child(
                 view()
-                    .flex_col()
-                    .gap(tokens::space(3.0))
+                    .w_full()
+                    .items_center()
                     .px(tokens::space(5.0))
-                    .pt(tokens::space(4.0))
-                    .pb(tokens::space(5.0))
-                    .child(dynamic(move || {
-                        db::deletion_preview_error()
-                            .map(|message| note(icons::warn(), message, true))
-                    }))
-                    .child(dynamic(|| {
-                        db::deletion_preview_loading().then(|| {
-                            text("Reviewing the data path…")
-                                .text_size(px(tokens::TEXT_SMALL))
-                                .text_color(move || theme().muted_foreground)
-                        })
-                    }))
-                    .child(dynamic(|| preview_card().map(|card| card.into_element())))
-                    .child(ui::field(
-                        "Confirm instance ID",
-                        ui::text_field(
-                            "deletion-confirm",
-                            "Instance ID",
-                            db::confirmation,
-                            db::set_confirmation,
-                        ),
-                    ))
-                    .child(ui::action_button(
-                        "Permanently delete instance data",
-                        Tone::Danger,
-                        "deletion-delete",
-                        || !db::can_delete(),
-                        db::delete_instance_data,
-                    )),
+                    .py(tokens::space(5.0))
+                    .child(
+                        view()
+                            .w_full()
+                            .max_w(px(840.0))
+                            .flex_col()
+                            .gap(tokens::space(4.0))
+                            .child(dynamic(move || {
+                                db::deletion_preview_error()
+                                    .map(|message| note(icons::warn(), message, true))
+                            }))
+                            .child(dynamic(|| {
+                                db::deletion_preview_loading().then(|| {
+                                    text("Reviewing…")
+                                        .text_size(px(tokens::TEXT_SMALL))
+                                        .text_color(move || theme().muted_foreground)
+                                })
+                            }))
+                            .child(dynamic(|| preview_card().map(|card| card.into_element())))
+                            .child(ui::field(
+                                "Confirm instance ID",
+                                ui::text_field(
+                                    "deletion-confirm",
+                                    "Instance ID",
+                                    db::confirmation,
+                                    db::set_confirmation,
+                                ),
+                            ))
+                            .child(view().flex_row().items_center().child(ui::action_button(
+                                "Permanently delete instance data",
+                                Tone::Danger,
+                                "deletion-delete",
+                                || !db::can_delete(),
+                                db::delete_instance_data,
+                            ))),
+                    ),
             ),
         )
         .into_element()
@@ -108,44 +111,33 @@ fn preview_card() -> Option<impl IntoElement> {
     let detail = preview.detail.clone();
     let can_delete = preview.can_delete;
     let path = preview.path.display().to_string();
-    Some(
-        ui::card(
-            "Permanent deletion",
-            view()
-                .flex_col()
-                .gap(tokens::space(2.5))
-                .child(ui::field(
-                    "Data path to delete",
-                    ui::read_only_value(path),
+    Some(ui::card(
+        "Permanent deletion",
+        view()
+            .flex_col()
+            .gap(tokens::space(2.5))
+            .child(ui::field("Data path to delete", ui::read_only_value(path)))
+            .child(
+                text(format!(
+                    "{entries} entries · {mebibytes:.2} MiB logical file size"
                 ))
-                .child(
-                    text(format!(
-                        "{entries} entries · {mebibytes:.2} MiB logical file size"
-                    ))
+                .text_size(px(tokens::TEXT_SMALL))
+                .tabular_nums()
+                .text_color(move || theme().muted_foreground),
+            )
+            .child(
+                text(detail)
                     .text_size(px(tokens::TEXT_SMALL))
-                    .tabular_nums()
-                    .text_color(move || theme().muted_foreground),
-                )
-                .child(
-                    text("Covers every database, configuration and credential in this instance. No backup is made; backups elsewhere are kept.")
-                        .text_size(px(tokens::TEXT_SMALL))
-                        .text_color(move || theme().muted_foreground)
-                        .number_of_lines(2),
-                )
-                .child(
-                    text(detail)
-                        .text_size(px(tokens::TEXT_SMALL))
-                        .text_color(move || {
-                            if can_delete {
-                                theme().destructive
-                            } else {
-                                tokens::warning()
-                            }
-                        })
-                        .selectable(true),
-                ),
-        ),
-    )
+                    .text_color(move || {
+                        if can_delete {
+                            theme().destructive
+                        } else {
+                            tokens::warning()
+                        }
+                    })
+                    .selectable(true),
+            ),
+    ))
 }
 
 pub(crate) fn pending_deletions() -> impl IntoElement {
@@ -199,17 +191,23 @@ pub(crate) fn pending_deletions() -> impl IntoElement {
 fn deletions_list(rows: Vec<InstanceDeletionInfo>) -> impl IntoElement {
     let empty = rows.is_empty();
     view()
-        .flex_col()
-        .gap(tokens::space(4.0))
+        .w_full()
+        .items_center()
         .px(tokens::space(5.0))
-        .pt(tokens::space(4.0))
-        .pb(tokens::space(5.0))
-        .child(when(empty, || {
-            text("None")
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground)
-        }))
-        .child(rows.into_iter().map(deletion_row))
+        .py(tokens::space(5.0))
+        .child(
+            view()
+                .w_full()
+                .max_w(px(840.0))
+                .flex_col()
+                .gap(tokens::space(4.0))
+                .child(when(empty, || {
+                    text("None")
+                        .text_size(px(tokens::TEXT_SMALL))
+                        .text_color(move || theme().muted_foreground)
+                }))
+                .child(rows.into_iter().map(deletion_row)),
+        )
 }
 
 fn deletion_row(row: InstanceDeletionInfo) -> impl IntoElement {
@@ -232,83 +230,84 @@ fn deletion_row(row: InstanceDeletionInfo) -> impl IntoElement {
     let finish_instance = instance_id.clone();
     let restore_prefix = prefix.clone();
     let finish_prefix = prefix.clone();
-    view()
-        .flex_col()
-        .gap(tokens::space(2.0))
-        .child(ui::hairline())
-        .child(
-            text(format!("{instance_id} · {status}"))
-                .text_size(px(tokens::TEXT_SMALL))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(move || theme().foreground),
-        )
-        .child(
-            text(format!("Deletion {id}"))
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground),
-        )
-        .child(
-            text(detail)
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground)
-                .selectable(true),
-        )
-        .child(ui::field(
-            format!("Original data path {prefix}"),
-            ui::read_only_value(original),
-        ))
-        .child(when(entries > 0, {
-            let staged_label = format!("Staged data path {prefix}");
-            move || {
-                view()
-                    .flex_col()
-                    .gap(tokens::space(2.0))
-                    .child(ui::field(
-                        staged_label.clone(),
-                        ui::read_only_value(staged.clone()),
-                    ))
-                    .child(
-                        text(format!(
-                            "Remaining: {entries} entries · {:.2} MiB",
-                            bytes as f64 / (1u64 << 20) as f64
+    ui::card(
+        format!("{instance_id} · {status}"),
+        view()
+            .flex_col()
+            .gap(tokens::space(2.5))
+            .child(
+                text(format!("Deletion {id}"))
+                    .font_family("monospace")
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .text_color(move || theme().muted_foreground),
+            )
+            .child(
+                text(detail)
+                    .text_size(px(tokens::TEXT_SMALL))
+                    .text_color(move || theme().muted_foreground)
+                    .selectable(true),
+            )
+            .child(ui::field(
+                format!("Original data path {prefix}"),
+                ui::read_only_value(original),
+            ))
+            .child(when(entries > 0, {
+                let staged_label = format!("Staged data path {prefix}");
+                move || {
+                    view()
+                        .flex_col()
+                        .gap(tokens::space(2.0))
+                        .child(ui::field(
+                            staged_label.clone(),
+                            ui::read_only_value(staged.clone()),
                         ))
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .tabular_nums()
-                        .text_color(move || theme().muted_foreground),
-                    )
-            }
-        }))
-        .child(when(busy, || {
-            text("Another caller owns this deletion.")
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(tokens::warning)
-        }))
-        .child(ui::action_button(
-            format!("Restore original data {restore_prefix}"),
-            Tone::Default,
-            format!("deletion-restore-{prefix}"),
-            move || db::operations_busy() || busy || !can_restore,
-            move || db::restore_deletion(&restore_id, &restore_revision),
-        ))
-        .child(ui::field(
-            format!("Confirm deletion of {instance_id}"),
-            ui::text_field(
-                format!("deletion-confirm-{prefix}"),
-                instance_id.clone(),
-                db::confirmation,
-                db::set_confirmation,
-            ),
-        ))
-        .child(ui::action_button(
-            format!("Finish permanent deletion {finish_prefix}"),
-            Tone::Danger,
-            format!("deletion-finish-{prefix}"),
-            move || {
-                db::operations_busy()
-                    || busy
-                    || !can_erase
-                    || db::confirmation().trim() != finish_instance
-            },
-            move || db::finish_deletion(&id, &finish_revision),
-        ))
+                        .child(
+                            text(format!(
+                                "Remaining: {entries} entries · {:.2} MiB",
+                                bytes as f64 / (1u64 << 20) as f64
+                            ))
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .tabular_nums()
+                            .text_color(move || theme().muted_foreground),
+                        )
+                }
+            }))
+            .child(when(busy, || {
+                text("Another caller owns this deletion.")
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .text_color(tokens::warning)
+            }))
+            .child(view().flex_row().items_center().child(ui::action_button(
+                format!("Restore original data {restore_prefix}"),
+                Tone::Default,
+                format!("deletion-restore-{prefix}"),
+                move || db::operations_busy() || busy || !can_restore,
+                move || db::restore_deletion(&restore_id, &restore_revision),
+            )))
+            .child(ui::field(
+                format!("Confirm deletion of {instance_id}"),
+                view()
+                    .flex_row()
+                    .items_center()
+                    .gap(tokens::space(1.5))
+                    .child(view().flex_1().min_w(px(0.0)).child(ui::text_field(
+                        format!("deletion-confirm-{prefix}"),
+                        instance_id.clone(),
+                        db::confirmation,
+                        db::set_confirmation,
+                    )))
+                    .child(ui::action_button(
+                        format!("Finish permanent deletion {finish_prefix}"),
+                        Tone::Danger,
+                        format!("deletion-finish-{prefix}"),
+                        move || {
+                            db::operations_busy()
+                                || busy
+                                || !can_erase
+                                || db::confirmation().trim() != finish_instance
+                        },
+                        move || db::finish_deletion(&id, &finish_revision),
+                    )),
+            )),
+    )
 }

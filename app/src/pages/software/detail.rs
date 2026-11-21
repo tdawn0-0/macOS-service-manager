@@ -26,30 +26,36 @@ pub(super) fn detail_pane() -> impl IntoElement {
         .child(
             scroll().flex_1().min_h(px(0.0)).child(
                 view()
-                    .flex_col()
-                    .gap(tokens::space(4.0))
+                    .w_full()
+                    .items_center()
                     .px(tokens::space(5.0))
-                    .pt(tokens::space(4.0))
-                    .pb(tokens::space(5.0))
-                    .child(installed_card())
-                    .child(install_card())
-                    .child(cache_card()),
+                    .py(tokens::space(5.0))
+                    .child(
+                        view()
+                            .w_full()
+                            .max_w(px(840.0))
+                            .flex_col()
+                            .gap(tokens::space(4.0))
+                            .child(installed_card())
+                            .child(install_card())
+                            .child(cache_card()),
+                    ),
             ),
         )
 }
 
-/// The software's name, what is installed, and a fresh read.
+/// The software's name and a fresh read.
 fn header() -> impl IntoElement {
     ui::page_header(
         move || sw::active_software().title().to_string(),
-        Some(move || meta(sw::active_software())),
+        None::<&str>,
         view()
             .flex_none()
             .flex_row()
             .items_center()
             .gap(tokens::space(2.0))
             .child(when(sw::loading, || {
-                text("Loading")
+                text("Loading…")
                     .text_size(px(tokens::TEXT_CAPTION))
                     .text_color(move || theme().muted_foreground)
             }))
@@ -60,19 +66,6 @@ fn header() -> impl IntoElement {
                 sw::refresh,
             )),
     )
-}
-
-fn meta(kind: SoftwareKind) -> String {
-    let count = sw::installed_count(kind);
-    let mut text = if count == 0 {
-        "Not installed".to_string()
-    } else {
-        format!("{} installed", sw::plural(count, "version"))
-    };
-    if let Some(default) = sw::default_version(kind) {
-        text.push_str(&format!(" · default {default}"));
-    }
-    text
 }
 
 /// The read error and an operation's error.
@@ -329,8 +322,15 @@ fn install_card() -> impl IntoElement {
             .flex_col()
             .gap(tokens::space(3.0))
             .child(dynamic(|| Some(catalog_versions().into_element())))
-            .child(version_field())
-            .child(dynamic(|| Some(install_actions().into_element())))
+            .child(
+                view()
+                    .flex_row()
+                    .items_end()
+                    .flex_wrap()
+                    .gap(tokens::space(2.0))
+                    .child(view().flex_1().min_w(px(180.0)).child(version_field()))
+                    .child(dynamic(|| Some(install_actions().into_element()))),
+            )
             .child(dynamic(|| sw::preview().map(preview_inner))),
     )
 }
@@ -625,50 +625,59 @@ fn cache_body() -> impl IntoElement {
     let disabled = empty || sw::operation_busy();
 
     view()
-        .flex_col()
+        .flex_row()
+        .items_center()
+        .flex_wrap()
         .gap(tokens::space(2.0))
         .child(
-            text(meta)
-                .text_size(px(tokens::TEXT_SMALL))
-                .tabular_nums()
-                .text_color(move || theme().foreground),
-        )
-        .child(when(has_directory, move || {
             view()
-                .flex_row()
-                .items_center()
-                .gap(tokens::space(1.5))
-                .min_w(px(0.0))
+                .flex_1()
+                .min_w(px(180.0))
+                .flex_col()
+                .gap(tokens::space(1.0))
                 .child(
-                    icons::folder()
-                        .size(px(12.0))
-                        .flex_none()
-                        .text_color(move || theme().muted_foreground),
+                    text(meta)
+                        .text_size(px(tokens::TEXT_SMALL))
+                        .tabular_nums()
+                        .text_color(move || theme().foreground),
                 )
-                .child(
-                    text(directory.clone())
-                        .font_family("monospace")
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground)
-                        .truncate(),
-                )
-        }))
+                .child(when(has_directory, move || {
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(1.5))
+                        .min_w(px(0.0))
+                        .child(
+                            icons::folder()
+                                .size(px(12.0))
+                                .flex_none()
+                                .text_color(move || theme().muted_foreground),
+                        )
+                        .child(
+                            text(directory.clone())
+                                .font_family("monospace")
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .text_color(move || theme().muted_foreground)
+                                .truncate(),
+                        )
+                })),
+        )
         .child(
             view()
                 .flex_row()
                 .items_center()
                 .gap(tokens::space(2.0))
+                .child(when(sw::cache_busy(), || {
+                    text("Clearing…")
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .text_color(move || theme().muted_foreground)
+                }))
                 .child(action_button(
                     "Clear download cache",
                     Tone::Default,
                     "clear-cache",
                     disabled,
                     sw::request_clear_cache,
-                ))
-                .child(when(sw::cache_busy(), || {
-                    text("Clearing cached archives…")
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground)
-                })),
+                )),
         )
 }

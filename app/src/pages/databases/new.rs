@@ -28,22 +28,27 @@ pub(crate) fn new_pane() -> impl IntoElement {
         .child(
             scroll().flex_1().min_h(px(0.0)).child(
                 view()
-                    .flex_col()
-                    .gap(tokens::space(4.0))
+                    .w_full()
+                    .items_center()
                     .px(tokens::space(5.0))
-                    .pt(tokens::space(4.0))
-                    .pb(tokens::space(5.0))
-                    .child(tasks_section())
-                    .child(instance_card())
-                    .child(storage_card())
-                    .child(create_row()),
+                    .py(tokens::space(5.0))
+                    .child(
+                        view()
+                            .w_full()
+                            .max_w(px(840.0))
+                            .flex_col()
+                            .gap(tokens::space(4.0))
+                            .child(tasks_section())
+                            .child(instance_card())
+                            .child(storage_card())
+                            .child(create_row()),
+                    ),
             ),
         )
 }
 
 fn header() -> impl IntoElement {
     let kind = db::draft_kind();
-    let title = rail::instance_title(kind);
     ui::page_header_with_leading(
         Some(
             icons::engine(kind)
@@ -52,7 +57,7 @@ fn header() -> impl IntoElement {
                 .text_color(move || theme().muted_foreground),
         ),
         "New instance",
-        Some(title),
+        None::<&str>,
         None::<AnyElement>,
     )
 }
@@ -273,7 +278,6 @@ fn port_preview() -> impl IntoElement {
                 let suggested = db::port_conflict_suggestion();
                 let detail = inspection.detail.clone();
                 let listeners = inspection.listeners.clone();
-                let port = inspection.port;
                 view()
                     .test_id("db-port-preview")
                     .flex_col()
@@ -339,17 +343,11 @@ fn port_preview() -> impl IntoElement {
                             .text_size(px(tokens::TEXT_CAPTION))
                             .text_color(move || theme().muted_foreground)
                     }))
-                    .child(
-                        text(format!("This checks port {port}; it does not reserve it."))
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .tabular_nums()
-                            .text_color(move || theme().muted_foreground),
-                    )
             })
         }))
         .child(dynamic(move || {
             db::port_loading().then(|| {
-                text("Checking the port…")
+                text("Checking…")
                     .text_size(px(tokens::TEXT_CAPTION))
                     .text_color(move || theme().muted_foreground)
             })
@@ -361,49 +359,38 @@ fn storage_card() -> impl IntoElement {
 }
 
 fn storage_body() -> impl IntoElement {
-    view()
-        .flex_col()
-        .gap(tokens::space(2.5))
-        .child(ui::field(
-            "Data location",
-            ui::text_field(
+    view().flex_col().gap(tokens::space(2.0)).child(ui::field(
+        "Data location",
+        view()
+            .flex_row()
+            .items_center()
+            .gap(tokens::space(1.5))
+            .child(view().flex_1().min_w(px(0.0)).child(ui::text_field(
                 "db-data-directory",
-                "Blank for app storage, or a new absolute directory",
+                "App storage (default) or absolute path",
                 db::draft_data_directory,
                 db::set_draft_data_directory,
-            ),
-        ))
-        .child(
-            view()
-                .flex_row()
-                .items_center()
-                .gap(tokens::space(1.5))
-                .child(ui::action_button(
-                    "Choose parent folder…",
-                    Tone::Default,
-                    "db-choose-parent",
-                    false,
-                    db::choose_data_parent,
-                ))
-                .child(when(
-                    move || !db::draft_data_directory().is_empty(),
-                    || {
-                        ui::action_button(
-                            "Use app storage",
-                            Tone::Default,
-                            "db-use-app-storage",
-                            false,
-                            db::use_app_storage,
-                        )
-                    },
-                )),
-        )
-        .child(
-            text("A chosen folder becomes a new subfolder for this instance. External data is retained when the instance is removed.")
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground)
-                .number_of_lines(2),
-        )
+            )))
+            .child(ui::action_button(
+                "Choose parent folder…",
+                Tone::Default,
+                "db-choose-parent",
+                false,
+                db::choose_data_parent,
+            ))
+            .child(when(
+                move || !db::draft_data_directory().is_empty(),
+                || {
+                    ui::action_button(
+                        "Use app storage",
+                        Tone::Default,
+                        "db-use-app-storage",
+                        false,
+                        db::use_app_storage,
+                    )
+                },
+            )),
+    ))
 }
 
 fn create_row() -> impl IntoElement {

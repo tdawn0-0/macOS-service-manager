@@ -25,8 +25,8 @@ pub(crate) fn rail() -> impl IntoElement {
         .child(ui::page_header_with_leading(
             None::<AnyElement>,
             "Databases",
-            Some(Section::Databases.summary()),
-            None::<AnyElement>,
+            None::<&str>,
+            Some(new_instance_button()),
         ))
         .child(
             view()
@@ -34,17 +34,16 @@ pub(crate) fn rail() -> impl IntoElement {
                 .min_h(px(0.0))
                 .flex_col()
                 .px(tokens::space(2.0))
-                .py(tokens::space(3.0))
-                .child(
-                    view()
-                        .flex_row()
-                        .items_center()
-                        .justify_between()
-                        .gap(tokens::space(1.0))
-                        .child(section_label("Instances"))
-                        .child(when(
-                            || db::running_count() > 0,
-                            || {
+                .py(tokens::space(2.5))
+                .child(when(
+                    || db::running_count() > 0,
+                    || {
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .justify_end()
+                            .pb(tokens::space(1.5))
+                            .child(
                                 nsh_base::button()
                                     .test_id("db-stop-all")
                                     .px(tokens::space(1.5))
@@ -60,71 +59,75 @@ pub(crate) fn rail() -> impl IntoElement {
                                             .text_size(px(tokens::TEXT_CAPTION))
                                             .font_weight(FontWeight::MEDIUM)
                                             .text_color(move || theme().muted_foreground),
-                                    )
-                            },
-                        )),
-                )
+                                    ),
+                            )
+                    },
+                ))
                 .child(dynamic(|| Some(rows())))
-                .child(
-                    view()
-                        .flex_col()
-                        .gap(tokens::space(1.0))
-                        .pt(tokens::space(2.0))
-                        .child(nav_row(
-                            "New instance",
-                            "db-new",
-                            None::<fn() -> String>,
-                            || db::mode() == db::Mode::New,
-                            db::open_new,
-                        )),
-                )
                 .child(view().flex_1())
                 .child(
                     view()
                         .flex_col()
-                        .gap(tokens::space(1.0))
-                        .pt(tokens::space(3.0))
-                        .child(section_label("Unfinished"))
+                        .gap(tokens::space(0.5))
+                        .pt(tokens::space(2.0))
+                        .child(view().pb(tokens::space(1.5)).child(ui::hairline()))
                         .child(nav_row(
                             "Database tasks",
                             "db-work",
-                            Some(|| db::database_work().len().to_string()),
+                            || db::database_work().len().to_string(),
                             || db::mode() == db::Mode::Work,
                             db::open_work,
                         ))
                         .child(nav_row(
                             "Initializations",
                             "db-initializations",
-                            Some(|| db::pending_initializations().len().to_string()),
+                            || db::pending_initializations().len().to_string(),
                             || db::mode() == db::Mode::Initializations,
                             db::open_initializations,
                         ))
                         .child(nav_row(
                             "Pending deletions",
                             "db-deletions",
-                            Some(|| db::pending_deletions().len().to_string()),
+                            || db::pending_deletions().len().to_string(),
                             || db::mode() == db::Mode::Deletions,
                             db::open_deletions,
                         )),
-                )
-                .child(
-                    view().px(tokens::space(2.0)).pt(tokens::space(3.0)).child(
-                        text("Removing an instance keeps its data files")
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .text_color(move || theme().muted_foreground)
-                            .number_of_lines(2),
-                    ),
                 ),
         )
 }
 
-fn section_label(title: &'static str) -> impl IntoElement {
-    text(title)
-        .px(tokens::space(2.0))
-        .pb(tokens::space(1.0))
-        .text_size(px(tokens::TEXT_CAPTION))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(move || theme().muted_foreground)
+fn new_instance_button() -> impl IntoElement {
+    view()
+        .flex_none()
+        .tooltip(ui::tooltip("New instance"))
+        .child(
+            nsh_base::button()
+                .test_id("db-new")
+                .size(px(26.0))
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .rounded(move || theme().radius)
+                .selected(|| db::mode() == db::Mode::New)
+                .bg(move || {
+                    if db::mode() == db::Mode::New {
+                        tokens::row_selected()
+                    } else {
+                        AdaptiveColor::TRANSPARENT
+                    }
+                })
+                .hover(move |style| style.bg(tokens::row_hover()))
+                .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
+                .accessibility_label("New instance")
+                .on_press(db::open_new)
+                .child(icons::plus().size(px(14.0)).text_color(move || {
+                    if db::mode() == db::Mode::New {
+                        theme().foreground
+                    } else {
+                        theme().muted_foreground
+                    }
+                })),
+        )
 }
 
 /// The registered instances, read from the store each time they change.
@@ -301,22 +304,22 @@ pub(crate) fn instance_title(kind: &str) -> &'static str {
 fn nav_row(
     label: &'static str,
     test_id: &'static str,
-    trailing: Option<impl Fn() -> String + 'static>,
+    count: impl Fn() -> String + 'static,
     selected: impl IntoReactive<bool> + 'static,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
     let selected = selected.into_reactive();
     let selected_bg = selected.clone();
-    let selected_icon = selected.clone();
+    let selected_text = selected.clone();
     nsh_base::button()
         .test_id(test_id)
         .w_full()
         .flex_row()
         .items_center()
-        .justify_start()
+        .justify_between()
         .gap(tokens::space(2.0))
         .px(tokens::space(2.0))
-        .py(tokens::space(1.5))
+        .py(tokens::space(1.25))
         .rounded(move || theme().radius)
         .selected(move || selected.get())
         .bg(move || {
@@ -330,31 +333,25 @@ fn nav_row(
         .focus_visible(|style| style.ring(px(2.0)).ring_color(move || theme().ring))
         .on_press(on_press)
         .child(
-            icons::external()
-                .size(px(13.0))
-                .flex_none()
+            text(label)
+                .flex_1()
+                .min_w(px(0.0))
+                .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || {
-                    if selected_icon.get() {
+                    if selected_text.get() {
                         theme().foreground
                     } else {
                         theme().muted_foreground
                     }
-                }),
-        )
-        .child(
-            text(label)
-                .flex_1()
-                .min_w(px(0.0))
-                .text_sm()
-                .text_color(move || theme().sidebar_foreground)
+                })
                 .truncate(),
         )
-        .child(trailing.map(|count| {
+        .child(
             text(count)
                 .text_size(px(tokens::TEXT_CAPTION))
                 .tabular_nums()
-                .text_color(move || theme().muted_foreground)
-        }))
+                .text_color(move || theme().muted_foreground),
+        )
 }
 
 /// Moves the workspace to the software screen of an engine, as the Go

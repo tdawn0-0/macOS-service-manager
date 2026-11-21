@@ -29,88 +29,97 @@ fn tasks_body() -> impl IntoElement {
     view()
         .flex_col()
         .gap(tokens::space(2.0))
-        .child(tasks.into_iter().map(|(id, kind, progress, result, running)| {
-            let instance_id = id.clone();
-            let cancel_id = id.clone();
-            let dismiss_id = id.clone();
-            let label = if kind == "initialize" {
-                "Initialization".to_string()
-            } else {
-                format!("Database · {kind}")
-            };
-            let cancel_label = if kind == "initialize" {
-                format!("Cancel initialization {instance_id}")
-            } else {
-                format!("Cancel database operation {instance_id}")
-            };
-            let dismiss_label = if kind == "initialize" {
-                format!("Dismiss initialization result {instance_id}")
-            } else {
-                format!("Dismiss database result {instance_id}")
-            };
-            view()
-                .test_id(&format!("db-task-{id}"))
-                .flex_col()
-                .gap(tokens::space(1.0))
-                .p(tokens::space(2.0))
-                .rounded(move || theme().radius)
-                .bg(tokens::inset)
-                .child(ui::hairline())
-                .child(
-                    text(format!("{label} · {id}"))
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().muted_foreground),
-                )
-                .child(
-                    text(if running {
-                        progress.clone()
+        .child(
+            tasks
+                .into_iter()
+                .map(|(id, kind, progress, result, running)| {
+                    let instance_id = id.clone();
+                    let cancel_id = id.clone();
+                    let dismiss_id = id.clone();
+                    let label = if kind == "initialize" {
+                        "Initialization".to_string()
                     } else {
-                        result.clone().unwrap_or_default()
-                    })
-                    .text_size(px(tokens::TEXT_SMALL))
-                    .text_color(move || {
-                        if running {
-                            tokens::success()
-                        } else if result.as_deref().is_some_and(|line| line.contains("Error:")) {
-                            theme().destructive
-                        } else {
-                            theme().foreground
-                        }
-                    })
-                    .selectable(true),
-                )
-                .child(when(running, move || {
-                    let cancel_label = cancel_label.clone();
-                    let cancel_id = cancel_id.clone();
+                        format!("Database · {kind}")
+                    };
+                    let cancel_label = if kind == "initialize" {
+                        format!("Cancel initialization {instance_id}")
+                    } else {
+                        format!("Cancel database operation {instance_id}")
+                    };
+                    let dismiss_label = if kind == "initialize" {
+                        format!("Dismiss initialization result {instance_id}")
+                    } else {
+                        format!("Dismiss database result {instance_id}")
+                    };
                     view()
+                        .test_id(&format!("db-task-{id}"))
                         .flex_col()
-                        .gap(tokens::space(1.0))
-                        .child(ui::action_button(
-                            cancel_label,
-                            Tone::Default,
-                            format!("db-task-cancel-{cancel_id}"),
-                            false,
-                            move || db::cancel_task(&cancel_id),
-                        ))
+                        .gap(tokens::space(1.5))
+                        .p(tokens::space(3.0))
+                        .rounded(move || theme().radius)
+                        .bg(tokens::inset)
+                        .border_1()
+                        .border_color(tokens::hairline)
                         .child(
-                            text("Canceling does not undo data already written. Review the target before retrying.")
+                            text(format!("{label} · {id}"))
                                 .text_size(px(tokens::TEXT_CAPTION))
+                                .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(move || theme().muted_foreground),
                         )
-                }))
-                .child(when(!running, move || {
-                    let dismiss_label = dismiss_label.clone();
-                    let dismiss_id = dismiss_id.clone();
-                    ui::action_button(
-                        dismiss_label,
-                        Tone::Default,
-                        format!("db-task-dismiss-{dismiss_id}"),
-                        false,
-                        move || db::dismiss_task(&dismiss_id),
-                    )
-                }))
-        }))
+                        .child(
+                            text(if running {
+                                progress.clone()
+                            } else {
+                                result.clone().unwrap_or_default()
+                            })
+                            .text_size(px(tokens::TEXT_SMALL))
+                            .text_color(move || {
+                                if running {
+                                    tokens::success()
+                                } else if result
+                                    .as_deref()
+                                    .is_some_and(|line| line.contains("Error:"))
+                                {
+                                    theme().destructive
+                                } else {
+                                    theme().foreground
+                                }
+                            })
+                            .selectable(true),
+                        )
+                        .child(when(running, move || {
+                            let cancel_label = cancel_label.clone();
+                            let cancel_id = cancel_id.clone();
+                            view()
+                                .flex_row()
+                                .items_center()
+                                .gap(tokens::space(2.0))
+                                .child(ui::action_button(
+                                    cancel_label,
+                                    Tone::Default,
+                                    format!("db-task-cancel-{cancel_id}"),
+                                    false,
+                                    move || db::cancel_task(&cancel_id),
+                                ))
+                                .child(
+                                    text("Written data is kept.")
+                                        .text_size(px(tokens::TEXT_CAPTION))
+                                        .text_color(move || theme().muted_foreground),
+                                )
+                        }))
+                        .child(when(!running, move || {
+                            let dismiss_label = dismiss_label.clone();
+                            let dismiss_id = dismiss_id.clone();
+                            view().flex_row().items_center().child(ui::action_button(
+                                dismiss_label,
+                                Tone::Default,
+                                format!("db-task-dismiss-{dismiss_id}"),
+                                false,
+                                move || db::dismiss_task(&dismiss_id),
+                            ))
+                        }))
+                }),
+        )
 }
 
 pub(crate) fn database_work() -> impl IntoElement {
@@ -138,13 +147,19 @@ fn work_list() -> impl IntoElement {
     let rows = db::database_work();
     let empty = rows.is_empty();
     view()
-        .flex_col()
-        .gap(tokens::space(4.0))
+        .w_full()
+        .items_center()
         .px(tokens::space(5.0))
-        .pt(tokens::space(4.0))
-        .pb(tokens::space(5.0))
-        .child(when(empty, empty_line))
-        .child(rows.into_iter().map(work_row))
+        .py(tokens::space(5.0))
+        .child(
+            view()
+                .w_full()
+                .max_w(px(840.0))
+                .flex_col()
+                .gap(tokens::space(4.0))
+                .child(when(empty, empty_line))
+                .child(rows.into_iter().map(work_row)),
+        )
 }
 
 fn work_row(row: DatabaseWorkInfo) -> impl IntoElement {
@@ -165,58 +180,42 @@ fn work_row(row: DatabaseWorkInfo) -> impl IntoElement {
     } else {
         format!("Finish database task {prefix}")
     };
-    view()
-        .flex_col()
-        .gap(tokens::space(2.0))
-        .child(ui::hairline())
-        .child(
-            text(format!("{instance_id} · {kind}"))
-                .text_size(px(tokens::TEXT_SMALL))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(move || theme().foreground),
-        )
-        .child(
-            text(status.clone())
-                .text_size(px(tokens::TEXT_SMALL))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(move || {
-                    if status == "Succeeded" {
-                        tokens::success()
-                    } else {
-                        tokens::warning()
-                    }
-                }),
-        )
-        .child(
-            text(detail)
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().foreground)
-                .selectable(true),
-        )
-        .child(
-            text(format!("Task {id} · Target {database}"))
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground),
-        )
-        .child(when(!output.is_empty(), {
-            let output = output.clone();
-            move || ui::field(format!("Output {id}"), ui::read_only_value(output.clone()))
-        }))
-        .child(ui::action_button(
-            label,
-            Tone::Primary,
-            format!("work-resolve-{prefix}"),
-            move || db::operations_busy() || !can_resolve,
-            move || db::resolve_work(&resolve_id, &revision),
-        ))
-        .child(
-            text(
-                "Does not undo changes already written. Database files and backup output are kept.",
+    ui::card(
+        format!("{instance_id} · {kind}"),
+        view()
+            .flex_col()
+            .gap(tokens::space(2.0))
+            .child(
+                view()
+                    .flex_row()
+                    .items_center()
+                    .gap(tokens::space(2.0))
+                    .child(ui::status_tag(status))
+                    .child(
+                        text(format!("Task {id} · Target {database}"))
+                            .font_family("monospace")
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().muted_foreground),
+                    ),
             )
-            .text_size(px(tokens::TEXT_CAPTION))
-            .text_color(move || theme().muted_foreground)
-            .number_of_lines(2),
-        )
+            .child(
+                text(detail)
+                    .text_size(px(tokens::TEXT_SMALL))
+                    .text_color(move || theme().foreground)
+                    .selectable(true),
+            )
+            .child(when(!output.is_empty(), {
+                let output = output.clone();
+                move || ui::field(format!("Output {id}"), ui::read_only_value(output.clone()))
+            }))
+            .child(view().flex_row().items_center().child(ui::action_button(
+                label,
+                Tone::Primary,
+                format!("work-resolve-{prefix}"),
+                move || db::operations_busy() || !can_resolve,
+                move || db::resolve_work(&resolve_id, &revision),
+            ))),
+    )
 }
 
 pub(crate) fn initializations() -> impl IntoElement {
@@ -247,13 +246,19 @@ fn initializations_list() -> impl IntoElement {
     let rows = db::pending_initializations();
     let empty = rows.is_empty();
     view()
-        .flex_col()
-        .gap(tokens::space(4.0))
+        .w_full()
+        .items_center()
         .px(tokens::space(5.0))
-        .pt(tokens::space(4.0))
-        .pb(tokens::space(5.0))
-        .child(when(empty, empty_line))
-        .child(rows.into_iter().map(initialization_row))
+        .py(tokens::space(5.0))
+        .child(
+            view()
+                .w_full()
+                .max_w(px(840.0))
+                .flex_col()
+                .gap(tokens::space(4.0))
+                .child(when(empty, empty_line))
+                .child(rows.into_iter().map(initialization_row)),
+        )
 }
 
 fn initialization_row(row: InstanceInitializationInfo) -> impl IntoElement {
@@ -274,39 +279,35 @@ fn initialization_row(row: InstanceInitializationInfo) -> impl IntoElement {
         _ => format!("Stop and archive data {prefix}"),
     };
     let resolve_id = id.clone();
-    view()
-        .flex_col()
-        .gap(tokens::space(2.0))
-        .child(ui::hairline())
-        .child(
-            text(format!("{instance_id} · {status}"))
-                .text_size(px(tokens::TEXT_SMALL))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(move || theme().foreground),
-        )
-        .child(
-            text(format!("{} · port {port}", rail::instance_title(&kind)))
-                .text_size(px(tokens::TEXT_SMALL))
-                .tabular_nums()
-                .text_color(move || theme().muted_foreground),
-        )
-        .child(
-            text(detail)
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground)
-                .selectable(true),
-        )
-        .child(ui::field(
-            format!("Prepared data {id}"),
-            ui::read_only_value(path),
-        ))
-        .child(ui::action_button(
-            label,
-            Tone::Primary,
-            format!("initialization-resolve-{prefix}"),
-            move || db::operations_busy() || busy || !can_resolve,
-            move || db::resolve_initialization(&resolve_id, &revision),
-        ))
+    ui::card(
+        format!("{instance_id} · {status}"),
+        view()
+            .flex_col()
+            .gap(tokens::space(2.0))
+            .child(
+                text(format!("{} · port {port}", rail::instance_title(&kind)))
+                    .text_size(px(tokens::TEXT_SMALL))
+                    .tabular_nums()
+                    .text_color(move || theme().muted_foreground),
+            )
+            .child(
+                text(detail)
+                    .text_size(px(tokens::TEXT_SMALL))
+                    .text_color(move || theme().muted_foreground)
+                    .selectable(true),
+            )
+            .child(ui::field(
+                format!("Prepared data {id}"),
+                ui::read_only_value(path),
+            ))
+            .child(view().flex_row().items_center().child(ui::action_button(
+                label,
+                Tone::Primary,
+                format!("initialization-resolve-{prefix}"),
+                move || db::operations_busy() || busy || !can_resolve,
+                move || db::resolve_initialization(&resolve_id, &revision),
+            ))),
+    )
 }
 
 fn heading(

@@ -20,10 +20,7 @@ use crate::{
         controls::{self as ui, Tone},
         icons, note,
     },
-    store::{
-        Section,
-        development::{self as dev, Mode, Tab},
-    },
+    store::development::{self as dev, Mode, Tab},
     theme as tokens,
 };
 
@@ -52,12 +49,12 @@ pub(crate) fn development() -> impl IntoElement {
         ))
 }
 
-/// The workspace's title, summary and a fresh read of the runtime home.
+/// The workspace's title and a fresh read of the runtime home.
 fn header() -> impl IntoElement {
     let software = move || dev::tab() == Tab::Software;
     ui::page_header(
         "Development",
-        Some(Section::Development.summary()),
+        None::<&str>,
         view()
             .flex_none()
             .flex_row()

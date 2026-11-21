@@ -39,17 +39,23 @@ pub(crate) fn detail_pane() -> impl IntoElement {
                         .child(
                             scroll().flex_1().min_h(px(0.0)).child(
                                 view()
-                                    .flex_col()
-                                    .gap(tokens::space(4.0))
+                                    .w_full()
+                                    .items_center()
                                     .px(tokens::space(5.0))
-                                    .pt(tokens::space(4.0))
-                                    .pb(tokens::space(5.0))
-                                    .child(tasks_section())
-                                    .child(connections_card())
-                                    .child(endpoint_card())
-                                    .child(databases_card())
-                                    .child(backups_card())
-                                    .child(remove_card()),
+                                    .py(tokens::space(5.0))
+                                    .child(
+                                        view()
+                                            .w_full()
+                                            .max_w(px(840.0))
+                                            .flex_col()
+                                            .gap(tokens::space(4.0))
+                                            .child(tasks_section())
+                                            .child(connections_card())
+                                            .child(endpoint_card())
+                                            .child(databases_card())
+                                            .child(backups_card())
+                                            .child(remove_card()),
+                                    ),
                             ),
                         )
                 },
@@ -99,21 +105,10 @@ fn empty_state() -> impl IntoElement {
                         ),
                 )
                 .child(
-                    view()
-                        .flex_col()
-                        .items_center()
-                        .gap(tokens::space(1.0))
-                        .child(
-                            text("No instance selected")
-                                .text_size(px(15.0))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(move || theme().foreground),
-                        )
-                        .child(
-                            text("Choose an instance from the sidebar, or create a new local database instance.")
-                                .text_size(px(tokens::TEXT_SMALL))
-                                .text_color(move || theme().muted_foreground),
-                        ),
+                    text("No database selected")
+                        .text_size(px(15.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(move || theme().foreground),
                 )
                 .child(ui::action_button(
                     "New instance",
@@ -139,12 +134,6 @@ fn header() -> AnyElement {
     let id = instance.id.clone();
     let status = db::status(&id);
     let running = matches!(status.as_str(), "Running" | "Healthy");
-    let meta = format!(
-        "{} {} · 127.0.0.1:{}",
-        rail::instance_title(&instance.kind),
-        db::package_version(&instance.package),
-        instance.port
-    );
     let start_id = id.clone();
     let restart_id = id.clone();
     let stop_id = id.clone();
@@ -158,7 +147,7 @@ fn header() -> AnyElement {
                 .text_color(move || theme().muted_foreground),
         ),
         id,
-        Some(meta),
+        None::<&str>,
         Some(
             view()
                 .flex_row()
@@ -360,13 +349,7 @@ fn connections_card() -> impl IntoElement {
                                 .selectable(true),
                         )
                 })
-            }))
-            .child(
-                text("Profiles never store the password. The Terminal launcher reads the credential file inside the shell.")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground)
-                    .number_of_lines(2),
-            ),
+            })),
     )
 }
 
@@ -638,15 +621,21 @@ fn endpoint_card() -> impl IntoElement {
     let key = computed(|| {
         let instance = db::selected_instance()?;
         let version = db::package_version(&instance.package);
-        Some((instance.id, version, instance.port, instance.data_directory))
+        Some((
+            instance.id,
+            instance.kind,
+            version,
+            instance.port,
+            instance.data_directory,
+        ))
     });
     ui::card(
         "Endpoint & storage",
         dynamic(move || {
             Some(
                 key.get()
-                    .map(|(id, version, port, data_directory)| {
-                        endpoint_body(id, version, port, data_directory).into_element()
+                    .map(|(id, kind, version, port, data_directory)| {
+                        endpoint_body(id, kind, version, port, data_directory).into_element()
                     })
                     .unwrap_or_else(|| empty().into_element()),
             )
@@ -656,6 +645,7 @@ fn endpoint_card() -> impl IntoElement {
 
 fn endpoint_body(
     id: String,
+    kind: String,
     version: String,
     port: i64,
     data_directory: String,
@@ -666,6 +656,7 @@ fn endpoint_body(
         data_directory.clone()
     };
     let endpoint = format!("127.0.0.1:{port}");
+    let summary = format!("{} {} · {endpoint}", rail::instance_title(&kind), version);
     let external = !data_directory.is_empty();
 
     let id_upgrade = id.clone();
@@ -677,32 +668,36 @@ fn endpoint_body(
     view()
         .flex_col()
         .gap(tokens::space(2.5))
-        .child(kv("Version", version))
-        .child(dynamic(move || {
-            let target = db::upgrade_target(&id_upgrade)?;
-            let upgrade_version = db::package_version(&target);
-            let upgrade_id = id_upgrade.clone();
-            let running_id = id_upgrade.clone();
-            Some(
-                view()
-                    .flex_row()
-                    .items_center()
-                    .gap(tokens::space(1.5))
-                    .child(ui::action_button(
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .flex_wrap()
+                .gap(tokens::space(2.0))
+                .child(
+                    text(summary)
+                        .text_size(px(tokens::TEXT_SMALL))
+                        .font_weight(FontWeight::MEDIUM)
+                        .tabular_nums()
+                        .text_color(move || theme().foreground)
+                        .selectable(true),
+                )
+                .child(dynamic(move || {
+                    let target = db::upgrade_target(&id_upgrade)?;
+                    let upgrade_version = db::package_version(&target);
+                    let upgrade_id = id_upgrade.clone();
+                    let running_id = id_upgrade.clone();
+                    Some(ui::action_button(
                         format!("Upgrade to {upgrade_version}…"),
                         Tone::Default,
                         "db-upgrade",
                         move || db::operations_busy() || db::is_running(&running_id),
                         move || db::request_upgrade(&upgrade_id),
                     ))
-                    .child(
-                        text("Only the server version changes; data, port and credentials are kept.")
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .text_color(move || theme().muted_foreground),
-                    ),
-            )
-        }))
-        .child(kv("Endpoint", endpoint))
+                })),
+        )
+        .child(ui::kv_mono("Endpoint", endpoint))
         .child(
             view()
                 .flex_col()
@@ -743,7 +738,8 @@ fn endpoint_body(
                 )
                 .child(edit_port_preview(id_preview)),
         )
-        .child(kv("Data", data))
+        .child(ui::hairline())
+        .child(ui::kv_mono("Data", data))
         .child(dynamic(move || {
             let telemetry = db::telemetry(&id_telemetry);
             let disk = telemetry
@@ -761,15 +757,14 @@ fn endpoint_body(
                     .test_id("db-telemetry")
                     .flex_col()
                     .gap(tokens::space(2.0))
-                    .child(kv("Disk usage", disk))
-                    .child(kv("Latest backup", backup)),
+                    .child(ui::kv("Disk usage", disk))
+                    .child(ui::kv("Latest backup", backup)),
             )
         }))
         .child(when(external, || {
-            text("External data is retained when the instance is removed; permanent erasure is not available for it.")
+            text("External data is kept when removed; permanent deletion is unavailable.")
                 .text_size(px(tokens::TEXT_CAPTION))
                 .text_color(tokens::warning)
-                .number_of_lines(2)
         }))
 }
 
@@ -854,34 +849,11 @@ fn edit_port_preview(id: String) -> impl IntoElement {
         }))
         .child(dynamic(move || {
             db::edit_port_loading(&id_load).then(|| {
-                text("Checking the port…")
+                text("Checking…")
                     .text_size(px(tokens::TEXT_CAPTION))
                     .text_color(move || theme().muted_foreground)
             })
         }))
-}
-
-fn kv(label: &'static str, value: String) -> impl IntoElement {
-    view()
-        .flex_row()
-        .items_start()
-        .gap(tokens::space(2.0))
-        .child(
-            text(label)
-                .w(px(84.0))
-                .flex_none()
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || theme().muted_foreground),
-        )
-        .child(
-            text(value)
-                .flex_1()
-                .min_w(px(0.0))
-                .text_size(px(tokens::TEXT_SMALL))
-                .tabular_nums()
-                .text_color(move || theme().foreground)
-                .selectable(true),
-        )
 }
 
 // --- Databases and users -----------------------------------------------------
@@ -909,7 +881,6 @@ fn databases_body(id: String, kind: String) -> impl IntoElement {
 
     let id_refresh = id.clone();
     let id_refresh_disabled = id.clone();
-    let id_running = id.clone();
     let id_create = id.clone();
     let id_drop = id.clone();
     let id_create_user = id.clone();
@@ -929,14 +900,6 @@ fn databases_body(id: String, kind: String) -> impl IntoElement {
                     "db-catalog-refresh",
                     move || db::operations_busy() || !db::is_running(&id_refresh_disabled),
                     move || db::refresh_catalog(&id_refresh),
-                ))
-                .child(when(
-                    move || !db::is_running(&id_running),
-                    || {
-                        text("Start the instance to read its databases.")
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .text_color(move || theme().muted_foreground)
-                    },
                 ))
                 .child(when(db::catalog_loading, || {
                     text("Reading…")
@@ -1235,9 +1198,9 @@ fn backups_body(id: String, kind: String) -> impl IntoElement {
                         .child(
                             text(move || {
                                 if drag_over.get() {
-                                    "Drop backup file to restore"
+                                    "Drop backup file"
                                 } else {
-                                    "Drop a backup file here"
+                                    "Drop file here"
                                 }
                             })
                             .text_size(px(tokens::TEXT_CAPTION))
@@ -1543,18 +1506,18 @@ fn remove_body(id: String, external: bool) -> impl IntoElement {
         .gap(tokens::space(2.5))
         .child(
             text(if external {
-                "Removing the registration keeps the external data directory. Devbase never deletes external data; permanent erasure is not available for it."
+                "External data is kept on disk."
             } else {
-                "Removing the registration keeps the data files under instances/<id>. Permanent erasure is a separate, confirmed operation."
+                "Removing keeps data files on disk."
             })
             .text_size(px(tokens::TEXT_CAPTION))
-            .text_color(move || theme().muted_foreground)
-            .number_of_lines(3),
+            .text_color(move || theme().muted_foreground),
         )
         .child(
             view()
                 .flex_row()
                 .items_center()
+                .flex_wrap()
                 .gap(tokens::space(1.5))
                 .child(ui::action_button(
                     "Remove instance (keep data files)",

@@ -1022,11 +1022,6 @@ fn ca_runtime_trust_card_shows_exports_and_copies_shell_and_dotenv() {
     app.press("id:ca-open").unwrap();
     app.wait_for("id:ca-runtime-trust").unwrap();
     assert!(app.screen().shows("CLI & Runtime Trust"));
-    assert!(
-        app.screen()
-            .matches("text:/Node\\.js, Python, and curl/")
-            .unwrap()
-    );
     assert!(app.screen().shows("/tmp/devbase-ca/active-1.pem"));
     assert!(app.screen().matches("text:/NODE_EXTRA_CA_CERTS=/").unwrap());
     assert!(app.screen().matches("text:/SSL_CERT_FILE=/").unwrap());

@@ -13,10 +13,7 @@ use nsh_core::prelude::*;
 
 use crate::{
     components::icons,
-    store::{
-        Section,
-        software::{self as sw, SoftwareKind},
-    },
+    store::software::{self as sw, SoftwareKind},
     theme as tokens,
 };
 
@@ -46,9 +43,8 @@ fn rail() -> impl IntoElement {
             view()
                 .h(px(tokens::TITLE_BAR_HEIGHT))
                 .flex_none()
-                .flex_col()
-                .justify_center()
-                .gap(tokens::space(0.5))
+                .flex_row()
+                .items_center()
                 .px(tokens::space(4.0))
                 .border_b_1()
                 .border_color(tokens::hairline)
@@ -58,12 +54,6 @@ fn rail() -> impl IntoElement {
                         .text_size(px(15.0))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(move || theme().foreground)
-                        .truncate(),
-                )
-                .child(
-                    text(Section::Development.summary())
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground)
                         .truncate(),
                 ),
         )
@@ -85,15 +75,6 @@ fn rail() -> impl IntoElement {
                                 .pt(tokens::space(3.0))
                                 .child(group("Database engines", SoftwareKind::DATABASES)),
                         ),
-                )
-                .child(view().flex_1())
-                .child(
-                    view().px(tokens::space(2.0)).pt(tokens::space(3.0)).child(
-                        text("Downloads are verified before they are installed")
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .text_color(move || theme().muted_foreground)
-                            .number_of_lines(2),
-                    ),
                 ),
         )
 }

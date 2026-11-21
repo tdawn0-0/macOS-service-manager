@@ -18,29 +18,28 @@ pub(super) fn shell_integration() -> impl IntoElement {
     dev::load();
     scroll().flex_1().min_h(px(0.0)).child(
         view()
-            .flex_col()
-            .gap(tokens::space(4.0))
+            .w_full()
+            .items_center()
             .px(tokens::space(5.0))
-            .py(tokens::space(4.0))
-            .child(shells_card())
-            .child(ca_env_card())
-            .child(runtime_card("node"))
-            .child(runtime_card("java")),
+            .py(tokens::space(5.0))
+            .child(
+                view()
+                    .w_full()
+                    .max_w(px(840.0))
+                    .flex_col()
+                    .gap(tokens::space(4.0))
+                    .child(shells_card())
+                    .child(ca_env_card())
+                    .child(runtime_card("node"))
+                    .child(runtime_card("java")),
+            ),
     )
 }
 
 fn shells_card() -> impl IntoElement {
     card(
         "Shell startup files",
-        view()
-            .flex_col()
-            .gap(tokens::space(2.0))
-            .child(
-                text("Devbase edits only its own marked block. It never evaluates a startup file.")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground),
-            )
-            .child(dynamic(|| Some(shells_list().into_element()))),
+        dynamic(|| Some(shells_list().into_element())),
     )
 }
 
@@ -56,9 +55,8 @@ fn shells_list() -> impl IntoElement {
     }
     view()
         .flex_col()
-        .gap(tokens::space(2.0))
         .child(when(empty, || {
-            text("No supported shell was found.")
+            text("No supported shells found")
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
         }))
@@ -82,18 +80,25 @@ fn shell_row(row: dev::ShellRow) -> impl IntoElement {
                 .flex_row()
                 .items_center()
                 .flex_wrap()
-                .gap(tokens::space(1.5))
+                .gap(tokens::space(2.0))
                 .child(
-                    text(label)
-                        .text_size(px(tokens::TEXT_BODY))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(move || theme().foreground),
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(1.5))
+                        .child(
+                            text(label)
+                                .text_size(px(tokens::TEXT_BODY))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(move || theme().foreground),
+                        )
+                        .child(if available {
+                            tag("Installed", TagTone::Neutral)
+                        } else {
+                            tag("Not installed", TagTone::Warning)
+                        }),
                 )
-                .child(if available {
-                    tag("Installed", TagTone::Neutral)
-                } else {
-                    tag("Not installed", TagTone::Warning)
-                })
+                .child(view().flex_1())
                 .child(status_text("Node.js", node, row.node_applied))
                 .child(status_text("Java", java, row.java_applied))
                 .child(status_text("Local CA", ca_env, row.ca_env_applied)),
@@ -156,27 +161,12 @@ fn ca_env_card() -> impl IntoElement {
             .flex_col()
             .gap(tokens::space(2.5))
             .child(
-                text("Node.js, Python, and curl do not automatically read macOS Keychain trust roots. Enabling this writes a reversible Devbase block in zsh, Bash, and fish startup files so local HTTPS requests trust the Devbase local CA.")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground),
-            )
-            .child(
                 view()
                     .flex_row()
                     .items_center()
                     .gap(tokens::space(2.0))
-                    .child(ui::switch(
-                        "shell-ca-env-switch",
-                        dev::ca_env_enabled,
-                        || {
-                            dev::is_busy("ca-env-shell")
-                                || (!dev::ca_cert_exists() && !dev::ca_env_enabled())
-                        },
-                        "Local HTTPS CA environment",
-                        dev::set_ca_env_shell,
-                    ))
                     .child(
-                        text("Export local CA environment variables in detected shells")
+                        text("Export CA variables in shells")
                             .flex_1()
                             .min_w(px(0.0))
                             .text_size(px(tokens::TEXT_SMALL))
@@ -192,26 +182,39 @@ fn ca_env_card() -> impl IntoElement {
                         } else {
                             tag("Not enabled", TagTone::Neutral).into_element()
                         })
-                    })),
+                    }))
+                    .child(ui::switch(
+                        "shell-ca-env-switch",
+                        dev::ca_env_enabled,
+                        || {
+                            dev::is_busy("ca-env-shell")
+                                || (!dev::ca_cert_exists() && !dev::ca_env_enabled())
+                        },
+                        "Local HTTPS CA environment",
+                        dev::set_ca_env_shell,
+                    )),
             )
             .child(when(
                 || !dev::ca_cert_exists(),
                 || {
-                    text("Local CA certificate not found yet. Create or trust the local CA in HTTPS Proxy first.")
+                    text("Create or trust the local CA in HTTPS Proxy first.")
                         .text_size(px(tokens::TEXT_CAPTION))
                         .text_color(tokens::warning)
                 },
             ))
-            .child(field_label("Generated shell exports (zsh / Bash)"))
             .child(
-                ui::inset(
-                    text(dev::ca_env_preview)
-                        .test_id("shell-ca-env-preview")
-                        .font_family("monospace")
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().foreground)
-                        .selectable(true),
-                ),
+                view()
+                    .flex_col()
+                    .gap(tokens::space(1.0))
+                    .child(field_label("zsh / Bash"))
+                    .child(ui::inset(
+                        text(dev::ca_env_preview)
+                            .test_id("shell-ca-env-preview")
+                            .font_family("monospace")
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().foreground)
+                            .selectable(true),
+                    )),
             )
             .child(dynamic(|| {
                 let fish_available = dev::shells()
@@ -221,8 +224,8 @@ fn ca_env_card() -> impl IntoElement {
                 (fish_available && !preview.is_empty()).then(move || {
                     view()
                         .flex_col()
-                        .gap(tokens::space(1.5))
-                        .child(field_label("Generated shell exports (fish)"))
+                        .gap(tokens::space(1.0))
+                        .child(field_label("fish"))
                         .child(ui::inset(
                             text(preview)
                                 .test_id("shell-ca-env-preview-fish")
@@ -233,12 +236,7 @@ fn ca_env_card() -> impl IntoElement {
                         ))
                         .into_element()
                 })
-            }))
-            .child(
-                text("Start a new terminal or AI session after changing this.")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground),
-            ),
+            })),
     ))
 }
 
@@ -248,36 +246,26 @@ fn runtime_card(runtime: &'static str) -> impl IntoElement {
     } else {
         "Node.js in the terminal"
     };
-    let description = if runtime == "java" {
-        "Configures installed zsh, Bash and fish, including non-interactive commands. Each folder follows .java-version and .sdkmanrc, else the default."
-    } else {
-        "Configures installed zsh, Bash and fish, including non-interactive commands. Each folder runs its declared Node.js version, else the default."
-    };
     card(
         title,
         view()
             .flex_col()
-            .gap(tokens::space(2.0))
-            .child(
-                text(description)
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground),
-            )
+            .gap(tokens::space(2.5))
             .child(dynamic(move || {
                 Some(runtime_controls(runtime).into_element())
             }))
-            .child(field_label("BASH_ENV template"))
             .child(
-                text(dev::bash_command)
-                    .font_family("monospace")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground)
-                    .selectable(true),
-            )
-            .child(
-                text("Start a new terminal or AI session after changing this.")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground),
+                view()
+                    .flex_col()
+                    .gap(tokens::space(1.0))
+                    .child(field_label("BASH_ENV"))
+                    .child(ui::inset(
+                        text(dev::bash_command)
+                            .font_family("monospace")
+                            .text_size(px(tokens::TEXT_CAPTION))
+                            .text_color(move || theme().muted_foreground)
+                            .selectable(true),
+                    )),
             ),
     )
 }
@@ -295,50 +283,45 @@ fn runtime_controls(runtime: &'static str) -> impl IntoElement {
     let busy_enable = busy_key.clone();
     let copy_bash = move || dev::copy_bash(runtime);
     view()
-        .flex_col()
+        .flex_row()
+        .items_center()
+        .flex_wrap()
         .gap(tokens::space(2.0))
         .child(
             view()
                 .flex_row()
                 .items_center()
-                .flex_wrap()
                 .gap(tokens::space(1.5))
                 .child(
                     view()
-                        .flex_row()
-                        .items_center()
-                        .gap(tokens::space(1.5))
-                        .child(
-                            view()
-                                .size(px(8.0))
-                                .flex_none()
-                                .rounded(px(4.0))
-                                .bg(move || {
-                                    if enabled {
-                                        tokens::success()
-                                    } else {
-                                        theme().muted_foreground.opacity(0.5)
-                                    }
-                                }),
-                        )
-                        .child(
-                            text(if enabled {
-                                "Enabled for detected shells"
+                        .size(px(8.0))
+                        .flex_none()
+                        .rounded(px(4.0))
+                        .bg(move || {
+                            if enabled {
+                                tokens::success()
                             } else {
-                                "Not enabled"
-                            })
-                            .text_size(px(tokens::TEXT_SMALL))
-                            .text_color(move || {
-                                if enabled {
-                                    tokens::success()
-                                } else {
-                                    theme().muted_foreground
-                                }
-                            }),
-                        ),
+                                theme().muted_foreground.opacity(0.5)
+                            }
+                        }),
                 )
-                .child(view().flex_1()),
+                .child(
+                    text(if enabled {
+                        "Enabled for detected shells"
+                    } else {
+                        "Not enabled"
+                    })
+                    .text_size(px(tokens::TEXT_SMALL))
+                    .text_color(move || {
+                        if enabled {
+                            tokens::success()
+                        } else {
+                            theme().muted_foreground
+                        }
+                    }),
+                ),
         )
+        .child(view().flex_1())
         .child(
             view()
                 .flex_row()
@@ -346,11 +329,7 @@ fn runtime_controls(runtime: &'static str) -> impl IntoElement {
                 .flex_wrap()
                 .gap(tokens::space(1.5))
                 .child(action_button(
-                    if enabled {
-                        "Re-apply in terminal"
-                    } else {
-                        "Enable in terminal"
-                    },
+                    if enabled { "Re-apply" } else { "Enable" },
                     if enabled {
                         Tone::Default
                     } else {
@@ -361,14 +340,14 @@ fn runtime_controls(runtime: &'static str) -> impl IntoElement {
                     move || dev::request_runtime_shell(runtime, true),
                 ))
                 .child(action_button(
-                    "Disable in terminal",
+                    "Disable",
                     Tone::Default,
                     remove,
                     move || dev::is_busy(&busy_key),
                     move || dev::request_runtime_shell(runtime, false),
                 ))
                 .child(action_button(
-                    "Copy Bash command",
+                    "Copy Bash",
                     Tone::Default,
                     copy,
                     false,

@@ -1295,7 +1295,7 @@ fn empty_detail_pane_shows_new_instance_cta_when_no_instance_is_selected() {
     app.press("id:db-refresh").unwrap();
 
     app.wait_for("id:db-empty-state").unwrap();
-    app.wait_for("No instance selected").unwrap();
+    app.wait_for("No database selected").unwrap();
     app.wait_for("id:db-empty-new-instance").unwrap();
 
     app.press("id:db-empty-new-instance").unwrap();

@@ -24,12 +24,19 @@ pub(super) fn terminal_page() -> impl IntoElement {
         .child(
             scroll().flex_1().min_h(px(0.0)).child(
                 view()
-                    .flex_col()
-                    .gap(tokens::space(4.0))
+                    .w_full()
+                    .items_center()
                     .px(tokens::space(5.0))
-                    .py(tokens::space(4.0))
-                    .child(folder_card())
-                    .child(selection_card()),
+                    .py(tokens::space(5.0))
+                    .child(
+                        view()
+                            .w_full()
+                            .max_w(px(840.0))
+                            .flex_col()
+                            .gap(tokens::space(4.0))
+                            .child(folder_card())
+                            .child(selection_card()),
+                    ),
             ),
         )
 }
@@ -44,7 +51,7 @@ fn header() -> impl IntoElement {
             dev::close_terminal,
         )),
         "Runtime terminal",
-        Some("Node.js for one folder, in the developer's terminal."),
+        None::<&str>,
         None::<AnyElement>,
     )
 }
@@ -54,22 +61,33 @@ fn folder_card() -> impl IntoElement {
         "Folder",
         view()
             .flex_col()
-            .gap(tokens::space(2.0))
-            .child(field_label("Directory"))
-            .child(ui::text_field(
-                "terminal-dir",
-                "Folder to open",
-                dev::terminal_dir,
-                dev::set_terminal_dir,
-            ))
+            .gap(tokens::space(2.5))
             .child(
-                text("Resolution walks up: .node-version, .nvmrc, package.json engines.node, then the default.")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground),
+                view()
+                    .flex_col()
+                    .gap(tokens::space(1.0))
+                    .child(field_label("Directory"))
+                    .child(
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .gap(tokens::space(1.5))
+                            .child(view().flex_1().min_w(px(0.0)).child(ui::text_field(
+                                "terminal-dir",
+                                "/path/to/project",
+                                dev::terminal_dir,
+                                dev::set_terminal_dir,
+                            )))
+                            .child(resolve_row()),
+                    ),
             )
-            .child(field_label("Version override"))
-            .child(dynamic(|| Some(overrides().into_element())))
-            .child(resolve_row())
+            .child(
+                view()
+                    .flex_col()
+                    .gap(tokens::space(1.0))
+                    .child(field_label("Version override"))
+                    .child(dynamic(|| Some(overrides().into_element()))),
+            )
             .child(dynamic(move || {
                 dev::selection_error().map(|message| {
                     text(message)
@@ -115,7 +133,7 @@ fn resolve_row() -> impl IntoElement {
         .items_center()
         .gap(tokens::space(1.5))
         .child(action_button(
-            "Resolve version",
+            "Resolve",
             Tone::Primary,
             "terminal-resolve",
             dev::selection_loading,
@@ -141,9 +159,9 @@ fn selection_body() -> impl IntoElement {
     view()
         .test_id("terminal-selection")
         .flex_col()
-        .gap(tokens::space(2.0))
+        .gap(tokens::space(2.5))
         .child(when(!has_selection, || {
-            text("Resolve a folder to see its Node.js version.")
+            text("No folder resolved")
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().muted_foreground)
         }))
@@ -168,37 +186,25 @@ fn selection_body() -> impl IntoElement {
                 )
                 .child(ui::kv_mono("Folder", dir))
                 .child(ui::kv_mono(
-                    "Asked for by",
+                    "Source",
                     if source.is_empty() {
-                        "the default".to_string()
+                        "default".to_string()
                     } else {
                         source
                     },
                 ))
-                .child(ui::kv_mono("PATH prefix", path))
+                .child(ui::kv_mono("PATH", path))
                 .child(when(selection.system, || {
-                    text("This folder asks for the system Node.js; Devbase leaves PATH unchanged.")
+                    text("System Node.js selected; PATH unchanged.")
                         .text_size(px(tokens::TEXT_CAPTION))
                         .text_color(tokens::warning)
                 }))
         }))
-        .child(
-            view()
-                .flex_row()
-                .items_center()
-                .flex_wrap()
-                .gap(tokens::space(1.5))
-                .child(action_button(
-                    "Open Terminal",
-                    Tone::Primary,
-                    "terminal-launch",
-                    move || !has_selection || dev::is_busy("launch"),
-                    dev::launch_terminal,
-                ))
-                .child(
-                    text("Terminal opens in the folder with this runtime first on PATH. Project servers stay yours to start.")
-                        .text_size(px(tokens::TEXT_CAPTION))
-                        .text_color(move || theme().muted_foreground),
-                ),
-        )
+        .child(view().flex_row().items_center().child(action_button(
+            "Open Terminal",
+            Tone::Primary,
+            "terminal-launch",
+            move || !has_selection || dev::is_busy("launch"),
+            dev::launch_terminal,
+        )))
 }

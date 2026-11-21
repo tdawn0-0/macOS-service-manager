@@ -30,12 +30,18 @@ pub(crate) fn authority_page() -> impl IntoElement {
         .child(
             scroll().flex_1().min_h(px(0.0)).child(
                 view()
-                    .flex_col()
-                    .gap(tokens::space(4.0))
+                    .w_full()
+                    .items_center()
                     .px(tokens::space(5.0))
-                    .pt(tokens::space(4.0))
-                    .pb(tokens::space(5.0))
-                    .child(dynamic(|| Some(cards()))),
+                    .py(tokens::space(5.0))
+                    .child(
+                        view()
+                            .w_full()
+                            .max_w(px(840.0))
+                            .flex_col()
+                            .gap(tokens::space(4.0))
+                            .child(dynamic(|| Some(cards()))),
+                    ),
             ),
         )
 }
@@ -62,9 +68,9 @@ fn header() -> impl IntoElement {
                 ),
         ),
         "Local certificates",
-        Some("The authority the HTTPS proxy signs with"),
+        None::<&str>,
         Some(ui::action_button(
-            "Refresh certificate status",
+            "Refresh",
             Tone::Default,
             "ca-refresh",
             proxy::busy,
@@ -228,42 +234,29 @@ fn runtime_trust_card(active: &AuthorityInfo) -> impl IntoElement {
         view()
             .test_id("ca-runtime-trust")
             .flex_col()
-            .gap(tokens::space(2.0))
-            .child(
-                text(
-                    "Node.js, Python, and curl do not read the macOS keychain automatically. Export the active Devbase CA certificate path in your shell or project .env file.",
-                )
-                .text_size(px(tokens::TEXT_SMALL))
-                .text_color(move || theme().muted_foreground),
-            )
+            .gap(tokens::space(2.5))
             .child(when(not_created, || {
-                text("Create or trust the local CA above to generate the certificate file at this path.")
-                    .text_size(px(tokens::TEXT_CAPTION))
-                    .text_color(move || theme().muted_foreground)
+                view()
+                    .flex_row()
+                    .items_center()
+                    .child(ui::tag("Not created", TagTone::Warning))
             }))
             .child(
                 view()
                     .flex_col()
-                    .gap(tokens::space(0.5))
-                    .child(
-                        text("CA certificate path")
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(move || theme().muted_foreground),
-                    )
-                    .child(ui::mono_value("ca-runtime-cert-path", cert_path)),
+                    .gap(tokens::space(1.0))
+                    .child(ui::field_label("Certificate"))
+                    .child(ui::inset(ui::mono_value("ca-runtime-cert-path", cert_path))),
             )
             .child(
                 view()
                     .flex_col()
-                    .gap(tokens::space(0.5))
-                    .child(
-                        text("Environment exports")
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(move || theme().muted_foreground),
-                    )
-                    .child(ui::mono_value("ca-runtime-exports", dotenv_lines)),
+                    .gap(tokens::space(1.0))
+                    .child(ui::field_label("Environment exports"))
+                    .child(ui::inset(ui::mono_value(
+                        "ca-runtime-exports",
+                        dotenv_lines,
+                    ))),
             )
             .child(
                 view()
@@ -304,24 +297,21 @@ fn info_card(
         view()
             .test_id(test_id)
             .flex_col()
-            .gap(tokens::space(2.0))
-            .child(
-                view()
-                    .flex_row()
-                    .items_center()
-                    .gap(tokens::space(1.5))
-                    .child(
-                        text(info.name.clone())
-                            .text_size(px(tokens::TEXT_SMALL))
-                            .text_color(move || theme().muted_foreground),
-                    ),
-            )
+            .gap(tokens::space(2.5))
             .child(
                 view()
                     .flex_row()
                     .items_center()
                     .flex_wrap()
                     .gap(tokens::space(1.5))
+                    .child(
+                        text(info.name.clone())
+                            .flex_1()
+                            .min_w(px(160.0))
+                            .text_size(px(tokens::TEXT_SMALL))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(move || theme().foreground),
+                    )
                     .child(ui::status_tag(info.status.clone()))
                     .child(when(
                         trust == devproxy::ca::material::TrustState::Trusted,
@@ -342,17 +332,12 @@ fn info_card(
             .child(when(!fingerprint.is_empty(), move || {
                 view()
                     .flex_col()
-                    .gap(tokens::space(0.5))
-                    .child(
-                        text("SHA-256")
-                            .text_size(px(tokens::TEXT_CAPTION))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(move || theme().muted_foreground),
-                    )
-                    .child(ui::mono_value(
+                    .gap(tokens::space(1.0))
+                    .child(ui::field_label("SHA-256"))
+                    .child(ui::inset(ui::mono_value(
                         format!("{test_id}-fingerprint"),
                         proxy::split_fingerprint(&fingerprint),
-                    ))
+                    )))
                     .child(
                         text(validity.clone())
                             .text_size(px(tokens::TEXT_CAPTION))

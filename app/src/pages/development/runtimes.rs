@@ -2,12 +2,17 @@
 //! version is the default, the release list the Go "Refresh available
 //! versions" action read, and the way into the runtime terminal.
 
-use nsh_base::{input, theme};
+use nsh_base::theme;
 use nsh_core::prelude::*;
 
-use crate::{components::icons, store::development as dev, theme as tokens};
-
-use super::ui::{self, TagTone, Tone, action_button, card, field_label, hairline, tag};
+use crate::{
+    components::{
+        controls::{self as ui, TagTone, Tone, action_button, card, field_label, hairline, tag},
+        icons,
+    },
+    store::development as dev,
+    theme as tokens,
+};
 
 pub(super) fn runtimes() -> impl IntoElement {
     dev::load();
@@ -310,8 +315,8 @@ fn java_catalog_block() -> impl IntoElement {
                     };
                     ui::chip(
                         label,
-                        format!("java-catalog-{id}"),
                         choice == id,
+                        format!("java-catalog-{id}"),
                         false,
                         move || dev::select_java(&select_id),
                     )
@@ -417,29 +422,12 @@ fn uv_input() -> impl IntoElement {
         .flex_col()
         .gap(tokens::space(1.0))
         .child(field_label("uv executable"))
-        .child(
-            view()
-                .h(px(28.0))
-                .flex_row()
-                .items_center()
-                .rounded(move || theme().radius)
-                .bg(tokens::control)
-                .border_1()
-                .border_color(tokens::hairline)
-                .child(
-                    input()
-                        .test_id("uv-path-input")
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .h(px(26.0))
-                        .px(tokens::space(2.0))
-                        .text_size(px(tokens::TEXT_SMALL))
-                        .text_color(move || theme().foreground)
-                        .placeholder("/absolute/path/to/uv (optional)")
-                        .value(dev::uv_path)
-                        .on_change(|text: &str| dev::set_uv_path_draft(text.to_owned())),
-                ),
-        )
+        .child(ui::text_field(
+            "uv-path-input",
+            "/absolute/path/to/uv (optional)",
+            dev::uv_path,
+            dev::set_uv_path_draft,
+        ))
         .child(
             view()
                 .flex_row()
@@ -504,8 +492,8 @@ fn python_body() -> impl IntoElement {
                     let choice = python.key.clone();
                     ui::chip(
                         python.key.clone(),
-                        format!("python-available-{}", python.key),
                         dev::python_choice() == python.key,
+                        format!("python-available-{}", python.key),
                         false,
                         move || dev::select_python(&choice),
                     )

@@ -6,16 +6,14 @@
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
-use crate::{store::development as dev, theme as tokens};
-
-use super::ui::{TagTone, Tone, action_button, card, field_label, hairline, tag};
+use crate::{
+    components::controls::{TagTone, Tone, action_button, card, field_label, hairline, tag},
+    store::development as dev,
+    theme as tokens,
+};
 
 pub(super) fn shell_integration() -> impl IntoElement {
     dev::load();
-    dynamic(|| Some(shell_body().into_element()))
-}
-
-fn shell_body() -> impl IntoElement {
     scroll().flex_1().min_h(px(0.0)).child(
         view()
             .flex_col()
@@ -29,15 +27,6 @@ fn shell_body() -> impl IntoElement {
 }
 
 fn shells_card() -> impl IntoElement {
-    let shells = dev::shells();
-    let empty = shells.is_empty();
-    let mut rows: Vec<AnyElement> = Vec::new();
-    for row in shells {
-        if !rows.is_empty() {
-            rows.push(hairline().into_element());
-        }
-        rows.push(shell_row(row).into_element());
-    }
     card(
         "Shell startup files",
         view()
@@ -48,13 +37,29 @@ fn shells_card() -> impl IntoElement {
                     .text_size(px(tokens::TEXT_CAPTION))
                     .text_color(move || theme().muted_foreground),
             )
-            .child(when(empty, || {
-                text("No supported shell was found.")
-                    .text_size(px(tokens::TEXT_SMALL))
-                    .text_color(move || theme().muted_foreground)
-            }))
-            .child(rows),
+            .child(dynamic(|| Some(shells_list().into_element()))),
     )
+}
+
+fn shells_list() -> impl IntoElement {
+    let shells = dev::shells();
+    let empty = shells.is_empty();
+    let mut rows: Vec<AnyElement> = Vec::new();
+    for row in shells {
+        if !rows.is_empty() {
+            rows.push(hairline().into_element());
+        }
+        rows.push(shell_row(row).into_element());
+    }
+    view()
+        .flex_col()
+        .gap(tokens::space(2.0))
+        .child(when(empty, || {
+            text("No supported shell was found.")
+                .text_size(px(tokens::TEXT_SMALL))
+                .text_color(move || theme().muted_foreground)
+        }))
+        .child(rows)
 }
 
 fn shell_row(row: dev::ShellRow) -> impl IntoElement {
@@ -140,25 +145,16 @@ fn status_text(name: &'static str, state: &'static str, applied: bool) -> impl I
 }
 
 fn runtime_card(runtime: &'static str) -> impl IntoElement {
-    let enabled = if runtime == "java" {
-        dev::java_shell_enabled()
-    } else {
-        dev::node_shell_enabled()
-    };
     let title = if runtime == "java" {
         "Java in the terminal"
     } else {
         "Node.js in the terminal"
     };
-    let enable = format!("shell-enable-{runtime}");
-    let remove = format!("shell-remove-{runtime}");
-    let copy = format!("dev-copy-bash-{runtime}");
     let description = if runtime == "java" {
         "Configures installed zsh, Bash and fish, including non-interactive commands. Each folder follows .java-version and .sdkmanrc, else the default."
     } else {
         "Configures installed zsh, Bash and fish, including non-interactive commands. Each folder runs its declared Node.js version, else the default."
     };
-    let copy_bash = move || dev::copy_bash(runtime);
     card(
         title,
         view()
@@ -169,80 +165,9 @@ fn runtime_card(runtime: &'static str) -> impl IntoElement {
                     .text_size(px(tokens::TEXT_CAPTION))
                     .text_color(move || theme().muted_foreground),
             )
-            .child(
-                view()
-                    .flex_row()
-                    .items_center()
-                    .flex_wrap()
-                    .gap(tokens::space(1.5))
-                    .child(
-                        view()
-                            .flex_row()
-                            .items_center()
-                            .gap(tokens::space(1.5))
-                            .child(view().size(px(8.0)).flex_none().rounded(px(4.0)).bg(
-                                move || {
-                                    if enabled {
-                                        tokens::success()
-                                    } else {
-                                        theme().muted_foreground.opacity(0.5)
-                                    }
-                                },
-                            ))
-                            .child(
-                                text(if enabled {
-                                    "Enabled for detected shells"
-                                } else {
-                                    "Not enabled"
-                                })
-                                .text_size(px(tokens::TEXT_SMALL))
-                                .text_color(move || {
-                                    if enabled {
-                                        tokens::success()
-                                    } else {
-                                        theme().muted_foreground
-                                    }
-                                }),
-                            ),
-                    )
-                    .child(view().flex_1()),
-            )
-            .child(
-                view()
-                    .flex_row()
-                    .items_center()
-                    .flex_wrap()
-                    .gap(tokens::space(1.5))
-                    .child(action_button(
-                        if enabled {
-                            "Re-apply in terminal"
-                        } else {
-                            "Enable in terminal"
-                        },
-                        if enabled {
-                            Tone::Default
-                        } else {
-                            Tone::Primary
-                        },
-                        enable,
-                        dev::is_busy(&format!("{runtime}-shell")),
-                        move || dev::request_runtime_shell(runtime, true),
-                    ))
-                    .child(action_button(
-                        "Disable in terminal",
-                        Tone::Default,
-                        remove,
-                        dev::is_busy(&format!("{runtime}-shell")),
-                        move || dev::request_runtime_shell(runtime, false),
-                    ))
-                    .child(action_button(
-                        "Copy Bash command",
-                        Tone::Default,
-                        copy,
-                        false,
-                        copy_bash,
-                    )),
-            )
+            .child(dynamic(move || {
+                Some(runtime_controls(runtime).into_element())
+            }))
             .child(field_label("BASH_ENV template"))
             .child(
                 text(dev::bash_command)
@@ -257,4 +182,99 @@ fn runtime_card(runtime: &'static str) -> impl IntoElement {
                     .text_color(move || theme().muted_foreground),
             ),
     )
+}
+
+fn runtime_controls(runtime: &'static str) -> impl IntoElement {
+    let enabled = if runtime == "java" {
+        dev::java_shell_enabled()
+    } else {
+        dev::node_shell_enabled()
+    };
+    let enable = format!("shell-enable-{runtime}");
+    let remove = format!("shell-remove-{runtime}");
+    let copy = format!("dev-copy-bash-{runtime}");
+    let busy_key = format!("{runtime}-shell");
+    let busy_enable = busy_key.clone();
+    let copy_bash = move || dev::copy_bash(runtime);
+    view()
+        .flex_col()
+        .gap(tokens::space(2.0))
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .flex_wrap()
+                .gap(tokens::space(1.5))
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(1.5))
+                        .child(
+                            view()
+                                .size(px(8.0))
+                                .flex_none()
+                                .rounded(px(4.0))
+                                .bg(move || {
+                                    if enabled {
+                                        tokens::success()
+                                    } else {
+                                        theme().muted_foreground.opacity(0.5)
+                                    }
+                                }),
+                        )
+                        .child(
+                            text(if enabled {
+                                "Enabled for detected shells"
+                            } else {
+                                "Not enabled"
+                            })
+                            .text_size(px(tokens::TEXT_SMALL))
+                            .text_color(move || {
+                                if enabled {
+                                    tokens::success()
+                                } else {
+                                    theme().muted_foreground
+                                }
+                            }),
+                        ),
+                )
+                .child(view().flex_1()),
+        )
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .flex_wrap()
+                .gap(tokens::space(1.5))
+                .child(action_button(
+                    if enabled {
+                        "Re-apply in terminal"
+                    } else {
+                        "Enable in terminal"
+                    },
+                    if enabled {
+                        Tone::Default
+                    } else {
+                        Tone::Primary
+                    },
+                    enable,
+                    move || dev::is_busy(&busy_enable),
+                    move || dev::request_runtime_shell(runtime, true),
+                ))
+                .child(action_button(
+                    "Disable in terminal",
+                    Tone::Default,
+                    remove,
+                    move || dev::is_busy(&busy_key),
+                    move || dev::request_runtime_shell(runtime, false),
+                ))
+                .child(action_button(
+                    "Copy Bash command",
+                    Tone::Default,
+                    copy,
+                    false,
+                    copy_bash,
+                )),
+        )
 }

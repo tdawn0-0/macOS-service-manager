@@ -8,15 +8,15 @@ use nsh_base::theme;
 use nsh_core::prelude::*;
 
 use crate::{
-    components::{icons as app_icons, note},
+    components::{
+        controls::{self as ui, Tone},
+        icons as app_icons, note,
+    },
     store::databases as db,
     theme as tokens,
 };
 
-use super::{
-    icons, rail,
-    ui::{self, Tone},
-};
+use super::{icons, rail};
 
 pub(crate) fn deletion_preview() -> impl IntoElement {
     view()
@@ -66,14 +66,14 @@ fn preview_body() -> AnyElement {
                     "Refresh deletion preview",
                     Tone::Default,
                     "deletion-refresh",
-                    db::operations_busy(),
+                    db::operations_busy,
                     db::refresh_deletion_preview,
                 ))
                 .child(ui::action_button(
                     "Cancel deletion preview",
                     Tone::Default,
                     "deletion-cancel",
-                    db::operations_busy(),
+                    db::operations_busy,
                     db::cancel_deletion_preview,
                 )),
         )
@@ -116,15 +116,13 @@ fn preview_body() -> AnyElement {
                             db::set_confirmation,
                         ),
                     ))
-                    .child(dynamic(|| {
-                        Some(ui::action_button(
-                            "Permanently delete instance data",
-                            Tone::Danger,
-                            "deletion-delete",
-                            !db::can_delete(),
-                            db::delete_instance_data,
-                        ))
-                    })),
+                    .child(ui::action_button(
+                        "Permanently delete instance data",
+                        Tone::Danger,
+                        "deletion-delete",
+                        || !db::can_delete(),
+                        db::delete_instance_data,
+                    )),
             ),
         )
         .into_element()
@@ -181,15 +179,7 @@ pub(crate) fn pending_deletions() -> impl IntoElement {
         .test_id("db-pending-deletions")
         .flex_1()
         .min_w(px(0.0))
-        .child(dynamic(|| Some(deletions_body())))
-}
-
-fn deletions_body() -> impl IntoElement {
-    let rows = db::pending_deletions();
-    let empty = rows.is_empty();
-    view()
         .flex_col()
-        .flex_1()
         .child(
             view()
                 .h(px(60.0))
@@ -210,14 +200,14 @@ fn deletions_body() -> impl IntoElement {
                     "Refresh pending deletions",
                     Tone::Default,
                     "deletions-refresh",
-                    db::operations_busy(),
+                    db::operations_busy,
                     db::refresh_deletions,
                 ))
                 .child(ui::action_button(
                     "Back to database settings",
                     Tone::Default,
                     "deletions-back",
-                    db::operations_busy(),
+                    db::operations_busy,
                     db::back_to_settings,
                 )),
         )
@@ -237,21 +227,27 @@ fn deletions_body() -> impl IntoElement {
                 })),
         )
         .child(
-            scroll().flex_1().min_h(px(0.0)).child(
-                view()
-                    .flex_col()
-                    .gap(tokens::space(4.0))
-                    .px(tokens::space(5.0))
-                    .pb(tokens::space(5.0))
-                    .child(when(empty, || {
-                        text("None")
-                            .text_size(px(tokens::TEXT_SMALL))
-                            .text_color(move || theme().muted_foreground)
-                    }))
-                    .child(rows.into_iter().map(deletion_row)),
-            ),
+            scroll()
+                .flex_1()
+                .min_h(px(0.0))
+                .child(dynamic(|| Some(deletions_list()))),
         )
-        .into_element()
+}
+
+fn deletions_list() -> impl IntoElement {
+    let rows = db::pending_deletions();
+    let empty = rows.is_empty();
+    view()
+        .flex_col()
+        .gap(tokens::space(4.0))
+        .px(tokens::space(5.0))
+        .pb(tokens::space(5.0))
+        .child(when(empty, || {
+            text("None")
+                .text_size(px(tokens::TEXT_SMALL))
+                .text_color(move || theme().muted_foreground)
+        }))
+        .child(rows.into_iter().map(deletion_row))
 }
 
 fn deletion_row(row: InstanceDeletionInfo) -> impl IntoElement {
@@ -274,7 +270,6 @@ fn deletion_row(row: InstanceDeletionInfo) -> impl IntoElement {
     let finish_instance = instance_id.clone();
     let restore_prefix = prefix.clone();
     let finish_prefix = prefix.clone();
-    let busy_action = db::operations_busy();
     view()
         .flex_col()
         .gap(tokens::space(2.0))
@@ -329,7 +324,7 @@ fn deletion_row(row: InstanceDeletionInfo) -> impl IntoElement {
             format!("Restore original data {restore_prefix}"),
             Tone::Default,
             format!("deletion-restore-{prefix}"),
-            busy_action || busy || !can_restore,
+            move || db::operations_busy() || busy || !can_restore,
             move || db::restore_deletion(&restore_id, &restore_revision),
         ))
         .child(ui::field(
@@ -345,7 +340,12 @@ fn deletion_row(row: InstanceDeletionInfo) -> impl IntoElement {
             format!("Finish permanent deletion {finish_prefix}"),
             Tone::Danger,
             format!("deletion-finish-{prefix}"),
-            busy_action || busy || !can_erase || db::confirmation().trim() != finish_instance,
+            move || {
+                db::operations_busy()
+                    || busy
+                    || !can_erase
+                    || db::confirmation().trim() != finish_instance
+            },
             move || db::finish_deletion(&id, &finish_revision),
         ))
 }

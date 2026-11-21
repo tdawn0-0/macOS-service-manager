@@ -5,19 +5,19 @@
 //! The page reads [`crate::store::system`]. Helper installs and removals run
 //! in background tasks and surface their busy line, status and verbatim error;
 //! the single administrator prompt happens inside devcore's injected
-//! `AdminRunner`, never in this page. NSH components run once, so each card's
-//! body is a `dynamic` region bound to the store it reads.
+//! `AdminRunner`, never in this page. The scroll container and cards mount
+//! once, with scoped `dynamic` regions only for banners and reactive card
+//! content so notices or busy toggles never tear down the cards or reset scroll.
 
 use devcore::helper::{HELPER_DIR, PLIST_PATH, SOCKET_PATH};
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
 use crate::{
+    components::controls::{self as ui, Tone},
     store::{Section, system},
     theme as tokens,
 };
-
-use super::diagnostics::ui;
 
 pub(crate) fn settings() -> impl IntoElement {
     system::load_settings();
@@ -27,9 +27,9 @@ pub(crate) fn settings() -> impl IntoElement {
         .flex_1()
         .flex_col()
         .min_w(px(0.0))
-        .child(dynamic(|| Some(header().into_element())))
-        .child(scroll().flex_1().min_h(px(0.0)).child(dynamic(|| {
-            Some(
+        .child(header())
+        .child(
+            scroll().flex_1().min_h(px(0.0)).child(
                 view()
                     .w_full()
                     .max_w(px(880.0))
@@ -37,32 +37,30 @@ pub(crate) fn settings() -> impl IntoElement {
                     .gap(tokens::space(4.0))
                     .px(tokens::space(6.0))
                     .py(tokens::space(5.0))
-                    .children(system::settings_error().map(|error| ui::note(error, true)))
-                    .children(system::settings_action_error().map(|error| ui::note(error, true)))
-                    .children(system::settings_notice().map(|notice| ui::note(notice, false)))
+                    .child(dynamic(|| {
+                        system::settings_error().map(|error| ui::plain_note(error, true))
+                    }))
+                    .child(dynamic(|| {
+                        system::settings_action_error().map(|error| ui::plain_note(error, true))
+                    }))
+                    .child(dynamic(|| {
+                        system::settings_notice().map(|notice| ui::plain_note(notice, false))
+                    }))
                     .child(ui::card(
                         "Privileged helper",
                         dynamic(|| Some(helper_body().into_element())),
                     ))
-                    .child(ui::card(
-                        "macOS permissions",
-                        dynamic(|| Some(permissions_body().into_element())),
-                    ))
-                    .child(ui::card(
-                        "Workspace",
-                        dynamic(|| Some(workspace_body().into_element())),
-                    ))
+                    .child(ui::card("macOS permissions", permissions_body()))
+                    .child(ui::card("Workspace", workspace_body()))
                     .child(ui::card(
                         "Command-line interface",
                         dynamic(|| Some(cli_body().into_element())),
-                    ))
-                    .into_element(),
-            )
-        })))
+                    )),
+            ),
+        )
 }
 
 fn header() -> impl IntoElement {
-    let busy = system::settings_busy();
     view()
         .h(px(44.0))
         .flex_none()
@@ -85,16 +83,16 @@ fn header() -> impl IntoElement {
                 .truncate(),
         )
         .child(view().flex_1())
-        .child(when(busy, || {
+        .child(when(system::settings_busy, || {
             text("Loading")
                 .text_size(px(tokens::TEXT_CAPTION))
                 .text_color(move || theme().muted_foreground)
         }))
         .child(ui::action_button(
             "Refresh",
-            ui::Tone::Default,
+            Tone::Default,
             "settings-refresh",
-            busy,
+            system::settings_busy,
             system::refresh_settings,
         ))
 }
@@ -143,7 +141,7 @@ fn helper_body() -> impl IntoElement {
                 .child(when(!installed, move || {
                     ui::action_button(
                         "Install helper",
-                        ui::Tone::Primary,
+                        Tone::Primary,
                         "settings-install-helper",
                         busy || settings_busy,
                         system::install_helper,
@@ -152,7 +150,7 @@ fn helper_body() -> impl IntoElement {
                 .child(when(installed, move || {
                     ui::action_button(
                         "Remove helper",
-                        ui::Tone::Danger,
+                        Tone::Danger,
                         "settings-remove-helper",
                         busy || settings_busy,
                         system::uninstall_helper,
@@ -160,7 +158,7 @@ fn helper_body() -> impl IntoElement {
                 }))
                 .child(ui::action_button(
                     "Refresh status",
-                    ui::Tone::Default,
+                    Tone::Default,
                     "settings-refresh-helper",
                     settings_busy,
                     system::refresh_settings,
@@ -184,14 +182,14 @@ fn permissions_body() -> impl IntoElement {
                 .gap(tokens::space(1.5))
                 .child(ui::action_button(
                     "Open Full Disk Access…",
-                    ui::Tone::Default,
+                    Tone::Default,
                     "settings-open-fda",
                     false,
                     system::open_full_disk_access,
                 ))
                 .child(ui::action_button(
                     "Open Login Items…",
-                    ui::Tone::Default,
+                    Tone::Default,
                     "settings-open-login-items",
                     false,
                     system::open_login_items,
@@ -200,25 +198,6 @@ fn permissions_body() -> impl IntoElement {
 }
 
 fn workspace_body() -> impl IntoElement {
-    let cache = system::cache();
-    let cache_busy = system::cache_busy();
-    let busy = system::settings_busy();
-    let workspace_root = system::workspace_root();
-    let rotation = system::log_rotation_enabled();
-    let rotation_busy = system::log_rotation_busy() || busy;
-    let login = system::login_at_login();
-    let login_busy = system::login_busy();
-    let cache_text = if cache.files > 0 {
-        format!(
-            "{} · {}",
-            crate::store::software::format_bytes(cache.bytes),
-            crate::store::software::plural(cache.files as usize, "archive")
-        )
-    } else {
-        "0 B".to_string()
-    };
-    let cache_folder = cache.directory;
-    let root_for_reveal = workspace_root.clone();
     view()
         .flex_col()
         .gap(tokens::space(2.0))
@@ -229,9 +208,10 @@ fn workspace_body() -> impl IntoElement {
                 .gap(tokens::space(2.0))
                 .child(ui::switch(
                     "settings-log-rotation",
-                    rotation,
-                    rotation_busy,
-                    move || system::set_log_rotation(!rotation),
+                    system::log_rotation_enabled,
+                    || system::log_rotation_busy() || system::settings_busy(),
+                    "Automatic log rotation",
+                    system::set_log_rotation,
                 ))
                 .child(
                     text("Automatic log rotation")
@@ -248,9 +228,10 @@ fn workspace_body() -> impl IntoElement {
                 .gap(tokens::space(2.0))
                 .child(ui::switch(
                     "settings-login-item",
-                    login,
-                    login_busy,
-                    move || system::set_login_item(!login),
+                    system::login_at_login,
+                    system::login_busy,
+                    "Start at login in menu bar",
+                    system::set_login_item,
                 ))
                 .child(
                     text("Start at login in menu bar")
@@ -260,6 +241,28 @@ fn workspace_body() -> impl IntoElement {
                         .text_color(move || theme().foreground),
                 ),
         )
+        .child(dynamic(|| Some(workspace_details().into_element())))
+}
+
+fn workspace_details() -> impl IntoElement {
+    let cache = system::cache();
+    let cache_busy = system::cache_busy();
+    let busy = system::settings_busy();
+    let workspace_root = system::workspace_root();
+    let cache_text = if cache.files > 0 {
+        format!(
+            "{} · {}",
+            crate::store::software::format_bytes(cache.bytes),
+            crate::store::software::plural(cache.files as usize, "archive")
+        )
+    } else {
+        "0 B".to_string()
+    };
+    let cache_folder = cache.directory;
+    let root_for_reveal = workspace_root.clone();
+    view()
+        .flex_col()
+        .gap(tokens::space(2.0))
         .child(when(!workspace_root.is_empty(), {
             let root = workspace_root.clone();
             move || ui::kv("Workspace", root.clone())
@@ -276,21 +279,21 @@ fn workspace_body() -> impl IntoElement {
                 .gap(tokens::space(1.5))
                 .child(ui::action_button(
                     "Show workspace in Finder",
-                    ui::Tone::Default,
+                    Tone::Default,
                     "settings-reveal-workspace",
                     root_for_reveal.is_empty(),
                     system::reveal_workspace,
                 ))
                 .child(ui::action_button(
                     "Clear download cache",
-                    ui::Tone::Default,
+                    Tone::Default,
                     "settings-clear-cache",
                     cache_busy || busy || cache.files == 0,
                     system::request_clear_cache,
                 ))
                 .child(ui::action_button(
                     "Run diagnostics",
-                    ui::Tone::Default,
+                    Tone::Default,
                     "settings-run-diagnostics",
                     busy,
                     || {
@@ -346,7 +349,7 @@ fn cli_body() -> impl IntoElement {
             let wrapper = wrapper.clone();
             move || ui::kv("Command", wrapper.clone())
         }))
-        .children(path_hint.map(|hint| ui::note(hint, false)))
+        .children(path_hint.map(|hint| ui::plain_note(hint, false)))
         .children(activity.map(|activity| {
             text(activity)
                 .text_size(px(tokens::TEXT_SMALL))
@@ -360,7 +363,7 @@ fn cli_body() -> impl IntoElement {
                 .child(when(!installed, move || {
                     ui::action_button(
                         "Install devbase CLI",
-                        ui::Tone::Primary,
+                        Tone::Primary,
                         "settings-install-cli",
                         busy || settings_busy,
                         system::install_cli,
@@ -369,7 +372,7 @@ fn cli_body() -> impl IntoElement {
                 .child(when(installed && managed, move || {
                     ui::action_button(
                         "Remove devbase CLI",
-                        ui::Tone::Danger,
+                        Tone::Danger,
                         "settings-remove-cli",
                         busy || settings_busy,
                         system::uninstall_cli,
@@ -377,7 +380,7 @@ fn cli_body() -> impl IntoElement {
                 }))
                 .child(ui::action_button(
                     "Copy AI schema command",
-                    ui::Tone::Default,
+                    Tone::Default,
                     "settings-copy-schema",
                     false,
                     system::copy_schema_command,

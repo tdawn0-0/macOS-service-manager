@@ -6,9 +6,11 @@ use devcore::operations::{OperationRecord, operation_can_retry};
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
-use crate::{store::system, theme as tokens};
-
-use super::ui;
+use crate::{
+    components::controls::{self as ui, Tone},
+    store::system,
+    theme as tokens,
+};
 
 pub(crate) fn operations_card() -> impl IntoElement {
     ui::card(
@@ -25,8 +27,8 @@ fn operations_body() -> impl IntoElement {
     view()
         .flex_col()
         .gap(tokens::space(2.0))
-        .children(error.map(|error| ui::note(error, true)))
-        .children(action_error.map(|error| ui::note(error, true)))
+        .children(error.map(|error| ui::plain_note(error, true)))
+        .children(action_error.map(|error| ui::plain_note(error, true)))
         .child(
             view()
                 .flex_row()
@@ -41,7 +43,7 @@ fn operations_body() -> impl IntoElement {
                 .child(view().flex_1())
                 .child(ui::action_button(
                     "Refresh tasks",
-                    ui::Tone::Default,
+                    Tone::Default,
                     "operations-refresh",
                     loading,
                     system::refresh_operations,
@@ -148,14 +150,14 @@ fn record(record: OperationRecord) -> impl IntoElement {
                     .selectable(true)
             }))
             .child(when(record.busy, || {
-                ui::note("Another caller owns this task.", false)
+                ui::plain_note("Another caller owns this task.", false)
             }))
             .child(when(
                 !record.artifact.is_empty()
                     && record.request.kind == "backup"
                     && record.status != "Succeeded",
                 || {
-                    ui::note(
+                    ui::plain_note(
                         "This output may be incomplete. Do not use it as a verified backup.",
                         false,
                     )
@@ -168,14 +170,14 @@ fn record(record: OperationRecord) -> impl IntoElement {
                     .gap(tokens::space(1.5))
                     .child(ui::action_button(
                         retry_label,
-                        ui::Tone::Primary,
+                        Tone::Primary,
                         format!("operation-retry-{test_suffix}"),
                         busy || !retryable,
                         move || system::retry_operation(&retry_id),
                     ))
                     .child(ui::action_button(
                         "Dismiss record (keep all files)",
-                        ui::Tone::Default,
+                        Tone::Default,
                         format!("operation-dismiss-{test_suffix}"),
                         busy,
                         move || system::dismiss_operation(&dismiss_id),

@@ -8,15 +8,15 @@ use nsh_base::theme;
 use nsh_core::prelude::*;
 
 use crate::{
-    components::{icons as app_icons, note},
+    components::{
+        controls::{self as ui, Tone},
+        icons as app_icons, note,
+    },
     store::databases as db,
     theme as tokens,
 };
 
-use super::{
-    icons, rail,
-    ui::{self, Tone},
-};
+use super::{icons, rail};
 
 /// The running and finished operations, as the Go `devDatabaseTasks` drew
 /// them above the instance.
@@ -118,37 +118,32 @@ pub(crate) fn database_work() -> impl IntoElement {
         .test_id("db-work-page")
         .flex_1()
         .min_w(px(0.0))
-        .child(dynamic(|| Some(work_body())))
-}
-
-fn work_body() -> AnyElement {
-    let rows = db::database_work();
-    let empty = rows.is_empty();
-    view()
         .flex_col()
-        .flex_1()
         .child(heading(
             "Unfinished database tasks",
             "Refresh database tasks",
             "db-work-refresh",
             db::refresh_work,
         ))
-        .child(notes(
-            db::pending_deletions_error(),
-            db::database_work_error(),
-        ))
+        .child(notes(db::pending_deletions_error, db::database_work_error))
         .child(
-            scroll().flex_1().min_h(px(0.0)).child(
-                view()
-                    .flex_col()
-                    .gap(tokens::space(4.0))
-                    .px(tokens::space(5.0))
-                    .pb(tokens::space(5.0))
-                    .child(when(empty, empty_line))
-                    .child(rows.into_iter().map(work_row)),
-            ),
+            scroll()
+                .flex_1()
+                .min_h(px(0.0))
+                .child(dynamic(|| Some(work_list()))),
         )
-        .into_element()
+}
+
+fn work_list() -> impl IntoElement {
+    let rows = db::database_work();
+    let empty = rows.is_empty();
+    view()
+        .flex_col()
+        .gap(tokens::space(4.0))
+        .px(tokens::space(5.0))
+        .pb(tokens::space(5.0))
+        .child(when(empty, empty_line))
+        .child(rows.into_iter().map(work_row))
 }
 
 fn work_row(row: DatabaseWorkInfo) -> impl IntoElement {
@@ -163,7 +158,6 @@ fn work_row(row: DatabaseWorkInfo) -> impl IntoElement {
     let prefix = db::short_id(&id);
     let running = row.running;
     let can_resolve = row.can_resolve;
-    let busy = db::operations_busy();
     let resolve_id = id.clone();
     let label = if running {
         format!("Stop database task {prefix}")
@@ -211,7 +205,7 @@ fn work_row(row: DatabaseWorkInfo) -> impl IntoElement {
             label,
             Tone::Primary,
             format!("work-resolve-{prefix}"),
-            busy || !can_resolve,
+            move || db::operations_busy() || !can_resolve,
             move || db::resolve_work(&resolve_id, &revision),
         ))
         .child(
@@ -229,15 +223,7 @@ pub(crate) fn initializations() -> impl IntoElement {
         .test_id("db-initializations-page")
         .flex_1()
         .min_w(px(0.0))
-        .child(dynamic(|| Some(initializations_body())))
-}
-
-fn initializations_body() -> AnyElement {
-    let rows = db::pending_initializations();
-    let empty = rows.is_empty();
-    view()
         .flex_col()
-        .flex_1()
         .child(heading(
             "Unfinished initializations",
             "Refresh initializations",
@@ -245,21 +231,27 @@ fn initializations_body() -> AnyElement {
             db::refresh_initializations,
         ))
         .child(notes(
-            db::database_work_error(),
-            db::pending_initializations_error(),
+            db::database_work_error,
+            db::pending_initializations_error,
         ))
         .child(
-            scroll().flex_1().min_h(px(0.0)).child(
-                view()
-                    .flex_col()
-                    .gap(tokens::space(4.0))
-                    .px(tokens::space(5.0))
-                    .pb(tokens::space(5.0))
-                    .child(when(empty, empty_line))
-                    .child(rows.into_iter().map(initialization_row)),
-            ),
+            scroll()
+                .flex_1()
+                .min_h(px(0.0))
+                .child(dynamic(|| Some(initializations_list()))),
         )
-        .into_element()
+}
+
+fn initializations_list() -> impl IntoElement {
+    let rows = db::pending_initializations();
+    let empty = rows.is_empty();
+    view()
+        .flex_col()
+        .gap(tokens::space(4.0))
+        .px(tokens::space(5.0))
+        .pb(tokens::space(5.0))
+        .child(when(empty, empty_line))
+        .child(rows.into_iter().map(initialization_row))
 }
 
 fn initialization_row(row: InstanceInitializationInfo) -> impl IntoElement {
@@ -279,9 +271,7 @@ fn initialization_row(row: InstanceInitializationInfo) -> impl IntoElement {
         "Archived" => format!("Finish archive {prefix}"),
         _ => format!("Stop and archive data {prefix}"),
     };
-    let working = db::operations_busy();
     let resolve_id = id.clone();
-    let _ = &instance_id;
     view()
         .flex_col()
         .gap(tokens::space(2.0))
@@ -311,7 +301,7 @@ fn initialization_row(row: InstanceInitializationInfo) -> impl IntoElement {
             label,
             Tone::Primary,
             format!("initialization-resolve-{prefix}"),
-            working || busy || !can_resolve,
+            move || db::operations_busy() || busy || !can_resolve,
             move || db::resolve_initialization(&resolve_id, &revision),
         ))
 }
@@ -341,19 +331,22 @@ fn heading(
             refresh,
             Tone::Default,
             refresh_id,
-            db::operations_busy(),
+            db::operations_busy,
             on_refresh,
         ))
         .child(ui::action_button(
             "Back to database settings",
             Tone::Default,
             "list-back",
-            db::operations_busy(),
+            db::operations_busy,
             db::back_to_settings,
         ))
 }
 
-fn notes(error: Option<String>, second: Option<String>) -> impl IntoElement {
+fn notes(
+    error: impl Fn() -> Option<String> + 'static,
+    second: impl Fn() -> Option<String> + 'static,
+) -> impl IntoElement {
     view()
         .flex_col()
         .flex_none()
@@ -361,14 +354,10 @@ fn notes(error: Option<String>, second: Option<String>) -> impl IntoElement {
             db::action_error().map(|message| note(app_icons::warn(), message, true))
         }))
         .child(dynamic(move || {
-            error
-                .clone()
-                .map(|message| note(app_icons::warn(), message, true))
+            error().map(|message| note(app_icons::warn(), message, true))
         }))
         .child(dynamic(move || {
-            second
-                .clone()
-                .map(|message| note(app_icons::warn(), message, true))
+            second().map(|message| note(app_icons::warn(), message, true))
         }))
         .child(dynamic(move || {
             db::notice().map(|message| note(icons::check(), message, false))

@@ -13,7 +13,6 @@ mod icons;
 mod new;
 mod rail;
 mod tasks;
-mod ui;
 
 use nsh_core::prelude::*;
 

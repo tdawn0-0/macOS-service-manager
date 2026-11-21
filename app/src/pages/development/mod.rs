@@ -11,13 +11,15 @@ mod overview;
 mod runtimes;
 mod shell;
 mod terminal;
-mod ui;
 
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
 use crate::{
-    components::{icons, note},
+    components::{
+        controls::{self as ui, Tone},
+        icons, note,
+    },
     store::{
         Section,
         development::{self as dev, Mode, Tab},
@@ -99,15 +101,7 @@ fn header() -> impl IntoElement {
         ))
         .child(when(
             move || !software(),
-            || {
-                ui::action_button(
-                    "Refresh",
-                    ui::Tone::Default,
-                    "dev-refresh",
-                    false,
-                    dev::refresh,
-                )
-            },
+            || ui::action_button("Refresh", Tone::Default, "dev-refresh", false, dev::refresh),
         ))
 }
 
@@ -123,55 +117,22 @@ fn notes() -> impl IntoElement {
             dev::action_error().map(|message| note(icons::warn(), message, true))
         }))
         .child(dynamic(move || {
-            dev::notice().map(|message| note(ui::check(), message, false))
+            dev::notice().map(|message| note(icons::check(), message, false))
         }))
 }
 
-/// The four tabs, left to right.
+/// The four tabs, left to right, backed by `nsh_base::tabs()` + `tab()`.
 fn tabs() -> impl IntoElement {
-    view()
-        .h(px(38.0))
-        .flex_none()
-        .flex_row()
-        .items_center()
-        .gap(tokens::space(0.5))
-        .px(tokens::space(5.0))
-        .border_b_1()
-        .border_color(tokens::hairline)
-        .child(Tab::ALL.into_iter().map(tab_button))
-        .child(view().flex_1())
+    ui::tab_bar("Development views", Tab::ALL.into_iter().map(tab_button))
 }
 
 fn tab_button(tab: Tab) -> impl IntoElement {
-    let active = move || dev::tab() == tab;
-    nsh_base::button()
-        .test_id(&format!("dev-tab-{}", tab.key()))
-        .h(px(28.0))
-        .px(tokens::space(2.5))
-        .items_center()
-        .justify_center()
-        .rounded(move || theme().radius)
-        .bg(move || {
-            if active() {
-                tokens::row_selected()
-            } else {
-                AdaptiveColor::TRANSPARENT
-            }
-        })
-        .hover(move |style| style.bg(tokens::row_hover()))
-        .on_press(move || dev::select_tab(tab))
-        .child(
-            text(tab.label())
-                .text_size(px(tokens::TEXT_SMALL))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(move || {
-                    if active() {
-                        theme().foreground
-                    } else {
-                        theme().muted_foreground
-                    }
-                }),
-        )
+    ui::tab_item(
+        tab.label(),
+        format!("dev-tab-{}", tab.key()),
+        move || dev::tab() == tab,
+        move || dev::select_tab(tab),
+    )
 }
 
 /// One tab's screen at a time.

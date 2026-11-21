@@ -4,9 +4,7 @@
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
-use crate::{store::system, theme as tokens};
-
-use super::ui;
+use crate::{components::controls as ui, store::system, theme as tokens};
 
 /// The Go summary line: `%d failed · %d warnings · %d checks`.
 pub(crate) fn summary() -> String {
@@ -71,7 +69,7 @@ fn runtime_body() -> impl IntoElement {
     view()
         .flex_col()
         .gap(tokens::space(1.5))
-        .children(error.map(|error| ui::note(error, true)))
+        .children(error.map(|error| ui::plain_note(error, true)))
         .child(when(empty && !loading, || {
             text("No runtime observations yet.")
                 .text_size(px(tokens::TEXT_SMALL))
@@ -114,7 +112,7 @@ fn checks_body() -> impl IntoElement {
     view()
         .flex_col()
         .gap(tokens::space(2.0))
-        .children(error.map(|error| ui::note(error, true)))
+        .children(error.map(|error| ui::plain_note(error, true)))
         .child(when(!has_report && !loading, || {
             text("No checks run yet. Run diagnostics to inspect packages and databases.")
                 .text_size(px(tokens::TEXT_SMALL))

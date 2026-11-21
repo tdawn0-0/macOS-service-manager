@@ -3,18 +3,19 @@
 //! and the download cache.
 
 use devcore::software::details::PackageDetails;
-use nsh_base::{input, theme};
+use nsh_base::theme;
 use nsh_core::prelude::*;
 
 use crate::{
-    components::{icons as app_icons, note},
+    components::{
+        controls::{self as ui, TagTone, Tone, action_button, card, hairline, tag},
+        icons as app_icons, note,
+    },
     store::software::{self as sw, SoftwareKind},
     theme as tokens,
 };
 
-use super::{
-    TagTone, Tone, action_button, card, check, folder, hairline, package, refresh, tag, warn,
-};
+use super::{check, folder, package, refresh, warn};
 
 pub(super) fn detail_pane() -> impl IntoElement {
     view()
@@ -73,23 +74,12 @@ fn header() -> impl IntoElement {
                 .text_size(px(tokens::TEXT_CAPTION))
                 .text_color(move || theme().muted_foreground)
         }))
-        .child(
-            nsh_base::button()
-                .test_id("software-refresh")
-                .size(px(26.0))
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .rounded(move || theme().radius)
-                .hover(move |style| style.bg(tokens::row_hover()))
-                .accessibility_label("Refresh software")
-                .on_press(sw::refresh)
-                .child(
-                    refresh()
-                        .size(px(14.0))
-                        .text_color(move || theme().muted_foreground),
-                ),
-        )
+        .child(ui::toolbar_icon_button(
+            refresh(),
+            "Refresh software",
+            "software-refresh",
+            sw::refresh,
+        ))
 }
 
 fn meta(kind: SoftwareKind) -> String {
@@ -332,13 +322,17 @@ fn integrity_color(status: &str) -> AdaptiveColor {
 fn install_card() -> impl IntoElement {
     card(
         "Install a version",
-        dynamic(|| Some(install_body().into_element())),
+        view()
+            .flex_col()
+            .gap(tokens::space(3.0))
+            .child(dynamic(|| Some(catalog_versions().into_element())))
+            .child(version_field())
+            .child(dynamic(|| Some(install_actions().into_element())))
+            .child(dynamic(|| sw::preview().map(preview_inner))),
     )
 }
 
-fn install_body() -> impl IntoElement {
-    let kind = sw::active_software();
-    let catalog = sw::versions(kind);
+fn install_actions() -> impl IntoElement {
     let preview = sw::preview();
     let details = preview
         .as_ref()
@@ -376,44 +370,33 @@ fn install_body() -> impl IntoElement {
     };
 
     view()
-        .flex_col()
-        .gap(tokens::space(3.0))
-        .child(catalog_versions(kind, catalog))
-        .child(version_field())
-        .child(
-            view()
-                .flex_row()
-                .items_center()
-                .flex_wrap()
-                .gap(tokens::space(2.0))
-                .child(action_button(
-                    "Review package",
-                    review_tone,
-                    "software-review",
-                    review_disabled,
-                    sw::review,
-                ))
-                .child(action_button(
-                    label,
-                    install_tone,
-                    "software-install",
-                    !can_install,
-                    sw::install,
-                )),
-        )
-        .child(preview_block(preview))
+        .flex_row()
+        .items_center()
+        .flex_wrap()
+        .gap(tokens::space(2.0))
+        .child(action_button(
+            "Review package",
+            review_tone,
+            "software-review",
+            review_disabled,
+            sw::review,
+        ))
+        .child(action_button(
+            label,
+            install_tone,
+            "software-install",
+            !can_install,
+            sw::install,
+        ))
 }
 
-fn catalog_versions(kind: SoftwareKind, versions: Vec<String>) -> impl IntoElement {
+fn catalog_versions() -> impl IntoElement {
+    let kind = sw::active_software();
+    let versions = sw::versions(kind);
     view()
         .flex_col()
         .gap(tokens::space(1.5))
-        .child(
-            text("Catalog versions")
-                .text_size(px(tokens::TEXT_CAPTION))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(move || theme().muted_foreground),
-        )
+        .child(ui::field_label("Catalog versions"))
         .child(
             view()
                 .flex_row()
@@ -430,79 +413,26 @@ fn catalog_versions(kind: SoftwareKind, versions: Vec<String>) -> impl IntoEleme
 
 fn version_chip(kind: SoftwareKind, version: String) -> impl IntoElement {
     let pressed = version.clone();
-    let fill_version = version.clone();
-    let text_version = version.clone();
-    nsh_base::button()
-        .test_id(&format!("version-{}-{}", kind.key(), version))
-        .h(px(24.0))
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .px(tokens::space(2.0))
-        .rounded(move || theme().radius)
-        .bg(move || {
-            if sw::version() == fill_version {
-                tokens::row_selected()
-            } else {
-                tokens::control()
-            }
-        })
-        .border_1()
-        .border_color(tokens::hairline)
-        .hover(move |style| style.bg(tokens::row_hover()))
-        .on_press(move || sw::set_version(pressed.clone()))
-        .child(
-            text(version.clone())
-                .text_size(px(tokens::TEXT_CAPTION))
-                .text_color(move || {
-                    if sw::version() == text_version {
-                        theme().foreground
-                    } else {
-                        theme().muted_foreground
-                    }
-                }),
-        )
+    let selected_version = version.clone();
+    ui::chip(
+        version.clone(),
+        move || sw::version() == selected_version,
+        format!("version-{}-{}", kind.key(), version),
+        false,
+        move || sw::set_version(pressed.clone()),
+    )
 }
 
 fn version_field() -> impl IntoElement {
-    view()
-        .flex_col()
-        .gap(tokens::space(1.0))
-        .child(
-            text("Exact version")
-                .text_size(px(tokens::TEXT_CAPTION))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(move || theme().muted_foreground),
-        )
-        .child(
-            view()
-                .h(px(28.0))
-                .flex_row()
-                .items_center()
-                .rounded(move || theme().radius)
-                .bg(tokens::control)
-                .border_1()
-                .border_color(tokens::hairline)
-                .child(
-                    input()
-                        .test_id("software-version-exact")
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .h(px(26.0))
-                        .px(tokens::space(2.0))
-                        .text_size(px(tokens::TEXT_SMALL))
-                        .text_color(move || theme().foreground)
-                        .placeholder("For example 22.14.0")
-                        .value(sw::version)
-                        .on_change(|text: &str| sw::set_version(text.to_owned())),
-                ),
-        )
-}
-
-fn preview_block(preview: Option<sw::Preview>) -> impl IntoElement {
-    view()
-        .flex_col()
-        .child(dynamic(move || preview.clone().map(preview_inner)))
+    ui::field(
+        "Exact version",
+        ui::text_field(
+            "software-version-exact",
+            "For example 22.14.0",
+            sw::version,
+            sw::set_version,
+        ),
+    )
 }
 
 fn preview_inner(preview: sw::Preview) -> impl IntoElement {

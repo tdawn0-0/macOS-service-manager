@@ -1,6 +1,6 @@
 //! What the shell and its pages share.
 
-mod controls;
+pub(crate) mod controls;
 pub(crate) mod icons;
 mod sidebar;
 mod status_dot;

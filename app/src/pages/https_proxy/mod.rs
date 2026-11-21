@@ -8,7 +8,6 @@
 mod authority;
 mod icons;
 mod proxy;
-mod ui;
 
 use nsh_core::prelude::*;
 

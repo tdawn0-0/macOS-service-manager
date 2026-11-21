@@ -7,16 +7,15 @@ use nsh_base::theme;
 use nsh_core::prelude::*;
 
 use crate::{
-    components::{icons as app_icons, note},
+    components::{
+        controls::{self as ui, TagTone, Tone},
+        icons as app_icons, note,
+    },
     store::{databases as db, software::SoftwareKind},
     theme as tokens,
 };
 
-use super::{
-    icons, rail,
-    tasks::tasks_section,
-    ui::{self, TagTone, Tone},
-};
+use super::{icons, rail, tasks::tasks_section};
 
 pub(crate) fn new_pane() -> impl IntoElement {
     view()
@@ -231,6 +230,7 @@ fn engine_row() -> impl IntoElement {
                         kind.title(),
                         active == kind.key(),
                         format!("db-engine-{}", kind.key()),
+                        false,
                         move || db::set_draft_kind(kind.key()),
                     )
                     .into_element()
@@ -263,6 +263,7 @@ fn version_row(kind: &'static str, packages: Vec<Package>) -> impl IntoElement {
                         label,
                         selected == id,
                         format!("db-version-{id}"),
+                        false,
                         move || db::set_draft_package(press.clone()),
                     )
                     .into_element()
@@ -395,13 +396,11 @@ fn storage_body() -> impl IntoElement {
 }
 
 fn create_row() -> impl IntoElement {
-    dynamic(|| {
-        Some(ui::action_button(
-            "Create instance",
-            Tone::Primary,
-            "db-create",
-            db::operations_busy(),
-            db::create_instance,
-        ))
-    })
+    ui::action_button(
+        "Create instance",
+        Tone::Primary,
+        "db-create",
+        db::operations_busy,
+        db::create_instance,
+    )
 }

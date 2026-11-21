@@ -4,19 +4,16 @@
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
-use crate::{store::development as dev, theme as tokens};
-
-use super::{
-    defaults,
-    ui::{Tone, action_button, card},
+use crate::{
+    components::controls::{Tone, action_button, card},
+    store::development as dev,
+    theme as tokens,
 };
+
+use super::defaults;
 
 pub(super) fn overview() -> impl IntoElement {
     dev::load();
-    dynamic(|| Some(overview_body().into_element()))
-}
-
-fn overview_body() -> impl IntoElement {
     scroll().flex_1().min_h(px(0.0)).child(
         view()
             .flex_col()
@@ -32,15 +29,13 @@ fn overview_body() -> impl IntoElement {
 }
 
 fn shell_card() -> impl IntoElement {
-    let node = dev::node_shell_enabled();
-    let java = dev::java_shell_enabled();
     card(
         "Shell integration",
         view()
             .flex_col()
             .gap(tokens::space(2.0))
-            .child(shell_line("Node.js", node))
-            .child(shell_line("Java", java))
+            .child(shell_line("Node.js", dev::node_shell_enabled))
+            .child(shell_line("Java", dev::java_shell_enabled))
             .child(
                 text("The startup block makes each folder's .node-version, .nvmrc or package.json engines.node the folder's Node.js, else the default.")
                     .text_size(px(tokens::TEXT_CAPTION))
@@ -56,7 +51,10 @@ fn shell_card() -> impl IntoElement {
     )
 }
 
-fn shell_line(label: &'static str, enabled: bool) -> impl IntoElement {
+fn shell_line(
+    label: &'static str,
+    enabled: impl Fn() -> bool + Copy + 'static,
+) -> impl IntoElement {
     view()
         .flex_row()
         .items_center()
@@ -69,15 +67,17 @@ fn shell_line(label: &'static str, enabled: bool) -> impl IntoElement {
                 .text_color(move || theme().muted_foreground),
         )
         .child(
-            text(if enabled {
-                "Enabled for detected shells"
-            } else {
-                "Not enabled"
+            text(move || {
+                if enabled() {
+                    "Enabled for detected shells".to_string()
+                } else {
+                    "Not enabled".to_string()
+                }
             })
             .flex_1()
             .text_size(px(tokens::TEXT_SMALL))
             .text_color(move || {
-                if enabled {
+                if enabled() {
                     tokens::success()
                 } else {
                     theme().muted_foreground

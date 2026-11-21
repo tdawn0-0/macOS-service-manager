@@ -9,28 +9,19 @@ use nsh_base::theme;
 use nsh_core::prelude::*;
 
 use crate::{
-    components::{icons as app_icons, note},
+    components::{
+        controls::{self as ui, TagTone, Tone},
+        icons as app_icons, note,
+    },
     store::proxy,
     theme as tokens,
 };
 
-use super::{
-    icons,
-    proxy::back_to_rules,
-    ui::{self, TagTone, Tone},
-};
+use super::{icons, proxy::back_to_rules};
 
 pub(crate) fn authority_page() -> impl IntoElement {
     view()
         .test_id("ca-page")
-        .flex_1()
-        .min_w(px(0.0))
-        .child(dynamic(|| Some(page_body())))
-}
-
-fn page_body() -> impl IntoElement {
-    let busy = proxy::busy();
-    view()
         .flex_1()
         .min_w(px(0.0))
         .flex_col()
@@ -55,13 +46,12 @@ fn page_body() -> impl IntoElement {
                     .gap(tokens::space(4.0))
                     .px(tokens::space(5.0))
                     .pb(tokens::space(5.0))
-                    .child(dynamic(move || Some(cards(busy)))),
+                    .child(dynamic(|| Some(cards()))),
             ),
         )
 }
 
 fn header() -> impl IntoElement {
-    let busy = proxy::busy();
     view()
         .h(px(60.0))
         .flex_none()
@@ -98,7 +88,7 @@ fn header() -> impl IntoElement {
             "Refresh certificate status",
             Tone::Default,
             "ca-refresh",
-            busy,
+            proxy::busy,
             proxy::refresh_authority,
         ))
 }
@@ -115,17 +105,20 @@ fn notes() -> impl IntoElement {
         }))
 }
 
-fn cards(busy: bool) -> impl IntoElement {
+fn cards() -> impl IntoElement {
     let Some(status) = proxy::authority() else {
         return view().into_element();
     };
     let prepared = status.prepared.clone();
+    let has_prepared = prepared.is_some();
     let previous_id = status
         .previous
         .as_ref()
         .map(|info| info.id.clone())
         .unwrap_or_default();
 
+    let active_unusable = !status.active.usable && status.active.status != "Not created";
+    let active_no_fingerprint = status.active.fingerprint.is_empty();
     let active = info_card(
         "ca-active",
         "Active authority",
@@ -139,7 +132,7 @@ fn cards(busy: bool) -> impl IntoElement {
                 "Trust local CA",
                 Tone::Primary,
                 "ca-active-trust",
-                busy || (!status.active.usable && status.active.status != "Not created"),
+                move || proxy::busy() || active_unusable,
                 proxy::trust_active,
             ))
             .child(copy_button(
@@ -150,7 +143,7 @@ fn cards(busy: bool) -> impl IntoElement {
                 "Remove CA trust",
                 Tone::Default,
                 "ca-active-remove",
-                busy || status.active.fingerprint.is_empty(),
+                move || proxy::busy() || active_no_fingerprint,
                 proxy::remove_active_trust,
             )),
     );
@@ -166,21 +159,21 @@ fn cards(busy: bool) -> impl IntoElement {
                 "Prepare replacement CA",
                 Tone::Default,
                 "ca-prepare",
-                busy || prepared.is_some(),
+                move || proxy::busy() || has_prepared,
                 proxy::prepare_authority,
             ))
             .child(ui::action_button(
                 "Apply proxy",
                 Tone::Default,
                 "ca-apply-proxy",
-                busy,
+                proxy::busy,
                 proxy::authority_apply_proxy,
             ))
             .child(ui::action_button(
                 "Stop HTTPS proxy",
                 Tone::Default,
                 "ca-stop-proxy",
-                busy,
+                proxy::busy,
                 proxy::authority_stop_proxy,
             )),
     );
@@ -193,6 +186,7 @@ fn cards(busy: bool) -> impl IntoElement {
             "Activate prepared CA"
         };
         let trusted = info.trust == devproxy::ca::material::TrustState::Trusted;
+        let usable = info.usable;
         info_card(
             "ca-prepared",
             "Prepared replacement",
@@ -206,14 +200,14 @@ fn cards(busy: bool) -> impl IntoElement {
                     "Trust prepared CA",
                     Tone::Primary,
                     "ca-prepared-trust",
-                    busy || !info.usable,
+                    move || proxy::busy() || !usable,
                     proxy::trust_prepared,
                 ))
                 .child(ui::action_button(
                     label,
                     Tone::Primary,
                     "ca-prepared-activate",
-                    busy || !info.usable || (!prepared_is_active && !trusted),
+                    move || proxy::busy() || !usable || (!prepared_is_active && !trusted),
                     proxy::activate_authority,
                 ))
                 .child(copy_button("ca-prepared-copy", info.fingerprint.clone()))
@@ -221,7 +215,7 @@ fn cards(busy: bool) -> impl IntoElement {
                     "Discard prepared CA",
                     Tone::Danger,
                     "ca-prepared-discard",
-                    busy,
+                    proxy::busy,
                     proxy::discard_prepared,
                 )),
         )
@@ -231,7 +225,7 @@ fn cards(busy: bool) -> impl IntoElement {
         .archives
         .iter()
         .filter(|info| !info.fingerprint.is_empty())
-        .map(|info| archive_card(info, &previous_id, prepared.is_some(), busy))
+        .map(|info| archive_card(info, &previous_id, has_prepared))
         .collect();
 
     view()
@@ -331,7 +325,7 @@ fn copy_button(test_id: &'static str, fingerprint: String) -> impl IntoElement {
     )
 }
 
-fn archive_card(info: &AuthorityInfo, previous_id: &str, prepared: bool, busy: bool) -> AnyElement {
+fn archive_card(info: &AuthorityInfo, previous_id: &str, prepared: bool) -> AnyElement {
     let short = proxy::short_id(&info.id);
     let title = if info.id == previous_id {
         format!("Previous authority · {short}")
@@ -390,21 +384,21 @@ fn archive_card(info: &AuthorityInfo, previous_id: &str, prepared: bool, busy: b
                         "Use this CA",
                         Tone::Primary,
                         format!("ca-archive-use-{short}"),
-                        busy || !usable || prepared,
+                        move || proxy::busy() || !usable || prepared,
                         move || proxy::restore_authority(id_use.clone(), fingerprint_use.clone()),
                     ))
                     .child(ui::action_button(
                         "Trust",
                         Tone::Default,
                         format!("ca-archive-trust-{short}"),
-                        busy || !usable,
+                        move || proxy::busy() || !usable,
                         move || proxy::trust_saved(id_trust.clone(), fingerprint_trust.clone()),
                     ))
                     .child(ui::action_button(
                         "Remove trust",
                         Tone::Default,
                         format!("ca-archive-remove-trust-{short}"),
-                        busy,
+                        proxy::busy,
                         move || {
                             proxy::remove_saved_trust(id_remove.clone(), fingerprint_remove.clone())
                         },

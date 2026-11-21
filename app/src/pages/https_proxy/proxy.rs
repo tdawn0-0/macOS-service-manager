@@ -8,15 +8,15 @@ use nsh_base::{menu, menu_item, menu_separator, theme};
 use nsh_core::prelude::*;
 
 use crate::{
-    components::{icons as app_icons, note},
+    components::{
+        controls::{self as ui, TagTone, Tone},
+        icons as app_icons, note,
+    },
     store::proxy::{self, RuleDraft, TUNNEL_MODE_CUSTOM_DOMAIN, TUNNEL_MODE_WORKERS_DEV},
     theme as tokens,
 };
 
-use super::{
-    icons,
-    ui::{self, TagTone, Tone},
-};
+use super::icons;
 
 pub(crate) fn rules_page() -> impl IntoElement {
     view()
@@ -33,7 +33,7 @@ pub(crate) fn rules_page() -> impl IntoElement {
                     .px(tokens::space(5.0))
                     .pb(tokens::space(5.0))
                     .child(rules_card())
-                    .child(dynamic(|| Some(proxy_card())))
+                    .child(proxy_card())
                     .child(tunnel_card())
                     .child(dynamic(|| Some(trust_card())))
                     .child(dynamic(logs_card)),
@@ -136,13 +136,12 @@ fn rules_card() -> impl IntoElement {
                 },
             ))
             .child(each(proxy::rules, |row| row.id, rule_row))
-            .child(dynamic(|| Some(footer()))),
+            .child(footer()),
     )
 }
 
 fn rule_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoElement {
     let id = row.get().id;
-    let busy = proxy::busy();
     view()
         .test_id(&format!("proxy-rule-{id}"))
         .flex_col()
@@ -152,9 +151,9 @@ fn rule_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoEl
         .bg(tokens::inset)
         .border_1()
         .border_color(tokens::hairline)
-        .child(top_row(row, index, busy))
+        .child(top_row(row, index))
         .child(when(move || row.get().tunnel, {
-            move || tunnel_row(index, row, busy)
+            move || tunnel_row(index, row)
         }))
         .child(dynamic({
             move || {
@@ -165,7 +164,7 @@ fn rule_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoEl
         }))
 }
 
-fn top_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>, busy: bool) -> impl IntoElement {
+fn top_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>) -> impl IntoElement {
     let id = row.get().id;
     view()
         .flex_row()
@@ -225,29 +224,24 @@ fn top_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>, busy: bool) -> 
                 ))
                 .child(dynamic(move || Some(ports_menu(index, id)))),
         )
-        .child(dynamic({
-            move || {
-                let on = row.get().tunnel;
-                Some(
-                    view()
-                        .flex_row()
-                        .items_center()
-                        .gap(tokens::space(1.5))
-                        .child(ui::switch(
-                            format!("proxy-tunnel-{id}"),
-                            on,
-                            busy,
-                            move || proxy::set_tunnel(index.get(), !on),
-                        ))
-                        .child(
-                            text("Tunnel")
-                                .text_size(px(tokens::TEXT_CAPTION))
-                                .text_color(move || theme().muted_foreground),
-                        )
-                        .into_element(),
-                )
-            }
-        }))
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(1.5))
+                .child(ui::switch(
+                    format!("proxy-tunnel-{id}"),
+                    move || row.get().tunnel,
+                    proxy::busy,
+                    "Tunnel",
+                    move |next| proxy::set_tunnel(index.get(), next),
+                ))
+                .child(
+                    text("Tunnel")
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .text_color(move || theme().muted_foreground),
+                ),
+        )
         .child(view().flex_1())
         .child(
             view()
@@ -266,14 +260,14 @@ fn top_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>, busy: bool) -> 
                                 .flex_row()
                                 .items_center()
                                 .gap(tokens::space(1.0))
-                                .child(ui::icon_button(
+                                .child(ui::row_icon_button(
                                     icons::copy(),
                                     "Copy HTTPS URL",
                                     format!("proxy-copy-url-{id}"),
                                     false,
                                     move || copy(&copy_url),
                                 ))
-                                .child(ui::icon_button(
+                                .child(ui::row_icon_button(
                                     icons::link(),
                                     "Open HTTPS URL",
                                     format!("proxy-open-url-{id}"),
@@ -284,7 +278,7 @@ fn top_row(row: ReadSignal<RuleDraft>, index: ReadSignal<usize>, busy: bool) -> 
                         )
                     }
                 }))
-                .child(ui::icon_button(
+                .child(ui::row_icon_button(
                     icons::trash(),
                     "Remove rule",
                     format!("proxy-remove-{id}"),
@@ -389,11 +383,7 @@ fn disabled_item(label: &'static str) -> AnyElement {
         .into_element()
 }
 
-fn tunnel_row(
-    index: ReadSignal<usize>,
-    row: ReadSignal<RuleDraft>,
-    busy: bool,
-) -> impl IntoElement {
+fn tunnel_row(index: ReadSignal<usize>, row: ReadSignal<RuleDraft>) -> impl IntoElement {
     let id = row.get().id;
     view()
         .flex_col()
@@ -411,46 +401,26 @@ fn tunnel_row(
                         .flex_none()
                         .text_color(move || theme().muted_foreground),
                 )
-                .child(dynamic({
-                    move || {
-                        let custom = row.get().tunnel_mode == TUNNEL_MODE_CUSTOM_DOMAIN;
-                        Some(
-                            view()
-                                .flex_row()
-                                .items_center()
-                                .gap(tokens::space(1.5))
-                                .child(ui::chip(
-                                    TUNNEL_MODE_WORKERS_DEV,
-                                    !custom,
-                                    format!("proxy-mode-workers-{id}"),
-                                    busy,
-                                    {
-                                        move || {
-                                            proxy::set_tunnel_mode(
-                                                index.get(),
-                                                TUNNEL_MODE_WORKERS_DEV,
-                                            )
-                                        }
-                                    },
-                                ))
-                                .child(ui::chip(
-                                    TUNNEL_MODE_CUSTOM_DOMAIN,
-                                    custom,
-                                    format!("proxy-mode-custom-{id}"),
-                                    busy,
-                                    {
-                                        move || {
-                                            proxy::set_tunnel_mode(
-                                                index.get(),
-                                                TUNNEL_MODE_CUSTOM_DOMAIN,
-                                            )
-                                        }
-                                    },
-                                ))
-                                .into_element(),
-                        )
-                    }
-                }))
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(1.5))
+                        .child(ui::chip(
+                            TUNNEL_MODE_WORKERS_DEV,
+                            move || row.get().tunnel_mode != TUNNEL_MODE_CUSTOM_DOMAIN,
+                            format!("proxy-mode-workers-{id}"),
+                            proxy::busy,
+                            move || proxy::set_tunnel_mode(index.get(), TUNNEL_MODE_WORKERS_DEV),
+                        ))
+                        .child(ui::chip(
+                            TUNNEL_MODE_CUSTOM_DOMAIN,
+                            move || row.get().tunnel_mode == TUNNEL_MODE_CUSTOM_DOMAIN,
+                            format!("proxy-mode-custom-{id}"),
+                            proxy::busy,
+                            move || proxy::set_tunnel_mode(index.get(), TUNNEL_MODE_CUSTOM_DOMAIN),
+                        )),
+                )
                 .child(when(
                     move || row.get().tunnel_mode == TUNNEL_MODE_CUSTOM_DOMAIN,
                     {
@@ -470,29 +440,24 @@ fn tunnel_row(
                         }
                     },
                 ))
-                .child(dynamic({
-                    move || {
-                        let on = row.get().tunnel_auth;
-                        Some(
-                            view()
-                                .flex_row()
-                                .items_center()
-                                .gap(tokens::space(1.5))
-                                .child(ui::switch(
-                                    format!("proxy-auth-{id}"),
-                                    on,
-                                    busy,
-                                    move || proxy::set_tunnel_auth(index.get(), !on),
-                                ))
-                                .child(
-                                    text("Protect")
-                                        .text_size(px(tokens::TEXT_CAPTION))
-                                        .text_color(move || theme().muted_foreground),
-                                )
-                                .into_element(),
-                        )
-                    }
-                }))
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(tokens::space(1.5))
+                        .child(ui::switch(
+                            format!("proxy-auth-{id}"),
+                            move || row.get().tunnel_auth,
+                            proxy::busy,
+                            "Protect",
+                            move |next| proxy::set_tunnel_auth(index.get(), next),
+                        ))
+                        .child(
+                            text("Protect")
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .text_color(move || theme().muted_foreground),
+                        ),
+                )
                 .child(view().flex_1())
                 .child(
                     text({
@@ -537,14 +502,14 @@ fn tunnel_row(
                                 .flex_row()
                                 .items_center()
                                 .gap(tokens::space(1.0))
-                                .child(ui::icon_button(
+                                .child(ui::row_icon_button(
                                     icons::copy(),
                                     "Copy tunnel URL",
                                     format!("proxy-copy-tunnel-{id}"),
                                     false,
                                     move || copy(&copy_url),
                                 ))
-                                .child(ui::icon_button(
+                                .child(ui::row_icon_button(
                                     icons::link(),
                                     "Open tunnel URL",
                                     format!("proxy-open-tunnel-{id}"),
@@ -568,19 +533,19 @@ fn tunnel_row(
                                 .gap(tokens::space(1.0))
                                 .child({
                                     let domain = domain.clone();
-                                    ui::icon_button(
+                                    ui::row_icon_button(
                                         icons::key(),
                                         "Copy tunnel token",
                                         format!("proxy-copy-token-{id}"),
-                                        busy,
+                                        proxy::busy,
                                         move || proxy::copy_tunnel_token(domain.clone()),
                                     )
                                 })
-                                .child(ui::icon_button(
+                                .child(ui::row_icon_button(
                                     icons::rotate(),
                                     "Rotate tunnel token",
                                     format!("proxy-rotate-token-{id}"),
-                                    busy,
+                                    proxy::busy,
                                     {
                                         let domain = domain.clone();
                                         move || proxy::rotate_tunnel_token(domain.clone())
@@ -854,11 +819,6 @@ fn footer_state() -> impl IntoElement {
 // --- Service cards -----------------------------------------------------------
 
 fn proxy_card() -> impl IntoElement {
-    let status = proxy::proxy_status();
-    let on = status == "Running";
-    let busy = proxy::busy();
-    let dirty = proxy::dirty();
-    let empty = proxy::saved_rules().is_empty();
     view()
         .flex_col()
         .gap(tokens::space(3.0))
@@ -884,9 +844,9 @@ fn proxy_card() -> impl IntoElement {
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(move || theme().muted_foreground),
                 )
-                .child(when(status != "Running" && status != "Stopped", {
-                    let status = status.clone();
-                    move || ui::status_tag(status.clone())
+                .child(dynamic(|| {
+                    let status = proxy::proxy_status();
+                    (status != "Running" && status != "Stopped").then(|| ui::status_tag(status))
                 }))
                 .child(view().flex_1())
                 .child(
@@ -901,9 +861,15 @@ fn proxy_card() -> impl IntoElement {
                         )
                         .child(ui::switch(
                             "proxy-switch",
-                            on,
-                            busy || dirty || (empty && !on),
-                            move || proxy::set_proxy_enabled(!on),
+                            || proxy::proxy_status() == "Running",
+                            || {
+                                let on = proxy::proxy_status() == "Running";
+                                proxy::busy()
+                                    || proxy::dirty()
+                                    || (proxy::saved_rules().is_empty() && !on)
+                            },
+                            "HTTPS proxy service",
+                            proxy::set_proxy_enabled,
                         )),
                 ),
         )
@@ -917,14 +883,14 @@ fn proxy_card() -> impl IntoElement {
                     "Restart HTTPS proxy",
                     Tone::Default,
                     "proxy-restart",
-                    busy || dirty,
+                    || proxy::busy() || proxy::dirty(),
                     proxy::restart_proxy,
                 ))
                 .child(ui::action_button(
                     "Read proxy logs",
                     Tone::Default,
                     "proxy-logs",
-                    busy,
+                    proxy::busy,
                     || proxy::read_logs("proxy"),
                 )),
         )
@@ -939,7 +905,7 @@ fn tunnel_card() -> impl IntoElement {
         .bg(tokens::panel)
         .border_1()
         .border_color(tokens::hairline)
-        .child(dynamic(|| Some(tunnel_header())))
+        .child(tunnel_header())
         .child(
             view()
                 .flex_row()
@@ -974,11 +940,6 @@ fn tunnel_card() -> impl IntoElement {
 }
 
 fn tunnel_header() -> impl IntoElement {
-    let status = proxy::tunnel_status();
-    let on = status == "Running";
-    let busy = proxy::busy();
-    let tunnel_dirty = proxy::tunnel_dirty();
-    let has_tunnel = proxy::has_tunnel_rules();
     view()
         .flex_row()
         .items_center()
@@ -995,9 +956,9 @@ fn tunnel_header() -> impl IntoElement {
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(move || theme().muted_foreground),
         )
-        .child(when(status != "Running" && status != "Stopped", {
-            let status = status.clone();
-            move || ui::status_tag(status.clone())
+        .child(dynamic(|| {
+            let status = proxy::tunnel_status();
+            (status != "Running" && status != "Stopped").then(|| ui::status_tag(status))
         }))
         .child(view().flex_1())
         .child(
@@ -1012,9 +973,15 @@ fn tunnel_header() -> impl IntoElement {
                 )
                 .child(ui::switch(
                     "tunnel-switch",
-                    on,
-                    busy || tunnel_dirty || (!has_tunnel && !on),
-                    move || proxy::set_tunnel_enabled(!on),
+                    || proxy::tunnel_status() == "Running",
+                    || {
+                        let on = proxy::tunnel_status() == "Running";
+                        proxy::busy()
+                            || proxy::tunnel_dirty()
+                            || (!proxy::has_tunnel_rules() && !on)
+                    },
+                    "Cloudflare tunnel service",
+                    proxy::set_tunnel_enabled,
                 )),
         )
 }

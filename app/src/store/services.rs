@@ -191,6 +191,19 @@ struct LogPoll(Rc<RefCell<LogPollInner>>);
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct HelperProbeState(Option<bool>);
 
+/// Persisted width of the resizable Services inspector, kept off [`Services`]
+/// so dragging the handle never wakes list or detail bindings.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct InspectorLayout {
+    width: f32,
+}
+
+impl Default for InspectorLayout {
+    fn default() -> Self {
+        Self { width: 336.0 }
+    }
+}
+
 fn services() -> Signal<Services> {
     global::<Services>()
 }
@@ -209,6 +222,21 @@ fn log_poll() -> Signal<LogPoll> {
 
 fn helper_probe() -> Signal<HelperProbeState> {
     global::<HelperProbeState>()
+}
+
+fn inspector_layout() -> Signal<InspectorLayout> {
+    global::<InspectorLayout>()
+}
+
+pub(crate) fn inspector_width() -> f32 {
+    inspector_layout().with(|state| state.width)
+}
+
+pub(crate) fn set_inspector_width(width: f32) {
+    let clamped = width.clamp(280.0, 560.0);
+    if (inspector_layout().with_untracked(|state| state.width) - clamped).abs() > 0.5 {
+        inspector_layout().set(InspectorLayout { width: clamped });
+    }
 }
 
 /// Runs store work outside the view that asked for it: a row or pane the
@@ -454,9 +482,17 @@ pub(crate) fn refresh(source: Source) {
     });
 }
 
-/// Reads the shown source again, on request.
+/// Reads the shown source again, on request, and refreshes the selected
+/// item's detail rows when one is open.
 pub(crate) fn refresh_active() {
-    refresh(active_source());
+    let source = active_source();
+    refresh(source);
+    if let Some(id) = selected_id()
+        && let Some(item) = item_by_id(&id)
+        && item.source == source
+    {
+        load_detail(item);
+    }
 }
 
 /// Reads `source` again only if it has already been loaded in this session.

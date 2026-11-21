@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::error::{CliError, CliResult};
 
-pub const CLI_VERSION: &str = "0.1.0";
+pub const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const CLI_ARCH: &str = "darwin/arm64";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

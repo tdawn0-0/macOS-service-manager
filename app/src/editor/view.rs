@@ -6,27 +6,50 @@
 //! bindings — no coarse `dynamic(...)` wrappers around text inputs, so focus
 //! and caret position stay intact across every keystroke.
 
+use std::rc::Rc;
+
 use devcore::service::Source;
 use nsh_base::{
     TooltipElement, button, checkbox, dialog, input, switch, tab, tabs, theme, toggle,
     toggle_group, tooltip,
 };
 use nsh_core::{
-    desktop::WindowKind,
+    desktop::{WindowAttributes, WindowKind},
     element::{AutoCapitalize, desktop},
     prelude::*,
 };
 
-use crate::theme as tokens;
+use crate::{components::icons, theme as tokens};
 
 use super::store::{
     self, CommandMode, JOB_KINDS, RestartPolicy, ScheduleMode, kind_label, signals,
 };
 
+/// Minimum content size of the native desktop editor window in points.
+const EDITOR_MIN_SIZE: (f32, f32) = (520.0, 520.0);
+
+/// Attributes shared by [`editor_window`]'s native desktop dialog.
+pub(crate) fn editor_window_attributes() -> WindowAttributes {
+    let mut attrs = WindowAttributes::default();
+    attrs.close_on_escape = Some(true);
+    attrs.min_size = Some(Some(size(px(EDITOR_MIN_SIZE.0), px(EDITOR_MIN_SIZE.1))));
+    attrs
+}
+
 /// The editor's full form panel. Directly mountable in `nsh_testing::Headless`
 /// or embedded inside [`editor_window`].
 pub fn editor_panel() -> impl IntoElement {
+    editor_panel_with_title(true)
+}
+
+fn editor_panel_with_title(show_title: bool) -> impl IntoElement {
     let s = signals();
+
+    on_key("mod+s", |_| {
+        if !store::is_saving() && !store::is_loading() {
+            store::save();
+        }
+    });
 
     view()
         .test_id("plist-editor")
@@ -38,7 +61,10 @@ pub fn editor_panel() -> impl IntoElement {
         .gap(tokens::space(3.5))
         .bg(move || theme().background)
         .text_color(move || theme().foreground)
-        .child(header())
+        .child(when(
+            move || show_title || store::has_subtitle(),
+            move || header(show_title),
+        ))
         .child(when(move || !store::is_existing(), kind_selector))
         .child(when(store::is_loading, loading_banner))
         .child(
@@ -69,6 +95,7 @@ pub fn editor_window() -> impl IntoElement {
             .kind(WindowKind::Dialog)
             .parent("main")
             .modal(true)
+            .attributes(editor_window_attributes())
             .title(move || {
                 if store::is_existing() {
                     "Edit Job".to_string()
@@ -83,7 +110,7 @@ pub fn editor_window() -> impl IntoElement {
                     store::close();
                 }
             })
-            .content(editor_panel)
+            .content(|| editor_panel_with_title(false))
             .into_element()
     } else {
         when(store::is_open, || {
@@ -111,7 +138,7 @@ pub fn editor_window() -> impl IntoElement {
                                 .border_1()
                                 .border_color(tokens::hairline)
                                 .overflow_hidden()
-                                .child(editor_panel()),
+                                .child(editor_panel_with_title(true)),
                         ),
                 )
         })
@@ -121,11 +148,11 @@ pub fn editor_window() -> impl IntoElement {
 
 // --- Header & kind selector --------------------------------------------------
 
-fn header() -> impl IntoElement {
+fn header(show_title: bool) -> impl IntoElement {
     view()
         .flex_col()
         .gap(tokens::space(0.75))
-        .child(
+        .child(when(show_title, || {
             text(move || {
                 if store::is_existing() {
                     "Edit Job"
@@ -136,8 +163,8 @@ fn header() -> impl IntoElement {
             .test_id("editor-title")
             .text_size(px(16.0))
             .font_weight(FontWeight::SEMIBOLD)
-            .text_color(move || theme().foreground),
-        )
+            .text_color(move || theme().foreground)
+        }))
         .child(when(store::has_subtitle, || {
             text(store::subtitle)
                 .test_id("editor-subtitle")
@@ -790,6 +817,7 @@ fn text_input_box(
         .bg(tokens::control)
         .border_1()
         .border_color(tokens::hairline)
+        .focus_within(|s| s.border_color(move || theme().ring))
         .child(
             input()
                 .test_id(test_id)
@@ -825,6 +853,7 @@ fn multiline_input_box(
         .bg(tokens::control)
         .border_1()
         .border_color(tokens::hairline)
+        .focus_within(|s| s.border_color(move || theme().ring))
         .child(
             input()
                 .test_id(test_id)
@@ -920,13 +949,16 @@ fn switch_row(
     disabled: impl Fn() -> bool + Copy + 'static,
     on_change: impl Fn(bool) + 'static,
 ) -> impl IntoElement {
+    let label = Rc::new(label);
+    let text_label = Rc::clone(&label);
+    let a11y_label = Rc::clone(&label);
     view()
         .flex_row()
         .items_center()
         .justify_between()
         .gap(tokens::space(2.0))
         .child(
-            text(label)
+            text(move || text_label())
                 .text_size(px(tokens::TEXT_SMALL))
                 .text_color(move || theme().foreground),
         )
@@ -935,6 +967,9 @@ fn switch_row(
                 .test_id(test_id)
                 .checked(checked)
                 .disabled(disabled)
+                .accessibility_label(move || Some(SharedString::from(a11y_label())))
+                .rounded(px(9.0))
+                .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
                 .on_change(move |next: &bool| on_change(*next))
                 .opacity(move || if disabled() { 0.5_f32 } else { 1.0_f32 })
                 .track_style(move |s| {
@@ -974,6 +1009,8 @@ fn checkbox_row(
         .flex_row()
         .items_center()
         .gap(tokens::space(2.0))
+        .rounded(move || theme().radius)
+        .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
         .indicator_style(move |s| {
             s.size(px(16.0))
                 .items_center()
@@ -996,9 +1033,8 @@ fn checkbox_row(
                 })
         })
         .indicator(view().child(when(checked, || {
-            text("✓")
-                .text_size(px(10.0))
-                .font_weight(FontWeight::BOLD)
+            icons::check()
+                .size(px(11.0))
                 .text_color(move || theme().primary_foreground)
         })))
         .child(
@@ -1037,6 +1073,14 @@ fn action_button(
                 tokens::hairline()
             }
         })
+        .hover(move |s| {
+            if primary {
+                s.bg(theme().primary.opacity(0.86))
+            } else {
+                s.bg(tokens::row_hover())
+            }
+        })
+        .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
         .disabled(disabled)
         .opacity(move || if disabled() { 0.5_f32 } else { 1.0_f32 })
         .on_press(on_press)
@@ -1052,4 +1096,19 @@ fn action_button(
                     }
                 }),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn editor_window_attributes_set_escape_and_min_size() {
+        let attrs = editor_window_attributes();
+        assert_eq!(attrs.close_on_escape, Some(true));
+        assert_eq!(
+            attrs.min_size,
+            Some(Some(size(px(EDITOR_MIN_SIZE.0), px(EDITOR_MIN_SIZE.1))))
+        );
+    }
 }

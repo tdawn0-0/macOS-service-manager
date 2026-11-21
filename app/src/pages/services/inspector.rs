@@ -7,7 +7,7 @@ use devcore::service::{Action, Autostart, Item, LogFile, Row, Source, State};
 use nsh_base::{menu, menu_item, menu_separator, theme};
 use nsh_core::prelude::*;
 
-use super::hint_tooltip;
+use super::{hint_tooltip, is_editable_plist};
 use crate::{
     components::{icon_button, icons, labeled_button, state_color, status_dot},
     store::services::{self as svc, DetailTab, LogBodyMode},
@@ -19,8 +19,10 @@ pub(crate) fn inspector() -> impl IntoElement {
     let selected_id = computed(svc::selected_id);
     view()
         .test_id("inspector")
-        .w(px(336.0))
-        .flex_none()
+        .flex_1()
+        .w_full()
+        .min_w(px(0.0))
+        .min_h(px(0.0))
         .flex_col()
         .bg(tokens::sheet)
         .border_l_1()
@@ -34,13 +36,14 @@ pub(crate) fn inspector() -> impl IntoElement {
 
 fn bar() -> impl IntoElement {
     view()
-        .h(px(52.0))
+        .h(px(tokens::TITLE_BAR_HEIGHT))
         .flex_none()
         .flex_row()
         .items_center()
         .justify_end()
         .px(tokens::space(3.0))
         .pt(tokens::space(2.0))
+        .window_drag(true)
         .child(icon_button(icons::close(), "Close details", || {
             svc::clear_selection()
         }))
@@ -173,19 +176,9 @@ fn state_chip(id: String) -> impl IntoElement {
             .text_size(px(tokens::TEXT_CAPTION))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(move || state_color(status.get().0))
+            .tabular_nums()
             .truncate(),
         )
-}
-
-fn is_editable_plist(item: &Item) -> bool {
-    matches!(
-        item.source,
-        Source::UserAgent | Source::SystemAgent | Source::Daemon
-    ) && !item.path.as_os_str().is_empty()
-        && item
-            .path
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("plist"))
 }
 
 /// The actions an item is mostly used for, each with a place of its own, and
@@ -408,6 +401,7 @@ fn autostart_card(id: String) -> impl IntoElement {
             let busy_id = id.clone();
             let busy = computed(move || svc::is_busy(&busy_id));
             let label_id = id.clone();
+            let switch_a11y_id = id.clone();
             let admin_id = id.clone();
             let words_id = id.clone();
             let switch_id = id.clone();
@@ -469,8 +463,14 @@ fn autostart_card(id: String) -> impl IntoElement {
                                 .checked(move || on.get())
                                 .disabled(move || busy.get())
                                 .accessibility_label(move || {
-                                    Some(SharedString::from(if on.get() { "On" } else { "Off" }))
+                                    Some(SharedString::from(
+                                        svc::item_by_id(&switch_a11y_id)
+                                            .map(|item| toggle_label(&item))
+                                            .unwrap_or("Load at login"),
+                                    ))
                                 })
+                                .rounded(px(9.0))
+                                .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
                                 .opacity(move || if busy.get() { 0.5_f32 } else { 1.0_f32 })
                                 .track_style(move |s| {
                                     s.w(px(30.0))
@@ -574,7 +574,7 @@ fn info_tab(id: String) -> impl IntoElement {
     let error = computed(move || svc::detail_error(&err_id));
     let load_id = id.clone();
     let loading = computed(move || svc::detail_loading(&load_id));
-    let rows = computed(move || svc::detail_rows(&id));
+    let groups = computed(move || group_rows(svc::detail_rows(&id)));
 
     view()
         .flex_col()
@@ -599,37 +599,69 @@ fn info_tab(id: String) -> impl IntoElement {
                     .text_color(move || theme().muted_foreground)
             },
         ))
-        .child(dynamic(move || {
-            let groups = group_rows(rows.get());
-            (!groups.is_empty()).then(move || {
-                scroll().flex_1().min_h(px(0.0)).selectable(true).child(
+        .child(
+            scroll()
+                .test_id("info-scroll")
+                .flex_1()
+                .min_h(px(0.0))
+                .selectable(true)
+                .child(
                     view()
                         .flex_col()
                         .gap(tokens::space(4.0))
                         .px(tokens::space(4.0))
                         .py(tokens::space(2.0))
-                        .child(
-                            groups
-                                .into_iter()
-                                .map(|(title, rows)| info_group(title, rows)),
-                        ),
-                )
-            })
-        }))
+                        .child(each(
+                            move || groups.get(),
+                            |(title, _)| title.clone(),
+                            |group, _| info_group(group),
+                        )),
+                ),
+        )
 }
 
-fn group_rows(rows: Vec<Row>) -> Vec<(String, Vec<Row>)> {
-    let mut groups: Vec<(String, Vec<Row>)> = Vec::new();
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KeyedRow {
+    row: Row,
+    occurrence: usize,
+    long: bool,
+    code: bool,
+}
+
+fn group_rows(rows: Vec<Row>) -> Vec<(String, Vec<KeyedRow>)> {
+    let mut groups: Vec<(String, Vec<KeyedRow>)> = Vec::new();
     for row in rows {
+        let code = looks_like_code(&row);
+        let long = row.value.len() > 30 || code;
         match groups.last_mut() {
-            Some((title, rows)) if title == &row.group => rows.push(row),
-            _ => groups.push((row.group.clone(), vec![row])),
+            Some((title, items)) if title == &row.group => {
+                let occurrence = items.iter().filter(|r| r.row.key == row.key).count();
+                items.push(KeyedRow {
+                    row,
+                    occurrence,
+                    long,
+                    code,
+                });
+            }
+            _ => {
+                let title = row.group.clone();
+                groups.push((
+                    title,
+                    vec![KeyedRow {
+                        row,
+                        occurrence: 0,
+                        long,
+                        code,
+                    }],
+                ));
+            }
         }
     }
     groups
 }
 
-fn info_group(title: String, rows: Vec<Row>) -> impl IntoElement {
+fn info_group(group: ReadSignal<(String, Vec<KeyedRow>)>) -> impl IntoElement {
+    let title = group.with_untracked(|(title, _)| title.clone());
     let has_title = !title.is_empty();
     view()
         .flex_col()
@@ -650,19 +682,34 @@ fn info_group(title: String, rows: Vec<Row>) -> impl IntoElement {
                 .border_1()
                 .border_color(tokens::hairline)
                 .overflow_hidden()
-                .child(rows.into_iter().map(info_row)),
+                .child(each(
+                    move || group.with(|(_, rows)| rows.clone()),
+                    |entry| {
+                        (
+                            entry.row.key.clone(),
+                            entry.occurrence,
+                            entry.long,
+                            entry.code,
+                        )
+                    },
+                    |entry, _| info_row(entry),
+                )),
         )
 }
 
 /// Shows a value: beside its name if it fits, below if not, with a button to
 /// copy it while the pointer is over the row.
-fn info_row(row: Row) -> impl IntoElement {
-    let key = format!("{}:{}", row.group, row.key);
+fn info_row(entry: ReadSignal<KeyedRow>) -> impl IntoElement {
+    let initial = entry.get_untracked();
+    let key = format!(
+        "{}:{}:{}",
+        initial.row.group, initial.row.key, initial.occurrence
+    );
     let hovered_key = key.clone();
     let opacity_key = key.clone();
-    let long = row.value.len() > 30 || looks_like_code(&row);
-    let value = info_value(&row);
-    let copy_label = format!("Copy {}", row.key);
+    let long = initial.long;
+    let value = info_value(entry, initial.code);
+    let copy_label = format!("Copy {}", initial.row.key);
     view()
         .relative()
         .w_full()
@@ -681,7 +728,7 @@ fn info_row(row: Row) -> impl IntoElement {
             view()
                 .flex_col()
                 .gap(px(3.0))
-                .child(info_key(&row, false))
+                .child(info_key(&initial.row, false))
                 .child(value)
                 .into_element()
         } else {
@@ -689,7 +736,7 @@ fn info_row(row: Row) -> impl IntoElement {
                 .flex_row()
                 .items_center()
                 .gap(tokens::space(2.5))
-                .child(info_key(&row, true))
+                .child(info_key(&initial.row, true))
                 .child(value)
                 .into_element()
         })
@@ -714,9 +761,9 @@ fn info_row(row: Row) -> impl IntoElement {
                             }
                         })
                         .accessibility_label(copy_label)
-                        .on_press({
-                            let value = row.value.clone();
-                            move || svc::copy(&value)
+                        .on_press(move || {
+                            let current = entry.with_untracked(|item| item.row.value.clone());
+                            svc::copy(&current);
                         })
                         .child(
                             icons::copy()
@@ -743,9 +790,8 @@ fn info_key(row: &Row, grow: bool) -> impl IntoElement {
     }
 }
 
-fn info_value(row: &Row) -> AnyElement {
-    let code = looks_like_code(row);
-    let value = text(row.value.clone())
+fn info_value(entry: ReadSignal<KeyedRow>, code: bool) -> AnyElement {
+    let value = text(move || entry.with(|item| item.row.value.clone()))
         .text_size(px(if code {
             tokens::TEXT_CAPTION
         } else {
@@ -757,7 +803,7 @@ fn info_value(row: &Row) -> AnyElement {
     if code {
         value.font_family("monospace").into_element()
     } else {
-        value.into_element()
+        value.tabular_nums().into_element()
     }
 }
 

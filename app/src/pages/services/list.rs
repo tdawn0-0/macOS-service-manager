@@ -2,10 +2,17 @@
 //! All / Running / Stopped filter, each row with its state and the one
 //! action it is mostly used for.
 
+use std::path::PathBuf;
+
 use devcore::service::{Action, Item, Source};
 use nsh_base::{input, theme};
-use nsh_core::prelude::*;
+use nsh_core::{
+    element::desktop::{MenuItem, popup_menu_at},
+    keymap::When,
+    prelude::*,
+};
 
+use super::is_editable_plist;
 use crate::{
     components::{icon_button, icons, note, status_dot},
     store::services::{self as svc, Filter},
@@ -13,27 +20,126 @@ use crate::{
 };
 
 pub(crate) fn list_pane() -> impl IntoElement {
+    let search_ref = element_ref();
+    let drag_over = signal(false);
+    let login_drag_over = move || svc::active_source() == Source::LoginItem && drag_over.get();
+
     view()
+        .test_id("services-list-pane")
         .flex_1()
         .min_w(px(0.0))
+        .min_h(px(0.0))
         .flex_col()
+        .bg(move || {
+            if login_drag_over() {
+                theme().primary.opacity(0.06)
+            } else {
+                AdaptiveColor::TRANSPARENT
+            }
+        })
+        .on_file_drag_enter(move |e: &FileDragEvent| {
+            if svc::active_source() == Source::LoginItem
+                && (e.uris.is_empty()
+                    || e.uris
+                        .iter()
+                        .any(|uri| app_bundle_path_from_uri(uri).is_some()))
+            {
+                drag_over.set(true);
+            }
+        })
+        .on_file_drag_leave(move |_: &()| drag_over.set(false))
+        .on_file_drop(move |e: &FileDropEvent| {
+            drag_over.set(false);
+            if svc::active_source() == Source::LoginItem {
+                for uri in &e.uris {
+                    if let Some(path) = app_bundle_path_from_uri(uri) {
+                        svc::add_login_item_path(path);
+                    }
+                }
+            }
+        })
+        .child(when(
+            move || !crate::editor::is_open() && !crate::dev_logs::is_open(),
+            move || search_shortcut(search_ref),
+        ))
+        .child(when(
+            move || {
+                !crate::editor::is_open()
+                    && !crate::dev_logs::is_open()
+                    && (!svc::query().is_empty()
+                        || svc::filter() != Filter::All
+                        || svc::selected_id().is_some())
+            },
+            escape_shortcut,
+        ))
         .child(header())
-        .child(search_row())
+        .child(search_row(search_ref))
         .child(view().h(px(1.0)).flex_none().bg(tokens::hairline))
+        .child(when(login_drag_over, drop_hint_banner))
         .child(when_some_note())
         .child(list())
+}
+
+fn search_shortcut(search_ref: ElementRef) -> impl IntoElement {
+    on_key("mod+f", move |_| search_ref.focus());
+    view().w(px(0.0)).h(px(0.0)).flex_none()
+}
+
+fn escape_shortcut() -> impl IntoElement {
+    on_key_with(
+        "escape",
+        KeyOptions {
+            when: When::Always,
+            ..KeyOptions::default()
+        },
+        |_| {
+            if !svc::query().is_empty() || svc::filter() != Filter::All {
+                svc::clear_search();
+            } else if svc::selected_id().is_some() {
+                svc::clear_selection();
+            }
+        },
+    );
+    view().w(px(0.0)).h(px(0.0)).flex_none()
+}
+
+fn drop_hint_banner() -> impl IntoElement {
+    view()
+        .test_id("login-item-drop-hint")
+        .flex_none()
+        .flex_row()
+        .items_center()
+        .gap(tokens::space(2.0))
+        .px(tokens::space(4.0))
+        .py(tokens::space(2.0))
+        .border_b_1()
+        .border_color(move || theme().ring)
+        .bg(move || theme().primary.opacity(0.08))
+        .child(
+            icons::plus()
+                .size(px(13.0))
+                .flex_none()
+                .text_color(move || theme().primary),
+        )
+        .child(
+            text("Drop an .app bundle to add it to Login Items")
+                .text_size(px(tokens::TEXT_SMALL))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(move || theme().foreground),
+        )
 }
 
 /// The title of the list and what reads it.
 fn header() -> impl IntoElement {
     view()
-        .h(px(52.0))
+        .h(px(tokens::TITLE_BAR_HEIGHT))
         .flex_none()
         .flex_row()
         .items_center()
         .gap(tokens::space(2.0))
         .px(tokens::space(5.0))
         .pt(tokens::space(2.0))
+        .window_drag(true)
         .child(
             text(move || svc::active_source().title().to_string())
                 .text_size(px(15.0))
@@ -86,6 +192,7 @@ fn header_action_button(
         .border_1()
         .border_color(tokens::hairline)
         .hover(move |style| style.bg(tokens::row_hover()))
+        .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
         .on_press(on_press)
         .child(
             icons::plus()
@@ -102,7 +209,7 @@ fn header_action_button(
 }
 
 /// The search field and the three filters.
-fn search_row() -> impl IntoElement {
+fn search_row(search_ref: ElementRef) -> impl IntoElement {
     view()
         .flex_none()
         .flex_row()
@@ -123,6 +230,7 @@ fn search_row() -> impl IntoElement {
                 .bg(tokens::control)
                 .border_1()
                 .border_color(tokens::hairline)
+                .focus_within(|s| s.border_color(move || theme().ring))
                 .child(
                     icons::search()
                         .size(px(13.0))
@@ -132,6 +240,7 @@ fn search_row() -> impl IntoElement {
                 .child(
                     input()
                         .test_id("services-search")
+                        .element_ref(&search_ref)
                         .flex_1()
                         .min_w(px(0.0))
                         .h(px(26.0))
@@ -174,6 +283,7 @@ fn filter_button(filter: Filter) -> impl IntoElement {
             }
         })
         .hover(move |style| style.bg(tokens::row_hover()))
+        .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
         .on_change(move |_: &bool| svc::set_filter(filter))
         .child(
             text(filter.label())
@@ -400,6 +510,13 @@ fn row(item: ReadSignal<Item>) -> impl IntoElement {
             }
         })
         .on_press(move || svc::select_item(&item.with_untracked(|item| item.id.clone())))
+        .on_context_menu(move |e: &ContextMenuEvent| {
+            let current = item.get_untracked();
+            let items = row_context_menu_items(&current);
+            if !items.is_empty() {
+                drop(popup_menu_at(items, e.page_position));
+            }
+        })
         .child(status_dot(move || item.get().state))
         .child(
             text(name.clone())
@@ -477,6 +594,7 @@ fn row_action(item: ReadSignal<Item>, action_id: String) -> impl IntoElement {
         .border_1()
         .border_color(tokens::hairline)
         .hover(move |style| style.bg(tokens::row_hover()))
+        .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
         .opacity(move || {
             let id = item.with_untracked(|item| item.id.clone());
             let shown =
@@ -520,5 +638,142 @@ fn autostart_note(item: &Item) -> &'static str {
         "disabled"
     } else {
         ""
+    }
+}
+
+/// Builds the native right-click context menu for a service list row.
+fn row_context_menu_items(item: &Item) -> Vec<MenuItem> {
+    let actions = svc::provider(item.source)
+        .map(|provider| provider.actions(item))
+        .unwrap_or_default();
+    let busy = svc::is_busy(&item.id);
+    let mut entries = Vec::new();
+
+    for action in actions.iter().copied() {
+        if matches!(action, Action::Enable | Action::Disable | Action::Remove) {
+            continue;
+        }
+        let target = item.clone();
+        entries.push(
+            MenuItem::new(action.label())
+                .disabled(busy)
+                .on_select(move || svc::request_action(target.clone(), action)),
+        );
+    }
+
+    if is_editable_plist(item) {
+        if !entries.is_empty() {
+            entries.push(MenuItem::separator());
+        }
+        let source = item.source;
+        let path = item.path.clone();
+        entries.push(
+            MenuItem::new("Edit Plist…")
+                .on_select(move || crate::editor::open_edit(source, path.clone())),
+        );
+    }
+
+    if !item.path.as_os_str().is_empty() {
+        if !entries.is_empty() {
+            entries.push(MenuItem::separator());
+        }
+        let copy_path = item.path.display().to_string();
+        entries.push(MenuItem::new("Copy Path").on_select(move || svc::copy(&copy_path)));
+        let reveal = item.path.clone();
+        entries.push(MenuItem::new("Reveal in Finder").on_select(move || {
+            let path = reveal.clone();
+            Owner::detached().run(move || {
+                spawn(async move {
+                    let _ = reveal_path(path).await;
+                });
+            });
+        }));
+    }
+
+    if actions.contains(&Action::Remove) {
+        if !entries.is_empty() {
+            entries.push(MenuItem::separator());
+        }
+        let target = item.clone();
+        entries.push(
+            MenuItem::new("Remove…")
+                .destructive(true)
+                .disabled(busy)
+                .on_select(move || svc::request_action(target.clone(), Action::Remove)),
+        );
+    }
+
+    entries
+}
+
+/// Extracts an absolute `.app` bundle path from a dropped `file:` URI or raw
+/// absolute path.
+fn app_bundle_path_from_uri(uri: &str) -> Option<PathBuf> {
+    let raw = if let Some(rest) = uri.strip_prefix("file://localhost/") {
+        format!("/{rest}")
+    } else if let Some(rest) = uri.strip_prefix("file:///") {
+        format!("/{rest}")
+    } else if uri.starts_with('/') {
+        uri.to_string()
+    } else {
+        return None;
+    };
+    let decoded = percent_decode(&raw)?;
+    let trimmed = decoded.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(trimmed);
+    let is_app = path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("app"));
+    (path.is_absolute() && is_app).then_some(path)
+}
+
+fn percent_decode(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16)?;
+            let lo = (bytes[i + 2] as char).to_digit(16)?;
+            out.push(((hi << 4) | lo) as u8);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_dropped_app_bundle_uris() {
+        assert_eq!(
+            app_bundle_path_from_uri("file:///Applications/Raycast.app/"),
+            Some(PathBuf::from("/Applications/Raycast.app"))
+        );
+        assert_eq!(
+            app_bundle_path_from_uri("file://localhost/Applications/Visual%20Studio%20Code.app"),
+            Some(PathBuf::from("/Applications/Visual Studio Code.app"))
+        );
+        assert_eq!(
+            app_bundle_path_from_uri("/Applications/Devbase.APP/"),
+            Some(PathBuf::from("/Applications/Devbase.APP"))
+        );
+        assert_eq!(
+            app_bundle_path_from_uri("file:///Applications/README.txt"),
+            None
+        );
+        assert_eq!(
+            app_bundle_path_from_uri("https://example.com/Foo.app"),
+            None
+        );
+        assert_eq!(app_bundle_path_from_uri("Applications/Foo.app"), None);
     }
 }

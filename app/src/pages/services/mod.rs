@@ -10,8 +10,8 @@ mod list;
 
 use std::time::Duration;
 
-use devcore::service::Source;
-use nsh_base::theme;
+use devcore::service::{Item, Source};
+use nsh_base::{ResizeHandleContext, ResizeHandleState, h_resizable, resizable_panel, theme};
 use nsh_core::prelude::*;
 
 use crate::{
@@ -19,6 +19,10 @@ use crate::{
     store::services::{self as svc, SOURCES},
     theme as tokens,
 };
+
+const INSPECTOR_MIN_WIDTH: f32 = 280.0;
+const INSPECTOR_MAX_WIDTH: f32 = 560.0;
+const LIST_MIN_WIDTH: f32 = 280.0;
 
 pub(crate) fn services() -> impl IntoElement {
     // The page is made once; reading the source happens in a task, not in a
@@ -31,15 +35,67 @@ pub(crate) fn services() -> impl IntoElement {
         .flex_1()
         .flex_row()
         .min_w(px(0.0))
+        .min_h(px(0.0))
         .child(source_rail())
-        .child(list::list_pane())
-        .child(when(
-            move || svc::selected_id().is_some(),
-            inspector::inspector,
-        ))
+        .child(
+            h_resizable()
+                .flex_1()
+                .min_w(px(0.0))
+                .min_h(px(0.0))
+                .handle_accessibility_label("Resize inspector")
+                .render_handle(|ctx: &ResizeHandleContext| {
+                    let active = ctx.is_active();
+                    let hovered = ctx.state == ResizeHandleState::Hovered;
+                    view()
+                        .w(if active || hovered { px(2.0) } else { px(1.0) })
+                        .h_full()
+                        .bg(move || {
+                            if active {
+                                theme().primary
+                            } else if hovered {
+                                theme().ring
+                            } else {
+                                AdaptiveColor::TRANSPARENT
+                            }
+                        })
+                })
+                .child(
+                    resizable_panel()
+                        .min_size(px(LIST_MIN_WIDTH))
+                        .flex_col()
+                        .min_h(px(0.0))
+                        .child(list::list_pane()),
+                )
+                .child(
+                    resizable_panel()
+                        .size(move || Some(px(svc::inspector_width())))
+                        .size_range(px(INSPECTOR_MIN_WIDTH)..px(INSPECTOR_MAX_WIDTH))
+                        .fixed(true)
+                        .visible(move || svc::selected_id().is_some())
+                        .on_resize(move |size: &Points| svc::set_inspector_width(size.0))
+                        .flex_col()
+                        .min_h(px(0.0))
+                        .child(when(
+                            move || svc::selected_id().is_some(),
+                            inspector::inspector,
+                        )),
+                ),
+        )
 }
 
-/// The three launchd sources, with how many of their jobs there are and how
+/// Whether `item` points to an editable launchd property list.
+pub(super) fn is_editable_plist(item: &Item) -> bool {
+    matches!(
+        item.source,
+        Source::UserAgent | Source::SystemAgent | Source::Daemon
+    ) && !item.path.as_os_str().is_empty()
+        && item
+            .path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("plist"))
+}
+
+/// The launchd sources, with how many of their jobs there are and how
 /// many run.
 fn source_rail() -> impl IntoElement {
     view()
@@ -50,13 +106,18 @@ fn source_rail() -> impl IntoElement {
         .border_r_1()
         .border_color(tokens::hairline)
         .px(tokens::space(2.0))
-        .py(tokens::space(3.0))
+        .pb(tokens::space(3.0))
         .child(
             view()
+                .min_h(px(tokens::TITLE_BAR_HEIGHT))
+                .flex_none()
                 .flex_col()
+                .justify_center()
                 .gap(tokens::space(0.5))
                 .px(tokens::space(2.0))
-                .pb(tokens::space(3.0))
+                .pt(tokens::space(2.0))
+                .pb(tokens::space(2.5))
+                .window_drag(true)
                 .child(
                     text("Services")
                         .text_base()
@@ -119,6 +180,7 @@ fn source_row(source: Source) -> impl IntoElement {
             }
         })
         .hover(move |style| style.bg(tokens::row_hover()))
+        .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
         .on_press(move || svc::select_source(source))
         .child(
             icons::source(source)
@@ -153,6 +215,7 @@ fn source_row(source: Source) -> impl IntoElement {
             })
             .text_size(px(tokens::TEXT_CAPTION))
             .text_color(move || theme().muted_foreground)
+            .tabular_nums()
             .flex_none(),
         )
 }

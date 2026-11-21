@@ -27,8 +27,9 @@ use nsh_app_devbase::testing::{
     EditorProvider, EditorSaveResult, SystemCacheClear, SystemCacheInfo, SystemCliChange,
     SystemCliStatus, SystemHelperChange, SystemHelperStatus, SystemLoginChange,
     SystemSettingsProvider, SystemSettingsSnapshot, install_editor_provider, install_provider,
-    install_system_settings_provider, use_fake_dev_logs, use_fake_editor, use_fake_providers,
-    use_fake_system,
+    install_system_settings_provider, use_fake_databases, use_fake_dev_logs, use_fake_development,
+    use_fake_editor, use_fake_guide, use_fake_menubar, use_fake_providers, use_fake_proxy,
+    use_fake_software, use_fake_system,
 };
 
 /// The service tests share one fake-provider registry, so they take turns.
@@ -757,10 +758,15 @@ fn autostart_switch_and_filter_controls_use_native_roles() {
     app.press("id:filter-all").unwrap();
     app.wait_for("com.example.alpha").unwrap();
 
-    // Autostart control uses nsh_base::switch with ARIA switch role and checked state.
+    // Autostart control uses nsh_base::switch with ARIA switch role, meaningful
+    // label ("Load at login" / "Load at boot"), and checked state.
     app.press("id:item-com.example.alpha").unwrap();
     app.wait_for("id:autostart-toggle").unwrap();
-    assert!(app.screen().matches("id:inspector >> role:switch").unwrap());
+    assert!(
+        app.screen()
+            .matches("id:inspector >> role:switch[Load at login]")
+            .unwrap()
+    );
     assert_eq!(
         app.screen()
             .accessibility_state("id:autostart-toggle")
@@ -777,6 +783,17 @@ fn autostart_switch_and_filter_controls_use_native_roles() {
             .unwrap()
             .checked,
         Some(Checked::False)
+    );
+
+    // Daemon autostart switch exposes "Load at boot" accessibility label.
+    app.press("id:source-daemon").unwrap();
+    app.wait_for("com.example.gamma").unwrap();
+    app.press("id:item-com.example.gamma").unwrap();
+    app.wait_for("id:autostart-toggle").unwrap();
+    assert!(
+        app.screen()
+            .matches("id:inspector >> role:switch[Load at boot]")
+            .unwrap()
     );
 }
 
@@ -970,6 +987,172 @@ fn brew_login_item_restriction_and_plist_editor_wire_into_services() {
     app.press("id:open-full-disk-access").unwrap();
     app.wait(Duration::from_millis(200)).unwrap();
     assert_eq!(login.settings_opened.load(Ordering::Relaxed), 1);
+
+    drop(app);
+    drop(turn);
+}
+
+struct RefreshingDetailProvider {
+    items: Mutex<Vec<Item>>,
+    pid: AtomicU64,
+}
+
+impl Provider for RefreshingDetailProvider {
+    fn source(&self) -> Source {
+        Source::UserAgent
+    }
+
+    fn list(&self) -> Result<Vec<Item>, BoxError> {
+        Ok(self
+            .items
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone())
+    }
+
+    fn detail(&self, item: &Item) -> Result<Detail, BoxError> {
+        let pid = self.pid.load(Ordering::Relaxed);
+        Ok(Detail {
+            rows: vec![
+                Row {
+                    group: "Status".to_string(),
+                    key: "Label".to_string(),
+                    value: item.name.clone(),
+                },
+                Row {
+                    group: "Status".to_string(),
+                    key: "PID".to_string(),
+                    value: pid.to_string(),
+                },
+                Row {
+                    group: "Files".to_string(),
+                    key: "Property list".to_string(),
+                    value: item.path.display().to_string(),
+                },
+            ],
+            logs: Vec::new(),
+        })
+    }
+
+    fn actions(&self, _item: &Item) -> Vec<Action> {
+        vec![Action::Stop, Action::Restart, Action::Disable]
+    }
+
+    fn confirm(&self, _item: &Item, _action: Action) -> Option<String> {
+        None
+    }
+
+    fn do_action(&self, _item: &Item, _action: Action) -> Result<(), BoxError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn info_tab_scroll_node_id_stays_stable_across_detail_refreshes() {
+    let turn = serial();
+    use_fake_providers();
+    use_fake_dev_logs();
+    use_fake_editor();
+
+    let provider = Arc::new(RefreshingDetailProvider {
+        items: Mutex::new(vec![item(
+            Source::UserAgent,
+            "com.example.alpha",
+            State::Running,
+            Autostart::On,
+            false,
+        )]),
+        pid: AtomicU64::new(4242),
+    });
+    install_provider(Source::UserAgent, provider.clone());
+    install_provider(Source::SystemAgent, system_agents());
+    install_provider(Source::Daemon, daemons(Behaviour::Normal));
+
+    let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
+    app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    app.wait_for("com.example.alpha").unwrap();
+
+    // No inspector is mounted before selection.
+    assert!(!app.screen().matches("id:inspector").unwrap());
+
+    app.press("id:item-com.example.alpha").unwrap();
+    app.wait_for("id:info-scroll").unwrap();
+    app.wait_for("4242").unwrap();
+
+    let scroll_id_before = app.screen().id("id:info-scroll").unwrap();
+    let inspector_id_before = app.screen().id("id:inspector").unwrap();
+
+    // Simulate a PID change and trigger Refresh; the Info tab scroll container
+    // must keep its NodeId so scroll offset and text selection survive.
+    provider.pid.store(7788, Ordering::Relaxed);
+    app.press("role:button[Refresh]").unwrap();
+    app.wait_for("7788").unwrap();
+
+    assert_eq!(
+        app.screen().id("id:info-scroll").unwrap(),
+        scroll_id_before,
+        "info_tab scroll container must stay mounted across detail refreshes"
+    );
+    assert_eq!(
+        app.screen().id("id:inspector").unwrap(),
+        inspector_id_before
+    );
+
+    drop(app);
+    drop(turn);
+}
+
+#[test]
+fn services_keyboard_shortcuts_focus_search_clear_query_and_close_inspector() {
+    let turn = serial();
+    use_fake_providers();
+    use_fake_software();
+    use_fake_development();
+    use_fake_databases();
+    use_fake_proxy();
+    use_fake_system();
+    use_fake_guide();
+    use_fake_menubar();
+    use_fake_dev_logs();
+    use_fake_editor();
+    install_provider(Source::UserAgent, user_agents(Behaviour::Normal));
+    install_provider(Source::SystemAgent, system_agents());
+    install_provider(Source::Daemon, daemons(Behaviour::Normal));
+
+    let mut config = EngineConfig::new(Root::of::<nsh_app_devbase::App>());
+    config.environment.os = nsh_core::platform::Os::MacOs;
+    let mut app = Headless::start(config).unwrap();
+    app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
+    app.wait_for("com.example.alpha").unwrap();
+    app.wait_for("com.example.bravo").unwrap();
+
+    // Cmd+F focuses the search input.
+    app.press_key("mod+f").unwrap();
+    let search_id = app.screen().id("id:services-search").unwrap();
+    assert!(
+        app.screen()
+            .commands()
+            .iter()
+            .any(|(id, cmd)| *id == search_id && matches!(cmd, nsh_core::Command::Focus)),
+        "mod+f should focus services-search"
+    );
+
+    // Filter down and open the inspector.
+    app.type_text("id:services-search", "alpha").unwrap();
+    app.wait_for_gone("com.example.bravo", Duration::from_secs(2))
+        .unwrap();
+    app.press("id:item-com.example.alpha").unwrap();
+    app.wait_for("id:inspector").unwrap();
+
+    // First Escape clears search while keeping the inspector open.
+    app.press_key("escape").unwrap();
+    app.wait_for("com.example.bravo").unwrap();
+    assert!(app.screen().matches("id:inspector").unwrap());
+
+    // Second Escape closes the inspector.
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:inspector", Duration::from_secs(2))
+        .unwrap();
 
     drop(app);
     drop(turn);

@@ -948,3 +948,87 @@ fn program_mode_env_kind_switching_cancel_and_missing_file_load_error() {
     app.wait_for("plist not found: /Users/tester/Library/LaunchAgents/missing.plist")
         .unwrap();
 }
+
+#[test]
+fn mod_s_shortcut_saves_form_and_closes_editor() {
+    let provider = FakeEditorProvider::new();
+    let guard = serial();
+    use_fake_editor();
+    install_editor_provider(provider.clone());
+    let mut config = EngineConfig::new(Root::of::<EditorHarness>());
+    config.environment.os = nsh_core::platform::Os::MacOs;
+    let mut app = Headless::start(config).unwrap();
+    app.wait_for("id:editor-harness").unwrap();
+
+    app.press("id:open-new-user").unwrap();
+    app.wait_for("New Job").unwrap();
+    app.type_text("id:editor-label", "com.example.shortcut")
+        .unwrap();
+    app.type_text("id:editor-args", "echo saved-by-shortcut")
+        .unwrap();
+
+    // Cmd+S triggers save even while the command field has focus.
+    app.press_key("mod+s").unwrap();
+    app.wait_for(
+        "status open=false rev=1 last=user-agent/com.example.shortcut/true notice=com.example.shortcut saved",
+    )
+    .unwrap();
+
+    let saves = provider.saves();
+    assert_eq!(saves.len(), 1);
+    assert_eq!(saves[0].spec.label, "com.example.shortcut");
+
+    drop(app);
+    drop(guard);
+}
+
+#[component]
+fn EditorWindowHarness() -> impl IntoElement {
+    view()
+        .test_id("editor-window-harness")
+        .size_full()
+        .flex_col()
+        .child(
+            nsh_base::button()
+                .test_id("open-window-new-user")
+                .on_press(|| editor_open_new(Source::UserAgent))
+                .child(text("Open Editor Window")),
+        )
+        .child(
+            text(move || format!("window-open={}", editor_is_open()))
+                .test_id("editor-window-status"),
+        )
+        .child(nsh_app_devbase::editor::editor_window())
+}
+
+#[test]
+fn desktop_editor_window_hides_duplicate_heading_and_closes_on_escape() {
+    let provider = FakeEditorProvider::new();
+    let guard = serial();
+    use_fake_editor();
+    install_editor_provider(provider);
+
+    let mut config = EngineConfig::new(Root::of::<EditorWindowHarness>());
+    config.environment.os = nsh_core::platform::Os::MacOs;
+    let mut app = Headless::start(config).unwrap();
+    app.wait_for("id:editor-window-harness").unwrap();
+
+    app.press("id:open-window-new-user").unwrap();
+    app.wait_for("window-open=true").unwrap();
+    app.wait_for("id:plist-editor").unwrap();
+
+    // Native desktop titlebar already shows "New Job", so the duplicate 16pt
+    // heading inside the panel is hidden.
+    assert!(
+        !app.screen().matches("id:editor-title").unwrap(),
+        "desktop editor window should hide duplicate editor-title heading"
+    );
+
+    // Escape closes the desktop dialog window (close_on_escape = true).
+    app.press_key("escape").unwrap();
+    app.wait_for("window-open=false").unwrap();
+    assert!(!app.screen().matches("id:plist-editor").unwrap());
+
+    drop(app);
+    drop(guard);
+}

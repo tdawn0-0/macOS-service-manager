@@ -534,3 +534,139 @@ fn slow_read_never_overwrites_newer_target_selection() {
     assert!(app.screen().shows("INFO connected"));
     assert!(!app.screen().shows("proxy-err-1"));
 }
+
+#[test]
+fn keyboard_shortcuts_focus_filter_clear_and_close_drawer() {
+    let provider = populated_provider();
+    let turn = serial();
+    use_fake_provider();
+    install_provider(provider);
+
+    let mut config = EngineConfig::new(Root::of::<DrawerHarness>());
+    config.environment.os = nsh_core::platform::Os::MacOs;
+    let mut app = Headless::start(config).unwrap();
+    app.set_viewport(Size::new(px(1120.0), px(720.0))).unwrap();
+    app.wait_for("Workspace body").unwrap();
+
+    app.press("id:harness-toggle").unwrap();
+    app.wait_for("proxy-err-1").unwrap();
+
+    // Cmd+F focuses the log filter input.
+    app.press_key("mod+f").unwrap();
+    let filter_id = app.screen().id("id:dev-log-filter").unwrap();
+    assert!(
+        app.screen()
+            .commands()
+            .iter()
+            .any(|(id, cmd)| *id == filter_id && matches!(cmd, nsh_core::Command::Focus)),
+        "mod+f should focus dev-log-filter"
+    );
+
+    // Filter to a single line, then Escape clears filter first without closing.
+    app.type_text("id:dev-log-filter", "err-2").unwrap();
+    app.wait_for_gone("proxy-err-1", Duration::from_secs(2))
+        .unwrap();
+    assert!(app.screen().shows("proxy-err-2"));
+
+    app.press_key("escape").unwrap();
+    app.wait_for("proxy-err-1").unwrap();
+    assert!(app.screen().matches("id:dev-log-drawer").unwrap());
+
+    // Second Escape closes the drawer.
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:dev-log-drawer", Duration::from_secs(2))
+        .unwrap();
+
+    drop(app);
+    drop(turn);
+}
+
+#[component]
+fn ResizableDrawerHarness() -> impl IntoElement {
+    let drawer_height = signal(px(180.0));
+    view()
+        .test_id("resizable-drawer-harness")
+        .size_full()
+        .flex_col()
+        .child(
+            view()
+                .flex_none()
+                .flex_row()
+                .gap(px(4.0))
+                .child(
+                    nsh_base::button()
+                        .test_id("resizable-open")
+                        .on_press(dev_logs::open_default)
+                        .child(text("Open")),
+                )
+                .child(
+                    nsh_base::button()
+                        .test_id("resizable-grow")
+                        .on_press(move || drawer_height.set(px(340.0)))
+                        .child(text("Grow")),
+                ),
+        )
+        .child(
+            nsh_base::v_resizable()
+                .flex_1()
+                .min_h(px(0.0))
+                .child(
+                    nsh_base::resizable_panel()
+                        .min_size(px(120.0))
+                        .child(view().flex_1().child(text("Resizable workspace"))),
+                )
+                .child(
+                    nsh_base::resizable_panel()
+                        .size(move || Some(drawer_height.get()))
+                        .size_range(px(120.0)..px(480.0))
+                        .fixed(true)
+                        .visible(dev_logs::is_open)
+                        .flex_col()
+                        .child(dev_logs::drawer()),
+                ),
+        )
+}
+
+#[test]
+fn drawer_height_flexes_inside_v_resizable_panel() {
+    let provider = populated_provider();
+    let turn = serial();
+    use_fake_provider();
+    install_provider(provider);
+
+    let mut app = Headless::start(EngineConfig::new(Root::of::<ResizableDrawerHarness>())).unwrap();
+    app.set_viewport(Size::new(px(1120.0), px(720.0))).unwrap();
+    app.wait_for("Resizable workspace").unwrap();
+
+    app.press("id:resizable-open").unwrap();
+    app.wait_for("proxy-err-1").unwrap();
+
+    let height_at = |app: &Headless| {
+        app.screen()
+            .layout_nodes()
+            .into_iter()
+            .find(|node| node.test_id.as_deref() == Some("dev-log-drawer"))
+            .expect("dev-log-drawer should be laid out")
+            .bounds
+            .size
+            .height
+            .0
+    };
+
+    let compact = height_at(&app);
+    assert!(
+        (compact - 180.0).abs() <= 2.0,
+        "drawer should fill 180pt resizable panel, got {compact}"
+    );
+
+    app.press("id:resizable-grow").unwrap();
+    app.wait(Duration::from_millis(100)).unwrap();
+    let expanded = height_at(&app);
+    assert!(
+        (expanded - 340.0).abs() <= 2.0,
+        "drawer should flex to 340pt resizable panel, got {expanded}"
+    );
+
+    drop(app);
+    drop(turn);
+}

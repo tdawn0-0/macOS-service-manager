@@ -78,6 +78,16 @@ def verify(app, release_bundle=False):
         if not isinstance(payload, dict) or not payload.get('version'):
             raise ValueError(f'Unexpected `version --json` output: {ver.stdout.strip()!r}')
 
+        bundle_version = info.get('CFBundleShortVersionString')
+        if not isinstance(bundle_version, str) or not bundle_version:
+            raise ValueError('CFBundleShortVersionString is missing from Info.plist')
+        cli_version = payload['version']
+        if cli_version != bundle_version:
+            raise ValueError(
+                f'Bundle CFBundleShortVersionString ({bundle_version!r}) does not match '
+                f'CLI `version --json` ({cli_version!r})'
+            )
+
         dev = subprocess.run(
             [str(binary), '--dev'],
             stdin=subprocess.DEVNULL,

@@ -12,7 +12,7 @@
 use std::time::Duration;
 
 use nsh_base::{input, switch, tab, tabs, theme, tooltip};
-use nsh_core::{element::Svg, prelude::*};
+use nsh_core::{element::Svg, keymap::When, prelude::*};
 
 use crate::{
     components::icons,
@@ -20,8 +20,10 @@ use crate::{
     theme as tokens,
 };
 
-/// Height of the expanded workspace log drawer in points.
-const DRAWER_HEIGHT: f32 = 260.0;
+/// Minimum height of the expanded workspace log drawer in points so the
+/// toolbar, metadata row, and viewport remain usable when mounted standalone
+/// or compressed inside a vertical resizable panel.
+const DRAWER_MIN_HEIGHT: f32 = 100.0;
 
 /// Collapsible bottom workspace live log drawer. Renders nothing when closed.
 pub fn drawer() -> impl IntoElement {
@@ -30,6 +32,7 @@ pub fn drawer() -> impl IntoElement {
 
 fn drawer_panel() -> impl IntoElement {
     let scroll_ref = element_ref();
+    let filter_ref = element_ref();
     effect(move || {
         let rev = store::lines_revision();
         if rev > 0 && !store::is_paused() {
@@ -37,19 +40,47 @@ fn drawer_panel() -> impl IntoElement {
         }
     });
 
+    on_key("mod+f", move |_| {
+        if !crate::editor::is_open() {
+            filter_ref.focus();
+        }
+    });
+
     view()
         .test_id("dev-log-drawer")
-        .h(px(DRAWER_HEIGHT))
-        .flex_none()
+        .w_full()
+        .flex_1()
+        .min_h(px(DRAWER_MIN_HEIGHT))
         .flex_col()
         .bg(tokens::sheet)
         .border_t_1()
         .border_color(tokens::hairline)
         // Run the 1-second poller only while the drawer is open AND not paused.
         .child(when(move || !store::is_paused(), live_poller))
-        .child(toolbar())
+        // Escape clears the active log filter first, then closes the drawer,
+        // without intercepting Escape when the modal plist editor is open.
+        .child(when(move || !crate::editor::is_open(), escape_shortcut))
+        .child(toolbar(filter_ref))
         .child(metadata_row())
         .child(log_viewport(scroll_ref))
+}
+
+fn escape_shortcut() -> impl IntoElement {
+    on_key_with(
+        "escape",
+        KeyOptions {
+            when: When::Always,
+            ..KeyOptions::default()
+        },
+        |_| {
+            if !store::query().is_empty() {
+                store::set_query(String::new());
+            } else {
+                store::close();
+            }
+        },
+    );
+    view().w(px(0.0)).h(px(0.0)).flex_none()
 }
 
 fn live_poller() -> impl IntoElement {
@@ -57,7 +88,7 @@ fn live_poller() -> impl IntoElement {
     view().w(px(0.0)).h(px(0.0)).flex_none()
 }
 
-fn toolbar() -> impl IntoElement {
+fn toolbar(filter_ref: ElementRef) -> impl IntoElement {
     view()
         .flex_none()
         .flex_row()
@@ -68,7 +99,7 @@ fn toolbar() -> impl IntoElement {
         .pb(tokens::space(1.5))
         .child(target_tabs())
         .child(stream_tabs())
-        .child(filter_input())
+        .child(filter_input(filter_ref))
         .child(live_switch())
         .child(action_buttons())
 }
@@ -185,7 +216,7 @@ fn stream_tabs() -> impl IntoElement {
         }))
 }
 
-fn filter_input() -> impl IntoElement {
+fn filter_input(filter_ref: ElementRef) -> impl IntoElement {
     view()
         .flex_1()
         .min_w(px(120.0))
@@ -198,6 +229,7 @@ fn filter_input() -> impl IntoElement {
         .bg(tokens::control)
         .border_1()
         .border_color(tokens::hairline)
+        .focus_within(|s| s.border_color(move || theme().ring))
         .child(
             icons::search()
                 .size(px(12.0))
@@ -207,6 +239,7 @@ fn filter_input() -> impl IntoElement {
         .child(
             input()
                 .test_id("dev-log-filter")
+                .element_ref(&filter_ref)
                 .flex_1()
                 .min_w(px(0.0))
                 .h(px(24.0))
@@ -229,6 +262,7 @@ fn filter_input() -> impl IntoElement {
                         .justify_center()
                         .rounded(move || theme().radius)
                         .hover(move |style| style.bg(tokens::row_hover()))
+                        .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
                         .accessibility_label("Clear filter")
                         .on_press(|| store::set_query(String::new()))
                         .child(
@@ -254,6 +288,8 @@ fn live_switch() -> impl IntoElement {
                 .flex_row()
                 .items_center()
                 .gap(tokens::space(1.5))
+                .rounded(move || theme().radius)
+                .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
                 .track_style(|style| {
                     style
                         .w(px(28.0))
@@ -359,6 +395,7 @@ fn drawer_icon_button(
             .justify_center()
             .rounded(move || theme().radius)
             .hover(move |style| style.bg(tokens::row_hover()))
+            .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
             .disabled(disabled)
             .opacity(move || if disabled() { 0.4_f32 } else { 1.0_f32 })
             .accessibility_label(label)

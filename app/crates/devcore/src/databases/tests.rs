@@ -34,6 +34,7 @@ type InputCall = (String, Vec<String>, Vec<(String, String)>, Option<String>);
 
 #[derive(Default)]
 struct TestRunner {
+    jobs_dir: PathBuf,
     calls: Mutex<Vec<(String, Vec<String>)>>,
     jobs: Mutex<BTreeMap<String, String>>,
     job_argv: Mutex<BTreeMap<String, Vec<String>>>,
@@ -42,6 +43,13 @@ struct TestRunner {
 }
 
 impl TestRunner {
+    fn with_jobs_dir(jobs_dir: PathBuf) -> Self {
+        TestRunner {
+            jobs_dir,
+            ..Default::default()
+        }
+    }
+
     fn calls(&self) -> Vec<(String, Vec<String>)> {
         self.calls.lock().unwrap().clone()
     }
@@ -90,11 +98,62 @@ impl CommandRunner for TestRunner {
                 message,
             ))
         };
-        if program == "/usr/sbin/lsof" {
+        if program == "/usr/sbin/lsof" || program == "lsof" {
             return Ok(self.lsof.lock().unwrap().clone());
+        }
+        if program == "ss" {
+            return fail("ss unavailable in test");
         }
         if program == "/usr/sbin/netstat" {
             return Ok(String::new());
+        }
+        if program == "systemctl" {
+            return match args.get(1).copied() {
+                Some("show") => {
+                    let unit = args.last().copied().unwrap_or_default();
+                    match self.jobs.lock().unwrap().get(unit).map(String::as_str) {
+                        Some("running") => Ok(
+                            "LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=987654\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n"
+                                .to_string(),
+                        ),
+                        Some(_) => Ok(
+                            "LoadState=loaded\nActiveState=inactive\nSubState=dead\nMainPID=0\nExecMainCode=1\nExecMainStatus=0\nNRestarts=0\n"
+                                .to_string(),
+                        ),
+                        None => Ok(
+                            "LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n"
+                                .to_string(),
+                        ),
+                    }
+                }
+                Some("start") => {
+                    let unit = args.get(2).copied().unwrap_or_default().to_string();
+                    let phase = if unit.contains("-tool") {
+                        "exited"
+                    } else {
+                        "running"
+                    };
+                    let unit_path = self.jobs_dir.join(&unit);
+                    if let Ok(content) = fs::read_to_string(&unit_path)
+                        && let Ok(spec) = crate::systemd::parse_unit(&unit, &content)
+                    {
+                        simulate_database_side_effect(&spec.exec_start);
+                        self.job_argv
+                            .lock()
+                            .unwrap()
+                            .insert(unit.clone(), spec.exec_start);
+                    }
+                    self.jobs.lock().unwrap().insert(unit, phase.to_string());
+                    Ok(String::new())
+                }
+                Some("stop") => {
+                    let unit = args.get(2).copied().unwrap_or_default();
+                    self.jobs.lock().unwrap().remove(unit);
+                    Ok(String::new())
+                }
+                Some("daemon-reload" | "reset-failed") => Ok(String::new()),
+                _ => fail("unexpected systemctl command"),
+            };
         }
         if program == "launchctl" || program == "/bin/launchctl" {
             let Some(command) = args.first() else {
@@ -382,7 +441,7 @@ fn fixture() -> Fixture {
     fs::create_dir_all(&home).unwrap();
     let store = Store::new(&root).with_home(&home);
     store.init().unwrap();
-    let runner = Arc::new(TestRunner::default());
+    let runner = Arc::new(TestRunner::with_jobs_dir(root.join("jobs")));
     let binder = Arc::new(FakeBinder::default());
     let probe = Arc::new(FakeProbe::passing());
     let mongo = Arc::new(FakeMongo::default());
@@ -406,7 +465,9 @@ fn seed_package(f: &Fixture, name: &str, version: &str, binaries: &[(&str, &str)
     let package = Package {
         name: name.to_string(),
         version: version.to_string(),
-        arch: "arm64".to_string(),
+        arch: crate::platform::HostTarget::current()
+            .arch_name()
+            .to_string(),
         url: "https://downloads.example.test/db.tar.gz".to_string(),
         sha256: crate::fs::digest_bytes(b"database archive"),
         format: "tar.gz".to_string(),

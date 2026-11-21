@@ -55,7 +55,9 @@ fn start_job_writes_a_private_plist_and_bootstraps() {
             other => panic!("unexpected launchctl call {other:?}"),
         }
     }));
-    let engine = Engine::new(root.path(), runner.clone()).with_uid(501);
+    let engine = Engine::new(root.path(), runner.clone())
+        .with_backend(Arc::new(LaunchdBackend))
+        .with_uid(501);
     let job = JobSpec {
         id: "db-api".into(),
         args: vec!["/bin/sleep".into(), "30".into()],
@@ -118,7 +120,9 @@ fn start_job_does_not_rewrite_a_running_job() {
         assert_eq!(args.first().map(String::as_str), Some("print"));
         Ok("state = running\npid = 12\n".to_string())
     }));
-    let engine = Engine::new(root.path(), runner.clone()).with_uid(501);
+    let engine = Engine::new(root.path(), runner.clone())
+        .with_backend(Arc::new(LaunchdBackend))
+        .with_uid(501);
     let job = JobSpec {
         id: "db-api".into(),
         args: vec!["/bin/sleep".into(), "30".into()],
@@ -152,6 +156,7 @@ fn stop_job_boots_out_and_waits_for_absence() {
         }
     }));
     let engine = Engine::new(root.path(), runner.clone())
+        .with_backend(Arc::new(LaunchdBackend))
         .with_uid(501)
         .with_poll_interval(std::time::Duration::from_millis(1));
     loaded.lock().unwrap().insert(engine.target("db-api"), true);
@@ -178,7 +183,9 @@ fn stop_job_treats_an_absent_job_as_success() {
     let runner = Arc::new(FakeCommands::new(|_, _| {
         Err("Could not find service".to_string())
     }));
-    let engine = Engine::new(root.path(), runner.clone()).with_uid(501);
+    let engine = Engine::new(root.path(), runner.clone())
+        .with_backend(Arc::new(LaunchdBackend))
+        .with_uid(501);
     engine.stop_job("db-api", &|| false).unwrap();
     assert_eq!(runner.calls().len(), 1);
 }
@@ -240,7 +247,9 @@ fn readiness_waits_for_a_stable_process() {
     let runner = Arc::new(FakeCommands::new(|_, _| {
         Ok("state = running\npid = 42\n".to_string())
     }));
-    let engine = Engine::new(root.path(), runner).with_uid(501);
+    let engine = Engine::new(root.path(), runner)
+        .with_backend(Arc::new(LaunchdBackend))
+        .with_uid(501);
     let probe = FakeProbe::passing();
     let service = ServiceProbe {
         id: "api".into(),
@@ -258,7 +267,9 @@ fn readiness_fails_fast_after_a_recorded_exit() {
     let runner = Arc::new(FakeCommands::new(|_, _| {
         Ok("state = exited\nruns = 1\nlast exit code = 3\n".to_string())
     }));
-    let engine = Engine::new(root.path(), runner).with_uid(501);
+    let engine = Engine::new(root.path(), runner)
+        .with_backend(Arc::new(LaunchdBackend))
+        .with_uid(501);
     let probe = FakeProbe::passing();
     let service = ServiceProbe {
         id: "api".into(),
@@ -275,7 +286,9 @@ fn readiness_times_out_when_the_probe_never_passes() {
     let runner = Arc::new(FakeCommands::new(|_, _| {
         Ok("state = running\npid = 42\n".to_string())
     }));
-    let engine = Engine::new(root.path(), runner).with_uid(501);
+    let engine = Engine::new(root.path(), runner)
+        .with_backend(Arc::new(LaunchdBackend))
+        .with_uid(501);
     let probe = FakeProbe::failing("refused");
     let service = ServiceProbe {
         id: "api".into(),
@@ -296,7 +309,9 @@ fn read_job_state_reports_observation_failures() {
     let runner = Arc::new(FakeCommands::new(|_, _| {
         Err("launchd observation unavailable".into())
     }));
-    let engine = Engine::new(root.path(), runner).with_uid(501);
+    let engine = Engine::new(root.path(), runner)
+        .with_backend(Arc::new(LaunchdBackend))
+        .with_uid(501);
     let (state, result) = crate::health::read_job_state(&engine, "db-api", &|| false);
     assert_eq!(state, JobState::default());
     assert!(result.is_err());

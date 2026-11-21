@@ -60,6 +60,7 @@ fn shutdown_stops_only_managed_database_jobs_and_keeps_data() {
 
     let loaded = Arc::new(Mutex::new(BTreeMap::new()));
     let engine = Engine::new(store.root(), runner(loaded.clone()))
+        .with_backend(Arc::new(crate::engine::LaunchdBackend))
         .with_uid(501)
         .with_poll_interval(Duration::from_millis(1));
     for id in ["db-db", "proxy", "tunnel", "maintenance"] {

@@ -243,14 +243,17 @@ fn node_release_index_filters_arm64_and_caches_for_an_hour() {
     let (temp, store) = temp_root();
     let home = temp.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
+    let tag = crate::platform::HostTarget::current().node_dist_tag();
     let http = Arc::new(FakeHttp::default());
     http.set(
         "https://nodejs.example/dist/index.json",
-        r#"[
-          {"version":"v22.14.0","date":"2025-02-11","files":["osx-arm64-tar"],"npm":"10.9.2","v8":"12.4","lts":"Jod"},
-          {"version":"v20.19.0","date":"2025-03-20","files":["osx-x64-tar"],"lts":"Iron"},
-          {"version":"v21.0.0","date":"2024-10-01","files":["osx-arm64-tar"],"lts":false}
-        ]"#,
+        format!(
+            r#"[
+          {{"version":"v22.14.0","date":"2025-02-11","files":["{tag}"],"npm":"10.9.2","v8":"12.4","lts":"Jod"}},
+          {{"version":"v20.19.0","date":"2025-03-20","files":["win-x64-zip"],"lts":"Iron"}},
+          {{"version":"v21.0.0","date":"2024-10-01","files":["{tag}"],"lts":false}}
+        ]"#
+        ),
     );
     let runner = Arc::new(FakeRunner::default());
     let shell = shell_with(store.clone(), runner, http.clone(), &home)
@@ -279,10 +282,11 @@ fn node_index_falls_back_to_cache_when_the_network_fails() {
     let (temp, store) = temp_root();
     let home = temp.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
+    let tag = crate::platform::HostTarget::current().node_dist_tag();
     let http = Arc::new(FakeHttp::default());
     http.set(
         "https://node/ dist/index.json",
-        r#"[{"version":"v22.14.0","files":["osx-arm64-tar"]}]"#,
+        format!(r#"[{{"version":"v22.14.0","files":["{tag}"]}}]"#),
     );
     let runner = Arc::new(FakeRunner::default());
     let shell =
@@ -297,10 +301,14 @@ fn node_index_falls_back_to_cache_when_the_network_fails() {
 
 #[test]
 fn node_scans_and_resolution_cover_the_upstream_shasums_list() {
+    let target = crate::platform::HostTarget::current();
+    let archive_name = format!("node-v22.14.0-{}.tar.gz", target.node_archive_platform());
     let http = FakeHttp::default();
     http.set(
         "https://nodejs.org/dist/v22.14.0/SHASUMS256.txt",
-        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  node-v22.14.0-darwin-arm64.tar.gz\n",
+        format!(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  {archive_name}\n"
+        ),
     );
     let package = super::node::parse_semver("22.14.0").unwrap();
     assert_eq!((package.major, package.minor, package.patch), (22, 14, 0));
@@ -308,7 +316,7 @@ fn node_scans_and_resolution_cover_the_upstream_shasums_list() {
     assert_eq!(package.sha256.len(), 64);
     assert_eq!(
         package.url,
-        "https://nodejs.org/dist/v22.14.0/node-v22.14.0-darwin-arm64.tar.gz"
+        format!("https://nodejs.org/dist/v22.14.0/{archive_name}")
     );
     assert_eq!(package.binaries["node"], "bin/node");
     assert_eq!(package.binaries["npm"], "bin/npm");
@@ -367,10 +375,11 @@ fn node_version_file_walks_up_and_honors_overrides() {
     std::fs::create_dir_all(&home).unwrap();
     let runner = Arc::new(FakeRunner::default());
     let http = Arc::new(FakeHttp::default());
+    let arch = crate::platform::HostTarget::current().arch_name();
     let package = Package {
         name: "node".into(),
         version: "20.19.0".into(),
-        arch: "arm64".into(),
+        arch: arch.into(),
         ..Package::default()
     };
     let mut state = crate::model::State::default();
@@ -379,7 +388,11 @@ fn node_version_file_walks_up_and_honors_overrides() {
     let shell = shell_with(store, runner, http, &home);
     let selection = shell.select_node(&nested, None).unwrap();
     assert_eq!(selection.version, "20.19.0");
-    assert!(selection.bin().ends_with("node@20.19.0-arm64/bin"));
+    assert!(
+        selection
+            .bin()
+            .ends_with(format!("node@20.19.0-{arch}/bin"))
+    );
     let override_selection = shell.select_node(&nested, Some("system")).unwrap();
     assert!(override_selection.system);
     assert_eq!(override_selection.path(), "");
@@ -387,6 +400,7 @@ fn node_version_file_walks_up_and_honors_overrides() {
 
 #[test]
 fn java_catalog_pins_install_folders_and_resolves_by_key() {
+    let target = crate::platform::HostTarget::current();
     let (temp, _store) = temp_root();
     let home = temp.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
@@ -403,8 +417,8 @@ fn java_catalog_pins_install_folders_and_resolves_by_key() {
                 "preview": false,
                 "packages": [
                     {
-                        "os": "macOS",
-                        "arch": "aarch64",
+                        "os": target.jetbrains_os(),
+                        "arch": target.jetbrains_arch(),
                         "version": "21.0.2",
                         "url": "https://download.jetbrains.com/jdk/jbr-21.0.2.tar.gz",
                         "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -415,13 +429,13 @@ fn java_catalog_pins_install_folders_and_resolves_by_key() {
                         "filter": true
                     },
                     {
-                        "os": "linux",
+                        "os": "windows",
                         "arch": "x64",
                         "version": "21.0.2",
-                        "url": "https://download.jetbrains.com/jdk/linux.tar.gz",
+                        "url": "https://download.jetbrains.com/jdk/windows.tar.gz",
                         "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                         "package_type": "targz",
-                        "install_folder_name": "jbr-linux"
+                        "install_folder_name": "jbr-windows"
                     }
                 ]
             },
@@ -448,7 +462,7 @@ fn java_catalog_pins_install_folders_and_resolves_by_key() {
     assert_eq!(package.sha256.len(), 64);
     assert_eq!(package.binaries["java"], "Contents/Home/bin/java");
     assert_eq!(package.binaries["javac"], "Contents/Home/bin/javac");
-    assert_eq!(package.arch, "arm64");
+    assert_eq!(package.arch, target.arch_name());
     let resolved = java::resolve_java(http.as_ref(), "jbr-21.0.2_13").unwrap();
     assert_eq!(resolved.url, package.url);
     assert!(java::resolve_java(http.as_ref(), "missing").is_err());
@@ -456,9 +470,10 @@ fn java_catalog_pins_install_folders_and_resolves_by_key() {
 
 #[test]
 fn java_catalog_refuses_ambiguous_pins() {
+    let target = crate::platform::HostTarget::current();
     let base = serde_json::json!({
-        "os": "macOS",
-        "arch": "aarch64",
+        "os": target.jetbrains_os(),
+        "arch": target.jetbrains_arch(),
         "version": "21.0.2",
         "url": "https://download.jetbrains.com/jdk/a.tar.gz",
         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

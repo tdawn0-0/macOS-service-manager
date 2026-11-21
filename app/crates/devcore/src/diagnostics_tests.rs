@@ -35,6 +35,12 @@ impl FakeRunner {
 
     fn missing_services() -> Self {
         FakeRunner::new(|program, args| {
+            if program == "systemctl" {
+                return Ok(
+                    "LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n"
+                        .into(),
+                );
+            }
             Err(CommandError::new(
                 program,
                 args.iter().map(|arg| (*arg).to_string()).collect(),
@@ -224,6 +230,12 @@ fn snapshot_marks_a_registered_but_exited_service_failed() {
         if program == "launchctl" && args.first() == Some(&"print") {
             return Ok("state = exited\npid = 0\nruns = 1\nlast exit code = 0\n".into());
         }
+        if program == "systemctl" && args.get(1) == Some(&"show") {
+            return Ok(
+                "LoadState=loaded\nActiveState=failed\nSubState=failed\nMainPID=0\nExecMainCode=1\nExecMainStatus=0\nNRestarts=0\n"
+                    .into(),
+            );
+        }
         Err(CommandError::new(
             program,
             args.iter().map(|arg| (*arg).to_string()).collect(),
@@ -262,6 +274,12 @@ fn diagnose_checks_packages_databases_and_marks_phase3_unknown() {
     let runner = Arc::new(FakeRunner::new(|program, args| {
         if program == "launchctl" && args.first() == Some(&"print") {
             return Ok("state = running\npid = 42\n".into());
+        }
+        if program == "systemctl" && args.get(1) == Some(&"show") {
+            return Ok(
+                "LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=42\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n"
+                    .into(),
+            );
         }
         Err(CommandError::new(
             program,
@@ -306,6 +324,20 @@ fn log_rotation_setting_round_trips_and_writes_the_maintenance_job() {
         if program == "launchctl" && args.first() == Some(&"bootstrap") {
             return Ok(String::new());
         }
+        if program == "systemctl" {
+            return match args.get(1).copied() {
+                Some("show") => Ok(
+                    "LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n"
+                        .into(),
+                ),
+                Some("daemon-reload" | "start" | "stop" | "reset-failed") => Ok(String::new()),
+                _ => Err(CommandError::new(
+                    program,
+                    args.iter().map(|arg| (*arg).to_string()).collect(),
+                    "unexpected systemctl command",
+                )),
+            };
+        }
         Err(CommandError::new(
             program,
             args.iter().map(|arg| (*arg).to_string()).collect(),
@@ -322,7 +354,8 @@ fn log_rotation_setting_round_trips_and_writes_the_maintenance_job() {
     assert!(diag.engine().job_path("maintenance").exists());
     let calls = runner.calls();
     assert!(calls.iter().any(|(program, args)| {
-        program == "launchctl" && args.first().is_some_and(|arg| arg == "bootstrap")
+        (program == "launchctl" && args.first().is_some_and(|arg| arg == "bootstrap"))
+            || (program == "systemctl" && args.get(1).is_some_and(|arg| arg == "start"))
     }));
 }
 
@@ -519,6 +552,21 @@ fn maintain_runs_due_automatic_backups_for_running_instances_and_prunes() {
                 args.iter().map(|arg| (*arg).to_string()).collect(),
                 "Could not find service",
             ));
+        }
+        if program == "systemctl" && args.get(1) == Some(&"show") {
+            let unit = args.last().copied().unwrap_or_default();
+            if unit.ends_with("-db-cache-daily.service")
+                || unit.ends_with("-db-cache-weekly.service")
+            {
+                return Ok(
+                    "LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=99\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n"
+                        .into(),
+                );
+            }
+            return Ok(
+                "LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n"
+                    .into(),
+            );
         }
         Err(CommandError::new(
             program,

@@ -23,6 +23,12 @@ impl CommandRunner for FakeRunner {
         args: &[&str],
         _timeout: Duration,
     ) -> Result<String, CommandError> {
+        if program == "systemctl" {
+            return Ok(
+                "LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n"
+                    .into(),
+            );
+        }
         Err(CommandError::new(
             program,
             args.iter().map(|arg| (*arg).to_string()).collect(),

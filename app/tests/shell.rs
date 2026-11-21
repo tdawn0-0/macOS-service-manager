@@ -38,11 +38,9 @@ use nsh_app_devbase::testing::{
     use_fake_guide, use_fake_menubar, use_fake_providers, use_fake_proxy, use_fake_software,
     use_fake_system, use_fake_updater,
 };
-use nsh_core::{
-    desktop::{WindowMode, WindowState},
-    platform::Os,
-    prelude::*,
-};
+#[cfg(target_os = "macos")]
+use nsh_core::desktop::{WindowMode, WindowState};
+use nsh_core::{platform::Os, prelude::*};
 use nsh_engine::{EngineConfig, Root};
 use nsh_testing::Headless;
 
@@ -76,6 +74,7 @@ fn start() -> (MutexGuard<'static, ()>, Headless) {
     (turn, app)
 }
 
+#[cfg(target_os = "macos")]
 fn start_macos() -> (MutexGuard<'static, ()>, Headless) {
     let turn = serial();
     install_all_fakes();
@@ -583,7 +582,11 @@ fn command_palette_opens_filters_and_executes_navigation_actions_and_db_jump() {
     app.wait_for("id:command-palette").unwrap();
     assert!(app.screen().shows("Go to Development"));
     assert!(app.screen().shows("Go to Services"));
-    assert!(app.screen().shows("New LaunchAgent…"));
+    assert!(app.screen().shows(if cfg!(target_os = "macos") {
+        "New LaunchAgent…"
+    } else {
+        "New Systemd Unit…"
+    }));
     assert!(app.screen().shows("Stop All Databases"));
     assert!(app.screen().shows("Start Cloudflare Tunnel"));
     let screen = app.screen();
@@ -701,10 +704,18 @@ fn global_toast_stack_renders_and_dismisses_toasts() {
         .unwrap();
 }
 
+fn live_sidebar_service_source() -> Source {
+    if cfg!(target_os = "macos") {
+        Source::Brew
+    } else {
+        Source::SystemdUser
+    }
+}
+
 #[component]
 fn LiveSidebarHarness() -> impl IntoElement {
     menubar_load();
-    refresh_services(Source::Brew);
+    refresh_services(live_sidebar_service_source());
     view()
         .size_full()
         .flex_col()
@@ -717,14 +728,15 @@ fn sidebar_displays_live_running_counts_for_services_databases_and_proxy() {
     let _turn = serial();
     install_all_fakes();
 
+    let source = live_sidebar_service_source();
     install_provider(
-        Source::Brew,
+        source,
         Arc::new(FakeShellServices {
-            source: Source::Brew,
+            source,
             items: vec![
-                sample_service("brew:redis", Source::Brew, "redis", ServiceState::Running),
-                sample_service("brew:nginx", Source::Brew, "nginx", ServiceState::Running),
-                sample_service("brew:mysql", Source::Brew, "mysql", ServiceState::Stopped),
+                sample_service("svc:redis", source, "redis", ServiceState::Running),
+                sample_service("svc:nginx", source, "nginx", ServiceState::Running),
+                sample_service("svc:mysql", source, "mysql", ServiceState::Stopped),
             ],
         }),
     );

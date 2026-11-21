@@ -57,6 +57,12 @@ impl FakeRunner {
                     "Could not find service",
                 ));
             }
+            if program == "systemctl" {
+                return Ok(
+                    "LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n"
+                        .into(),
+                );
+            }
             Err(CommandError::new(
                 program,
                 args.iter().map(|arg| (*arg).to_string()).collect(),
@@ -65,6 +71,7 @@ impl FakeRunner {
         })
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn calls(&self) -> Vec<(String, Vec<String>)> {
         self.calls.lock().unwrap().clone()
     }
@@ -145,6 +152,7 @@ struct Env {
     _dir: TempDir,
     software: Software,
     http: Arc<FakeHttp>,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     runner: Arc<FakeRunner>,
 }
 
@@ -248,7 +256,7 @@ fn archive_package(version: &str, archive: &[u8]) -> Package {
     Package {
         name: "fixture".into(),
         version: version.into(),
-        arch: "arm64".into(),
+        arch: crate::platform::HostTarget::current().arch_name().into(),
         url: "https://unused.invalid/fixture.zip".into(),
         sha256: crate::fs::digest_bytes(archive),
         format: "zip".into(),
@@ -293,35 +301,55 @@ fn assert_integrity(
 
 #[test]
 fn catalog_pins_exact_releases_and_lists_versions() {
+    let target = crate::platform::HostTarget::current();
     let package = catalog::resolve("mysql", "8.4.13").unwrap();
-    assert_eq!(package.arch, "arm64");
-    assert_eq!(package.format, "tar.gz");
+    assert_eq!(package.arch, target.arch_name());
     assert_eq!(package.strip, 1);
-    assert_eq!(package.min_macos, "26.0");
-    assert_eq!(
-        package.url,
-        "https://dev.mysql.com/get/Downloads/MySQL-8.4/mysql-8.4.13-macos15-arm64.tar.gz"
-    );
-    assert_eq!(
-        package.sha256,
-        "f324f8950e24d4147470bbc6a6ef0b90ef93b91d3fc74154b3d2ba085b44912a"
-    );
+    if target.is_macos() {
+        assert_eq!(package.format, "tar.gz");
+        assert_eq!(package.min_macos, "26.0");
+        assert_eq!(
+            package.url,
+            "https://dev.mysql.com/get/Downloads/MySQL-8.4/mysql-8.4.13-macos15-arm64.tar.gz"
+        );
+        assert_eq!(
+            package.sha256,
+            "f324f8950e24d4147470bbc6a6ef0b90ef93b91d3fc74154b3d2ba085b44912a"
+        );
+    } else {
+        assert_eq!(package.format, "tar.xz");
+        assert!(package.url.contains("mysql-8.4.13-linux-"));
+        assert_eq!(package.sha256.len(), 64);
+    }
     assert_eq!(package.binaries["mysqld"], "bin/mysqld");
     assert!(package.validate().is_ok());
 
     let mongodb = catalog::resolve("mongodb", "v8.0.38").unwrap();
     assert_eq!(mongodb.version, "8.0.38");
-    assert_eq!(
-        mongodb.url,
-        "https://fastdl.mongodb.org/osx/mongodb-macos-arm64-8.0.38.tgz"
-    );
-    assert_eq!(
-        available_versions("mysql"),
-        vec!["8.4.13", "8.4.4", "8.0.45", "8.0.41"]
-    );
+    if target.is_macos() {
+        assert_eq!(
+            mongodb.url,
+            "https://fastdl.mongodb.org/osx/mongodb-macos-arm64-8.0.38.tgz"
+        );
+        assert_eq!(
+            available_versions("mysql"),
+            vec!["8.4.13", "8.4.4", "8.0.45", "8.0.41"]
+        );
+    } else {
+        assert!(mongodb.url.contains("mongodb-linux-"));
+        assert_eq!(available_versions("mysql"), vec!["8.4.13", "8.0.45"]);
+    }
     assert_eq!(available_versions("mongodb").len(), 4);
-    assert_eq!(available_versions("postgresql"), vec!["17", "18", "16"]);
-    assert_eq!(available_versions("redis"), vec!["8.2"]);
+    if target.is_macos() {
+        assert_eq!(available_versions("postgresql"), vec!["17", "18", "16"]);
+        assert_eq!(available_versions("redis"), vec!["8.2"]);
+    } else {
+        assert_eq!(
+            available_versions("postgresql"),
+            vec!["system", "17", "18", "16"]
+        );
+        assert_eq!(available_versions("redis"), vec!["system", "8.2"]);
+    }
     assert_eq!(available_versions("node"), vec!["22.14.0", "20.19.0"]);
     assert!(available_versions("unknown").is_empty());
     assert!(catalog::resolve("mysql", "9.9.9").is_err());
@@ -332,20 +360,19 @@ fn catalog_pins_exact_releases_and_lists_versions() {
 #[test]
 fn node_checksums_are_resolved_from_shasums() {
     let env = env();
+    let target = crate::platform::HostTarget::current();
     let sha = "a".repeat(64);
     let base = "https://nodejs.org/dist/v22.14.0/";
+    let archive_name = format!("node-v22.14.0-{}.tar.gz", target.node_archive_platform());
     env.http.set(
         &format!("{base}SHASUMS256.txt"),
         format!(
-            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  node-v22.14.0-darwin-x64.tar.gz\n{sha}  node-v22.14.0-darwin-arm64.tar.gz\n"
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  node-v22.14.0-darwin-x64.tar.gz\n{sha}  {archive_name}\n"
         )
         .into_bytes(),
     );
     let package = catalog::resolve_node(env.http.as_ref(), "22.14.0").unwrap();
-    assert_eq!(
-        package.url,
-        format!("{base}node-v22.14.0-darwin-arm64.tar.gz")
-    );
+    assert_eq!(package.url, format!("{base}{archive_name}"));
     assert_eq!(package.sha256, sha);
     assert_eq!(package.license, "MIT");
     assert_eq!(package.binaries["node"], "bin/node");
@@ -408,6 +435,7 @@ fn macho_requires_an_arm64_slice() {
     }
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn install_rejects_an_intel_binary_before_publish() {
     for arch in ["arm64", "universal"] {
@@ -875,6 +903,7 @@ fn write_brew_keg(cellar: &Path, formula: &str, version: &str, tap: &str) {
     .unwrap();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn homebrew_install_validates_receipt_and_never_deletes_shared_software() {
     let cellar = tempfile::tempdir().unwrap();
@@ -941,6 +970,7 @@ fn homebrew_install_validates_receipt_and_never_deletes_shared_software() {
     }
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn homebrew_rejects_foreign_taps_formula_drift_and_archive_repair() {
     let cellar = tempfile::tempdir().unwrap();
@@ -992,6 +1022,7 @@ fn homebrew_rejects_foreign_taps_formula_drift_and_archive_repair() {
     assert!(env.software.resolve_package("postgresql", "18").is_err());
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn homebrew_failure_registers_nothing() {
     let cellar = tempfile::tempdir().unwrap();
@@ -1143,13 +1174,13 @@ fn java_owner_marker_is_required_for_uninstall() {
 #[test]
 fn package_install_is_busy_while_an_exclusive_lease_is_held() {
     let env = env();
+    let archive = integrity_archive();
+    let package = archive_package("1.0.0", &archive);
     let exclusive = env
         .software
         .store()
-        .package_lease("fixture@1.0.0-arm64", true)
+        .package_lease(&package.id(), true)
         .unwrap();
-    let archive = integrity_archive();
-    let package = archive_package("1.0.0", &archive);
     let error = env.software.install(&package, &|| false).unwrap_err();
     assert!(error.is_busy(), "{error}");
     drop(exclusive);
@@ -1226,7 +1257,10 @@ fn uninstall_refuses_live_references() {
         .uninstall(&package.id(), &|| false)
         .unwrap_err();
     assert!(
-        error.to_string().contains("referenced by a launchd job"),
+        error.to_string().contains("referenced by a launchd job")
+            || error
+                .to_string()
+                .contains("referenced by a managed service job"),
         "{error}"
     );
     assert!(directory.is_dir());
@@ -1257,6 +1291,21 @@ fn idle_check_treats_unknown_launchd_state_as_busy() {
                 return Ok("state = running".into());
             }
             return Err(make_error("Could not find service"));
+        }
+        if program == "systemctl" {
+            if handler_unavailable.load(Ordering::SeqCst) {
+                return Err(make_error("systemd query unavailable"));
+            }
+            if handler_loaded.load(Ordering::SeqCst) {
+                return Ok(
+                    "LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=42\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n"
+                        .into(),
+                );
+            }
+            return Ok(
+                "LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n"
+                    .into(),
+            );
         }
         Err(make_error("unexpected command"))
     });
@@ -1296,7 +1345,10 @@ fn idle_check_treats_unknown_launchd_state_as_busy() {
     assert!(
         error
             .to_string()
-            .contains("stop the launchd job using this package"),
+            .contains("stop the launchd job using this package")
+            || error
+                .to_string()
+                .contains("stop the managed service job using this package"),
         "{error}"
     );
     loaded.store(false, Ordering::SeqCst);

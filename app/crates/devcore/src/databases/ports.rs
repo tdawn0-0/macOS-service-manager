@@ -735,7 +735,6 @@ impl Databases {
         cancelled: super::Cancelled<'_>,
     ) -> Result<Vec<PortListener>, DatabaseError> {
         let query_timeout = Duration::from_secs(2);
-        let mut listeners = Vec::new();
         let ss = self
             .engine()
             .run_with_timeout("ss", &["-Hltpne"], query_timeout)
@@ -747,37 +746,30 @@ impl Databases {
             return Err(DatabaseError::Cancelled);
         }
         if let Ok(output) = ss {
-            listeners = parse_ss_listeners(&output, Some(port), 65);
+            return Ok(parse_ss_listeners(&output, Some(port), 65));
         }
-        if listeners.is_empty() {
-            let mut proc_listeners = Vec::new();
-            if let Ok(tcp) = std::fs::read_to_string("/proc/net/tcp") {
-                proc_listeners.extend(parse_proc_net_tcp(&tcp, false, Some(port)));
-            }
-            if let Ok(tcp6) = std::fs::read_to_string("/proc/net/tcp6") {
-                proc_listeners.extend(parse_proc_net_tcp(&tcp6, true, Some(port)));
-            }
-            if !proc_listeners.is_empty() {
-                listeners = proc_listeners;
-            }
+        if let Ok(output) = self.engine().run_with_timeout(
+            "lsof",
+            &[
+                "-nP",
+                "-a",
+                &format!("-iTCP:{port}"),
+                "-sTCP:LISTEN",
+                "+c0",
+                "-F0pcun",
+            ],
+            query_timeout,
+        ) {
+            return Ok(parse_port_listeners(&output));
         }
-        if listeners.is_empty()
-            && let Ok(output) = self.engine().run_with_timeout(
-                "lsof",
-                &[
-                    "-nP",
-                    "-a",
-                    &format!("-iTCP:{port}"),
-                    "-sTCP:LISTEN",
-                    "+c0",
-                    "-F0pcun",
-                ],
-                query_timeout,
-            )
-        {
-            listeners = parse_port_listeners(&output);
+        let mut proc_listeners = Vec::new();
+        if let Ok(tcp) = std::fs::read_to_string("/proc/net/tcp") {
+            proc_listeners.extend(parse_proc_net_tcp(&tcp, false, Some(port)));
         }
-        Ok(listeners)
+        if let Ok(tcp6) = std::fs::read_to_string("/proc/net/tcp6") {
+            proc_listeners.extend(parse_proc_net_tcp(&tcp6, true, Some(port)));
+        }
+        Ok(proc_listeners)
     }
 
     /// `ListeningUserPorts`: current-UID TCP listeners at 1024+ excluding the
@@ -864,44 +856,40 @@ impl Databases {
         let uid = unsafe { libc::getuid() } as i64;
         let timeout = Duration::from_secs(2);
 
-        let mut listeners = if let Ok(output) = self
+        let listeners = if let Ok(output) = self
             .engine()
             .run_with_timeout("ss", &["-Hltpne"], timeout)
             .or_else(|_| self.engine().run_with_timeout("ss", &["-Hltpn"], timeout))
         {
             parse_ss_listeners(&output, None, 0)
+        } else if let Ok(output) = self.engine().run_with_timeout(
+            "lsof",
+            &[
+                "-w",
+                "-nP",
+                "-a",
+                "-u",
+                &uid.to_string(),
+                "-iTCP",
+                "-sTCP:LISTEN",
+                "+c0",
+                "-F0pcun",
+            ],
+            timeout,
+        ) {
+            parse_port_listeners_limit(&output, 0)
         } else {
-            Vec::new()
+            let mut proc_listeners = Vec::new();
+            if let Ok(tcp) = std::fs::read_to_string("/proc/net/tcp") {
+                proc_listeners.extend(parse_proc_net_tcp(&tcp, false, None));
+            }
+            if let Ok(tcp6) = std::fs::read_to_string("/proc/net/tcp6") {
+                proc_listeners.extend(parse_proc_net_tcp(&tcp6, true, None));
+            }
+            proc_listeners
         };
         if cancelled() {
             return Err(DatabaseError::Cancelled);
-        }
-        if listeners.is_empty() {
-            if let Ok(tcp) = std::fs::read_to_string("/proc/net/tcp") {
-                listeners.extend(parse_proc_net_tcp(&tcp, false, None));
-            }
-            if let Ok(tcp6) = std::fs::read_to_string("/proc/net/tcp6") {
-                listeners.extend(parse_proc_net_tcp(&tcp6, true, None));
-            }
-        }
-        if listeners.is_empty()
-            && let Ok(output) = self.engine().run_with_timeout(
-                "lsof",
-                &[
-                    "-w",
-                    "-nP",
-                    "-a",
-                    "-u",
-                    &uid.to_string(),
-                    "-iTCP",
-                    "-sTCP:LISTEN",
-                    "+c0",
-                    "-F0pcun",
-                ],
-                timeout,
-            )
-        {
-            listeners = parse_port_listeners_limit(&output, 0);
         }
 
         let mut excluded = BTreeSet::new();

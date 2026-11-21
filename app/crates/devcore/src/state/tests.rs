@@ -82,7 +82,7 @@ fn sample_package() -> Package {
     Package {
         name: "node".into(),
         version: "22.14.0".into(),
-        arch: "arm64".into(),
+        arch: crate::platform::HostTarget::current().arch_name().into(),
         url: "https://nodejs.org/dist/v22.14.0/node.zip".into(),
         sha256: digest_bytes(b"archive"),
         format: "zip".into(),
@@ -95,13 +95,14 @@ fn sample_package() -> Package {
 fn sample_state() -> State {
     let mut state = State::default();
     let package = sample_package();
-    state.packages.insert(package.id(), package);
+    let package_id = package.id();
+    state.packages.insert(package_id.clone(), package);
     state.instances.insert(
         "blog".into(),
         Instance {
             id: "blog".into(),
             kind: "postgresql".into(),
-            package: "node@22.14.0-arm64".into(),
+            package: package_id,
             port: 5432,
             persistent: true,
             ..Default::default()
@@ -481,29 +482,25 @@ fn user_storage_locations_are_used_only_for_the_default_root() {
     let home = dir.path().join("home");
     let root = default_storage_root(&home);
     let user_store = Store::new(&root).with_home(&home);
+    let expected_cache = crate::platform::paths::user_cache_directory(&home);
+    let expected_java = crate::platform::paths::user_java_directory(&home);
     assert!(user_store.uses_user_storage());
-    assert_eq!(
-        user_store.cache_directory(),
-        home.join("Library/Caches/Devbase/Development")
-    );
+    assert_eq!(user_store.cache_directory(), expected_cache);
     assert_eq!(
         user_store.download_directory(),
-        home.join("Library/Caches/Devbase/Development/downloads")
+        expected_cache.join("downloads")
     );
-    assert_eq!(
-        user_store.java_directory(),
-        home.join("Library/Java/JavaVirtualMachines")
-    );
+    assert_eq!(user_store.java_directory(), expected_java);
 
     let java = Package {
         name: "java".into(),
         version: "21.0.13_9".into(),
-        arch: "arm64".into(),
+        arch: crate::platform::HostTarget::current().arch_name().into(),
         ..Default::default()
     };
     assert_eq!(
         user_store.package_directory(&java),
-        home.join("Library/Java/JavaVirtualMachines/temurin-21.0.13")
+        expected_java.join("temurin-21.0.13")
     );
     user_store.init().unwrap();
     assert!(user_store.download_directory().is_dir());
@@ -719,7 +716,13 @@ fn package_validation_matches_the_go_rules() {
     assert!(sample_package().validate().is_ok());
 
     let mut bad_arch = sample_package();
-    bad_arch.arch = "x86_64".into();
+    bad_arch.arch = if cfg!(target_os = "macos") {
+        "x86_64".into()
+    } else if cfg!(target_arch = "aarch64") {
+        "amd64".into()
+    } else {
+        "arm64".into()
+    };
     assert!(bad_arch.validate().is_err());
 
     let mut php = sample_package();

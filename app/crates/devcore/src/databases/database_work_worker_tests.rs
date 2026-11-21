@@ -54,6 +54,12 @@ impl CommandRunner for WorkerRunner {
         if program == "launchctl" || program == "/bin/launchctl" {
             return Ok(format!("state = running\npid = {}\nruns = 1\n", self.pid));
         }
+        if program == "systemctl" {
+            return Ok(format!(
+                "LoadState=loaded\nActiveState=active\nSubState=running\nMainPID={}\nExecMainCode=0\nExecMainStatus=0\nNRestarts=0\n",
+                self.pid
+            ));
+        }
         Ok(String::new())
     }
 
@@ -93,7 +99,7 @@ fn fixture(pid: i32) -> Fixture {
     let package = Package {
         name: "mysql-kit".into(),
         version: "8.4.0".into(),
-        arch: "arm64".into(),
+        arch: crate::platform::HostTarget::current().arch_name().into(),
         url: "https://downloads.example.test/mysql.tar.gz".into(),
         sha256: crate::fs::digest_bytes(b"mysql archive"),
         format: "tar.gz".into(),

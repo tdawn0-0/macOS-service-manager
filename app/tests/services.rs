@@ -16,9 +16,10 @@ use std::{
 };
 
 use devcore::service::{
-    Action, Autostart, BoxError, Detail, Item, LogFile, Provider, Restricted, Restriction, Row,
-    Source, State,
+    Action, Autostart, BoxError, Detail, Item, LogFile, Provider, Row, Source, State,
 };
+#[cfg(target_os = "macos")]
+use devcore::service::{Restricted, Restriction};
 use nsh_core::{Checked, prelude::*};
 use nsh_engine::{EngineConfig, Root};
 use nsh_testing::{DialogAnswer, Headless};
@@ -212,7 +213,60 @@ impl Provider for FakeProvider {
     }
 }
 
+fn primary_user_source() -> Source {
+    if cfg!(target_os = "macos") {
+        Source::UserAgent
+    } else {
+        Source::SystemdUser
+    }
+}
+
+fn secondary_source() -> Source {
+    if cfg!(target_os = "macos") {
+        Source::SystemAgent
+    } else {
+        Source::Autostart
+    }
+}
+
+fn admin_source() -> Source {
+    if cfg!(target_os = "macos") {
+        Source::Daemon
+    } else {
+        Source::SystemdSystem
+    }
+}
+
+fn primary_user_source_id() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "id:source-user-agent"
+    } else {
+        "id:source-systemd-user"
+    }
+}
+
+fn secondary_source_id() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "id:source-system-agent"
+    } else {
+        "id:source-autostart"
+    }
+}
+
+fn admin_source_id() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "id:source-daemon"
+    } else {
+        "id:source-systemd-system"
+    }
+}
+
 fn item(source: Source, name: &str, state: State, autostart: Autostart, admin: bool) -> Item {
+    let ext = match source {
+        Source::SystemdUser | Source::SystemdSystem => "service",
+        Source::Autostart => "desktop",
+        _ => "plist",
+    };
     Item {
         id: format!("{}:{}", source.as_str(), name),
         source,
@@ -221,10 +275,10 @@ fn item(source: Source, name: &str, state: State, autostart: Autostart, admin: b
         pid: if state == State::Running { 4242 } else { 0 },
         autostart,
         owner: match source {
-            Source::Daemon => "system".to_string(),
+            Source::Daemon | Source::SystemdSystem => "system".to_string(),
             _ => "gui/501".to_string(),
         },
-        path: PathBuf::from(format!("/tmp/devbase-tests/{name}.plist")),
+        path: PathBuf::from(format!("/tmp/devbase-tests/{name}.{ext}")),
         kind: None,
         admin,
         keep_alive: false,
@@ -232,25 +286,26 @@ fn item(source: Source, name: &str, state: State, autostart: Autostart, admin: b
 }
 
 fn user_agents(behaviour: Behaviour) -> Arc<FakeProvider> {
+    let source = primary_user_source();
     FakeProvider::new(
-        Source::UserAgent,
+        source,
         vec![
             item(
-                Source::UserAgent,
+                source,
                 "com.example.alpha",
                 State::Running,
                 Autostart::On,
                 false,
             ),
             item(
-                Source::UserAgent,
+                source,
                 "com.example.bravo",
                 State::Loaded,
                 Autostart::On,
                 false,
             ),
             item(
-                Source::UserAgent,
+                source,
                 "com.example.charlie",
                 State::Stopped,
                 Autostart::Off,
@@ -262,10 +317,11 @@ fn user_agents(behaviour: Behaviour) -> Arc<FakeProvider> {
 }
 
 fn system_agents() -> Arc<FakeProvider> {
+    let source = secondary_source();
     FakeProvider::new(
-        Source::SystemAgent,
+        source,
         vec![item(
-            Source::SystemAgent,
+            source,
             "com.example.beta",
             State::Loaded,
             Autostart::On,
@@ -276,10 +332,11 @@ fn system_agents() -> Arc<FakeProvider> {
 }
 
 fn daemons(behaviour: Behaviour) -> Arc<FakeProvider> {
+    let source = admin_source();
     FakeProvider::new(
-        Source::Daemon,
+        source,
         vec![item(
-            Source::Daemon,
+            source,
             "com.example.gamma",
             State::Running,
             Autostart::On,
@@ -298,9 +355,9 @@ fn start(
 ) -> (MutexGuard<'static, ()>, Headless) {
     let turn = serial();
     install_all_fakes();
-    install_provider(Source::UserAgent, user);
-    install_provider(Source::SystemAgent, system);
-    install_provider(Source::Daemon, daemon);
+    install_provider(primary_user_source(), user);
+    install_provider(secondary_source(), system);
+    install_provider(admin_source(), daemon);
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
     open_services(&mut app);
@@ -320,15 +377,15 @@ fn switching_source_shows_that_sources_items() {
     let (_turn, mut app) = normal_app();
     app.wait_for("com.example.alpha").unwrap();
 
-    app.press("id:source-system-agent").unwrap();
+    app.press(secondary_source_id()).unwrap();
     app.wait_for("com.example.beta").unwrap();
     assert!(!app.screen().shows("com.example.alpha"));
 
-    app.press("id:source-daemon").unwrap();
+    app.press(admin_source_id()).unwrap();
     app.wait_for("com.example.gamma").unwrap();
     assert!(!app.screen().shows("com.example.beta"));
 
-    app.press("id:source-user-agent").unwrap();
+    app.press(primary_user_source_id()).unwrap();
     app.wait_for("com.example.alpha").unwrap();
 }
 
@@ -348,6 +405,14 @@ fn search_filters_the_list_by_name() {
     app.wait_for("com.example.bravo").unwrap();
 }
 
+fn service_file_path(name: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("/tmp/devbase-tests/{name}.plist")
+    } else {
+        format!("/tmp/devbase-tests/{name}.service")
+    }
+}
+
 #[test]
 fn selecting_an_item_shows_its_detail_groups() {
     let (_turn, mut app) = normal_app();
@@ -357,10 +422,7 @@ fn selecting_an_item_shows_its_detail_groups() {
     app.wait_for("Program").unwrap();
     assert!(app.screen().shows("Files"));
     assert!(app.screen().shows("Property list"));
-    assert!(
-        app.screen()
-            .shows("/tmp/devbase-tests/com.example.alpha.plist")
-    );
+    assert!(app.screen().shows(&service_file_path("com.example.alpha")));
     assert!(app.screen().shows("Running · PID 4242"));
 }
 
@@ -370,7 +432,7 @@ fn actions_follow_the_state_matrix() {
     app.wait_for("com.example.alpha").unwrap();
 
     app.press("id:item-com.example.alpha").unwrap();
-    app.wait_for("/tmp/devbase-tests/com.example.alpha.plist")
+    app.wait_for(&service_file_path("com.example.alpha"))
         .unwrap();
     assert!(
         app.screen()
@@ -395,7 +457,7 @@ fn actions_follow_the_state_matrix() {
 
     // Idle: Start is the main action, and Restart does not apply.
     app.press("id:item-com.example.bravo").unwrap();
-    app.wait_for("/tmp/devbase-tests/com.example.bravo.plist")
+    app.wait_for(&service_file_path("com.example.bravo"))
         .unwrap();
     assert!(
         app.screen()
@@ -410,7 +472,7 @@ fn actions_follow_the_state_matrix() {
 
     // Stopped and not autostarted: Load.
     app.press("id:item-com.example.charlie").unwrap();
-    app.wait_for("/tmp/devbase-tests/com.example.charlie.plist")
+    app.wait_for(&service_file_path("com.example.charlie"))
         .unwrap();
     assert!(
         app.screen()
@@ -487,7 +549,7 @@ fn a_privileged_action_reports_the_missing_helper() {
         daemons(Behaviour::HelperMissing),
     );
     app.wait_for("com.example.alpha").unwrap();
-    app.press("id:source-daemon").unwrap();
+    app.press(admin_source_id()).unwrap();
     app.wait_for("com.example.gamma").unwrap();
 
     app.press("id:action-com.example.gamma").unwrap();
@@ -649,12 +711,16 @@ impl Drop for TempLogFile {
 
 #[test]
 fn helper_banner_follows_helper_installation_status() {
-    let helper_note = "The privileged helper is not installed. Changing system agents and daemons takes root, so those actions will fail until it is.";
+    let helper_note = if cfg!(target_os = "macos") {
+        "The privileged helper is not installed. Changing system agents and daemons takes root, so those actions will fail until it is."
+    } else {
+        "The privileged helper is not installed. Changing system units takes root, so those actions will fail until it is."
+    };
     let turn = serial();
     install_all_fakes();
-    install_provider(Source::UserAgent, user_agents(Behaviour::Normal));
-    install_provider(Source::SystemAgent, system_agents());
-    install_provider(Source::Daemon, daemons(Behaviour::Normal));
+    install_provider(primary_user_source(), user_agents(Behaviour::Normal));
+    install_provider(secondary_source(), system_agents());
+    install_provider(admin_source(), daemons(Behaviour::Normal));
     install_system_settings_provider(FakeSettings::new(false));
 
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
@@ -662,16 +728,18 @@ fn helper_banner_follows_helper_installation_status() {
     open_services(&mut app);
     app.wait_for("com.example.alpha").unwrap();
 
-    // Leftover phase footer is gone, and User Agents never show the helper warning.
+    // Leftover phase footer is gone, and User Agents / User Units never show the helper warning.
     assert!(!app.screen().shows("Phase 1 · three launchd sources"));
     assert!(!app.screen().shows(helper_note));
 
-    // When the helper is not installed, System Agents and Daemons show the warning.
-    app.press("id:source-system-agent").unwrap();
-    app.wait_for("com.example.beta").unwrap();
-    assert!(app.screen().shows(helper_note));
+    // When the helper is not installed, privileged sources show the warning.
+    if cfg!(target_os = "macos") {
+        app.press(secondary_source_id()).unwrap();
+        app.wait_for("com.example.beta").unwrap();
+        assert!(app.screen().shows(helper_note));
+    }
 
-    app.press("id:source-daemon").unwrap();
+    app.press(admin_source_id()).unwrap();
     app.wait_for("com.example.gamma").unwrap();
     assert!(app.screen().shows(helper_note));
 
@@ -685,9 +753,11 @@ fn helper_banner_follows_helper_installation_status() {
     app.wait_for("com.example.gamma").unwrap();
     assert!(!app.screen().shows(helper_note));
 
-    app.press("id:source-system-agent").unwrap();
-    app.wait_for("com.example.beta").unwrap();
-    assert!(!app.screen().shows(helper_note));
+    if cfg!(target_os = "macos") {
+        app.press(secondary_source_id()).unwrap();
+        app.wait_for("com.example.beta").unwrap();
+        assert!(!app.screen().shows(helper_note));
+    }
 
     // Removing the helper in Settings brings the warning back.
     app.press("role:button[Settings]").unwrap();
@@ -696,7 +766,12 @@ fn helper_banner_follows_helper_installation_status() {
     app.wait_for("Privileged helper removed").unwrap();
 
     app.press("role:button[Services]").unwrap();
-    app.wait_for("com.example.beta").unwrap();
+    app.wait_for(if cfg!(target_os = "macos") {
+        "com.example.beta"
+    } else {
+        "com.example.gamma"
+    })
+    .unwrap();
     assert!(app.screen().shows(helper_note));
 
     drop(app);
@@ -808,8 +883,8 @@ fn autostart_switch_and_filter_controls_use_native_roles() {
         Some(Checked::False)
     );
 
-    // Daemon autostart switch exposes "Load at boot" accessibility label.
-    app.press("id:source-daemon").unwrap();
+    // Daemon / System Unit autostart switch exposes "Load at boot" accessibility label.
+    app.press(admin_source_id()).unwrap();
     app.wait_for("com.example.gamma").unwrap();
     app.press("id:item-com.example.gamma").unwrap();
     app.wait_for("id:autostart-toggle").unwrap();
@@ -820,11 +895,13 @@ fn autostart_switch_and_filter_controls_use_native_roles() {
     );
 }
 
+#[cfg(target_os = "macos")]
 struct FakeRestrictedLoginItems {
     items: Vec<Item>,
     settings_opened: AtomicU64,
 }
 
+#[cfg(target_os = "macos")]
 impl Provider for FakeRestrictedLoginItems {
     fn source(&self) -> Source {
         Source::LoginItem
@@ -855,6 +932,7 @@ impl Provider for FakeRestrictedLoginItems {
     }
 }
 
+#[cfg(target_os = "macos")]
 impl Restricted for FakeRestrictedLoginItems {
     fn restriction(&self) -> Option<Restriction> {
         Some(Restriction {
@@ -930,6 +1008,7 @@ impl EditorProvider for FakeEditor {
     }
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn brew_login_item_restriction_and_plist_editor_wire_into_services() {
     let turn = serial();
@@ -1021,7 +1100,7 @@ struct RefreshingDetailProvider {
 
 impl Provider for RefreshingDetailProvider {
     fn source(&self) -> Source {
-        Source::UserAgent
+        primary_user_source()
     }
 
     fn list(&self) -> Result<Vec<Item>, BoxError> {
@@ -1076,7 +1155,7 @@ fn info_tab_scroll_node_id_stays_stable_across_detail_refreshes() {
 
     let provider = Arc::new(RefreshingDetailProvider {
         items: Mutex::new(vec![item(
-            Source::UserAgent,
+            primary_user_source(),
             "com.example.alpha",
             State::Running,
             Autostart::On,
@@ -1084,9 +1163,9 @@ fn info_tab_scroll_node_id_stays_stable_across_detail_refreshes() {
         )]),
         pid: AtomicU64::new(4242),
     });
-    install_provider(Source::UserAgent, provider.clone());
-    install_provider(Source::SystemAgent, system_agents());
-    install_provider(Source::Daemon, daemons(Behaviour::Normal));
+    install_provider(primary_user_source(), provider.clone());
+    install_provider(secondary_source(), system_agents());
+    install_provider(admin_source(), daemons(Behaviour::Normal));
 
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
@@ -1127,9 +1206,9 @@ fn info_tab_scroll_node_id_stays_stable_across_detail_refreshes() {
 fn services_keyboard_shortcuts_focus_search_clear_query_and_close_inspector() {
     let turn = serial();
     install_all_fakes();
-    install_provider(Source::UserAgent, user_agents(Behaviour::Normal));
-    install_provider(Source::SystemAgent, system_agents());
-    install_provider(Source::Daemon, daemons(Behaviour::Normal));
+    install_provider(primary_user_source(), user_agents(Behaviour::Normal));
+    install_provider(secondary_source(), system_agents());
+    install_provider(admin_source(), daemons(Behaviour::Normal));
 
     let mut config = EngineConfig::new(Root::of::<nsh_app_devbase::App>());
     config.environment.os = nsh_core::platform::Os::MacOs;
@@ -1176,36 +1255,38 @@ fn all_items_view_aggregates_sources_badges_counts_search_and_inspector() {
     let turn = serial();
     install_all_fakes();
 
-    let brew = FakeProvider::new(
-        Source::Brew,
-        vec![item(
-            Source::Brew,
-            "redis",
-            State::Running,
-            Autostart::On,
-            false,
-        )],
-        Behaviour::Normal,
-    );
-    let login = FakeProvider::new(
-        Source::LoginItem,
-        vec![item(
-            Source::LoginItem,
-            "Raycast",
-            State::Running,
-            Autostart::On,
-            false,
-        )],
-        Behaviour::Normal,
-    );
     install_editor_provider(Arc::new(FakeEditor {
         saved_items: Arc::new(Mutex::new(Vec::new())),
     }));
-    install_provider(Source::Brew, brew);
-    install_provider(Source::LoginItem, login);
-    install_provider(Source::UserAgent, user_agents(Behaviour::Normal));
-    install_provider(Source::SystemAgent, system_agents());
-    install_provider(Source::Daemon, daemons(Behaviour::Normal));
+    if cfg!(target_os = "macos") {
+        let brew = FakeProvider::new(
+            Source::Brew,
+            vec![item(
+                Source::Brew,
+                "redis",
+                State::Running,
+                Autostart::On,
+                false,
+            )],
+            Behaviour::Normal,
+        );
+        let login = FakeProvider::new(
+            Source::LoginItem,
+            vec![item(
+                Source::LoginItem,
+                "Raycast",
+                State::Running,
+                Autostart::On,
+                false,
+            )],
+            Behaviour::Normal,
+        );
+        install_provider(Source::Brew, brew);
+        install_provider(Source::LoginItem, login);
+    }
+    install_provider(primary_user_source(), user_agents(Behaviour::Normal));
+    install_provider(secondary_source(), system_agents());
+    install_provider(admin_source(), daemons(Behaviour::Normal));
 
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
@@ -1213,57 +1294,83 @@ fn all_items_view_aggregates_sources_badges_counts_search_and_inspector() {
     app.wait_for("com.example.alpha").unwrap();
 
     // Single-source view does not render per-row source badges.
-    assert!(!app.screen().matches("id:source-badge-user-agent").unwrap());
+    assert!(
+        !app.screen()
+            .matches(if cfg!(target_os = "macos") {
+                "id:source-badge-user-agent"
+            } else {
+                "id:source-badge-systemd-user"
+            })
+            .unwrap()
+    );
 
-    // Switching to All Items loads and combines all 5 sources.
+    // Switching to All Items loads and combines all active platform sources.
     app.press("id:source-all").unwrap();
-    app.wait_for("redis").unwrap();
-    app.wait_for("Raycast").unwrap();
     app.wait_for("com.example.alpha").unwrap();
     app.wait_for("com.example.beta").unwrap();
     app.wait_for("com.example.gamma").unwrap();
 
-    // Total running/total count appears on the All Items rail row (4 running of 7 total).
-    app.wait_for("id:source-all >> text:4/7").unwrap();
-
-    // Source pill badges identify each item's origin.
-    assert!(app.screen().matches("id:source-badge-brew").unwrap());
-    assert!(app.screen().matches("id:source-badge-login-item").unwrap());
-    assert!(app.screen().matches("id:source-badge-user-agent").unwrap());
-    assert!(
-        app.screen()
-            .matches("id:source-badge-system-agent")
-            .unwrap()
-    );
-    assert!(app.screen().matches("id:source-badge-daemon").unwrap());
-    assert!(app.screen().shows("Homebrew"));
-    assert!(app.screen().shows("Login Item"));
-    assert!(app.screen().shows("User Agent"));
-    assert!(app.screen().shows("System Agent"));
-    assert!(app.screen().shows("Daemon"));
+    if cfg!(target_os = "macos") {
+        app.wait_for("redis").unwrap();
+        app.wait_for("Raycast").unwrap();
+        // Total running/total count appears on the All Items rail row (4 running of 7 total).
+        app.wait_for("id:source-all >> text:4/7").unwrap();
+        // Source pill badges identify each item's origin.
+        assert!(app.screen().matches("id:source-badge-brew").unwrap());
+        assert!(app.screen().matches("id:source-badge-login-item").unwrap());
+        assert!(app.screen().matches("id:source-badge-user-agent").unwrap());
+        assert!(
+            app.screen()
+                .matches("id:source-badge-system-agent")
+                .unwrap()
+        );
+        assert!(app.screen().matches("id:source-badge-daemon").unwrap());
+        assert!(app.screen().shows("Homebrew"));
+        assert!(app.screen().shows("Login Item"));
+        assert!(app.screen().shows("User Agent"));
+        assert!(app.screen().shows("System Agent"));
+        assert!(app.screen().shows("Daemon"));
+    } else {
+        // 2 running of 5 total across SystemdUser (3: 1 running), Autostart (1: loaded), SystemdSystem (1: running).
+        app.wait_for("id:source-all >> text:2/5").unwrap();
+        assert!(
+            app.screen()
+                .matches("id:source-badge-systemd-user")
+                .unwrap()
+        );
+        assert!(
+            app.screen()
+                .matches("id:source-badge-systemd-system")
+                .unwrap()
+        );
+        assert!(app.screen().matches("id:source-badge-autostart").unwrap());
+    }
 
     // Cross-source search filters across all combined sources.
     app.type_text("id:services-search", "gamma").unwrap();
-    app.wait_for_gone("redis", Duration::from_secs(2)).unwrap();
+    app.wait_for_gone("com.example.alpha", Duration::from_secs(2))
+        .unwrap();
     assert!(app.screen().shows("com.example.gamma"));
     assert!(!app.screen().shows("com.example.alpha"));
 
     app.clear("id:services-search").unwrap();
-    app.wait_for("redis").unwrap();
+    app.wait_for("com.example.alpha").unwrap();
     app.wait_for("com.example.beta").unwrap();
 
     // Running/Stopped filter works across the aggregated list.
     app.press("id:filter-running").unwrap();
     app.wait_for_gone("com.example.beta", Duration::from_secs(2))
         .unwrap();
-    assert!(app.screen().shows("redis"));
-    assert!(app.screen().shows("Raycast"));
+    if cfg!(target_os = "macos") {
+        assert!(app.screen().shows("redis"));
+        assert!(app.screen().shows("Raycast"));
+    }
     assert!(app.screen().shows("com.example.alpha"));
     assert!(app.screen().shows("com.example.gamma"));
     app.press("id:filter-all").unwrap();
     app.wait_for("com.example.beta").unwrap();
 
-    // Selecting a Daemon in All Items opens its normal Inspector, Edit Plist, and boot switch.
+    // Selecting a Daemon / System Unit in All Items opens its normal Inspector and boot switch.
     app.press("id:item-com.example.gamma").unwrap();
     app.wait_for("id:inspector").unwrap();
     app.wait_for("id:edit-job").unwrap();
@@ -1272,26 +1379,29 @@ fn all_items_view_aggregates_sources_badges_counts_search_and_inspector() {
             .matches("id:inspector >> role:switch[Load at boot]")
             .unwrap()
     );
-    app.press("id:edit-job").unwrap();
-    app.wait_for("id:plist-editor").unwrap();
-    app.press("id:editor-cancel").unwrap();
-    app.wait_for_gone("id:plist-editor", Duration::from_secs(2))
-        .unwrap();
+    if cfg!(target_os = "macos") {
+        app.press("id:edit-job").unwrap();
+        app.wait_for("id:plist-editor").unwrap();
+        app.press("id:editor-cancel").unwrap();
+        app.wait_for_gone("id:plist-editor", Duration::from_secs(2))
+            .unwrap();
 
-    // Selecting a Homebrew item in All Items opens its Inspector without Edit Plist.
-    app.press("id:item-redis").unwrap();
-    app.wait_for("/tmp/devbase-tests/redis.plist").unwrap();
-    assert!(!app.screen().matches("id:edit-job").unwrap());
-    assert!(
-        app.screen()
-            .matches("id:inspector >> role:button[Stop]")
-            .unwrap()
-    );
+        // Selecting a Homebrew item in All Items opens its Inspector without Edit Plist.
+        app.press("id:item-redis").unwrap();
+        app.wait_for("/tmp/devbase-tests/redis.plist").unwrap();
+        assert!(!app.screen().matches("id:edit-job").unwrap());
+        assert!(
+            app.screen()
+                .matches("id:inspector >> role:button[Stop]")
+                .unwrap()
+        );
+    }
 
     drop(app);
     drop(turn);
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn login_items_restriction_opens_full_disk_access_guide_on_demand() {
     let turn = serial();

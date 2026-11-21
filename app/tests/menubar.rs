@@ -42,10 +42,11 @@ use nsh_app_devbase::testing::{
     use_fake_databases, use_fake_dev_logs, use_fake_development, use_fake_guide, use_fake_menubar,
     use_fake_providers, use_fake_proxy, use_fake_software, use_fake_system,
 };
+#[cfg(target_os = "macos")]
+use nsh_core::platform::Os;
 use nsh_core::{
     desktop::{Display, DisplayId, Shortcut},
     geometry::{Bounds, point, size},
-    platform::Os,
     prelude::*,
 };
 use nsh_engine::{EngineConfig, Root};

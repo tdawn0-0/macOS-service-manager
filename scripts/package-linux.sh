@@ -71,7 +71,8 @@ mkdir -p "$stage/resources"
 
 echo "==> Building single-binary Linux executable (version=$version, arch=$arch)"
 (cd app && DEVBASE_VERSION="$version" cargo build --release --locked --bin nsh-app-devbase)
-install -m 0755 "app/target/release/nsh-app-devbase" "$stage/devbase"
+target_dir=${CARGO_TARGET_DIR:-app/target}
+install -m 0755 "${target_dir}/release/nsh-app-devbase" "$stage/devbase"
 
 echo "==> Writing Freedesktop desktop entry"
 cat >"$stage/xyz.jyeu.devbase.desktop" <<'EOF'

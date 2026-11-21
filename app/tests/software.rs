@@ -289,7 +289,7 @@ fn the_catalog_and_installed_versions_render() {
     // Another engine has its own installed version and catalog.
     app.press("id:software-mysql").unwrap();
     app.wait_for("id:installed-mysql-8.4.13").unwrap();
-    assert!(app.screen().shows("8.4.4"));
+    assert!(app.screen().shows("8.0.45"));
     assert!(!app.screen().shows("20.19.0"));
 }
 

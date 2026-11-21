@@ -17,11 +17,12 @@ use std::{
 use nsh_app_devbase::{
     launch::{self, Seams},
     testing::{
-        SystemCacheClear, SystemCacheInfo, SystemCliChange, SystemCliStatus, SystemHelperChange,
-        SystemHelperStatus, SystemLoginChange, SystemSettingsProvider, SystemSettingsSnapshot,
-        install_system_settings_provider, system_request_quit, use_fake_databases,
-        use_fake_development, use_fake_guide, use_fake_providers, use_fake_proxy,
-        use_fake_software, use_fake_system,
+        AvailableUpdate, SystemCacheClear, SystemCacheInfo, SystemCliChange, SystemCliStatus,
+        SystemHelperChange, SystemHelperStatus, SystemLoginChange, SystemSettingsProvider,
+        SystemSettingsSnapshot, UpdateFeedInfo, UpdateProvider, UpdateState,
+        clear_fake_updater_provider, install_system_settings_provider, install_updater_provider,
+        system_request_quit, use_fake_databases, use_fake_development, use_fake_guide,
+        use_fake_providers, use_fake_proxy, use_fake_software, use_fake_system, use_fake_updater,
     },
 };
 use nsh_core::prelude::*;
@@ -267,7 +268,10 @@ impl SystemSettingsProvider for FakeSettings {
     }
 }
 
-fn start(fake: Arc<FakeSettings>) -> (MutexGuard<'static, ()>, Headless) {
+fn start_with_updater(
+    fake: Arc<FakeSettings>,
+    updater: Option<Arc<dyn UpdateProvider>>,
+) -> (MutexGuard<'static, ()>, Headless) {
     let turn = serial();
     use_fake_providers();
     use_fake_software();
@@ -276,6 +280,11 @@ fn start(fake: Arc<FakeSettings>) -> (MutexGuard<'static, ()>, Headless) {
     use_fake_proxy();
     use_fake_guide();
     use_fake_system();
+    use_fake_updater();
+    clear_fake_updater_provider();
+    if let Some(provider) = updater {
+        install_updater_provider(provider);
+    }
     install_system_settings_provider(fake);
     let mut app = Headless::start(EngineConfig::new(Root::of::<nsh_app_devbase::App>())).unwrap();
     app.set_viewport(Size::new(px(1100.0), px(720.0))).unwrap();
@@ -283,6 +292,10 @@ fn start(fake: Arc<FakeSettings>) -> (MutexGuard<'static, ()>, Headless) {
     app.press("role:button[Settings]").unwrap();
     app.wait_for("id:settings-page").unwrap();
     (turn, app)
+}
+
+fn start(fake: Arc<FakeSettings>) -> (MutexGuard<'static, ()>, Headless) {
+    start_with_updater(fake, None)
 }
 
 #[component]
@@ -552,4 +565,168 @@ fn a_dev_home_style_argv_is_not_mistaken_for_the_cli() {
     );
     let _ = launch::run(&["open".to_string()], &seams);
     assert_eq!(seams.calls(), ["gui true", "gui false"]);
+}
+
+#[test]
+fn copying_ai_agent_instructions_and_mcp_config_populates_clipboard() {
+    let fake = FakeSettings::new(HelperBehaviour::Normal);
+    let (_turn, mut app) = start(fake);
+
+    app.wait_for("id:settings-copy-agent-prompt").unwrap();
+    app.press("id:settings-copy-agent-prompt").unwrap();
+    app.wait_for("Copied AI agent instructions").unwrap();
+    let prompt = app.screen().clipboard().expect("clipboard populated");
+    assert!(prompt.contains("devbase schema"), "{prompt}");
+    assert!(prompt.contains("--json"), "{prompt}");
+    assert!(prompt.contains("--password-stdin"), "{prompt}");
+    assert!(prompt.contains("--token-stdin"), "{prompt}");
+    assert!(prompt.contains("devbase mcp"), "{prompt}");
+
+    app.wait_for("id:settings-copy-mcp-config").unwrap();
+    app.press("id:settings-copy-mcp-config").unwrap();
+    app.wait_for("Copied MCP config").unwrap();
+    let mcp_json = app.screen().clipboard().expect("clipboard populated");
+    let parsed: serde_json::Value = serde_json::from_str(mcp_json).expect("valid MCP JSON");
+    assert_eq!(
+        parsed["mcpServers"]["devbase"]["command"],
+        "/tmp/devbase-tests/bin/devbase"
+    );
+    assert_eq!(
+        parsed["mcpServers"]["devbase"]["args"],
+        serde_json::json!(["mcp"])
+    );
+}
+
+struct FakeUpdater {
+    feed: UpdateFeedInfo,
+    check_result: UpdateState,
+    install_result: Result<(), String>,
+    installed_versions: Mutex<Vec<String>>,
+}
+
+impl FakeUpdater {
+    fn new(feed: UpdateFeedInfo, check_result: UpdateState) -> Arc<Self> {
+        Arc::new(FakeUpdater {
+            feed,
+            check_result,
+            install_result: Ok(()),
+            installed_versions: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn installed(&self) -> Vec<String> {
+        self.installed_versions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
+impl UpdateProvider for FakeUpdater {
+    fn feed_info(&self) -> UpdateFeedInfo {
+        self.feed.clone()
+    }
+
+    fn check(&self) -> UpdateState {
+        self.check_result.clone()
+    }
+
+    fn install(&self, update: &AvailableUpdate) -> Result<(), String> {
+        self.installed_versions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(update.version.clone());
+        self.install_result.clone()
+    }
+}
+
+#[test]
+fn updates_card_reports_not_configured_honestly() {
+    let fake = FakeSettings::new(HelperBehaviour::Normal);
+    let updater = FakeUpdater::new(UpdateFeedInfo::not_configured(), UpdateState::NotConfigured);
+    let (_turn, mut app) = start_with_updater(fake, Some(updater));
+
+    app.wait_for("id:settings-updates-card").unwrap();
+    app.wait_for("No signed update feed is bundled with this build.")
+        .unwrap();
+    app.press("id:settings-check-updates").unwrap();
+    app.wait_for("No signed update feed is bundled with this build.")
+        .unwrap();
+}
+
+#[test]
+fn updates_card_reports_up_to_date() {
+    let fake = FakeSettings::new(HelperBehaviour::Normal);
+    let updater = FakeUpdater::new(
+        UpdateFeedInfo {
+            configured: true,
+            channel: "Stable (signed)".to_string(),
+            source: Some("https://releases.devbase.example/latest.json".to_string()),
+        },
+        UpdateState::UpToDate,
+    );
+    let (_turn, mut app) = start_with_updater(fake, Some(updater));
+
+    app.wait_for("id:settings-updates-card").unwrap();
+    app.wait_for("Stable (signed)").unwrap();
+    app.press("id:settings-check-updates").unwrap();
+    app.wait_for("Up to date").unwrap();
+    app.wait_for("Devbase 0.1.0 is the latest verified version.")
+        .unwrap();
+}
+
+#[test]
+fn updates_card_shows_available_update_notes_and_installs() {
+    let fake = FakeSettings::new(HelperBehaviour::Normal);
+    let updater = FakeUpdater::new(
+        UpdateFeedInfo {
+            configured: true,
+            channel: "Stable (signed)".to_string(),
+            source: Some("https://releases.devbase.example/latest.json".to_string()),
+        },
+        UpdateState::Available(AvailableUpdate {
+            version: "0.2.0".to_string(),
+            notes: Some("- Built-in stdio MCP server\n- Signed updater".to_string()),
+            url: "https://releases.devbase.example/Devbase-0.2.0-macos-arm64.tar.gz".to_string(),
+            sha256: Some("deadbeef".to_string()),
+            size: Some(4096),
+            can_install: true,
+        }),
+    );
+    let (_turn, mut app) = start_with_updater(fake, Some(updater.clone()));
+
+    app.wait_for("id:settings-updates-card").unwrap();
+    app.press("id:settings-check-updates").unwrap();
+    app.wait_for("Update available").unwrap();
+    app.wait_for("Version 0.2.0 is available and verified.")
+        .unwrap();
+    app.wait_for("id:settings-update-notes").unwrap();
+    app.wait_for("id:settings-install-update").unwrap();
+
+    app.press("id:settings-install-update").unwrap();
+    app.wait_for("Devbase 0.2.0 is installed. Restart to apply the update.")
+        .unwrap();
+    app.wait_for("id:settings-restart-update").unwrap();
+    assert_eq!(updater.installed(), vec!["0.2.0".to_string()]);
+}
+
+#[test]
+fn updates_card_surfaces_verification_errors_verbatim() {
+    let fake = FakeSettings::new(HelperBehaviour::Normal);
+    let updater = FakeUpdater::new(
+        UpdateFeedInfo {
+            configured: true,
+            channel: "Stable (signed)".to_string(),
+            source: Some("https://releases.devbase.example/latest.json".to_string()),
+        },
+        UpdateState::Error(
+            "update manifest: the signature does not match the app's publicKey".to_string(),
+        ),
+    );
+    let (_turn, mut app) = start_with_updater(fake, Some(updater));
+
+    app.wait_for("id:settings-updates-card").unwrap();
+    app.press("id:settings-check-updates").unwrap();
+    app.wait_for("update manifest: the signature does not match the app's publicKey")
+        .unwrap();
 }

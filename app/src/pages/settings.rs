@@ -15,8 +15,10 @@ use nsh_core::prelude::*;
 
 use crate::{
     components::controls::{self as ui, Tone},
+    meta,
     store::{Section, system},
     theme as tokens,
+    updater::UpdateState,
 };
 
 pub(crate) fn settings() -> impl IntoElement {
@@ -52,7 +54,16 @@ pub(crate) fn settings() -> impl IntoElement {
                     .child(ui::card(
                         "Command-line interface",
                         dynamic(|| Some(cli_body().into_element())),
-                    )),
+                    ))
+                    .child(
+                        view()
+                            .test_id("settings-updates-card")
+                            .w_full()
+                            .child(ui::card(
+                                "Updates",
+                                dynamic(|| Some(updates_body().into_element())),
+                            )),
+                    ),
             ),
         )
 }
@@ -342,6 +353,7 @@ fn cli_body() -> impl IntoElement {
         .child(
             view()
                 .flex_row()
+                .flex_wrap()
                 .items_center()
                 .gap(tokens::space(1.5))
                 .child(when(!installed, move || {
@@ -368,6 +380,153 @@ fn cli_body() -> impl IntoElement {
                     "settings-copy-schema",
                     false,
                     system::copy_schema_command,
+                ))
+                .child(ui::action_button(
+                    "Copy AI agent instructions",
+                    Tone::Default,
+                    "settings-copy-agent-prompt",
+                    false,
+                    system::copy_agent_instructions,
+                ))
+                .child(ui::action_button(
+                    "Copy MCP config",
+                    Tone::Default,
+                    "settings-copy-mcp-config",
+                    false,
+                    system::copy_mcp_config,
                 )),
+        )
+}
+
+fn updates_body() -> impl IntoElement {
+    let feed = system::update_feed();
+    let state = system::update_state();
+    let busy = system::updates_busy();
+
+    let (status_tag, status_summary) = match &state {
+        UpdateState::NotConfigured => (
+            "Not configured",
+            "No signed update feed is bundled with this build.".to_string(),
+        ),
+        UpdateState::Idle => ("Ready", "Signed update feed is configured.".to_string()),
+        UpdateState::Checking => ("Checking", "Checking for signed updates…".to_string()),
+        UpdateState::UpToDate => (
+            "Up to date",
+            format!("Devbase {} is the latest verified version.", meta::VERSION),
+        ),
+        UpdateState::Available(avail) => (
+            "Update available",
+            format!("Version {} is available and verified.", avail.version),
+        ),
+        UpdateState::Installing { version } => (
+            "Installing",
+            format!("Downloading and verifying Devbase {version}…"),
+        ),
+        UpdateState::Installed { version } => (
+            "Installed",
+            format!("Devbase {version} is installed. Restart to apply the update."),
+        ),
+        UpdateState::Error(_) => ("Error", "Update check could not complete.".to_string()),
+    };
+
+    let available = match &state {
+        UpdateState::Available(avail) => Some(avail.clone()),
+        _ => None,
+    };
+    let installed = matches!(state, UpdateState::Installed { .. });
+    let error_note = match &state {
+        UpdateState::Error(error) => Some(error.clone()),
+        _ => None,
+    };
+    let notes = available
+        .as_ref()
+        .and_then(|avail| avail.notes.clone())
+        .filter(|text| !text.trim().is_empty());
+    let install_label = available.as_ref().map(|avail| {
+        if avail.can_install {
+            "Install update"
+        } else {
+            "Download update"
+        }
+    });
+
+    view()
+        .flex_col()
+        .gap(tokens::space(2.0))
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .gap(tokens::space(2.0))
+                .child(ui::status_tag(status_tag))
+                .child(
+                    text(status_summary)
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .text_size(px(tokens::TEXT_SMALL))
+                        .text_color(move || theme().muted_foreground),
+                ),
+        )
+        .child(ui::kv_mono("Current version", meta::VERSION))
+        .child(ui::kv("Channel", feed.channel))
+        .children(
+            feed.source
+                .filter(|source| !source.is_empty())
+                .map(|source| ui::kv_mono("Feed", source)),
+        )
+        .children(notes.map(|notes| {
+            view()
+                .test_id("settings-update-notes")
+                .flex_col()
+                .gap(tokens::space(1.0))
+                .p(tokens::space(2.5))
+                .rounded(move || theme().radius)
+                .bg(tokens::inset)
+                .border_1()
+                .border_color(tokens::hairline)
+                .child(
+                    text("Release notes")
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(move || theme().muted_foreground),
+                )
+                .child(
+                    text(notes)
+                        .text_size(px(tokens::TEXT_SMALL))
+                        .text_color(move || theme().foreground),
+                )
+        }))
+        .children(error_note.map(|error| ui::plain_note(error, true)))
+        .child(
+            view()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap(tokens::space(1.5))
+                .child(ui::action_button(
+                    "Check for updates",
+                    Tone::Default,
+                    "settings-check-updates",
+                    busy,
+                    system::check_for_updates,
+                ))
+                .children(install_label.map(|label| {
+                    ui::action_button(
+                        label,
+                        Tone::Primary,
+                        "settings-install-update",
+                        busy,
+                        system::install_available_update,
+                    )
+                }))
+                .child(when(installed, || {
+                    ui::action_button(
+                        "Restart Devbase",
+                        Tone::Primary,
+                        "settings-restart-update",
+                        false,
+                        system::relaunch_after_update,
+                    )
+                })),
         )
 }

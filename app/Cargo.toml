@@ -11,6 +11,7 @@ exclude = ["crates/devcore", "crates/devproxy", "crates/devcli"]
 nsh-core = "0.6.1"
 nsh-base = { version = "0.6.1", default-features = false }
 nsh-engine = { version = "0.6.1", default-features = false }
+nsh-updater = "0.6.1"
 env_logger = "0.11"
 log = "0.4"
 serde_json = "1"

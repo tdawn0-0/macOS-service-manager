@@ -577,3 +577,61 @@ fn software_default_requires_an_installed_package() {
     assert_eq!(output.code, 1);
     assert!(output.err.contains("instance"));
 }
+
+#[test]
+fn mcp_is_registered_in_schema_and_help_and_handles_stdio_session() {
+    let dir = temp();
+
+    let schema = run(dir.path(), &["schema", "mcp"]);
+    assert_eq!(schema.code, 0, "{}", schema.err);
+    assert!(schema.out.contains("\"name\": \"mcp\""));
+
+    let help = run(dir.path(), &["help", "mcp"]);
+    assert_eq!(help.code, 0, "{}", help.err);
+    assert!(help.out.contains("devbase mcp"));
+
+    let bad_arg = run(dir.path(), &["mcp", "extra"]);
+    assert_eq!(bad_arg.code, 2);
+
+    // Full JSON-RPC session over mock stdin/stdout through `run_cli_with_env`.
+    let session = concat!(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\"}}\n",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\"}\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"devbase_diagnostics\",\"arguments\":{}}}\n",
+    );
+    let output = run_with(dir.path(), &["mcp"], session.as_bytes());
+    assert_eq!(output.code, 0, "{}", output.err);
+    assert!(output.err.is_empty());
+
+    let frames: Vec<serde_json::Value> = output
+        .out
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(frames.len(), 4);
+    assert_eq!(frames[0]["result"]["protocolVersion"], "2024-11-05");
+    assert_eq!(frames[0]["result"]["serverInfo"]["name"], "devbase");
+    assert_eq!(frames[1]["result"], serde_json::json!({}));
+    assert_eq!(frames[2]["result"]["tools"].as_array().unwrap().len(), 7);
+    assert_eq!(frames[3]["result"]["isError"], false);
+    let report: serde_json::Value =
+        serde_json::from_str(frames[3]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(report["redacted"], true);
+}
+
+#[test]
+fn run_cli_streams_mcp_without_blocking_on_read_to_end() {
+    let args = vec!["mcp".to_string()];
+    let mut input =
+        std::io::Cursor::new(b"{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"ping\"}\n".to_vec());
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let code = devcli::run_cli(&args, &mut input, &mut out, &mut err);
+    assert_eq!(code, 0);
+    assert!(err.is_empty());
+    let resp: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(resp["id"], 9);
+    assert_eq!(resp["result"], serde_json::json!({}));
+}

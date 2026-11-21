@@ -1872,6 +1872,7 @@ dependencies = [
  "nsh-platform-apple",
  "nsh-platform-macos",
  "nsh-testing",
+ "nsh-updater",
  "serde_json",
  "tokio",
 ]

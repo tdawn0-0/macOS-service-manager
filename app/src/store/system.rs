@@ -1199,6 +1199,7 @@ pub(crate) fn ports_loading() -> bool {
 
 /// Reads the helper, CLI, cache, rotation and login-item state.
 pub(crate) fn load_settings() {
+    load_updates();
     let (loaded, loading) =
         workspace().with(|state| (state.settings.loaded, state.settings.loading));
     if !loaded && !loading {
@@ -1207,6 +1208,7 @@ pub(crate) fn load_settings() {
 }
 
 pub(crate) fn refresh_settings() {
+    refresh_updates_feed();
     if workspace().with(|state| state.settings.loading) {
         return;
     }
@@ -1710,6 +1712,254 @@ pub(crate) fn copy_schema_command() {
         state.settings.action_error = None;
     });
     crate::toast::info("Copied devbase schema");
+}
+
+/// Builds a concise, ready-to-paste prompt snippet for AI coding agents
+/// (Claude Code, Cursor, Codex, Antigravity) using `devbase`.
+pub(crate) fn agent_instructions_snippet() -> String {
+    concat!(
+        "# Devbase CLI & MCP Instructions\n",
+        "- Discover commands, flags, stdin contracts, and exit codes with `devbase schema` (or `devbase schema --command <name>`).\n",
+        "- Pass `--json` on CLI calls for structured JSON stdout and structured JSON stderr errors (`{\"error\", \"exitCode\"}`).\n",
+        "- Never pass plaintext secrets in argv (`--password`, `--token`, `--api-token` exit 2); always pipe secrets via stdin using `--password-stdin` or `--token-stdin`.\n",
+        "- Destructive commands never prompt interactively: pass `--yes`, or run `--preview` followed by `--confirm <id> --fingerprint <fp>` for `db delete-data`.\n",
+        "- For read-only workspace, database, log, port, diagnostics, and services inspection, connect to the stdio MCP server via `devbase mcp`.",
+    )
+    .to_string()
+}
+
+/// Copies the AI agent prompt snippet to the clipboard.
+pub(crate) fn copy_agent_instructions() {
+    set_clipboard(agent_instructions_snippet());
+    workspace().update(|state| {
+        state.settings.action_error = None;
+    });
+    crate::toast::info("Copied AI agent instructions");
+}
+
+/// Builds the ready-to-paste MCP client JSON snippet pointing at the managed
+/// `devbase` CLI wrapper (falling back to `"devbase"` when unset).
+pub(crate) fn mcp_config_snippet(wrapper_path: &str) -> String {
+    let command = if wrapper_path.trim().is_empty() {
+        "devbase"
+    } else {
+        wrapper_path.trim()
+    };
+    let payload = serde_json::json!({
+        "mcpServers": {
+            "devbase": {
+                "command": command,
+                "args": ["mcp"],
+            }
+        }
+    });
+    serde_json::to_string_pretty(&payload).unwrap_or_default()
+}
+
+/// Copies the MCP server JSON config snippet for Claude Code / Cursor / Antigravity.
+pub(crate) fn copy_mcp_config() {
+    let wrapper = cli_status().wrapper_path;
+    set_clipboard(mcp_config_snippet(&wrapper));
+    workspace().update(|state| {
+        state.settings.action_error = None;
+    });
+    crate::toast::info("Copied MCP config");
+}
+
+// --- In-app updates ----------------------------------------------------------
+
+#[derive(Debug, Clone, Default)]
+struct UpdatesState {
+    feed: crate::updater::UpdateFeedInfo,
+    state: crate::updater::UpdateState,
+    loaded: bool,
+    sequence: u64,
+}
+
+fn updates_signal() -> Signal<UpdatesState> {
+    global::<UpdatesState>()
+}
+
+/// Loads the passive bundled updater feed info once (no network calls).
+pub(crate) fn load_updates() {
+    if updates_signal().with(|state| state.loaded) {
+        return;
+    }
+    refresh_updates_feed();
+}
+
+/// Refreshes passive feed metadata without hitting the network.
+pub(crate) fn refresh_updates_feed() {
+    let provider = crate::updater::provider_of();
+    let sequence = updates_signal().with(|state| state.sequence + 1);
+    updates_signal().update(|state| {
+        state.sequence = sequence;
+    });
+    task(async move {
+        let feed = blocking(move || provider.feed_info())
+            .await
+            .unwrap_or_else(|_| crate::updater::UpdateFeedInfo::not_configured());
+        updates_signal().update(|state| {
+            if state.sequence != sequence {
+                return;
+            }
+            state.loaded = true;
+            state.feed = feed.clone();
+            if matches!(
+                state.state,
+                crate::updater::UpdateState::NotConfigured | crate::updater::UpdateState::Idle
+            ) {
+                state.state = if feed.configured {
+                    crate::updater::UpdateState::Idle
+                } else {
+                    crate::updater::UpdateState::NotConfigured
+                };
+            }
+        });
+    });
+}
+
+pub(crate) fn update_feed() -> crate::updater::UpdateFeedInfo {
+    updates_signal().with(|state| state.feed.clone())
+}
+
+pub(crate) fn update_state() -> crate::updater::UpdateState {
+    updates_signal().with(|state| state.state.clone())
+}
+
+pub(crate) fn updates_busy() -> bool {
+    updates_signal().with(|state| {
+        matches!(
+            state.state,
+            crate::updater::UpdateState::Checking | crate::updater::UpdateState::Installing { .. }
+        )
+    })
+}
+
+/// Checks the configured signed release feed in a background task.
+pub(crate) fn check_for_updates() {
+    if updates_busy() {
+        return;
+    }
+    let provider = crate::updater::provider_of();
+    let sequence = updates_signal().with(|state| state.sequence + 1);
+    updates_signal().update(|state| {
+        state.sequence = sequence;
+        state.state = crate::updater::UpdateState::Checking;
+    });
+    task(async move {
+        let answer = blocking(move || {
+            let feed = provider.feed_info();
+            let result = provider.check();
+            (feed, result)
+        })
+        .await;
+        let (feed, next_state) = match answer {
+            Ok(pair) => pair,
+            Err(error) => (
+                crate::updater::UpdateFeedInfo::not_configured(),
+                crate::updater::UpdateState::Error(format!("update check did not finish: {error}")),
+            ),
+        };
+        let mut toast_outcome: Option<(bool, String)> = None;
+        updates_signal().update(|state| {
+            if state.sequence != sequence {
+                return;
+            }
+            state.loaded = true;
+            state.feed = feed;
+            match &next_state {
+                crate::updater::UpdateState::UpToDate => {
+                    toast_outcome = Some((
+                        false,
+                        format!("Devbase {} is up to date.", crate::meta::VERSION),
+                    ));
+                }
+                crate::updater::UpdateState::Available(avail) => {
+                    toast_outcome =
+                        Some((true, format!("Devbase {} is available.", avail.version)));
+                }
+                _ => {}
+            }
+            state.state = next_state;
+        });
+        if let Some((is_success, message)) = toast_outcome {
+            if is_success {
+                crate::toast::success(message);
+            } else {
+                crate::toast::info(message);
+            }
+        }
+    });
+}
+
+/// Downloads, verifies, and installs the available update (or opens its URL when
+/// in-place installation is unavailable).
+pub(crate) fn install_available_update() {
+    let available = updates_signal().with(|state| match &state.state {
+        crate::updater::UpdateState::Available(avail) => Some(avail.clone()),
+        _ => None,
+    });
+    let Some(update) = available else {
+        return;
+    };
+    if !update.can_install {
+        let url = update.url.clone();
+        task(async move {
+            let answer = blocking(move || open_url(&url)).await;
+            if let Ok(Err(error)) = answer {
+                updates_signal().update(|state| {
+                    state.state = crate::updater::UpdateState::Error(error);
+                });
+            }
+        });
+        return;
+    }
+    let provider = crate::updater::provider_of();
+    let version = update.version.clone();
+    let sequence = updates_signal().with(|state| state.sequence + 1);
+    updates_signal().update(|state| {
+        state.sequence = sequence;
+        state.state = crate::updater::UpdateState::Installing {
+            version: version.clone(),
+        };
+    });
+    task(async move {
+        let answer = match blocking(move || provider.install(&update)).await {
+            Ok(answer) => answer,
+            Err(error) => Err(format!("update installation did not finish: {error}")),
+        };
+        let mut toast_message: Option<String> = None;
+        updates_signal().update(|state| {
+            if state.sequence != sequence {
+                return;
+            }
+            match answer {
+                Ok(()) => {
+                    state.state = crate::updater::UpdateState::Installed {
+                        version: version.clone(),
+                    };
+                    toast_message = Some(format!(
+                        "Installed Devbase {version}. Restart Devbase to finish updating."
+                    ));
+                }
+                Err(error) => {
+                    state.state = crate::updater::UpdateState::Error(error);
+                }
+            }
+        });
+        if let Some(message) = toast_message {
+            crate::toast::success(message);
+        }
+    });
+}
+
+/// Restarts Devbase after an in-place update finishes (no-op in fake test mode).
+pub(crate) fn relaunch_after_update() {
+    if is_fake_mode() {
+        return;
+    }
+    nsh_core::element::desktop::restart();
 }
 
 // --- Quit confirmation -------------------------------------------------------

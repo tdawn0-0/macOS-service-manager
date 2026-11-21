@@ -21,7 +21,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 > Note: `Devbase --dev <internal-cmd>` remains strictly reserved for Devbase's own internal `launchd` jobs, shell shim, and privileged helper (`serve`, `tunnel`, `maintain`, `database-worker`, `node`, `helper`).
 
-## AI Self-Discovery, `--json`, and Exit Codes
+## AI Self-Discovery, MCP Server, `--json`, and Exit Codes
 
 AI agents and automation scripts can inspect the entire command surface programmatically:
 
@@ -37,6 +37,38 @@ devbase help db
   - `1`: operational or runtime error
   - `2`: invalid usage, unknown command, missing confirmation flag (`--yes` / `--confirm` + `--fingerprint`), or forbidden plaintext secret flag
 
+### Stdio MCP Server (`devbase mcp`)
+
+Devbase includes a built-in, strictly read-only stdio Model Context Protocol (MCP) server speaking newline-delimited JSON-RPC 2.0:
+
+```sh
+devbase mcp
+```
+
+Exposed read-only tools (zero plaintext secrets, zero destructive mutations):
+- `devbase_status` — Workspace packages, database instances, HTTPS proxy rules, runtime statuses, privileged helper, and CLI wrapper status.
+- `devbase_db_list` — Managed database instances, ports, storage modes, runtime statuses, and compatible upgrade targets.
+- `devbase_db_connection` — Password-free URI, env assignment, JDBC URL, CLI command, username, and credential file path for an instance.
+- `devbase_logs` — Bounded log tail for `proxy`, `tunnel`, or `db-<id>` (with strict job ID validation, optional stream/lines/filter).
+- `devbase_ports` — Active listening user ports (`active`), free local port suggestion (`free`), or port inspection (`check`).
+- `devbase_diagnostics` — Layered health checks across runtimes, databases, proxy, tunnel, and CA (redacted).
+- `devbase_services_list` — macOS services across launchd (`user-agent`, `system-agent`, `daemon`), Homebrew, and Login Items.
+
+Example MCP client configuration (Claude Code, Cursor, Antigravity):
+
+```json
+{
+  "mcpServers": {
+    "devbase": {
+      "command": "/Users/<you>/.local/bin/devbase",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+You can copy this snippet with your exact wrapper path directly from **Settings → Command-line interface → Copy MCP config**.
+
 ## Safety Rules
 
 - **No plaintext secrets in `argv`**: Passing `--password`, `--token`, or `--api-token` fails immediately with exit code `2`. Always pipe secrets over `stdin` using `--password-stdin` or `--token-stdin`.
@@ -49,6 +81,7 @@ devbase help db
 
 ### AI Discovery & Workspace
 - `devbase schema [--command <name>]` — Full JSON specification of commands, flags, stdin contracts, and exit codes.
+- `devbase mcp` — Read-only stdio Model Context Protocol (MCP) server for AI agents.
 - `devbase version [--json]` / `devbase help [<command>]`
 - `devbase status [--json]` — Workspace state (`packages`, `instances`, `proxyRules`), runtime statuses, helper state, and CLI wrapper state.
 - `devbase diagnostics [run|export] [--json]` — Layered health checks or redacted diagnostic export.

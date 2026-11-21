@@ -4,7 +4,7 @@
   "lockfiles": [
     {
       "path": "app/Cargo.lock",
-      "sha256": "90d1783ea59e8b17642ffd6a5b22960b22bde576b15a0de5646ef706523e6d89"
+      "sha256": "2ea976ff724594ed1c61946aca164b4d0ae1e96dcc340da4d67c181aae60a6c1"
     },
     {
       "path": "app/crates/devcli/Cargo.lock",

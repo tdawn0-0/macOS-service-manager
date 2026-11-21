@@ -18,6 +18,7 @@ mod shell;
 mod store;
 mod theme;
 pub mod toast;
+pub(crate) mod updater;
 
 use std::collections::BTreeMap;
 
@@ -128,6 +129,11 @@ pub mod testing {
     pub use crate::toast::{
         dismiss_all as toast_dismiss_all, error as toast_error, info as toast_info,
         success as toast_success,
+    };
+    pub use crate::updater::{
+        AvailableUpdate, UpdateFeedInfo, UpdateProvider, UpdateState,
+        clear_fake_provider as clear_fake_updater_provider,
+        install_provider as install_updater_provider, use_fake_provider as use_fake_updater,
     };
     pub use devcore::databases::ListeningPort as ProxyListeningPort;
     pub use devcore::model::ProxyRule;

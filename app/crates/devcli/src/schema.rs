@@ -889,6 +889,11 @@ pub fn build_cli_schema() -> CliSchema {
                 "Emit complete machine-readable JSON CLI contract for AI agents and scripts",
                 "devbase schema [--command <name>]",
             ),
+            command(
+                "mcp",
+                "Run the read-only stdio Model Context Protocol (MCP) server for AI agents",
+                "devbase mcp",
+            ),
             command_with(
                 "version",
                 vec!["--version", "-v"],
@@ -1090,7 +1095,7 @@ mod tests {
         assert_eq!(schema.schema_version, 1);
         assert_eq!(schema.name, "devbase");
         assert_eq!(schema.version, "0.1.0");
-        assert_eq!(schema.commands.len(), 20);
+        assert_eq!(schema.commands.len(), 21);
         assert_eq!(schema.commands[0].name, "status");
         assert_eq!(schema.commands.last().unwrap().name, "gui");
         assert_eq!(

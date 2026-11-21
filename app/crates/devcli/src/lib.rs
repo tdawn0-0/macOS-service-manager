@@ -19,6 +19,7 @@ pub mod commands;
 pub mod env;
 pub mod error;
 pub mod internal;
+pub mod mcp;
 pub mod output;
 pub mod schema;
 pub mod wrapper;
@@ -42,10 +43,30 @@ pub fn run_cli(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
+    let wants_json = wants_json_flag(args);
+    // Avoid `read_to_end` for `devbase mcp` so live newline-delimited JSON-RPC
+    // sessions stay interactive instead of blocking until EOF.
+    if let Ok((cleaned, json_flag)) = strip_global_flags(args)
+        && cleaned.first().map(String::as_str) == Some("mcp")
+    {
+        let mut env = CliEnv::default_env(Box::new(std::io::empty()));
+        env.json = wants_json || json_flag;
+        return match mcp::run_mcp_with_reader(&mut env, input, out, &cleaned[1..]) {
+            Ok(()) => 0,
+            Err(error) => {
+                if env.json {
+                    let _ = write_action_error_json(err, error.message(), error.exit_code());
+                } else {
+                    let _ = write_human_error(err, error.message());
+                }
+                error.exit_code()
+            }
+        };
+    }
     let mut input_bytes = Vec::new();
     let _ = input.read_to_end(&mut input_bytes);
     let mut env = CliEnv::default_env(Box::new(std::io::Cursor::new(input_bytes)));
-    env.json = wants_json_flag(args);
+    env.json = wants_json;
     match run_cli_with_env(args, &mut env, out, err) {
         Ok(()) => 0,
         Err(error) => {
@@ -84,6 +105,7 @@ pub fn run_cli_with_env(
         "help" | "--help" | "-h" => schema::run_help_command(out, rest),
         "version" | "--version" | "-v" => schema::run_version_command(out, env.json, rest),
         "schema" => schema::run_schema_command(out, rest),
+        "mcp" => mcp::run_mcp_command(env, out, rest),
         "status" => commands::workspace::run_status_command(env, out, rest),
         "diagnostics" => commands::workspace::run_diagnostics_command(env, out, rest),
         "tasks" => commands::workspace::run_tasks_command(env, out, rest),

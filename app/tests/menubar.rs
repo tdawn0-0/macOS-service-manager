@@ -2146,21 +2146,83 @@ fn popover_pins_footer_inside_viewport_with_many_databases_and_routes() {
     );
     drop(app);
 
-    // Also verify SizeToContent::Height (real macOS NSPanel popup mode) expands
-    // naturally for content without collapsing to POPOVER_MIN_HEIGHT and still
-    // clamps cleanly at POPOVER_MAX_HEIGHT (560pt) with the footer unclipped.
-    #[component]
-    fn FittedPopoverHarness() -> impl IntoElement {
-        nsh_app_devbase::testing::menubar_load();
-        let mut attrs = nsh_core::desktop::WindowAttributes::default();
-        attrs.size_to_content = Some(nsh_core::desktop::SizeToContent::Height);
-        nsh_core::element::desktop::current_window().set(attrs);
-        nsh_app_devbase::testing::menubar_popover()
-    }
-    let mut fitted =
-        Headless::start(EngineConfig::new(Root::of::<FittedPopoverHarness>())).unwrap();
+    // Also verify estimated_popover_height_for() sizes the popup cleanly for
+    // both rich content (clamped to 560pt) and empty/sparse content (220..=300pt),
+    // and that popover_content() keeps header, scrollable body, and footer
+    // cleanly separated and unclipped at the computed popup height.
+    let rich_panel = MenubarPanel::from(MenubarInput {
+        instances: vec![
+            MenubarInstance {
+                id: "pg-main".into(),
+                title: "PostgreSQL".into(),
+                port: 5432,
+                status: "Running".into(),
+            },
+            MenubarInstance {
+                id: "redis-cache".into(),
+                title: "Redis".into(),
+                port: 6379,
+                status: "Running".into(),
+            },
+            MenubarInstance {
+                id: "mysql-legacy".into(),
+                title: "MySQL".into(),
+                port: 3306,
+                status: "Stopped".into(),
+            },
+        ],
+        proxy_status: "Running".into(),
+        proxy_port: 443,
+        rules: vec![
+            MenubarRule {
+                host: "app.devbase.localhost".into(),
+                target: "127.0.0.1:3000".into(),
+                tunnel: true,
+                tunnel_url: "https://preview.example.dev".into(),
+            },
+            MenubarRule {
+                host: "api.devbase.localhost".into(),
+                target: "127.0.0.1:8080".into(),
+                tunnel: false,
+                tunnel_url: String::new(),
+            },
+            MenubarRule {
+                host: "docs.devbase.localhost".into(),
+                target: "127.0.0.1:4321".into(),
+                tunnel: false,
+                tunnel_url: String::new(),
+            },
+        ],
+        tunnel_configured: true,
+        tunnel_status: "Running".into(),
+        ..MenubarInput::default()
+    });
+    let estimated = nsh_app_devbase::testing::menubar_estimated_popover_height_for(
+        &rich_panel,
+        true,
+        true,
+        true,
+        true,
+    );
+    assert!(
+        (520.0..=560.0).contains(&estimated),
+        "rich panel estimated height should be 520..=560pt, got {estimated}"
+    );
+    let empty_estimated = nsh_app_devbase::testing::menubar_estimated_popover_height_for(
+        &MenubarPanel::from(MenubarInput::default()),
+        true,
+        true,
+        true,
+        true,
+    );
+    assert!(
+        (220.0..=300.0).contains(&empty_estimated),
+        "empty panel estimated height should be compact (220..=300pt), got {empty_estimated}"
+    );
+
+    let mut fitted = Headless::start(EngineConfig::new(Root::of::<PopoverHarness>())).unwrap();
     fitted
-        .set_viewport(Size::new(px(340.0), px(560.0)))
+        .set_viewport(Size::new(px(340.0), px(estimated)))
         .unwrap();
     fitted.wait_for("id:menubar-popover-footer").unwrap();
     let fnodes = fitted.screen().layout_nodes();
@@ -2175,12 +2237,16 @@ fn popover_pins_footer_inside_viewport_with_many_databases_and_routes() {
     let fbody = fbounds("menubar-popover-body");
     let ffooter = fbounds("menubar-popover-footer");
     assert!(
-        froot.size.height.0 > 300.0 && froot.size.height.0 <= 560.5,
-        "fitted popup height wrong: root={froot:?} body={fbody:?} footer={ffooter:?}"
+        froot.size.height.0 >= 460.0 && froot.size.height.0 <= 560.5,
+        "popup height wrong: root={froot:?} body={fbody:?} footer={ffooter:?}"
+    );
+    assert!(
+        fbody.size.height.0 > 300.0,
+        "popup body collapsed: root={froot:?} body={fbody:?} footer={ffooter:?}"
     );
     assert!(
         ffooter.origin.y.0 + ffooter.size.height.0 <= froot.size.height.0 + 0.5,
-        "fitted footer clipped: root={froot:?} body={fbody:?} footer={ffooter:?}"
+        "popup footer clipped: root={froot:?} body={fbody:?} footer={ffooter:?}"
     );
 
     drop(turn);

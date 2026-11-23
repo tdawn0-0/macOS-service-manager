@@ -34,8 +34,7 @@ use nsh_core::{
     PointerEvents,
     color::rgb,
     desktop::{
-        Display, SizeToContent, TrayTitleRun, WindowAttributes, WindowCloseCause, WindowKind,
-        WindowPosition,
+        Display, TrayTitleRun, WindowAttributes, WindowCloseCause, WindowKind, WindowPosition,
     },
     element::{
         ImageSrc, ReadSignal, animate_layout,
@@ -1259,13 +1258,31 @@ fn anchor_position(anchor: Option<Bounds<Points>>) -> Option<Point<Points>> {
     anchor_position_in(anchor, &displays())
 }
 
-fn estimated_popover_height(panel: &Panel) -> f32 {
+/// Pure height calculation for the floating menu bar popover, clamped to
+/// [`POPOVER_MIN_HEIGHT`]..=[`POPOVER_MAX_HEIGHT`].
+///
+/// The popup intentionally uses an explicit content height rather than
+/// `SizeToContent::Height`: in `nsh-platform-macos` 0.6.1, resizing a
+/// `WindowKind::Popup` after mount leaves its flipped modal root `NshView` at
+/// `default_size.height` inside the unflipped `NSView` content container,
+/// clipping or misaligning the entire UI.
+pub fn estimated_popover_height_for(
+    panel: &Panel,
+    rules_open: bool,
+    brew_open: bool,
+    agent_open: bool,
+    systemd_open: bool,
+) -> f32 {
     let instance_count = panel
         .rows
         .iter()
         .filter(|row| row.kind == RowKind::Instance && row.checked.is_some())
-        .count()
-        .max(1);
+        .count();
+    let instances_height = if instance_count == 0 {
+        36.0
+    } else {
+        instance_count as f32 * 48.0
+    };
     let brew_count = panel
         .rows
         .iter()
@@ -1313,8 +1330,12 @@ fn estimated_popover_height(panel: &Panel) -> f32 {
         .count();
     let has_tunnel = panel.rows.iter().any(|row| row.kind == RowKind::Tunnel);
     let rules_height = if !panel.rules.is_empty() {
-        26.0 + if untracked(rules_expanded) {
-            panel.rules.len() as f32 * 36.0
+        28.0 + if rules_open {
+            panel
+                .rules
+                .iter()
+                .map(|r| 46.0 + if r.tunnel_url.is_empty() { 0.0 } else { 26.0 })
+                .sum::<f32>()
         } else {
             0.0
         }
@@ -1322,8 +1343,8 @@ fn estimated_popover_height(panel: &Panel) -> f32 {
         0.0
     };
     let brew_height = if brew_count > 0 {
-        26.0 + if untracked(|| section_expanded(Source::Brew)) {
-            brew_count as f32 * 44.0
+        28.0 + if brew_open {
+            brew_count as f32 * 48.0
         } else {
             0.0
         }
@@ -1331,8 +1352,8 @@ fn estimated_popover_height(panel: &Panel) -> f32 {
         0.0
     };
     let agent_height = if agent_count > 0 {
-        26.0 + if untracked(|| section_expanded(Source::UserAgent)) {
-            agent_count as f32 * 44.0
+        28.0 + if agent_open {
+            agent_count as f32 * 48.0
         } else {
             0.0
         }
@@ -1340,17 +1361,19 @@ fn estimated_popover_height(panel: &Panel) -> f32 {
         0.0
     };
     let systemd_user_height = if systemd_user_count > 0 {
-        26.0 + if untracked(|| section_expanded(Source::SystemdUser)) {
-            systemd_user_count as f32 * 44.0
+        28.0 + if systemd_open {
+            systemd_user_count as f32 * 48.0
         } else {
             0.0
         }
     } else {
         0.0
     };
-    let height = 132.0
-        + (instance_count as f32 * 44.0)
-        + if has_tunnel { 96.0 } else { 52.0 }
+    // Header (54) + hairlines (2) + body padding (14) + footer (46) +
+    // Databases heading (26) + HTTPS heading (26) = 168pt.
+    let height = 168.0
+        + instances_height
+        + if has_tunnel { 96.0 } else { 48.0 }
         + rules_height
         + brew_height
         + agent_height
@@ -1358,12 +1381,41 @@ fn estimated_popover_height(panel: &Panel) -> f32 {
     height.clamp(POPOVER_MIN_HEIGHT, POPOVER_MAX_HEIGHT)
 }
 
+fn estimated_popover_height(panel: &Panel) -> f32 {
+    estimated_popover_height_for(
+        panel,
+        untracked(rules_expanded),
+        untracked(|| section_expanded(Source::Brew)),
+        untracked(|| section_expanded(Source::UserAgent)),
+        untracked(|| section_expanded(Source::SystemdUser)),
+    )
+}
+
+/// Default height when the popover opens before initial workspace state has
+/// finished loading.
+const POPOVER_LOADING_HEIGHT: f32 = 440.0;
+
 /// The floating `WindowKind::Popup` `NSPanel` anchored beneath the tray icon.
 /// Mounted by [`crate::App`] on desktop platforms.
-pub(crate) fn popover_window() -> impl IntoElement {
+///
+/// The popup opens at a fixed content height (`SizeToContent::Off`, no
+/// post-open `set_bounds`) because `nsh-platform-macos` 0.6.1 does not resize
+/// a `WindowKind::Popup`'s flipped modal root `NshView` when the panel's
+/// unflipped content container resizes after creation.
+pub fn popover_window() -> impl IntoElement {
     when(popover_open, move || {
         let anchor = popover_state().with_untracked(|state| state.anchor);
-        let initial_height = untracked(|| estimated_popover_height(&panel()));
+        let initial_height = untracked(|| {
+            let p = panel();
+            if system::workspace_root().is_empty()
+                && databases::instances().is_empty()
+                && proxy::saved_rules().is_empty()
+            {
+                POPOVER_LOADING_HEIGHT
+            } else {
+                estimated_popover_height(&p)
+            }
+        });
 
         let mut attrs = WindowAttributes::default();
         attrs.close_on_blur = Some(true);
@@ -1371,7 +1423,6 @@ pub(crate) fn popover_window() -> impl IntoElement {
         attrs.transparent = Some(platform::has_liquid_glass());
         attrs.shadow = Some(true);
         attrs.resizable = Some(false);
-        attrs.size_to_content = Some(SizeToContent::Height);
         attrs.min_size = Some(Some(size(px(POPOVER_WIDTH), px(POPOVER_MIN_HEIGHT))));
         attrs.max_size = Some(Some(size(px(POPOVER_WIDTH), px(POPOVER_MAX_HEIGHT))));
 
@@ -1591,20 +1642,35 @@ pub fn popover_content() -> impl IntoElement {
                 .rounded(px(12.0))
                 .pointer_events(PointerEvents::None)
                 .glass_effect(GlassEffect::Regular)
+                .glass_tint_color(move || Some(tokens::popover_glass_tint()))
         }))
-        .child(popover_header())
-        .child(view().h(px(1.0)).w_full().flex_none().bg(tokens::hairline))
         .child(
-            scroll()
-                .test_id("menubar-popover-body")
+            view()
+                .w_full()
                 .flex_1()
                 .min_h(px(0.0))
-                .px(px(8.0))
-                .py(px(6.0))
-                .child(popover_body()),
+                .flex_col()
+                .bg(move || {
+                    if platform::has_liquid_glass() {
+                        tokens::popover_surface_scrim()
+                    } else {
+                        AdaptiveColor::TRANSPARENT
+                    }
+                })
+                .child(popover_header())
+                .child(view().h(px(1.0)).w_full().flex_none().bg(tokens::hairline))
+                .child(
+                    scroll()
+                        .test_id("menubar-popover-body")
+                        .flex_1()
+                        .min_h(px(0.0))
+                        .px(px(8.0))
+                        .py(px(6.0))
+                        .child(popover_body()),
+                )
+                .child(view().h(px(1.0)).w_full().flex_none().bg(tokens::hairline))
+                .child(popover_footer()),
         )
-        .child(view().h(px(1.0)).w_full().flex_none().bg(tokens::hairline))
-        .child(popover_footer())
 }
 
 fn popover_header() -> impl IntoElement {
@@ -2442,6 +2508,7 @@ fn popover_body() -> impl IntoElement {
         .w_full()
         .flex_col()
         .gap(px(2.0))
+        .pb(px(6.0))
         .child(databases_section_heading())
         .child(when(
             move || databases::instances().is_empty(),

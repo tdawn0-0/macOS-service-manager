@@ -90,6 +90,17 @@ pub(crate) fn sidebar_glass_tint() -> AdaptiveColor {
     theme().sidebar.opacity(0.20)
 }
 
+/// Adaptive glass tint applied to `NSGlassEffectView` inside the menu bar popover.
+pub(crate) fn popover_glass_tint() -> AdaptiveColor {
+    theme().popover.opacity(0.45)
+}
+
+/// Subtle translucent surface scrim layered above `NSGlassEffectView` inside the
+/// menu bar popover so light and dark text stay crisp over any desktop wallpaper.
+pub(crate) fn popover_surface_scrim() -> AdaptiveColor {
+    theme().popover.opacity(0.82)
+}
+
 /// `name` from the app's theme, or `fallback` when a theme does not set it.
 fn color_or(name: &str, fallback: AdaptiveColor) -> AdaptiveColor {
     theme().color(name).unwrap_or(fallback)

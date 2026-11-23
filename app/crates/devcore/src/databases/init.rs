@@ -94,6 +94,7 @@ impl Databases {
             engine,
             software: self.software().clone(),
             binder: self.binder_arc(),
+            signaler: self.signaler_arc(),
             probe: self.probe_arc(),
             mongo: self.mongo_arc(),
             redis: self.redis_arc(),

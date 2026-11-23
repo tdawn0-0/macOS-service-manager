@@ -6,6 +6,7 @@ use nsh_core::prelude::*;
 
 pub(crate) mod databases;
 pub(crate) mod development;
+pub(crate) mod ports;
 pub(crate) mod proxy;
 pub(crate) mod services;
 pub(crate) mod software;
@@ -40,7 +41,12 @@ impl SectionGroup {
                 Section::Databases,
                 Section::HttpsProxy,
             ],
-            SectionGroup::System => &[Section::Services, Section::Diagnostics, Section::Settings],
+            SectionGroup::System => &[
+                Section::Services,
+                Section::Ports,
+                Section::Diagnostics,
+                Section::Settings,
+            ],
         }
     }
 }
@@ -55,21 +61,24 @@ pub(crate) enum Section {
     Databases,
     /// Local HTTPS rules, the CA and the Cloudflare tunnel.
     HttpsProxy,
-    /// launchd jobs and their lifecycle.
+    /// launchd / systemd jobs and their lifecycle.
     Services,
-    /// Environment checks, ports, logs and operations.
+    /// Active listening TCP ports, starring/watching, HTTPS handoff, and safe process stop.
+    Ports,
+    /// Environment checks, logs and operations.
     Diagnostics,
     /// Helper, CLI, login items and preferences.
     Settings,
 }
 
 impl Section {
-    /// Every section, in sidebar order (`Cmd+1..6`).
-    pub(crate) const ALL: [Section; 6] = [
+    /// Every section, in sidebar order (`Cmd+1..7`).
+    pub(crate) const ALL: [Section; 7] = [
         Section::Development,
         Section::Databases,
         Section::HttpsProxy,
         Section::Services,
+        Section::Ports,
         Section::Diagnostics,
         Section::Settings,
     ];
@@ -81,7 +90,9 @@ impl Section {
             Section::Development | Section::Databases | Section::HttpsProxy => {
                 SectionGroup::Workspace
             }
-            Section::Services | Section::Diagnostics | Section::Settings => SectionGroup::System,
+            Section::Services | Section::Ports | Section::Diagnostics | Section::Settings => {
+                SectionGroup::System
+            }
         }
     }
 
@@ -92,6 +103,7 @@ impl Section {
             Section::Databases => "Databases",
             Section::HttpsProxy => "HTTPS Proxy",
             Section::Services => "Services",
+            Section::Ports => "Ports",
             Section::Diagnostics => "Diagnostics",
             Section::Settings => "Settings",
         }
@@ -126,6 +138,7 @@ mod tests {
                 "Databases",
                 "HTTPS Proxy",
                 "Services",
+                "Ports",
                 "Diagnostics",
                 "Settings",
             ]
@@ -140,7 +153,12 @@ mod tests {
         );
         assert_eq!(
             SectionGroup::System.sections(),
-            &[Section::Services, Section::Diagnostics, Section::Settings]
+            &[
+                Section::Services,
+                Section::Ports,
+                Section::Diagnostics,
+                Section::Settings,
+            ]
         );
         for section in Section::ALL {
             assert!(section.group().sections().contains(&section));

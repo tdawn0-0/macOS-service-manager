@@ -394,20 +394,29 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "devbase_ports",
-            "description": "Inspect active listening local user ports, suggest a free local port, or inspect listeners on a specific port.",
+            "description": "Read-only inspection of active listening local ports (with PID, bind address, category, Devbase ownership, starred/watched state), free port suggestion, or specific port listener inspection.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
                         "enum": ["active", "free", "check"],
-                        "description": "Port operation: \"active\" (default), \"free\", or \"check\"."
+                        "description": "Read-only port operation: \"active\" (default), \"free\", or \"check\"."
                     },
                     "port": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 65535,
                         "description": "Port number (1-65535), required when action is \"check\"."
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": ["dev", "database", "web", "system"],
+                        "description": "Optional category filter when action is \"active\"."
+                    },
+                    "starred": {
+                        "type": "boolean",
+                        "description": "When true with action \"active\", return only starred ports."
                     }
                 },
                 "additionalProperties": false
@@ -685,13 +694,13 @@ fn call_logs(env: &mut CliEnv, args: &Map<String, Value>) -> Result<String, Stri
 }
 
 fn call_ports(env: &mut CliEnv, args: &Map<String, Value>) -> Result<String, String> {
-    reject_unknown_keys(args, &["action", "port"])?;
+    reject_unknown_keys(args, &["action", "port", "category", "starred"])?;
     let action = optional_string(args, "action")?
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("active")
         .to_lowercase();
-    let cli_args = match action.as_str() {
+    let mut cli_args = match action.as_str() {
         "active" => vec!["active".to_string()],
         "free" => vec!["free".to_string()],
         "check" => {
@@ -708,6 +717,18 @@ fn call_ports(env: &mut CliEnv, args: &Map<String, Value>) -> Result<String, Str
             ));
         }
     };
+    if action == "active" {
+        if let Some(category) = optional_string(args, "category")?
+            && !category.trim().is_empty()
+        {
+            cli_args.push(format!("--category={}", category.trim()));
+        }
+        match args.get("starred") {
+            None | Some(Value::Null) | Some(Value::Bool(false)) => {}
+            Some(Value::Bool(true)) => cli_args.push("--starred".to_string()),
+            Some(_) => return Err("argument \"starred\" must be a boolean".to_string()),
+        }
+    }
     capture_json(env, |env, out| {
         commands::workspace::run_ports_command(env, out, &cli_args)
     })
@@ -1112,6 +1133,44 @@ mod tests {
         )
         .unwrap();
         assert!(services["items"].is_array());
+    }
+
+    #[test]
+    fn ports_mcp_tool_remains_strictly_read_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut env = test_env(&dir);
+        let responses = exchange(
+            &mut env,
+            &[
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": { "name": "devbase_ports", "arguments": { "action": "kill", "port": 3000 } }
+                }),
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": { "name": "devbase_ports", "arguments": { "action": "star", "port": 3000 } }
+                }),
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": { "name": "devbase_ports", "arguments": { "action": "watch", "port": 3000 } }
+                }),
+            ],
+        );
+        for resp in &responses {
+            assert_eq!(resp["result"]["isError"], true);
+            assert!(
+                resp["result"]["content"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("unknown ports action")
+            );
+        }
     }
 
     #[test]

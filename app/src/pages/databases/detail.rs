@@ -878,6 +878,13 @@ fn edit_port_preview(id: String) -> impl IntoElement {
             };
             let conflict = db::format_port_conflict(&inspection);
             let suggested = db::edit_port_conflict_suggestion(&id_insp);
+            let (self_pid, self_uid) = crate::store::ports::current_identity();
+            let stoppable_listener = inspection
+                .listeners
+                .iter()
+                .find(|l| !l.own && l.pid > 1 && l.pid != self_pid && l.uid == self_uid)
+                .cloned();
+            let inspect_port_num = inspection.port;
             let use_id = id_insp.clone();
             let label = format!("Port {}", inspection.port);
             Some(
@@ -920,6 +927,29 @@ fn edit_port_preview(id: String) -> impl IntoElement {
                                     .text_color(tokens::warning)
                                     .selectable(true),
                             )
+                            .child(stoppable_listener.map(|listener| {
+                                let name = listener.name.clone();
+                                let pid = listener.pid;
+                                let label = if name.is_empty() {
+                                    format!("Stop PID {pid}")
+                                } else {
+                                    format!("Stop {name}")
+                                };
+                                ui::action_button(
+                                    label,
+                                    Tone::Danger,
+                                    "db-stop-conflict-port",
+                                    false,
+                                    move || {
+                                        crate::store::ports::stop_conflict_pid(
+                                            inspect_port_num,
+                                            pid,
+                                            name.clone(),
+                                            db::check_edit_port,
+                                        );
+                                    },
+                                )
+                            }))
                             .child(suggested.map(|next_port| {
                                 let press_id = use_id.clone();
                                 ui::action_button(

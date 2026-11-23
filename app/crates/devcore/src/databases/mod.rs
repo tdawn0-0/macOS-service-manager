@@ -73,8 +73,9 @@ pub use locations::{
 };
 pub use mongo::{MongoAdmin, WireMongoAdmin};
 pub use ports::{
-    AvailablePorts, ListeningPort, PortBindFailure, PortBinder, PortInspection, PortListener,
-    PortUnavailableError, SystemPortBinder,
+    AvailablePorts, ListeningPort, PortBindFailure, PortBinder, PortCategory, PortInspection,
+    PortListener, PortOwner, PortUnavailableError, ProcessSignaler, SignalKind, SignalOutcome,
+    SystemPortBinder, SystemProcessSignaler,
 };
 pub use profiles::ConnectionInfo;
 pub use redis::{RedisAdmin, WireRedisAdmin};
@@ -213,6 +214,7 @@ pub struct Databases {
     engine: Engine,
     software: Software,
     binder: Arc<dyn PortBinder>,
+    signaler: Arc<dyn ProcessSignaler>,
     probe: Arc<dyn HealthProbe>,
     mongo: Arc<dyn MongoAdmin>,
     redis: Arc<dyn RedisAdmin>,
@@ -248,6 +250,7 @@ impl Databases {
             engine,
             software,
             binder: Arc::new(SystemPortBinder),
+            signaler: Arc::new(SystemProcessSignaler),
             probe: Arc::new(NetworkProbe),
             mongo: Arc::new(WireMongoAdmin),
             redis: Arc::new(WireRedisAdmin),
@@ -257,6 +260,11 @@ impl Databases {
 
     pub fn with_binder(mut self, binder: Arc<dyn PortBinder>) -> Self {
         self.binder = binder;
+        self
+    }
+
+    pub fn with_signaler(mut self, signaler: Arc<dyn ProcessSignaler>) -> Self {
+        self.signaler = signaler;
         self
     }
 
@@ -291,6 +299,14 @@ impl Databases {
 
     pub(crate) fn binder(&self) -> &dyn PortBinder {
         self.binder.as_ref()
+    }
+
+    pub(crate) fn signaler(&self) -> &dyn ProcessSignaler {
+        self.signaler.as_ref()
+    }
+
+    pub(crate) fn signaler_arc(&self) -> Arc<dyn ProcessSignaler> {
+        self.signaler.clone()
     }
 
     pub(crate) fn binder_arc(&self) -> Arc<dyn PortBinder> {

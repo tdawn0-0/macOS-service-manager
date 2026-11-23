@@ -9,6 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::net::TcpListener;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::model::State;
 
 use super::{DatabaseError, Databases};
@@ -107,11 +109,371 @@ pub struct PortInspection {
     pub detail: String,
 }
 
-/// One user-owned listening port.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// High-level functional category for a listening TCP port.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum PortCategory {
+    #[default]
+    Dev,
+    Database,
+    Web,
+    System,
+}
+
+impl PortCategory {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PortCategory::Dev => "dev",
+            PortCategory::Database => "database",
+            PortCategory::Web => "web",
+            PortCategory::System => "system",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PortCategory::Dev => "Dev",
+            PortCategory::Database => "Database",
+            PortCategory::Web => "Web",
+            PortCategory::System => "System",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "dev" => Some(PortCategory::Dev),
+            "database" | "db" => Some(PortCategory::Database),
+            "web" | "proxy" => Some(PortCategory::Web),
+            "system" | "sys" => Some(PortCategory::System),
+            _ => None,
+        }
+    }
+}
+
+/// Whether a listening port belongs to a Devbase-managed resource or an external process.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PortOwner {
+    DevbaseDatabase {
+        id: String,
+        engine: String,
+    },
+    DevbaseProxy,
+    DevbaseRule {
+        domain: String,
+    },
+    #[default]
+    External,
+}
+
+/// One listening TCP port with process, ownership, and user-preference metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListeningPort {
     pub port: i64,
     pub process: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uid: Option<i64>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub address: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub command: String,
+    #[serde(default)]
+    pub category: PortCategory,
+    #[serde(default)]
+    pub owner: PortOwner,
+    #[serde(default)]
+    pub starred: bool,
+    #[serde(default)]
+    pub watched: bool,
+}
+
+impl ListeningPort {
+    /// Construct a minimal listening port entry (used by tests and callers
+    /// that only need port + process name).
+    pub fn simple(port: i64, process: impl Into<String>) -> Self {
+        let process = process.into();
+        let category = classify_port(port, &process, "", &PortOwner::External, None);
+        ListeningPort {
+            port,
+            process,
+            category,
+            ..Default::default()
+        }
+    }
+
+    /// Whether this entry represents an external user-owned process that can
+    /// safely receive a single-PID termination signal.
+    pub fn can_terminate_pid(&self, current_pid: i64, current_uid: i64) -> bool {
+        let Some(pid) = self.pid else {
+            return false;
+        };
+        if pid <= 1 || pid == current_pid {
+            return false;
+        }
+        self.uid == Some(current_uid)
+    }
+}
+
+/// Termination signal sent to a single user-owned process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignalKind {
+    Term,
+    Kill,
+}
+
+/// Result of signalling a single listening process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SignalOutcome {
+    Stopped,
+    StillRunning,
+    AlreadyExited,
+}
+
+/// Testable OS seam for safe single-PID process termination.
+pub trait ProcessSignaler: Send + Sync {
+    fn current_pid(&self) -> i64;
+    fn current_uid(&self) -> i64;
+    fn process_uid(&self, pid: i64) -> Result<Option<i64>, DatabaseError>;
+    fn is_alive(&self, pid: i64) -> bool;
+    fn send_signal(&self, pid: i64, signal: SignalKind) -> Result<bool, DatabaseError>;
+    fn wait_step(&self, duration: Duration);
+}
+
+/// Production signaler using single-PID `libc::kill(pid, sig)` only.
+/// Never sends signals to process groups (`-pgid`), PID <= 1, or Devbase itself.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemProcessSignaler;
+
+impl ProcessSignaler for SystemProcessSignaler {
+    fn current_pid(&self) -> i64 {
+        i64::from(std::process::id())
+    }
+
+    fn current_uid(&self) -> i64 {
+        unsafe { libc::getuid() as i64 }
+    }
+
+    fn process_uid(&self, pid: i64) -> Result<Option<i64>, DatabaseError> {
+        if pid <= 0 {
+            return Ok(None);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Ok(proc_pid_uid(pid))
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let output = std::process::Command::new("/bin/ps")
+                .args(["-o", "uid=", "-p", &pid.to_string()])
+                .output()
+                .map_err(DatabaseError::Io)?;
+            if !output.status.success() {
+                return Ok(None);
+            }
+            let text = String::from_utf8_lossy(&output.stdout);
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            trimmed.parse::<i64>().map(Some).map_err(|_| {
+                DatabaseError::invalid(format!("could not read owner UID for PID {pid}"))
+            })
+        }
+    }
+
+    fn is_alive(&self, pid: i64) -> bool {
+        if pid <= 0 {
+            return false;
+        }
+        let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        if rc == 0 {
+            return true;
+        }
+        matches!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EPERM)
+        )
+    }
+
+    fn send_signal(&self, pid: i64, signal: SignalKind) -> Result<bool, DatabaseError> {
+        // Defense-in-depth: never signal init/kernel/process groups or Devbase itself.
+        if pid <= 1 {
+            return Err(DatabaseError::invalid(
+                "refusing to signal protected system PID",
+            ));
+        }
+        if pid == self.current_pid() {
+            return Err(DatabaseError::invalid(
+                "refusing to signal Devbase's own process",
+            ));
+        }
+        let sig = match signal {
+            SignalKind::Term => libc::SIGTERM,
+            SignalKind::Kill => libc::SIGKILL,
+        };
+        let rc = unsafe { libc::kill(pid as libc::pid_t, sig) };
+        if rc == 0 {
+            return Ok(true);
+        }
+        let error = std::io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(libc::ESRCH) => Ok(false),
+            Some(libc::EPERM) => Err(DatabaseError::invalid(format!(
+                "permission denied signalling PID {pid} (use Services for system daemons)"
+            ))),
+            _ => Err(DatabaseError::Io(error)),
+        }
+    }
+
+    fn wait_step(&self, duration: Duration) {
+        std::thread::sleep(duration);
+    }
+}
+
+/// Resolve Devbase ownership for a TCP port from persisted workspace state.
+pub fn owner_for_port(state: &State, port: i64) -> PortOwner {
+    if state.proxy_listener_port == port {
+        return PortOwner::DevbaseProxy;
+    }
+    for instance in state.instances.values() {
+        if instance.port == port {
+            return PortOwner::DevbaseDatabase {
+                id: instance.id.clone(),
+                engine: instance.kind.clone(),
+            };
+        }
+    }
+    for rule in &state.proxy_rules {
+        if rule.upstream_host.is_empty() && rule.local_port == port {
+            return PortOwner::DevbaseRule {
+                domain: rule.domain.clone(),
+            };
+        }
+    }
+    PortOwner::External
+}
+
+/// Deterministically classify a listening TCP port into Dev / Database / Web / System.
+pub fn classify_port(
+    port: i64,
+    process: &str,
+    command: &str,
+    owner: &PortOwner,
+    uid: Option<i64>,
+) -> PortCategory {
+    match owner {
+        PortOwner::DevbaseDatabase { .. } => return PortCategory::Database,
+        PortOwner::DevbaseProxy => return PortCategory::Web,
+        PortOwner::DevbaseRule { .. } | PortOwner::External => {}
+    }
+
+    let proc_lc = process.trim().to_ascii_lowercase();
+    let cmd_lc = command.trim().to_ascii_lowercase();
+
+    let is_db_name = [
+        "postgres",
+        "postmaster",
+        "mysqld",
+        "mariadbd",
+        "mongod",
+        "mongos",
+        "redis",
+        "valkey",
+        "memcached",
+        "clickhouse",
+        "cockroach",
+        "influxd",
+        "surreal",
+        "qdrant",
+        "meilisearch",
+    ]
+    .iter()
+    .any(|kw| proc_lc.contains(kw) || cmd_lc.contains(kw));
+    if is_db_name {
+        return PortCategory::Database;
+    }
+
+    let is_web_name = [
+        "nginx", "caddy", "httpd", "apache", "haproxy", "traefik", "envoy", "lighttpd", "varnish",
+        "devbase",
+    ]
+    .iter()
+    .any(|kw| proc_lc.contains(kw));
+    if is_web_name || matches!(port, 80 | 443 | 8443) {
+        return PortCategory::Web;
+    }
+
+    let is_system_name = [
+        "launchd",
+        "systemd",
+        "sshd",
+        "cupsd",
+        "mdnsresponder",
+        "controlcenter",
+        "rapportd",
+        "sharingd",
+        "airplayxpchelper",
+        "avahi-daemon",
+        "dbus-daemon",
+        "dnsmasq",
+        "rpcbind",
+        "smbd",
+        "bluetoothd",
+        "tailscaled",
+    ]
+    .iter()
+    .any(|kw| proc_lc.contains(kw));
+    if is_system_name || uid == Some(0) || port < 1024 {
+        return PortCategory::System;
+    }
+
+    if matches!(
+        port,
+        5432 | 3306 | 33060 | 27017 | 6379 | 11211 | 5984 | 9042 | 8123
+    ) && proc_lc.is_empty()
+    {
+        return PortCategory::Database;
+    }
+
+    PortCategory::Dev
+}
+
+/// Parse `ps -o pid=,args=` output into a `pid -> command line` map.
+pub fn parse_ps_command_lines(output: &str) -> BTreeMap<i64, String> {
+    let mut map = BTreeMap::new();
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let mut parts = trimmed.splitn(2, char::is_whitespace);
+        let Some(pid_str) = parts.next() else {
+            continue;
+        };
+        let Ok(pid) = pid_str.trim().parse::<i64>() else {
+            continue;
+        };
+        if pid < 1 {
+            continue;
+        }
+        let command = visible_port_text(parts.next().unwrap_or_default());
+        if !command.is_empty() {
+            map.insert(pid, command);
+        }
+    }
+    map
+}
+
+/// Extract the bind host portion from a formatted `host:port` or `[ipv6]:port` string.
+pub fn bind_host_from_address(address: &str) -> String {
+    match split_host_port(address) {
+        Some((host, _)) => host,
+        None => String::new(),
+    }
 }
 
 /// The reserved-port view used by [`Databases::available_local_port`].
@@ -245,9 +607,12 @@ pub fn parse_port_listeners(output: &str) -> Vec<PortListener> {
     parse_port_listeners_limit(output, 65)
 }
 
-/// Parse `netstat -anv -p tcp` LISTEN rows for a target port.
-pub fn parse_netstat_listeners(output: &str, port: i64) -> Vec<PortListener> {
-    let port_text = port.to_string();
+/// Parse `netstat -anv -p tcp` LISTEN rows, optionally filtered to one TCP port.
+pub fn parse_netstat_listeners_opt(
+    output: &str,
+    filter_port: Option<i64>,
+    limit: usize,
+) -> Vec<PortListener> {
     let mut seen = BTreeSet::new();
     let mut results: Vec<PortListener> = Vec::new();
     for line in output.split('\n') {
@@ -259,16 +624,24 @@ pub fn parse_netstat_listeners(output: &str, port: i64) -> Vec<PortListener> {
             continue;
         }
         let local = fields[3];
-        let Some((host, parsed_port)) = local.rsplit_once('.') else {
+        let Some((host, parsed_port_text)) = local.rsplit_once('.') else {
             continue;
         };
-        if host.is_empty() || parsed_port != port_text {
+        let Ok(parsed_port) = parsed_port_text.parse::<i64>() else {
+            continue;
+        };
+        if host.is_empty() || !(1..=65535).contains(&parsed_port) {
+            continue;
+        }
+        if let Some(want) = filter_port
+            && parsed_port != want
+        {
             continue;
         }
         let address = if host.contains(':') {
-            format!("[{host}]:{port_text}")
+            format!("[{host}]:{parsed_port}")
         } else {
-            format!("{host}:{port_text}")
+            format!("{host}:{parsed_port}")
         };
         let mut pid = 0;
         let mut raw_name = String::new();
@@ -310,12 +683,22 @@ pub fn parse_netstat_listeners(output: &str, port: i64) -> Vec<PortListener> {
             address,
             own: false,
         });
-        if results.len() >= 65 {
+        if limit > 0 && results.len() >= limit {
             break;
         }
     }
     results.sort_by(|a, b| a.pid.cmp(&b.pid).then(a.address.cmp(&b.address)));
     results
+}
+
+/// Parse `netstat -anv -p tcp` LISTEN rows for a target port.
+pub fn parse_netstat_listeners(output: &str, port: i64) -> Vec<PortListener> {
+    parse_netstat_listeners_opt(output, Some(port), 65)
+}
+
+/// Parse all `netstat -anv -p tcp` LISTEN rows.
+pub fn parse_netstat_all_listeners(output: &str) -> Vec<PortListener> {
+    parse_netstat_listeners_opt(output, None, 0)
 }
 
 fn split_host_port(address: &str) -> Option<(String, i64)> {
@@ -772,6 +1155,125 @@ impl Databases {
         Ok(proc_listeners)
     }
 
+    /// Resolve command lines for a batch of PIDs. Failure is non-fatal and
+    /// simply yields an empty map (including under minimal test runners).
+    fn resolve_command_lines(&self, pids: &BTreeSet<i64>) -> BTreeMap<i64, String> {
+        if pids.is_empty() {
+            return BTreeMap::new();
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let mut map = BTreeMap::new();
+            for &pid in pids {
+                if let Some(cmd) = proc_pid_cmdline(pid) {
+                    map.insert(pid, cmd);
+                }
+            }
+            if !map.is_empty() {
+                return map;
+            }
+        }
+        let csv: String = pids
+            .iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let ps_bin = if cfg!(target_os = "macos") {
+            "/bin/ps"
+        } else {
+            "ps"
+        };
+        match self.engine().run_with_timeout(
+            ps_bin,
+            &["-o", "pid=,args=", "-p", &csv],
+            Duration::from_secs(2),
+        ) {
+            Ok(output) => parse_ps_command_lines(&output),
+            Err(_) => BTreeMap::new(),
+        }
+    }
+
+    fn enrich_listeners(
+        &self,
+        state: &State,
+        listeners: Vec<PortListener>,
+        uid_filter: Option<i64>,
+        excluded: &BTreeSet<i64>,
+        min_port: i64,
+    ) -> Vec<ListeningPort> {
+        let favorites: BTreeSet<i64> = state.favorite_ports.iter().copied().collect();
+        let watched: BTreeSet<i64> = state.watched_ports.iter().copied().collect();
+
+        // Deduplicate per port, preferring an entry with a real PID and name.
+        let mut by_port: BTreeMap<i64, (PortListener, String)> = BTreeMap::new();
+        #[allow(unused_mut)]
+        for mut listener in listeners {
+            #[cfg(not(target_os = "macos"))]
+            if listener.uid < 0
+                && listener.pid > 0
+                && let Some(proc_uid) = proc_pid_uid(listener.pid)
+            {
+                listener.uid = proc_uid;
+            }
+            if let Some(want_uid) = uid_filter
+                && listener.uid != want_uid
+            {
+                continue;
+            }
+            let Some((host, port)) = split_host_port(&listener.address) else {
+                continue;
+            };
+            if !(min_port..=65535).contains(&port) || excluded.contains(&port) {
+                continue;
+            }
+            let replace = match by_port.get(&port) {
+                None => true,
+                Some((prev, _)) => {
+                    let prev_named = !prev.name.is_empty() && prev.name != "unknown";
+                    let next_named = !listener.name.is_empty() && listener.name != "unknown";
+                    (prev.pid <= 0 && listener.pid > 0)
+                        || (!prev_named && next_named)
+                        || (prev.uid < 0 && listener.uid >= 0)
+                }
+            };
+            if replace {
+                by_port.insert(port, (listener, host));
+            }
+        }
+
+        let pids: BTreeSet<i64> = by_port
+            .values()
+            .filter_map(|(listener, _)| (listener.pid > 0).then_some(listener.pid))
+            .collect();
+        let commands = self.resolve_command_lines(&pids);
+
+        by_port
+            .into_iter()
+            .map(|(port, (listener, host))| {
+                let owner = owner_for_port(state, port);
+                let pid = (listener.pid > 0).then_some(listener.pid);
+                let uid = (listener.uid >= 0).then_some(listener.uid);
+                let command = pid
+                    .and_then(|p| commands.get(&p))
+                    .cloned()
+                    .unwrap_or_default();
+                let category = classify_port(port, &listener.name, &command, &owner, uid);
+                ListeningPort {
+                    port,
+                    process: listener.name,
+                    pid,
+                    uid,
+                    address: host,
+                    command,
+                    category,
+                    owner,
+                    starred: favorites.contains(&port),
+                    watched: watched.contains(&port),
+                }
+            })
+            .collect()
+    }
+
     /// `ListeningUserPorts`: current-UID TCP listeners at 1024+ excluding the
     /// proxy and managed instances, deduplicated and sorted.
     #[cfg(target_os = "macos")]
@@ -783,7 +1285,7 @@ impl Databases {
             return Err(DatabaseError::Cancelled);
         }
         let state = self.store().read()?;
-        let uid = unsafe { libc::getuid() } as i64;
+        let uid = self.signaler().current_uid();
         let timeout = Duration::from_secs(2);
         let output = match self.engine().run_with_timeout(
             "/usr/sbin/lsof",
@@ -818,32 +1320,12 @@ impl Databases {
         for instance in state.instances.values() {
             excluded.insert(instance.port);
         }
-        let mut by_port: BTreeMap<i64, String> = BTreeMap::new();
-        for listener in parse_port_listeners_limit(&output, 0) {
-            if listener.uid != uid {
-                continue;
-            }
-            let Some((_host, port)) = split_host_port(&listener.address) else {
-                continue;
-            };
-            if !(1024..=65535).contains(&port) || excluded.contains(&port) {
-                continue;
-            }
-            match by_port.get(&port) {
-                Some(previous) if !(previous.is_empty() && !listener.name.is_empty()) => {}
-                _ => {
-                    by_port.insert(port, listener.name);
-                }
-            }
-        }
-        Ok(by_port
-            .into_iter()
-            .map(|(port, process)| ListeningPort { port, process })
-            .collect())
+        let listeners = parse_port_listeners_limit(&output, 0);
+        Ok(self.enrich_listeners(&state, listeners, Some(uid), &excluded, 1024))
     }
 
     /// `ListeningUserPorts` (Linux): current-UID TCP listeners at 1024+ via
-    /// `ss -Hltpne` (falling back to `/proc/net/tcp{,6}` and `lsof`).
+    /// `ss -Hltpne` (falling back to `lsof` and `/proc/net/tcp{,6}`).
     #[cfg(not(target_os = "macos"))]
     pub fn listening_user_ports(
         &self,
@@ -853,7 +1335,7 @@ impl Databases {
             return Err(DatabaseError::Cancelled);
         }
         let state = self.store().read()?;
-        let uid = unsafe { libc::getuid() } as i64;
+        let uid = self.signaler().current_uid();
         let timeout = Duration::from_secs(2);
 
         let listeners = if let Ok(output) = self
@@ -897,34 +1379,243 @@ impl Databases {
         for instance in state.instances.values() {
             excluded.insert(instance.port);
         }
-        let mut by_port: BTreeMap<i64, String> = BTreeMap::new();
-        for mut listener in listeners {
-            if listener.uid < 0
-                && listener.pid > 0
-                && let Some(proc_uid) = proc_pid_uid(listener.pid)
-            {
-                listener.uid = proc_uid;
-            }
-            if listener.uid != uid {
-                continue;
-            }
-            let Some((_host, port)) = split_host_port(&listener.address) else {
-                continue;
-            };
-            if !(1024..=65535).contains(&port) || excluded.contains(&port) {
-                continue;
-            }
-            match by_port.get(&port) {
-                Some(previous) if !(previous.is_empty() && !listener.name.is_empty()) => {}
-                _ => {
-                    by_port.insert(port, listener.name);
-                }
-            }
+        Ok(self.enrich_listeners(&state, listeners, Some(uid), &excluded, 1024))
+    }
+
+    /// All visible local listening TCP ports (including Devbase databases,
+    /// Devbase HTTPS proxy, Devbase-ruled apps, external user services, and
+    /// visible system listeners), enriched with PID, bind address, command,
+    /// category, Devbase ownership, and starred/watched status.
+    #[cfg(target_os = "macos")]
+    pub fn listening_ports(
+        &self,
+        cancelled: super::Cancelled<'_>,
+    ) -> Result<Vec<ListeningPort>, DatabaseError> {
+        if cancelled() {
+            return Err(DatabaseError::Cancelled);
         }
-        Ok(by_port
-            .into_iter()
-            .map(|(port, process)| ListeningPort { port, process })
-            .collect())
+        let state = self.store().read()?;
+        let timeout = Duration::from_secs(2);
+        let mut listeners = match self.engine().run_with_timeout(
+            "/usr/sbin/lsof",
+            &["-w", "-nP", "-iTCP", "-sTCP:LISTEN", "+c0", "-F0pcun"],
+            timeout,
+        ) {
+            Ok(output) => parse_port_listeners_limit(&output, 0),
+            Err(crate::engine::EngineError::Command(error))
+                if error.status == Some(1) && error.stdout.trim().is_empty() =>
+            {
+                Vec::new()
+            }
+            Err(error) => return Err(DatabaseError::Engine(error)),
+        };
+        if cancelled() {
+            return Err(DatabaseError::Cancelled);
+        }
+        // Supplement with netstat so privileged/system listeners (e.g., port 443
+        // Devbase HTTPS proxy owned by root/launchd) are visible even when lsof
+        // only exposes current-UID file descriptors.
+        if let Ok(netstat_out) =
+            self.engine()
+                .run_with_timeout("/usr/sbin/netstat", &["-anv", "-p", "tcp"], timeout)
+        {
+            listeners.extend(parse_netstat_all_listeners(&netstat_out));
+        }
+        if cancelled() {
+            return Err(DatabaseError::Cancelled);
+        }
+        let excluded = BTreeSet::new();
+        Ok(self.enrich_listeners(&state, listeners, None, &excluded, 1))
+    }
+
+    /// All visible local listening TCP ports (Linux): `ss -Hltpne` sees both
+    /// current-user and system listeners in one pass, falling back to `lsof`
+    /// and `/proc/net/tcp{,6}`.
+    #[cfg(not(target_os = "macos"))]
+    pub fn listening_ports(
+        &self,
+        cancelled: super::Cancelled<'_>,
+    ) -> Result<Vec<ListeningPort>, DatabaseError> {
+        if cancelled() {
+            return Err(DatabaseError::Cancelled);
+        }
+        let state = self.store().read()?;
+        let timeout = Duration::from_secs(2);
+        let listeners = if let Ok(output) = self
+            .engine()
+            .run_with_timeout("ss", &["-Hltpne"], timeout)
+            .or_else(|_| self.engine().run_with_timeout("ss", &["-Hltpn"], timeout))
+        {
+            parse_ss_listeners(&output, None, 0)
+        } else if let Ok(output) = self.engine().run_with_timeout(
+            "lsof",
+            &["-w", "-nP", "-iTCP", "-sTCP:LISTEN", "+c0", "-F0pcun"],
+            timeout,
+        ) {
+            parse_port_listeners_limit(&output, 0)
+        } else {
+            let mut proc_listeners = Vec::new();
+            if let Ok(tcp) = std::fs::read_to_string("/proc/net/tcp") {
+                proc_listeners.extend(parse_proc_net_tcp(&tcp, false, None));
+            }
+            if let Ok(tcp6) = std::fs::read_to_string("/proc/net/tcp6") {
+                proc_listeners.extend(parse_proc_net_tcp(&tcp6, true, None));
+            }
+            proc_listeners
+        };
+        if cancelled() {
+            return Err(DatabaseError::Cancelled);
+        }
+        let excluded = BTreeSet::new();
+        Ok(self.enrich_listeners(&state, listeners, None, &excluded, 1))
+    }
+
+    /// Return the sorted list of starred (favorite) ports from workspace state.
+    pub fn favorite_ports(&self) -> Result<Vec<i64>, DatabaseError> {
+        Ok(self.store().read()?.favorite_ports)
+    }
+
+    /// Star or unstar a port in workspace state transactionally.
+    pub fn set_port_starred(&self, port: i64, starred: bool) -> Result<Vec<i64>, DatabaseError> {
+        if !(1..=65535).contains(&port) {
+            return Err(DatabaseError::invalid("port must be 1–65535"));
+        }
+        self.store()
+            .with_state(|state| {
+                let mut set: BTreeSet<i64> = state.favorite_ports.iter().copied().collect();
+                if starred {
+                    set.insert(port);
+                } else {
+                    set.remove(&port);
+                }
+                state.favorite_ports = set.into_iter().collect();
+                Ok(state.favorite_ports.clone())
+            })
+            .map_err(DatabaseError::from)
+    }
+
+    /// Toggle whether `port` is starred. Returns `(now_starred, updated_list)`.
+    pub fn toggle_port_starred(&self, port: i64) -> Result<(bool, Vec<i64>), DatabaseError> {
+        if !(1..=65535).contains(&port) {
+            return Err(DatabaseError::invalid("port must be 1–65535"));
+        }
+        self.store()
+            .with_state(|state| {
+                let mut set: BTreeSet<i64> = state.favorite_ports.iter().copied().collect();
+                let now_starred = if set.contains(&port) {
+                    set.remove(&port);
+                    false
+                } else {
+                    set.insert(port);
+                    true
+                };
+                state.favorite_ports = set.into_iter().collect();
+                Ok((now_starred, state.favorite_ports.clone()))
+            })
+            .map_err(DatabaseError::from)
+    }
+
+    /// Return the sorted list of watched ports from workspace state.
+    pub fn watched_ports(&self) -> Result<Vec<i64>, DatabaseError> {
+        Ok(self.store().read()?.watched_ports)
+    }
+
+    /// Watch or unwatch a port in workspace state transactionally.
+    pub fn set_port_watched(&self, port: i64, watched: bool) -> Result<Vec<i64>, DatabaseError> {
+        if !(1..=65535).contains(&port) {
+            return Err(DatabaseError::invalid("port must be 1–65535"));
+        }
+        self.store()
+            .with_state(|state| {
+                let mut set: BTreeSet<i64> = state.watched_ports.iter().copied().collect();
+                if watched {
+                    set.insert(port);
+                } else {
+                    set.remove(&port);
+                }
+                state.watched_ports = set.into_iter().collect();
+                Ok(state.watched_ports.clone())
+            })
+            .map_err(DatabaseError::from)
+    }
+
+    /// Toggle whether `port` is watched. Returns `(now_watched, updated_list)`.
+    pub fn toggle_port_watched(&self, port: i64) -> Result<(bool, Vec<i64>), DatabaseError> {
+        if !(1..=65535).contains(&port) {
+            return Err(DatabaseError::invalid("port must be 1–65535"));
+        }
+        self.store()
+            .with_state(|state| {
+                let mut set: BTreeSet<i64> = state.watched_ports.iter().copied().collect();
+                let now_watched = if set.contains(&port) {
+                    set.remove(&port);
+                    false
+                } else {
+                    set.insert(port);
+                    true
+                };
+                state.watched_ports = set.into_iter().collect();
+                Ok((now_watched, state.watched_ports.clone()))
+            })
+            .map_err(DatabaseError::from)
+    }
+
+    /// Safely terminate a single current-UID listening process.
+    ///
+    /// Enforces all safety invariants:
+    /// * Refuses `pid <= 1` and Devbase's own PID.
+    /// * Refuses processes owned by another UID (such as root/system daemons).
+    /// * Signals only the exact single PID (never a process group `-pgid`).
+    /// * Sends `SIGTERM` by default (`force == false`) and polls briefly for
+    ///   exit, returning [`SignalOutcome::StillRunning`] if the caller should
+    ///   offer an explicit `SIGKILL` (`force == true`).
+    pub fn terminate_port_process(
+        &self,
+        pid: i64,
+        force: bool,
+    ) -> Result<SignalOutcome, DatabaseError> {
+        let signaler = self.signaler();
+        if pid <= 1 {
+            return Err(DatabaseError::invalid(
+                "refusing to stop protected system PID",
+            ));
+        }
+        if pid == signaler.current_pid() {
+            return Err(DatabaseError::invalid(
+                "refusing to stop Devbase's own process",
+            ));
+        }
+        let current_uid = signaler.current_uid();
+        match signaler.process_uid(pid)? {
+            None => return Ok(SignalOutcome::AlreadyExited),
+            Some(owner_uid) if owner_uid != current_uid => {
+                return Err(DatabaseError::invalid(format!(
+                    "refusing to stop PID {pid}: owned by UID {owner_uid} (use Services for system daemons)"
+                )));
+            }
+            Some(_) => {}
+        }
+
+        let signal = if force {
+            SignalKind::Kill
+        } else {
+            SignalKind::Term
+        };
+        if !signaler.send_signal(pid, signal)? {
+            return Ok(SignalOutcome::AlreadyExited);
+        }
+
+        for _ in 0..8 {
+            if !signaler.is_alive(pid) {
+                return Ok(SignalOutcome::Stopped);
+            }
+            signaler.wait_step(Duration::from_millis(50));
+        }
+        if !signaler.is_alive(pid) {
+            Ok(SignalOutcome::Stopped)
+        } else {
+            Ok(SignalOutcome::StillRunning)
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -1054,9 +1745,226 @@ fn proc_pid_uid(pid: i64) -> Option<i64> {
     None
 }
 
+#[cfg(not(target_os = "macos"))]
+fn proc_pid_cmdline(pid: i64) -> Option<String> {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    if raw.is_empty() {
+        return None;
+    }
+    let joined = raw
+        .split(|&b| b == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).into_owned())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let cleaned = visible_port_text(&joined);
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
 #[cfg(test)]
 mod linux_port_tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct FakeSignaler {
+        self_pid: i64,
+        self_uid: i64,
+        uids: BTreeMap<i64, i64>,
+        alive: Mutex<BTreeSet<i64>>,
+        ignore_term: BTreeSet<i64>,
+        sent: Mutex<Vec<(i64, SignalKind)>>,
+    }
+
+    impl ProcessSignaler for FakeSignaler {
+        fn current_pid(&self) -> i64 {
+            self.self_pid
+        }
+
+        fn current_uid(&self) -> i64 {
+            self.self_uid
+        }
+
+        fn process_uid(&self, pid: i64) -> Result<Option<i64>, DatabaseError> {
+            Ok(self.uids.get(&pid).copied())
+        }
+
+        fn is_alive(&self, pid: i64) -> bool {
+            self.alive.lock().unwrap().contains(&pid)
+        }
+
+        fn send_signal(&self, pid: i64, signal: SignalKind) -> Result<bool, DatabaseError> {
+            self.sent.lock().unwrap().push((pid, signal));
+            let mut alive = self.alive.lock().unwrap();
+            if !alive.contains(&pid) {
+                return Ok(false);
+            }
+            if signal == SignalKind::Kill || !self.ignore_term.contains(&pid) {
+                alive.remove(&pid);
+            }
+            Ok(true)
+        }
+
+        fn wait_step(&self, _duration: Duration) {}
+    }
+
+    #[test]
+    fn parses_ps_command_lines_and_classifies_ports() {
+        let ps = "\
+  1234 node /Users/dev/app/node_modules/.bin/vite --port 5173
+  5678 /opt/homebrew/opt/postgresql@17/bin/postgres -D /data
+  9012 /usr/sbin/nginx -g daemon off;
+";
+        let map = parse_ps_command_lines(ps);
+        assert_eq!(
+            map.get(&1234).map(String::as_str),
+            Some("node /Users/dev/app/node_modules/.bin/vite --port 5173")
+        );
+        assert_eq!(
+            map.get(&5678).map(String::as_str),
+            Some("/opt/homebrew/opt/postgresql@17/bin/postgres -D /data")
+        );
+
+        assert_eq!(
+            classify_port(
+                5173,
+                "node",
+                "vite --port 5173",
+                &PortOwner::External,
+                Some(501)
+            ),
+            PortCategory::Dev
+        );
+        assert_eq!(
+            classify_port(5432, "postgres", "", &PortOwner::External, Some(501)),
+            PortCategory::Database
+        );
+        assert_eq!(
+            classify_port(443, "devbase", "", &PortOwner::DevbaseProxy, Some(0)),
+            PortCategory::Web
+        );
+        assert_eq!(
+            classify_port(22, "sshd", "", &PortOwner::External, Some(0)),
+            PortCategory::System
+        );
+        assert_eq!(
+            classify_port(
+                15432,
+                "postgres",
+                "",
+                &PortOwner::DevbaseDatabase {
+                    id: "pg17".into(),
+                    engine: "postgresql".into(),
+                },
+                Some(501)
+            ),
+            PortCategory::Database
+        );
+    }
+
+    #[test]
+    fn terminate_port_process_enforces_safety_guards() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::state::Store::new(dir.path());
+        store.init().unwrap();
+
+        let signaler = Arc::new(FakeSignaler {
+            self_pid: 4242,
+            self_uid: 501,
+            uids: BTreeMap::from([(1, 0), (4242, 501), (7000, 0), (8000, 501), (8001, 501)]),
+            alive: Mutex::new(BTreeSet::from([1, 4242, 7000, 8000, 8001])),
+            ignore_term: BTreeSet::from([8001]),
+            sent: Mutex::new(Vec::new()),
+        });
+        let databases = Databases::new(store).with_signaler(signaler.clone());
+
+        // PID <= 1 refused
+        assert!(databases.terminate_port_process(0, false).is_err());
+        assert!(databases.terminate_port_process(1, false).is_err());
+        assert!(databases.terminate_port_process(-8000, false).is_err());
+
+        // Self PID refused
+        assert!(databases.terminate_port_process(4242, false).is_err());
+
+        // Root / other UID refused
+        let err = databases.terminate_port_process(7000, false).unwrap_err();
+        assert!(err.to_string().contains("UID 0"));
+        assert!(signaler.sent.lock().unwrap().is_empty());
+
+        // Non-existent PID reports AlreadyExited
+        assert_eq!(
+            databases.terminate_port_process(99999, false).unwrap(),
+            SignalOutcome::AlreadyExited
+        );
+
+        // User-owned PID stops cleanly on SIGTERM
+        assert_eq!(
+            databases.terminate_port_process(8000, false).unwrap(),
+            SignalOutcome::Stopped
+        );
+        assert_eq!(
+            *signaler.sent.lock().unwrap(),
+            vec![(8000, SignalKind::Term)]
+        );
+
+        // Stubborn user-owned PID returns StillRunning on SIGTERM, then stops on SIGKILL
+        assert_eq!(
+            databases.terminate_port_process(8001, false).unwrap(),
+            SignalOutcome::StillRunning
+        );
+        assert_eq!(
+            databases.terminate_port_process(8001, true).unwrap(),
+            SignalOutcome::Stopped
+        );
+        assert_eq!(
+            *signaler.sent.lock().unwrap(),
+            vec![
+                (8000, SignalKind::Term),
+                (8001, SignalKind::Term),
+                (8001, SignalKind::Kill),
+            ]
+        );
+    }
+
+    #[test]
+    fn favorite_and_watched_ports_persist_transactionally() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::state::Store::new(dir.path());
+        store.init().unwrap();
+        let databases = Databases::new(store.clone());
+
+        assert!(databases.favorite_ports().unwrap().is_empty());
+        assert!(databases.watched_ports().unwrap().is_empty());
+
+        let (starred, list) = databases.toggle_port_starred(3000).unwrap();
+        assert!(starred);
+        assert_eq!(list, vec![3000]);
+        assert_eq!(
+            databases.set_port_starred(5173, true).unwrap(),
+            vec![3000, 5173]
+        );
+
+        let (watched, wlist) = databases.toggle_port_watched(3000).unwrap();
+        assert!(watched);
+        assert_eq!(wlist, vec![3000]);
+
+        // Re-reading state strictly verifies JSON schema compatibility.
+        let reloaded = store.read().unwrap();
+        assert_eq!(reloaded.favorite_ports, vec![3000, 5173]);
+        assert_eq!(reloaded.watched_ports, vec![3000]);
+
+        // Invalid ports rejected
+        assert!(databases.set_port_starred(0, true).is_err());
+        assert!(databases.set_port_watched(70000, true).is_err());
+
+        let (starred_after, list_after) = databases.toggle_port_starred(3000).unwrap();
+        assert!(!starred_after);
+        assert_eq!(list_after, vec![5173]);
+    }
 
     #[test]
     fn parses_ss_hltpn_and_extended_output() {

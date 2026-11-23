@@ -277,6 +277,13 @@ fn port_preview() -> impl IntoElement {
                 let label = format!("Port {}", inspection.port);
                 let conflict = db::format_port_conflict(&inspection);
                 let suggested = db::port_conflict_suggestion();
+                let (self_pid, self_uid) = crate::store::ports::current_identity();
+                let stoppable_listener = inspection
+                    .listeners
+                    .iter()
+                    .find(|l| !l.own && l.pid > 1 && l.pid != self_pid && l.uid == self_uid)
+                    .cloned();
+                let inspect_port_num = inspection.port;
                 let detail = inspection.detail.clone();
                 let listeners = inspection.listeners.clone();
                 view()
@@ -318,6 +325,29 @@ fn port_preview() -> impl IntoElement {
                                     .text_color(tokens::warning)
                                     .selectable(true),
                             )
+                            .child(stoppable_listener.map(|listener| {
+                                let name = listener.name.clone();
+                                let pid = listener.pid;
+                                let label = if name.is_empty() {
+                                    format!("Stop PID {pid}")
+                                } else {
+                                    format!("Stop {name}")
+                                };
+                                ui::action_button(
+                                    label,
+                                    Tone::Danger,
+                                    "db-stop-conflict-port",
+                                    false,
+                                    move || {
+                                        crate::store::ports::stop_conflict_pid(
+                                            inspect_port_num,
+                                            pid,
+                                            name.clone(),
+                                            db::check_port,
+                                        );
+                                    },
+                                )
+                            }))
                             .child(suggested.map(|next_port| {
                                 ui::action_button(
                                     format!("Use :{next_port}"),

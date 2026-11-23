@@ -53,7 +53,7 @@ fn authority_service(env: &CliEnv) -> AuthorityService {
     )
 }
 
-fn proxy_service(env: &CliEnv) -> ProxyService {
+pub(crate) fn proxy_service(env: &CliEnv) -> ProxyService {
     ProxyService::system(store(env), Arc::new(authority_service(env)))
 }
 

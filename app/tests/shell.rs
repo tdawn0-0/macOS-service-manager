@@ -419,6 +419,7 @@ fn sidebar_lists_the_six_sections() {
         "Databases",
         "HTTPS Proxy",
         "Services",
+        "Ports",
         "Diagnostics",
         "Settings",
     ] {

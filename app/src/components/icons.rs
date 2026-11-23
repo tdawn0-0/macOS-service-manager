@@ -75,6 +75,10 @@ pub(crate) enum Icon {
     Link,
     Plug,
     FileText,
+    Star,
+    StarFilled,
+    Bell,
+    BellOff,
 }
 
 /// Returns the complete static SVG document for `icon`.
@@ -202,6 +206,18 @@ pub(crate) fn markup(icon: Icon) -> &'static str {
         ),
         Icon::FileText => svg_doc!(
             r#"<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>"#
+        ),
+        Icon::Star => svg_doc!(
+            r#"<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>"#
+        ),
+        Icon::StarFilled => svg_doc!(
+            r#"<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" fill="currentColor"/>"#
+        ),
+        Icon::Bell => svg_doc!(
+            r#"<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>"#
+        ),
+        Icon::BellOff => svg_doc!(
+            r#"<path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 .6 5"/><path d="M17 17H3s3-2 3-9a4.67 4.67 0 0 1 .3-1.7"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="m2 2 20 20"/>"#
         ),
     }
 }
@@ -408,4 +424,20 @@ pub(crate) fn plug() -> Svg {
 
 pub(crate) fn file_text() -> Svg {
     render(Icon::FileText)
+}
+
+pub(crate) fn star() -> Svg {
+    render(Icon::Star)
+}
+
+pub(crate) fn star_filled() -> Svg {
+    render(Icon::StarFilled)
+}
+
+pub(crate) fn bell() -> Svg {
+    render(Icon::Bell)
+}
+
+pub(crate) fn bell_off() -> Svg {
+    render(Icon::BellOff)
 }

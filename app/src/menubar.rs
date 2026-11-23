@@ -54,7 +54,7 @@ use crate::{
         icons::{self, Icon},
     },
     platform,
-    store::{self, Section, databases, proxy, services, software::SoftwareKind, system},
+    store::{self, Section, databases, ports, proxy, services, software::SoftwareKind, system},
     theme as tokens,
 };
 
@@ -132,6 +132,11 @@ fn open_url_async(url: String) {
     spawn(async move {
         let _ = open_url(url).await;
     });
+}
+
+/// Opens a URL from other app pages using the same testable URL opener seam.
+pub(crate) fn open_url_from_app(url: String) {
+    open_url_async(url);
 }
 
 pub(crate) fn is_fake_mode() -> bool {
@@ -232,6 +237,10 @@ pub enum Action {
     OpenService { source: Source, id: String },
     /// Start or stop a Homebrew or UserAgent service item.
     ToggleService { id: String, start: bool },
+    /// Show the Ports section, optionally filtered to one port.
+    OpenPorts(Option<i64>),
+    /// Safely stop a listening port from the menu bar popover.
+    StopPort(i64),
     /// Bring the main window forward.
     OpenWindow,
     /// Read the workspace, proxy and settings again.
@@ -1020,6 +1029,21 @@ pub fn dispatch(action: Action) {
                 }
             }
         }
+        Action::OpenPorts(port) => {
+            close_popover();
+            if let Some(port) = port {
+                ports::open_ports_for(port);
+            } else {
+                store::select_section(Section::Ports);
+                ports::load();
+            }
+            show_window();
+        }
+        Action::StopPort(port) => {
+            if let Some(entry) = ports::all_ports().into_iter().find(|e| e.port == port) {
+                ports::stop_port(entry, false);
+            }
+        }
         Action::OpenWindow => {
             close_popover();
             show_window();
@@ -1032,10 +1056,11 @@ pub fn dispatch(action: Action) {
     }
 }
 
-/// Reads the workspace, proxy, settings, and any loaded services again.
+/// Reads the workspace, proxy, settings, ports, and any loaded services again.
 pub fn refresh() {
     databases::refresh();
     proxy::refresh();
+    ports::refresh();
     system::refresh_settings();
     for source in tray_service_sources().iter().copied() {
         services::refresh_if_loaded(source);
@@ -1046,6 +1071,7 @@ pub fn refresh() {
 pub fn load() {
     databases::refresh();
     proxy::refresh();
+    ports::load();
     system::load_settings();
 }
 
@@ -1061,6 +1087,7 @@ struct PopoverState {
 #[derive(Debug, Clone)]
 struct PopoverSectionState {
     rules_expanded: bool,
+    ports_expanded: bool,
     brew_expanded: bool,
     user_agent_expanded: bool,
     systemd_user_expanded: bool,
@@ -1070,6 +1097,7 @@ impl Default for PopoverSectionState {
     fn default() -> Self {
         Self {
             rules_expanded: true,
+            ports_expanded: false,
             brew_expanded: true,
             user_agent_expanded: true,
             systemd_user_expanded: true,
@@ -1087,6 +1115,22 @@ fn popover_sections() -> Signal<PopoverSectionState> {
 
 fn rules_expanded() -> bool {
     popover_sections().with(|state| state.rules_expanded)
+}
+
+fn ports_expanded() -> bool {
+    popover_sections().with(|state| state.ports_expanded)
+}
+
+fn toggle_ports_section() {
+    if !reduce_motion() {
+        animate_layout(LayoutAnimation::all(LayoutTransition::new(
+            LayoutCurve::EaseInEaseOut,
+            180.0,
+        )));
+    }
+    popover_sections().update(|state| {
+        state.ports_expanded = !state.ports_expanded;
+    });
 }
 
 fn toggle_rules_section() {
@@ -1381,14 +1425,39 @@ pub fn estimated_popover_height_for(
     height.clamp(POPOVER_MIN_HEIGHT, POPOVER_MAX_HEIGHT)
 }
 
+fn popover_ports_list() -> Vec<devcore::databases::ListeningPort> {
+    ports::all_ports()
+        .into_iter()
+        .filter(|entry| {
+            !matches!(
+                entry.owner,
+                devcore::databases::PortOwner::DevbaseDatabase { .. }
+                    | devcore::databases::PortOwner::DevbaseProxy
+            )
+        })
+        .take(6)
+        .collect()
+}
+
 fn estimated_popover_height(panel: &Panel) -> f32 {
-    estimated_popover_height_for(
+    let base = estimated_popover_height_for(
         panel,
         untracked(rules_expanded),
         untracked(|| section_expanded(Source::Brew)),
         untracked(|| section_expanded(Source::UserAgent)),
         untracked(|| section_expanded(Source::SystemdUser)),
-    )
+    );
+    let port_count = untracked(|| popover_ports_list().len());
+    let ports_extra = if port_count > 0 {
+        28.0 + if untracked(ports_expanded) {
+            port_count as f32 * 40.0
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+    (base + ports_extra).clamp(POPOVER_MIN_HEIGHT, POPOVER_MAX_HEIGHT)
 }
 
 /// Default height when the popover opens before initial workspace state has
@@ -2503,6 +2572,163 @@ fn collapsible_service_section(source: Source, section_key: &'static str) -> imp
         )))
 }
 
+fn popover_port_row(entry: ReadSignal<devcore::databases::ListeningPort>) -> impl IntoElement {
+    let port = entry.with_untracked(|e| e.port);
+    let (self_pid, self_uid) = ports::current_identity();
+    view()
+        .test_id(&format!("popover-port-{port}"))
+        .w_full()
+        .flex_row()
+        .items_center()
+        .gap(px(4.0))
+        .px(px(6.0))
+        .py(px(4.0))
+        .rounded(move || theme().radius)
+        .hover(|s| s.bg(tokens::row_hover()))
+        .child(
+            button()
+                .test_id(&format!("popover-open-port-{port}"))
+                .flex_1()
+                .min_w(px(0.0))
+                .flex_row()
+                .items_center()
+                .justify_start()
+                .gap(px(6.0))
+                .on_press(move || dispatch(Action::OpenPorts(Some(port))))
+                .child(
+                    text(format!(":{port}"))
+                        .w(px(48.0))
+                        .flex_none()
+                        .font_family("monospace")
+                        .tabular_nums()
+                        .text_size(px(tokens::TEXT_SMALL))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(move || theme().foreground),
+                )
+                .child(
+                    text(move || {
+                        entry.with(|e| {
+                            if e.process.is_empty() {
+                                "unknown".to_string()
+                            } else {
+                                e.process.clone()
+                            }
+                        })
+                    })
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .text_size(px(tokens::TEXT_CAPTION))
+                    .text_color(move || theme().muted_foreground)
+                    .truncate(),
+                ),
+        )
+        .child(popover_copy_url_button(
+            format!("popover-copy-port-{port}"),
+            format!("Copy URL for port {port}"),
+            move || {
+                let current = entry.with_untracked(|e| e.clone());
+                dispatch(Action::CopyUrl(ports::display_url(&current)));
+            },
+        ))
+        .child(when(
+            move || entry.with(|e| e.can_terminate_pid(self_pid, self_uid)),
+            move || {
+                view()
+                    .flex_none()
+                    .tooltip(controls::tooltip(format!("Stop listener on port {port}")))
+                    .child(
+                        button()
+                            .test_id(&format!("popover-stop-port-{port}"))
+                            .accessibility_label(format!("Stop port {port}"))
+                            .h(px(20.0))
+                            .px(px(6.0))
+                            .flex_none()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(4.0))
+                            .bg(tokens::control)
+                            .border_1()
+                            .border_color(tokens::hairline)
+                            .hover(|s| s.bg(move || theme().destructive.opacity(0.16)))
+                            .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
+                            .disabled(move || ports::is_stopping(port))
+                            .on_press(move || dispatch(Action::StopPort(port)))
+                            .child(
+                                text("Stop")
+                                    .text_size(px(10.0))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(move || theme().foreground),
+                            ),
+                    )
+            },
+        ))
+}
+
+fn collapsible_ports_section() -> impl IntoElement {
+    collapsible()
+        .test_id("popover-section-ports")
+        .w_full()
+        .flex_col()
+        .open(ports_expanded)
+        .child(
+            view()
+                .test_id("popover-toggle-ports")
+                .role(AccessibilityRole::Button)
+                .label("Toggle active ports section")
+                .accessibility_state(move || AccessibilityState {
+                    expanded: Some(ports_expanded()),
+                    ..AccessibilityState::default()
+                })
+                .focus_visible(|s| s.ring(px(2.0)).ring_color(move || theme().ring))
+                .w_full()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .px(px(6.0))
+                .pt(px(6.0))
+                .pb(px(4.0))
+                .rounded(move || theme().radius)
+                .hover(|s| s.bg(tokens::row_hover()))
+                .on_press(|_: &()| toggle_ports_section())
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(5.0))
+                        .child(
+                            icons::chevron_right()
+                                .size(px(11.0))
+                                .flex_none()
+                                .rotate(move || {
+                                    if ports_expanded() {
+                                        deg(90.0)
+                                    } else {
+                                        deg(0.0)
+                                    }
+                                })
+                                .text_color(move || theme().muted_foreground),
+                        )
+                        .child(
+                            text("Ports")
+                                .text_size(px(tokens::TEXT_CAPTION))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(move || theme().muted_foreground),
+                        ),
+                )
+                .child(
+                    text(move || popover_ports_list().len().to_string())
+                        .text_size(px(tokens::TEXT_CAPTION))
+                        .tabular_nums()
+                        .text_color(move || theme().muted_foreground),
+                ),
+        )
+        .content(view().w_full().flex_col().gap(px(2.0)).child(each(
+            popover_ports_list,
+            |entry| entry.port.to_string(),
+            |entry, _| popover_port_row(entry),
+        )))
+}
+
 fn popover_body() -> impl IntoElement {
     view()
         .w_full()
@@ -2528,6 +2754,10 @@ fn popover_body() -> impl IntoElement {
         .child(when(
             move || !proxy::saved_rules().is_empty(),
             collapsible_rules_section,
+        ))
+        .child(when(
+            move || !popover_ports_list().is_empty(),
+            collapsible_ports_section,
         ))
         .child(when(
             move || !loaded_services_for(Source::Brew).is_empty(),

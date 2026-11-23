@@ -509,6 +509,10 @@ pub struct State {
     pub log_rotation_disabled: bool,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub node_default: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub favorite_ports: Vec<i64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub watched_ports: Vec<i64>,
     pub schema_version: i64,
     pub packages: BTreeMap<String, Package>,
     pub instances: BTreeMap<String, Instance>,
@@ -534,6 +538,8 @@ impl Default for State {
             package_integrity: BTreeMap::new(),
             log_rotation_disabled: false,
             node_default: String::new(),
+            favorite_ports: Vec::new(),
+            watched_ports: Vec::new(),
             schema_version: SCHEMA,
             packages: BTreeMap::new(),
             instances: BTreeMap::new(),
@@ -579,11 +585,28 @@ pub(crate) struct StateWire {
     #[serde(default)]
     node_default: String,
     #[serde(default)]
+    favorite_ports: Option<Vec<i64>>,
+    #[serde(default)]
+    watched_ports: Option<Vec<i64>>,
+    #[serde(default)]
     schema_version: i64,
     #[serde(default)]
     packages: Option<BTreeMap<String, Package>>,
     #[serde(default)]
     instances: Option<BTreeMap<String, Instance>>,
+}
+
+fn normalize_saved_ports(ports: Vec<i64>, field: &str) -> Result<Vec<i64>, StateError> {
+    let mut normalized = std::collections::BTreeSet::new();
+    for port in ports {
+        if !(1..=65535).contains(&port) {
+            return Err(StateError::invalid(format!(
+                "invalid port {port} in {field}: must be 1–65535"
+            )));
+        }
+        normalized.insert(port);
+    }
+    Ok(normalized.into_iter().collect())
 }
 
 impl State {
@@ -602,6 +625,10 @@ impl State {
         if !(1..=65535).contains(&wire.proxy_listener_port) {
             return Err(StateError::invalid("incomplete state"));
         }
+        let favorite_ports =
+            normalize_saved_ports(wire.favorite_ports.unwrap_or_default(), "favoritePorts")?;
+        let watched_ports =
+            normalize_saved_ports(wire.watched_ports.unwrap_or_default(), "watchedPorts")?;
         let state = State {
             uv_executable: wire.uv_executable,
             runtime_defaults: wire.runtime_defaults.unwrap_or_default(),
@@ -618,6 +645,8 @@ impl State {
             package_integrity: wire.package_integrity.unwrap_or_default(),
             log_rotation_disabled: wire.log_rotation_disabled,
             node_default: wire.node_default,
+            favorite_ports,
+            watched_ports,
             schema_version: wire.schema_version,
             packages,
             instances,

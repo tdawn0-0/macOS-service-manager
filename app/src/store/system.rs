@@ -23,7 +23,7 @@ use std::{
 };
 
 use devcore::{
-    databases::{DatabaseActions, Databases, ListeningPort, PortInspection},
+    databases::{DatabaseActions, Databases, ListeningPort, PortInspection, SignalOutcome},
     diagnostics::{DiagnosticReport, Diagnostics},
     engine::{Engine, SystemCommandRunner},
     helper::{Client as HelperClient, HelperState as CoreHelperState},
@@ -151,11 +151,39 @@ pub trait OperationsProvider: Send + Sync {
     fn dismiss(&self, id: &str, revision: &str) -> Result<(), String>;
 }
 
-/// Port inspection and the listening-port inventory.
+/// Port inspection, listening-port inventory, preferences, and safe single-PID stop.
 pub trait PortsProvider: Send + Sync {
     fn inspect(&self, port: i64) -> Result<PortInspection, String>;
     fn available_local_port(&self) -> Result<i64, String>;
     fn listening(&self) -> Result<Vec<ListeningPort>, String>;
+
+    fn favorite_ports(&self) -> Result<Vec<i64>, String> {
+        Ok(Vec::new())
+    }
+
+    fn watched_ports(&self) -> Result<Vec<i64>, String> {
+        Ok(Vec::new())
+    }
+
+    fn toggle_starred(&self, _port: i64) -> Result<(bool, Vec<i64>), String> {
+        Err("starring ports is not configured in this provider".to_string())
+    }
+
+    fn toggle_watched(&self, _port: i64) -> Result<(bool, Vec<i64>), String> {
+        Err("watching ports is not configured in this provider".to_string())
+    }
+
+    fn terminate_pid(&self, _pid: i64, _force: bool) -> Result<SignalOutcome, String> {
+        Err("stopping external processes is not configured in this provider".to_string())
+    }
+
+    fn current_pid(&self) -> i64 {
+        i64::from(std::process::id())
+    }
+
+    fn current_uid(&self) -> i64 {
+        devcore::databases::ProcessSignaler::current_uid(&devcore::databases::SystemProcessSignaler)
+    }
 }
 
 /// Helper, CLI wrapper, cache, log rotation, login item and quit scope.
@@ -350,7 +378,37 @@ impl PortsProvider for Facade {
 
     fn listening(&self) -> Result<Vec<ListeningPort>, String> {
         self.databases()
-            .listening_user_ports(&|| false)
+            .listening_ports(&|| false)
+            .map_err(|error| error.to_string())
+    }
+
+    fn favorite_ports(&self) -> Result<Vec<i64>, String> {
+        self.databases()
+            .favorite_ports()
+            .map_err(|error| error.to_string())
+    }
+
+    fn watched_ports(&self) -> Result<Vec<i64>, String> {
+        self.databases()
+            .watched_ports()
+            .map_err(|error| error.to_string())
+    }
+
+    fn toggle_starred(&self, port: i64) -> Result<(bool, Vec<i64>), String> {
+        self.databases()
+            .toggle_port_starred(port)
+            .map_err(|error| error.to_string())
+    }
+
+    fn toggle_watched(&self, port: i64) -> Result<(bool, Vec<i64>), String> {
+        self.databases()
+            .toggle_port_watched(port)
+            .map_err(|error| error.to_string())
+    }
+
+    fn terminate_pid(&self, pid: i64, force: bool) -> Result<SignalOutcome, String> {
+        self.databases()
+            .terminate_port_process(pid, force)
             .map_err(|error| error.to_string())
     }
 }
@@ -517,7 +575,7 @@ fn operations_provider_of() -> Option<Arc<dyn OperationsProvider>> {
     Some(Arc::new(FACADE.clone()))
 }
 
-fn ports_provider_of() -> Option<Arc<dyn PortsProvider>> {
+pub(crate) fn ports_provider_of() -> Option<Arc<dyn PortsProvider>> {
     if let Some(provider) = take(&PORTS_FAKE) {
         return Some(provider);
     }
@@ -1160,10 +1218,18 @@ pub(crate) fn refresh_ports() {
         state.ports.error = None;
     });
     task(async move {
-        let answer = match blocking(move || provider.listening()).await {
+        let answer = match blocking(move || {
+            let ports = provider.listening()?;
+            let favorites = provider.favorite_ports().unwrap_or_default();
+            let watched = provider.watched_ports().unwrap_or_default();
+            Ok::<_, String>((ports, favorites, watched))
+        })
+        .await
+        {
             Ok(answer) => answer,
             Err(error) => Err(format!("the listening ports did not finish: {error}")),
         };
+        let mut refreshed: Option<(Vec<ListeningPort>, Vec<i64>, Vec<i64>)> = None;
         workspace().update(|state| {
             if state.ports.sequence != sequence {
                 return;
@@ -1171,13 +1237,17 @@ pub(crate) fn refresh_ports() {
             state.ports.loading = false;
             state.ports.loaded = true;
             match answer {
-                Ok(ports) => {
-                    state.ports.listening = ports;
+                Ok((ports, favorites, watched)) => {
+                    state.ports.listening = ports.clone();
                     state.ports.error = None;
+                    refreshed = Some((ports, favorites, watched));
                 }
                 Err(error) => state.ports.error = Some(error),
             }
         });
+        if let Some((ports, favorites, watched)) = refreshed {
+            crate::store::ports::on_ports_refreshed(&ports, favorites, watched);
+        }
     });
 }
 
@@ -1187,6 +1257,25 @@ pub(crate) fn listening_ports() -> Vec<ListeningPort> {
 
 pub(crate) fn ports_loading() -> bool {
     workspace().with(|state| state.ports.loading)
+}
+
+pub(crate) fn ports_loaded() -> bool {
+    workspace().with(|state| state.ports.loaded)
+}
+
+pub(crate) fn update_port_flags(port: i64, starred: Option<bool>, watched: Option<bool>) {
+    workspace().update(|state| {
+        for entry in &mut state.ports.listening {
+            if entry.port == port {
+                if let Some(s) = starred {
+                    entry.starred = s;
+                }
+                if let Some(w) = watched {
+                    entry.watched = w;
+                }
+            }
+        }
+    });
 }
 
 // --- Settings ----------------------------------------------------------------

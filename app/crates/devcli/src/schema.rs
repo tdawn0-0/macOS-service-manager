@@ -301,13 +301,21 @@ pub fn build_cli_schema() -> CliSchema {
             command_with(
                 "ports",
                 Vec::new(),
-                "Inspect active local listening user ports, find a free port, or check a port",
-                "devbase ports <active|free|check <port>>",
+                "Inspect active listening local ports, manage starred/watched ports, find a free port, or safely stop a user-owned listener",
+                "devbase ports <active|free|check <port>|kill <port|pid> --yes|star <port>|unstar <port>|watch <port>|unwatch <port>>",
                 vec![
-                    sub(
+                    sub_flags!(
                         "active",
-                        "List listening local user ports",
-                        "devbase ports [active]",
+                        "List listening local ports with PID, bind address, category, and Devbase ownership",
+                        "devbase ports [active] [--category <dev|database|web|system>] [--starred]",
+                        [
+                            flag(
+                                "--category",
+                                "string",
+                                "Filter by category: dev, database, web, or system"
+                            ),
+                            flag("--starred", "bool", "Show only starred ports"),
+                        ]
                     ),
                     sub(
                         "free",
@@ -316,8 +324,50 @@ pub fn build_cli_schema() -> CliSchema {
                     ),
                     privileged!(
                         "check",
-                        "Inspect listeners on a specific port",
+                        "Inspect listeners and Devbase ownership on a specific port",
                         "devbase ports check <port>"
+                    ),
+                    destructive!(
+                        "kill",
+                        "Safely stop a Devbase-managed listener or terminate a single user-owned listening PID",
+                        "devbase ports kill <port|pid> --yes [--force] [--pid]",
+                        [
+                            required_flag(
+                                "--yes",
+                                "bool",
+                                "Confirm stopping the listening process"
+                            ),
+                            flag(
+                                "--force",
+                                "bool",
+                                "Send SIGKILL instead of SIGTERM to an external process"
+                            ),
+                            flag(
+                                "--pid",
+                                "bool",
+                                "Treat the target argument as a PID instead of a port"
+                            ),
+                        ]
+                    ),
+                    sub(
+                        "star",
+                        "Pin a port to starred favorites",
+                        "devbase ports star <port>",
+                    ),
+                    sub(
+                        "unstar",
+                        "Remove a port from starred favorites",
+                        "devbase ports unstar <port>",
+                    ),
+                    sub(
+                        "watch",
+                        "Watch a port for open/close/owner change notifications",
+                        "devbase ports watch <port>",
+                    ),
+                    sub(
+                        "unwatch",
+                        "Stop watching a port",
+                        "devbase ports unwatch <port>",
                     ),
                 ],
             ),

@@ -18,7 +18,7 @@ use crate::{
         icons::{self, Icon},
     },
     meta, shell,
-    store::{self, Section, SectionGroup, databases, proxy, services},
+    store::{self, Section, SectionGroup, databases, ports, proxy, services},
     theme as tokens,
 };
 
@@ -33,6 +33,7 @@ const DEVBASE_GLYPH_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" widt
 fn section_icon(section: Section) -> Svg {
     icons::render(match section {
         Section::Services => Icon::Layers,
+        Section::Ports => Icon::Plug,
         Section::Development => Icon::Package,
         Section::Databases => Icon::Database,
         Section::HttpsProxy => Icon::ShieldCheck,
@@ -147,9 +148,22 @@ fn proxy_badge() -> Option<NavBadge> {
     }
 }
 
+fn ports_badge() -> Option<NavBadge> {
+    let active = ports::all_ports().len();
+    if active > 0 {
+        Some(NavBadge {
+            tone: BadgeTone::Running,
+            label: Some(active.to_string()),
+        })
+    } else {
+        None
+    }
+}
+
 fn section_badge(section: Section) -> Option<NavBadge> {
     match section {
         Section::Services => services_badge(),
+        Section::Ports => ports_badge(),
         Section::Databases => databases_badge(),
         Section::HttpsProxy => proxy_badge(),
         Section::Development | Section::Diagnostics | Section::Settings => None,
@@ -159,6 +173,7 @@ fn section_badge(section: Section) -> Option<NavBadge> {
 fn section_badge_test_id(section: Section) -> &'static str {
     match section {
         Section::Services => "sidebar-badge-services",
+        Section::Ports => "sidebar-badge-ports",
         Section::Development => "sidebar-badge-development",
         Section::Databases => "sidebar-badge-databases",
         Section::HttpsProxy => "sidebar-badge-https-proxy",

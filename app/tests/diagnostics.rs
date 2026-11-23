@@ -205,10 +205,7 @@ impl SystemPortsProvider for FakePorts {
     }
 
     fn listening(&self) -> Result<Vec<ListeningPort>, String> {
-        Ok(vec![ListeningPort {
-            port: 3000,
-            process: "node".to_string(),
-        }])
+        Ok(vec![ListeningPort::simple(3000, "node")])
     }
 }
 
@@ -340,10 +337,15 @@ fn exporting_writes_the_redacted_report_and_says_where() {
 }
 
 #[test]
-fn a_port_is_checked_and_a_free_port_is_suggested() {
+fn a_port_is_checked_and_a_free_port_is_suggested_on_ports_page() {
     let (_turn, mut app, _diagnostics, _operations, ports) = start();
 
-    app.press("id:diagnostics-check-port").unwrap();
+    // Diagnostics no longer duplicates the Ports card; navigate to dedicated Ports screen.
+    assert!(!app.screen().matches("id:diagnostics-port").unwrap());
+    app.press("role:button[Ports]").unwrap();
+    app.wait_for("id:ports-page").unwrap();
+
+    app.press("id:ports-check-port").unwrap();
     app.wait_for("Port 3000").unwrap();
     app.wait_for("PID 42 · UID 501 · node · 127.0.0.1:3000")
         .unwrap();
@@ -356,10 +358,10 @@ fn a_port_is_checked_and_a_free_port_is_suggested() {
         [3000]
     );
 
-    app.press("id:diagnostics-free-port").unwrap();
+    app.press("id:ports-free-port").unwrap();
     app.wait_for("text:/Suggested port: 4321/").unwrap();
     assert_eq!(
-        app.screen().input_text("id:diagnostics-port").unwrap(),
+        app.screen().input_text("id:ports-check-input").unwrap(),
         Some("4321")
     );
 }
@@ -398,30 +400,31 @@ fn the_journal_lists_tasks_and_retries_and_dismisses_them() {
 fn typing_port_input_keeps_input_and_listening_ports_mounted() {
     let (_turn, mut app, _diagnostics, _operations, _ports) = start();
 
-    app.wait_for("id:diagnostics-port").unwrap();
-    app.wait_for("id:listening-3000").unwrap();
+    app.press("role:button[Ports]").unwrap();
+    app.wait_for("id:ports-check-input").unwrap();
+    app.wait_for("id:port-row-3000").unwrap();
 
     let port_input_id = app
         .screen()
         .layout_nodes()
         .into_iter()
-        .find(|node| node.test_id.as_deref() == Some("diagnostics-port"))
-        .expect("diagnostics-port should be mounted")
+        .find(|node| node.test_id.as_deref() == Some("ports-check-input"))
+        .expect("ports-check-input should be mounted")
         .id;
 
-    app.clear("id:diagnostics-port").unwrap();
-    app.type_text("id:diagnostics-port", "5432").unwrap();
+    app.clear("id:ports-check-input").unwrap();
+    app.type_text("id:ports-check-input", "5432").unwrap();
 
     let port_input_after = app
         .screen()
         .layout_nodes()
         .into_iter()
-        .find(|node| node.test_id.as_deref() == Some("diagnostics-port"))
-        .expect("diagnostics-port should remain mounted")
+        .find(|node| node.test_id.as_deref() == Some("ports-check-input"))
+        .expect("ports-check-input should remain mounted")
         .id;
     assert_eq!(port_input_after, port_input_id);
     assert_eq!(
-        app.screen().input_text("id:diagnostics-port").unwrap(),
+        app.screen().input_text("id:ports-check-input").unwrap(),
         Some("5432")
     );
 }

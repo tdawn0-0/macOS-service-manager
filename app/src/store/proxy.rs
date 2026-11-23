@@ -1027,6 +1027,45 @@ fn is_tunnel_draft_dirty(tunnel: &TunnelDraft, snapshot: &Snapshot) -> bool {
         || tunnel.token_file.is_some()
 }
 
+#[derive(Debug, Clone, Default)]
+struct PendingPortDraft(Option<(String, i64)>);
+
+fn pending_port_draft() -> Signal<PendingPortDraft> {
+    global::<PendingPortDraft>()
+}
+
+fn push_port_draft(slug: String, port: i64) {
+    let port_text = port.to_string();
+    rules_draft().update(|state| {
+        let already_present = state.rules.iter().any(|row| {
+            row.local_port.trim() == port_text
+                && matches!(
+                    row.upstream_host.trim(),
+                    "" | "127.0.0.1" | "localhost" | "[::1]"
+                )
+        });
+        if !already_present {
+            let mut candidate = slug.clone();
+            let mut suffix = 2usize;
+            while state
+                .rules
+                .iter()
+                .any(|row| row.domain.eq_ignore_ascii_case(&candidate))
+            {
+                candidate = format!("{slug}-{suffix}");
+                suffix += 1;
+            }
+            let id = state.next_rule_id;
+            state.next_rule_id += 1;
+            let mut row = RuleDraft::new();
+            row.id = id;
+            row.domain = candidate;
+            row.local_port = port_text;
+            state.rules.push(row);
+        }
+    });
+}
+
 fn sync_drafts_with_snapshot(snapshot: &Snapshot) {
     let should_load_rules = untracked(|| {
         rules_draft().with(|draft| {
@@ -1041,6 +1080,11 @@ fn sync_drafts_with_snapshot(snapshot: &Snapshot) {
     });
     if should_load_rules {
         load_rules_draft(snapshot);
+    }
+    let queued = untracked(|| pending_port_draft().with(|p| p.0.clone()));
+    if let Some((slug, port)) = queued {
+        pending_port_draft().set(PendingPortDraft(None));
+        push_port_draft(slug, port);
     }
 
     let should_load_tunnel = untracked(|| {
@@ -1248,6 +1292,44 @@ pub(crate) fn add_rule() {
         state.rules.push(row);
     });
     clear_feedback();
+}
+
+/// Switches to HTTPS Proxy and pre-fills a new rule draft targeting `127.0.0.1:<port>`
+/// unless a draft rule already points at that loopback port.
+pub(crate) fn open_rule_draft_for_port(name_hint: &str, port: i64) {
+    let slug = sanitize_rule_slug(name_hint, port);
+    let already_loaded = untracked(|| rules_draft().with(|state| state.loaded));
+    if already_loaded {
+        push_port_draft(slug, port);
+    } else {
+        pending_port_draft().set(PendingPortDraft(Some((slug, port))));
+        load();
+    }
+    clear_feedback();
+    close_authority();
+    crate::store::select_section(crate::store::Section::HttpsProxy);
+}
+
+fn sanitize_rule_slug(raw: &str, port: i64) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in raw.trim().to_ascii_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_dash = false;
+        } else if !out.is_empty() && !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        format!("app-{port}")
+    } else if trimmed.len() > 40 {
+        trimmed[..40].trim_end_matches('-').to_string()
+    } else {
+        trimmed
+    }
 }
 
 pub(crate) fn remove_rule(index: usize) {

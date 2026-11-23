@@ -17,7 +17,9 @@ use crate::env::CliEnv;
 use crate::error::{CliError, CliResult};
 use crate::wrapper::CLIInstallStatus;
 
-use devcore::databases::Databases;
+use devcore::databases::{
+    Databases, InstanceAction, PortCategory, PortOwner, SignalOutcome, ports::owner_for_port,
+};
 use devcore::diagnostics::{DiagnosticCheck, DiagnosticReport, Diagnostics};
 use devcore::engine::{Engine, ProcessRunnerAdapter};
 use devcore::launchd::SystemRunner;
@@ -788,13 +790,34 @@ struct PortInspectionView {
     Detail: String,
 }
 
+fn parse_cli_port(raw: &str) -> CliResult<i64> {
+    let port: i64 = raw
+        .parse()
+        .map_err(|_| CliError::usage("port must be 1–65535"))?;
+    if !(1..=65535).contains(&port) {
+        return Err(CliError::usage("port must be 1–65535"));
+    }
+    Ok(port)
+}
+
+fn format_owner_label(owner: &PortOwner) -> String {
+    match owner {
+        PortOwner::DevbaseDatabase { id, engine } => format!("devbase-db:{id} ({engine})"),
+        PortOwner::DevbaseProxy => "devbase-proxy".to_string(),
+        PortOwner::DevbaseRule { domain } => format!("https://{domain}"),
+        PortOwner::External => String::new(),
+    }
+}
+
 pub fn run_ports_command(env: &mut CliEnv, out: &mut dyn Write, args: &[String]) -> CliResult<()> {
     if maybe_help(env, out, args, "ports")? {
         return Ok(());
     }
     let mut rest = args;
     let mut sub = "active";
-    if let Some(first) = rest.first() {
+    if let Some(first) = rest.first()
+        && !first.starts_with('-')
+    {
         sub = first;
         rest = &rest[1..];
     }
@@ -802,24 +825,70 @@ pub fn run_ports_command(env: &mut CliEnv, out: &mut dyn Write, args: &[String])
     let cancelled: &dyn Fn() -> bool = &|| false;
     match sub {
         "active" => {
-            if let Some(extra) = rest.first() {
+            let specs = FlagSpecs::new().value("category").bool("starred");
+            let parsed = match parse_flags(rest, &specs)? {
+                ParseOutcome::Help => {
+                    crate::schema::print_topic_help(out, "ports")?;
+                    return Ok(());
+                }
+                ParseOutcome::Parsed(parsed) => parsed,
+            };
+            if let Some(extra) = parsed.positionals.first() {
                 return Err(CliError::usage(format!(
                     "unexpected argument {extra:?} for ports active"
                 )));
             }
-            let ports = databases.listening_user_ports(cancelled)?;
+            let category_filter = match parsed.value("category") {
+                Some(raw) if !raw.trim().is_empty() => {
+                    Some(PortCategory::parse(raw).ok_or_else(|| {
+                        CliError::usage(format!(
+                            "unknown category {raw:?} (expected dev, database, web, or system)"
+                        ))
+                    })?)
+                }
+                _ => None,
+            };
+            let starred_only = parsed.boolean("starred")?;
+
+            let mut ports = databases.listening_ports(cancelled)?;
+            if let Some(category) = category_filter {
+                ports.retain(|entry| entry.category == category);
+            }
+            if starred_only {
+                ports.retain(|entry| entry.starred);
+            }
+            // Pin starred ports first, then sort by port number.
+            ports.sort_by(|a, b| b.starred.cmp(&a.starred).then(a.port.cmp(&b.port)));
+
             #[derive(Serialize)]
             struct PortView {
                 #[serde(rename = "Port")]
                 port: i64,
                 #[serde(rename = "Process")]
                 process: String,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                pid: Option<i64>,
+                #[serde(skip_serializing_if = "String::is_empty")]
+                address: String,
+                #[serde(skip_serializing_if = "String::is_empty")]
+                command: String,
+                category: PortCategory,
+                owner: PortOwner,
+                starred: bool,
+                watched: bool,
             }
             let views: Vec<PortView> = ports
                 .into_iter()
                 .map(|port| PortView {
                     port: port.port,
                     process: port.process,
+                    pid: port.pid,
+                    address: port.address,
+                    command: port.command,
+                    category: port.category,
+                    owner: port.owner,
+                    starred: port.starred,
+                    watched: port.watched,
                 })
                 .collect();
             #[derive(Serialize)]
@@ -828,14 +897,49 @@ pub fn run_ports_command(env: &mut CliEnv, out: &mut dyn Write, args: &[String])
             }
             crate::commands::write_result(env, out, &Payload { ports: &views }, |w| {
                 if views.is_empty() {
-                    writeln!(w, "No active listening local user ports found.")?;
+                    writeln!(w, "No active listening local ports found.")?;
                     return Ok(());
                 }
                 for view in &views {
-                    if view.process.is_empty() {
-                        writeln!(w, "{}", view.port)?;
+                    let pid_str = view
+                        .pid
+                        .map(|p| format!("pid={p}"))
+                        .unwrap_or_else(|| "-".to_string());
+                    let addr_str = if view.address.is_empty() {
+                        "-".to_string()
                     } else {
-                        writeln!(w, "{}\t{}", view.port, view.process)?;
+                        view.address.clone()
+                    };
+                    let owner_str = format_owner_label(&view.owner);
+                    let mut marks = String::new();
+                    if view.starred {
+                        marks.push('*');
+                    }
+                    if view.watched {
+                        marks.push('W');
+                    }
+                    if owner_str.is_empty() && marks.is_empty() {
+                        writeln!(
+                            w,
+                            "{}\t{}\t{}\t{}\t{}",
+                            view.port,
+                            view.process,
+                            pid_str,
+                            addr_str,
+                            view.category.as_str()
+                        )?;
+                    } else {
+                        writeln!(
+                            w,
+                            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                            view.port,
+                            view.process,
+                            pid_str,
+                            addr_str,
+                            view.category.as_str(),
+                            owner_str,
+                            marks
+                        )?;
                     }
                 }
                 Ok(())
@@ -856,12 +960,11 @@ pub fn run_ports_command(env: &mut CliEnv, out: &mut dyn Write, args: &[String])
             if rest.len() != 1 {
                 return Err(CliError::usage("usage: devbase ports check <port>"));
             }
-            let port: i64 = rest[0]
-                .parse()
-                .map_err(|_| CliError::usage("port must be 1–65535"))?;
-            if !(1..=65535).contains(&port) {
-                return Err(CliError::usage("port must be 1–65535"));
-            }
+            let port = parse_cli_port(&rest[0])?;
+            let state = store(env).read()?;
+            let owner = owner_for_port(&state, port);
+            let starred = state.favorite_ports.contains(&port);
+            let watched = state.watched_ports.contains(&port);
             let inspection = databases.inspect_port(port, cancelled)?;
             let view = PortInspectionView {
                 Port: inspection.port,
@@ -881,12 +984,34 @@ pub fn run_ports_command(env: &mut CliEnv, out: &mut dyn Write, args: &[String])
                 Truncated: inspection.truncated,
                 Detail: inspection.detail,
             };
-            crate::commands::write_result(env, out, &view, |w| {
-                writeln!(w, "Port {}: {}", view.Port, view.Status)?;
-                if !view.Detail.is_empty() {
-                    writeln!(w, "{}", view.Detail)?;
+            #[derive(Serialize)]
+            struct CheckPayload {
+                #[serde(flatten)]
+                inspection: PortInspectionView,
+                owner: PortOwner,
+                starred: bool,
+                watched: bool,
+            }
+            let payload = CheckPayload {
+                inspection: view,
+                owner,
+                starred,
+                watched,
+            };
+            crate::commands::write_result(env, out, &payload, |w| {
+                writeln!(
+                    w,
+                    "Port {}: {}",
+                    payload.inspection.Port, payload.inspection.Status
+                )?;
+                let owner_str = format_owner_label(&payload.owner);
+                if !owner_str.is_empty() {
+                    writeln!(w, "Owner: {owner_str}")?;
                 }
-                for listener in &view.Listeners {
+                if !payload.inspection.Detail.is_empty() {
+                    writeln!(w, "{}", payload.inspection.Detail)?;
+                }
+                for listener in &payload.inspection.Listeners {
                     writeln!(
                         w,
                         "  PID {} (UID {}) {} {}",
@@ -896,8 +1021,166 @@ pub fn run_ports_command(env: &mut CliEnv, out: &mut dyn Write, args: &[String])
                 Ok(())
             })
         }
+        "kill" => {
+            let specs = FlagSpecs::new().bool("yes").bool("force").bool("pid");
+            let parsed = match parse_flags(rest, &specs)? {
+                ParseOutcome::Help => {
+                    crate::schema::print_topic_help(out, "ports")?;
+                    return Ok(());
+                }
+                ParseOutcome::Parsed(parsed) => parsed,
+            };
+            if parsed.positionals.len() != 1 {
+                return Err(CliError::usage(
+                    "usage: devbase ports kill <port|pid> --yes [--force] [--pid]",
+                ));
+            }
+            let target_raw = &parsed.positionals[0];
+            let by_pid = parsed.boolean("pid")?;
+            let force = parsed.boolean("force")?;
+            let yes = parsed.boolean("yes")?;
+
+            if by_pid {
+                let pid: i64 = target_raw
+                    .parse()
+                    .map_err(|_| CliError::usage("PID must be a positive integer"))?;
+                if pid <= 1 {
+                    return Err(CliError::usage("refusing to stop protected system PID"));
+                }
+                require_yes(yes, &format!("stopping PID {pid} requires --yes"))?;
+                let outcome = databases.terminate_port_process(pid, force)?;
+                let signal_name = if force { "SIGKILL" } else { "SIGTERM" };
+                let payload = serde_json::json!({
+                    "action": "signal-process",
+                    "pid": pid,
+                    "signal": signal_name,
+                    "outcome": outcome,
+                });
+                return crate::commands::write_result(env, out, &payload, |w| match outcome {
+                    SignalOutcome::Stopped => writeln!(w, "Stopped PID {pid} ({signal_name})."),
+                    SignalOutcome::AlreadyExited => writeln!(w, "PID {pid} had already exited."),
+                    SignalOutcome::StillRunning => writeln!(
+                        w,
+                        "PID {pid} did not exit after {signal_name}; re-run with --force to send SIGKILL."
+                    ),
+                });
+            }
+
+            let port = parse_cli_port(target_raw)?;
+            require_yes(
+                yes,
+                &format!("stopping listener on port {port} requires --yes"),
+            )?;
+            let state = store(env).read()?;
+            match owner_for_port(&state, port) {
+                PortOwner::DevbaseDatabase { id, engine } => {
+                    databases.instance_action(&id, InstanceAction::Stop, cancelled)?;
+                    let payload = serde_json::json!({
+                        "action": "stop-database",
+                        "port": port,
+                        "instance": id,
+                        "engine": engine,
+                        "stopped": true,
+                    });
+                    crate::commands::write_result(env, out, &payload, |w| {
+                        writeln!(
+                            w,
+                            "Stopped Devbase database instance {id} ({engine}) on port {port}."
+                        )
+                    })
+                }
+                PortOwner::DevbaseProxy => {
+                    crate::commands::https::proxy_service(env).stop()?;
+                    let payload = serde_json::json!({
+                        "action": "stop-proxy",
+                        "port": port,
+                        "stopped": true,
+                    });
+                    crate::commands::write_result(env, out, &payload, |w| {
+                        writeln!(w, "Stopped Devbase HTTPS proxy on port {port}.")
+                    })
+                }
+                PortOwner::DevbaseRule { .. } | PortOwner::External => {
+                    let active = databases.listening_ports(cancelled)?;
+                    let pid = active
+                        .into_iter()
+                        .find(|entry| entry.port == port)
+                        .and_then(|entry| entry.pid)
+                        .ok_or_else(|| {
+                            CliError::operation(format!(
+                                "no listening process PID found for port {port}"
+                            ))
+                        })?;
+                    let outcome = databases.terminate_port_process(pid, force)?;
+                    let signal_name = if force { "SIGKILL" } else { "SIGTERM" };
+                    let payload = serde_json::json!({
+                        "action": "signal-process",
+                        "port": port,
+                        "pid": pid,
+                        "signal": signal_name,
+                        "outcome": outcome,
+                    });
+                    crate::commands::write_result(env, out, &payload, |w| match outcome {
+                        SignalOutcome::Stopped => {
+                            writeln!(w, "Stopped PID {pid} on port {port} ({signal_name}).")
+                        }
+                        SignalOutcome::AlreadyExited => {
+                            writeln!(w, "PID {pid} on port {port} had already exited.")
+                        }
+                        SignalOutcome::StillRunning => writeln!(
+                            w,
+                            "PID {pid} on port {port} did not exit after {signal_name}; re-run with --force to send SIGKILL."
+                        ),
+                    })
+                }
+            }
+        }
+        "star" | "unstar" => {
+            if rest.len() != 1 {
+                return Err(CliError::usage(format!(
+                    "usage: devbase ports {sub} <port>"
+                )));
+            }
+            let port = parse_cli_port(&rest[0])?;
+            let starred = sub == "star";
+            let favorite_ports = databases.set_port_starred(port, starred)?;
+            let payload = serde_json::json!({
+                "port": port,
+                "starred": starred,
+                "favoritePorts": favorite_ports,
+            });
+            crate::commands::write_result(env, out, &payload, |w| {
+                if starred {
+                    writeln!(w, "Starred port {port}.")
+                } else {
+                    writeln!(w, "Unstarred port {port}.")
+                }
+            })
+        }
+        "watch" | "unwatch" => {
+            if rest.len() != 1 {
+                return Err(CliError::usage(format!(
+                    "usage: devbase ports {sub} <port>"
+                )));
+            }
+            let port = parse_cli_port(&rest[0])?;
+            let watched = sub == "watch";
+            let watched_ports = databases.set_port_watched(port, watched)?;
+            let payload = serde_json::json!({
+                "port": port,
+                "watched": watched,
+                "watchedPorts": watched_ports,
+            });
+            crate::commands::write_result(env, out, &payload, |w| {
+                if watched {
+                    writeln!(w, "Watching port {port}.")
+                } else {
+                    writeln!(w, "Stopped watching port {port}.")
+                }
+            })
+        }
         other => Err(CliError::usage(format!(
-            "unknown ports subcommand {other:?} (expected active, free, or check)"
+            "unknown ports subcommand {other:?} (expected active, free, check, kill, star, unstar, watch, or unwatch)"
         ))),
     }
 }

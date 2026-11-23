@@ -13,8 +13,8 @@ use std::time::Duration;
 use tempfile::TempDir;
 
 use super::ports::{
-    ListeningPort, free_database_port, free_instance_port, parse_netstat_listeners,
-    parse_port_listeners,
+    ListeningPort, PortCategory, PortOwner, free_database_port, free_instance_port,
+    parse_netstat_listeners, parse_port_listeners,
 };
 use super::{
     DatabaseError, Databases, InstanceAction, InstanceCatalog, MongoAdmin, PortBindFailure,
@@ -653,22 +653,42 @@ fn listening_user_ports_excludes_instances_and_proxy() {
     drop(state);
     let uid = unsafe { libc::getuid() };
     f.runner.set_lsof(format!(
-        "p1\0cnode\0u{uid}\0n127.0.0.1:8080\0p2\0cpostgres\0u{uid}\0n127.0.0.1:5432\0p3\0credis\0u{uid}\0n127.0.0.1:6379\0p4\0cother\0u99999\0n127.0.0.1:9000\0"
+        "p101\0cnode\0u{uid}\0n127.0.0.1:8080\0p102\0cpostgres\0u{uid}\0n127.0.0.1:5432\0p103\0credis\0u{uid}\0n127.0.0.1:6379\0p104\0cother\0u99999\0n127.0.0.1:9000\0"
     ));
     let ports: Vec<ListeningPort> = f.databases.listening_user_ports(&|| false).unwrap();
+    assert_eq!(ports.len(), 2);
+    assert_eq!(ports[0].port, 6379);
+    assert_eq!(ports[0].process, "redis");
+    assert_eq!(ports[0].pid, Some(103));
+    assert_eq!(ports[0].address, "127.0.0.1");
+    assert_eq!(ports[0].category, PortCategory::Database);
+    assert_eq!(ports[0].owner, PortOwner::External);
+
+    assert_eq!(ports[1].port, 8080);
+    assert_eq!(ports[1].process, "node");
+    assert_eq!(ports[1].pid, Some(101));
+    assert_eq!(ports[1].category, PortCategory::Dev);
     assert_eq!(
-        ports,
-        vec![
-            ListeningPort {
-                port: 6379,
-                process: "redis".to_string()
-            },
-            ListeningPort {
-                port: 8080,
-                process: "node".to_string()
-            }
-        ]
+        ports[1].owner,
+        PortOwner::DevbaseRule {
+            domain: "app.devbase.localhost".to_string()
+        }
     );
+
+    // `listening_ports()` includes Devbase-managed DBs as well and tags their owner.
+    let all_ports = f.databases.listening_ports(&|| false).unwrap();
+    let pg_entry = all_ports
+        .iter()
+        .find(|p| p.port == 5432)
+        .expect("managed database port should appear in listening_ports()");
+    assert_eq!(
+        pg_entry.owner,
+        PortOwner::DevbaseDatabase {
+            id: "blog".to_string(),
+            engine: "postgresql".to_string(),
+        }
+    );
+    assert_eq!(pg_entry.category, PortCategory::Database);
 }
 
 // ---------------------------------------------------------------------------

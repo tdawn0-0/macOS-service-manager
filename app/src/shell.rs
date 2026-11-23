@@ -41,7 +41,9 @@ pub(crate) fn trigger_find() {
     global::<FindTrigger>().update(|trigger| {
         trigger.0 = trigger.0.wrapping_add(1);
     });
-    if store::active_section() != Section::Services && !dev_logs::is_open() {
+    if !matches!(store::active_section(), Section::Services | Section::Ports)
+        && !dev_logs::is_open()
+    {
         command_palette::open();
     }
 }
@@ -66,6 +68,7 @@ pub(crate) fn sidebar_glass_active() -> bool {
 pub(crate) fn refresh_active_section() {
     match store::active_section() {
         Section::Services => store::services::refresh_active(),
+        Section::Ports => store::ports::refresh(),
         Section::Development => {
             store::development::refresh();
             store::software::refresh();
@@ -198,6 +201,10 @@ fn active_page() -> impl IntoElement {
         .child(when(
             move || store::active_section() == Section::Services,
             pages::services,
+        ))
+        .child(when(
+            move || store::active_section() == Section::Ports,
+            pages::ports,
         ))
         .child(when(
             move || store::active_section() == Section::Development,

@@ -10,7 +10,7 @@ use nsh_core::prelude::*;
 use crate::{
     components::icons,
     dev_logs, editor, guide, platform, shell,
-    store::{self, Section, databases, proxy, software::SoftwareKind, system},
+    store::{self, Section, databases, ports, proxy, software::SoftwareKind, system},
     theme as tokens,
 };
 
@@ -127,14 +127,27 @@ pub(crate) fn build_items() -> Vec<CommandItem> {
                 "login",
             ])
             .checked(active == Section::Services),
-        CommandItem::new("nav:diagnostics", "Go to Diagnostics")
+        CommandItem::new("nav:ports", "Go to Ports")
             .group("Navigate")
             .shortcut("mod+5")
-            .keywords(["diagnostics", "ports", "checks", "health", "operations"])
+            .keywords([
+                "ports",
+                "listening",
+                "tcp",
+                "kill",
+                "pid",
+                "localhost",
+                "processes",
+            ])
+            .checked(active == Section::Ports),
+        CommandItem::new("nav:diagnostics", "Go to Diagnostics")
+            .group("Navigate")
+            .shortcut("mod+6")
+            .keywords(["diagnostics", "checks", "health", "operations"])
             .checked(active == Section::Diagnostics),
         CommandItem::new("nav:settings", "Go to Settings")
             .group("Navigate")
-            .shortcut("mod+6")
+            .shortcut("mod+7")
             .keywords(["settings", "preferences", "helper", "cli", "cache", "login"])
             .checked(active == Section::Settings),
         CommandItem::new(
@@ -259,6 +272,49 @@ pub(crate) fn build_items() -> Vec<CommandItem> {
         );
     }
 
+    let (self_pid, self_uid) = ports::current_identity();
+    for entry in ports::all_ports().into_iter().take(24) {
+        let proc_name = if entry.process.is_empty() {
+            "unknown".to_string()
+        } else {
+            entry.process.clone()
+        };
+        let pid_part = entry.pid.map(|p| format!(" · PID {p}")).unwrap_or_default();
+        let inspect_label = format!(":{} · {}{}", entry.port, proc_name, pid_part);
+        let mut keywords = vec![
+            entry.port.to_string(),
+            format!(":{}", entry.port),
+            proc_name.clone(),
+            entry.category.as_str().to_string(),
+            "port".to_string(),
+        ];
+        if let Some(pid) = entry.pid {
+            keywords.push(pid.to_string());
+        }
+        items.push(
+            CommandItem::new(format!("port:open:{}", entry.port), inspect_label)
+                .group("Ports")
+                .keywords(keywords.clone()),
+        );
+        let stoppable = matches!(
+            entry.owner,
+            devcore::databases::PortOwner::DevbaseDatabase { .. }
+                | devcore::databases::PortOwner::DevbaseProxy
+        ) || entry.can_terminate_pid(self_pid, self_uid);
+        if stoppable {
+            keywords.push("kill".to_string());
+            keywords.push("stop".to_string());
+            items.push(
+                CommandItem::new(
+                    format!("port:stop:{}", entry.port),
+                    format!("Stop :{} ({})", entry.port, proc_name),
+                )
+                .group("Ports")
+                .keywords(keywords),
+            );
+        }
+    }
+
     items
 }
 
@@ -266,6 +322,7 @@ pub(crate) fn build_items() -> Vec<CommandItem> {
 pub(crate) fn execute(id: &str) {
     match id {
         "nav:services" => store::select_section(Section::Services),
+        "nav:ports" => store::select_section(Section::Ports),
         "nav:development" => store::select_section(Section::Development),
         "nav:databases" => store::select_section(Section::Databases),
         "nav:https-proxy" => store::select_section(Section::HttpsProxy),
@@ -290,6 +347,15 @@ pub(crate) fn execute(id: &str) {
             if let Some(instance_id) = other.strip_prefix("db:") {
                 store::select_section(Section::Databases);
                 databases::open_instance(instance_id);
+            } else if let Some(port_str) = other.strip_prefix("port:open:")
+                && let Ok(port) = port_str.parse::<i64>()
+            {
+                ports::open_ports_for(port);
+            } else if let Some(port_str) = other.strip_prefix("port:stop:")
+                && let Ok(port) = port_str.parse::<i64>()
+                && let Some(entry) = ports::all_ports().into_iter().find(|e| e.port == port)
+            {
+                ports::stop_port(entry, false);
             }
         }
     }

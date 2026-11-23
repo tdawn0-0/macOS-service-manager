@@ -835,6 +835,7 @@ impl Databases {
             store,
             runner,
             binder: self.binder.clone(),
+            signaler: self.signaler.clone(),
             probe: self.probe.clone(),
             mongo: self.mongo.clone(),
             redis: self.redis.clone(),

@@ -1,14 +1,13 @@
-//! Diagnostics: the runtime snapshot, environment checks, the port
-//! inventory and the cross-process task journal.
+//! Diagnostics: the runtime snapshot, environment checks, and the
+//! cross-process task journal.
 //!
 //! The page reads [`crate::store::system`] and never calls devcore itself: a
-//! snapshot, a diagnosis, an export, a port check and every retry or dismiss
-//! is a task that writes the store when it answers. The scroll container and
-//! cards mount once with scoped reactive regions inside each card.
+//! snapshot, a diagnosis, an export, and every retry or dismiss is a task
+//! that writes the store when it answers. The scroll container and cards
+//! mount once with scoped reactive regions inside each card.
 
 mod checks;
 mod operations;
-mod ports;
 
 use nsh_base::theme;
 use nsh_core::prelude::*;
@@ -50,7 +49,6 @@ pub(crate) fn diagnostics() -> impl IntoElement {
                             .gap(tokens::space(5.0))
                             .child(checks::runtime_card())
                             .child(checks::checks_card())
-                            .child(ports::ports_card())
                             .child(operations::operations_card()),
                     ),
             ),
@@ -58,12 +56,8 @@ pub(crate) fn diagnostics() -> impl IntoElement {
 }
 
 fn header() -> impl IntoElement {
-    let refresh_busy = || {
-        system::report_loading()
-            || system::runtime_loading()
-            || system::ports_loading()
-            || system::operations_loading()
-    };
+    let refresh_busy =
+        || system::report_loading() || system::runtime_loading() || system::operations_loading();
     ui::page_header(
         "Diagnostics",
         None::<&str>,

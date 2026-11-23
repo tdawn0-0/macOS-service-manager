@@ -354,6 +354,8 @@ fn destructive_commands_require_their_confirmation() {
             "--fingerprint",
             "abc",
         ],
+        &["ports", "kill", "3000"],
+        &["ports", "kill", "--pid", "99999"],
     ];
     for case in cases {
         let output = run(dir.path(), case);
@@ -677,4 +679,42 @@ fn run_cli_streams_mcp_without_blocking_on_read_to_end() {
     let resp: serde_json::Value = serde_json::from_slice(&out).unwrap();
     assert_eq!(resp["id"], 9);
     assert_eq!(resp["result"], serde_json::json!({}));
+}
+
+#[test]
+fn ports_star_watch_and_kill_guards_work() {
+    let dir = temp();
+
+    let starred = run(dir.path(), &["--json", "ports", "star", "3000"]);
+    assert_eq!(starred.code, 0, "{}", starred.err);
+    let starred_json: serde_json::Value = serde_json::from_str(&starred.out).unwrap();
+    assert_eq!(starred_json["port"], 3000);
+    assert_eq!(starred_json["starred"], true);
+    assert_eq!(starred_json["favoritePorts"], serde_json::json!([3000]));
+
+    let watched = run(dir.path(), &["--json", "ports", "watch", "3000"]);
+    assert_eq!(watched.code, 0, "{}", watched.err);
+    let watched_json: serde_json::Value = serde_json::from_str(&watched.out).unwrap();
+    assert_eq!(watched_json["watched"], true);
+    assert_eq!(watched_json["watchedPorts"], serde_json::json!([3000]));
+
+    let unstarred = run(dir.path(), &["--json", "ports", "unstar", "3000"]);
+    assert_eq!(unstarred.code, 0, "{}", unstarred.err);
+    let unstarred_json: serde_json::Value = serde_json::from_str(&unstarred.out).unwrap();
+    assert_eq!(unstarred_json["favoritePorts"], serde_json::json!([]));
+
+    let unwatched = run(dir.path(), &["--json", "ports", "unwatch", "3000"]);
+    assert_eq!(unwatched.code, 0, "{}", unwatched.err);
+    let unwatched_json: serde_json::Value = serde_json::from_str(&unwatched.out).unwrap();
+    assert_eq!(unwatched_json["watchedPorts"], serde_json::json!([]));
+
+    // Protected PID 1 is refused even with --yes.
+    let pid1 = run(dir.path(), &["ports", "kill", "--pid", "1", "--yes"]);
+    assert_eq!(pid1.code, 2);
+    assert!(pid1.err.contains("protected system PID"));
+
+    // Invalid category is refused cleanly.
+    let bad_cat = run(dir.path(), &["ports", "active", "--category", "invalid"]);
+    assert_eq!(bad_cat.code, 2);
+    assert!(bad_cat.err.contains("unknown category"));
 }

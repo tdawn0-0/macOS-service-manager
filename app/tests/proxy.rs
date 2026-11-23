@@ -214,14 +214,8 @@ impl ProxyProvider for Fake {
 
     fn listening_ports(&self) -> Result<Vec<ProxyListeningPort>, String> {
         Ok(vec![
-            ProxyListeningPort {
-                port: 3000,
-                process: "node".to_string(),
-            },
-            ProxyListeningPort {
-                port: 5173,
-                process: "vite".to_string(),
-            },
+            ProxyListeningPort::simple(3000, "node"),
+            ProxyListeningPort::simple(5173, "vite"),
         ])
     }
 

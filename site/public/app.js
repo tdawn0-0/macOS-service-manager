@@ -89,7 +89,7 @@
     'cf-tunnel': ['net', 'tunnel', 'tunnel']
   };
 
-  const titles = { software: 'Software', databases: 'Databases', https: 'HTTPS', services: 'Services' };
+  const titles = { software: 'Software', databases: 'Databases', https: 'HTTPS', services: 'Services', ports: 'Ports' };
   let activeTab = 'databases';
 
   let toastTimer = null;
@@ -128,6 +128,10 @@
     else if (activeTab === 'software') el.textContent = '3 runtimes · arm64 & x86_64';
     else if (activeTab === 'https') el.textContent = state['https-proxy'] ? 'Proxy :443 · 3 routes' : 'Proxy stopped';
     else if (activeTab === 'services') el.textContent = '5 discovered';
+    else if (activeTab === 'ports') {
+      const live = $$('[data-port-item]:not([data-stopped="true"])').length;
+      el.textContent = `${live} listening`;
+    }
   };
 
   const syncDemo = () => {
@@ -312,6 +316,121 @@
       svcSource = pill.dataset.svcSource;
       $$('[data-svc-source]').forEach((p) => p.classList.toggle('active', p === pill));
       filterServices();
+    })
+  );
+
+  /* Interactive Ports Tab */
+  const portSearch = $('demo-port-search');
+  let portCat = 'all';
+
+  const syncPortCounts = () => {
+    const live = $$('[data-port-item]:not([data-stopped="true"])').length;
+    if ($('sidebar-ports-count')) $('sidebar-ports-count').textContent = String(live);
+    if (activeTab === 'ports') updateViewMeta();
+  };
+
+  const filterPorts = () => {
+    const q = (portSearch?.value || '').trim().toLowerCase();
+    $$('[data-port-item]').forEach((row) => {
+      if (row.dataset.stopped === 'true') {
+        row.style.display = 'none';
+        return;
+      }
+      const okCat =
+        portCat === 'all' ||
+        (portCat === 'starred' ? row.dataset.starred === 'true' : row.dataset.cat === portCat);
+      const okQ = !q || (row.dataset.search || '').toLowerCase().includes(q);
+      row.style.display = okCat && okQ ? '' : 'none';
+    });
+  };
+
+  portSearch?.addEventListener('input', filterPorts);
+  $$('[data-port-cat]').forEach((pill) =>
+    pill.addEventListener('click', () => {
+      portCat = pill.dataset.portCat;
+      $$('[data-port-cat]').forEach((p) => p.classList.toggle('active', p === pill));
+      filterPorts();
+    })
+  );
+
+  $$('[data-port-star]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      const row = btn.closest('[data-port-item]');
+      if (!row) return;
+      const next = row.dataset.starred !== 'true';
+      row.dataset.starred = String(next);
+      btn.classList.toggle('is-starred', next);
+      showToast(next ? `Starred port :${btn.dataset.portStar}` : `Unstarred port :${btn.dataset.portStar}`);
+      filterPorts();
+    })
+  );
+
+  $$('[data-port-watch]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      const row = btn.closest('[data-port-item]');
+      if (!row) return;
+      const next = row.dataset.watched !== 'true';
+      row.dataset.watched = String(next);
+      btn.classList.toggle('is-watched', next);
+      showToast(next ? `Watching port :${btn.dataset.portWatch} for changes` : `Stopped watching :${btn.dataset.portWatch}`);
+    })
+  );
+
+  $$('[data-port-add-https]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      const port = btn.dataset.portAddHttps;
+      const name = btn.dataset.portName || `app-${port}`;
+      selectTab('https');
+      appendLog('proxy', 'proxy', `draft rule ${name}.devbase.localhost → 127.0.0.1:${port}`, true);
+      showToast(`Prefilled https://${name}.devbase.localhost → :${port}`);
+    })
+  );
+
+  $$('[data-port-stop]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      const row = btn.closest('[data-port-item]');
+      if (!row) return;
+      row.dataset.stopped = 'true';
+      row.style.display = 'none';
+      syncPortCounts();
+      const port = btn.dataset.portStop;
+      const proc = btn.dataset.portProc || 'process';
+      const pid = btn.dataset.portPid || '';
+      appendLog('proxy', 'ports', `SIGTERM sent to ${proc} (PID ${pid}) on :${port}`, true);
+      showToast(`Stopped ${proc} (PID ${pid}) on :${port}`);
+    })
+  );
+
+  $$('[data-port-stop-db]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.portStopDb;
+      if (id in state) {
+        state[id] = false;
+        syncDemo();
+      }
+      const row = btn.closest('[data-port-item]');
+      if (row) {
+        row.dataset.stopped = 'true';
+        row.style.display = 'none';
+        syncPortCounts();
+      }
+      appendLog('db', id, `${id} stopped via database lifecycle`, false);
+      showToast(`Stopped Devbase database ${id}`);
+    })
+  );
+
+  $$('[data-port-stop-proxy]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      state['https-proxy'] = false;
+      syncDemo();
+      const row = btn.closest('[data-port-item]');
+      if (row) {
+        row.dataset.stopped = 'true';
+        row.style.display = 'none';
+        syncPortCounts();
+      }
+      appendLog('proxy', 'proxy', 'HTTPS proxy stopped cleanly on :443', false);
+      showToast('Stopped Devbase HTTPS proxy');
     })
   );
 

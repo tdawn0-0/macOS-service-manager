@@ -4,18 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Devbase — Your local stack, native to macOS &amp; Linux</title>
-  <meta name="description" content="Runtimes, databases, local HTTPS, and native launchd / systemd services in one pure-Rust app for macOS 26+ and Linux.">
+  <meta name="description" content="Runtimes, databases, local HTTPS, live TCP ports, and native launchd / systemd services in one pure-Rust app for macOS 26+ and Linux.">
   <meta name="theme-color" content="#fcfcfb" id="meta-theme-color">
   <link rel="canonical" href="https://devbase.jyeu.xyz/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Devbase">
   <meta property="og:title" content="Devbase — Your local stack, native to macOS &amp; Linux">
-  <meta property="og:description" content="Runtimes, databases, local HTTPS, and native launchd / systemd services in one pure-Rust app for macOS 26+ and Linux.">
+  <meta property="og:description" content="Runtimes, databases, local HTTPS, live TCP ports, and native launchd / systemd services in one pure-Rust app for macOS 26+ and Linux.">
   <meta property="og:url" content="https://devbase.jyeu.xyz/">
   <meta property="og:image" content="https://devbase.jyeu.xyz/icon.png">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="Devbase — Your local stack, native to macOS &amp; Linux">
-  <meta name="twitter:description" content="Runtimes, databases, local HTTPS, and native launchd / systemd services in one pure-Rust app for macOS 26+ and Linux.">
+  <meta name="twitter:description" content="Runtimes, databases, local HTTPS, live TCP ports, and native launchd / systemd services in one pure-Rust app for macOS 26+ and Linux.">
   <meta name="twitter:image" content="https://devbase.jyeu.xyz/icon.png">
   <link rel="icon" type="image/svg+xml" href="/icon.svg">
   <link rel="icon" type="image/png" href="/icon.png">
@@ -36,7 +36,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Geist:wght@400..700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=20261122a">
+  <link rel="stylesheet" href="/styles.css?v=20261123a">
 </head>
 <body>
 
@@ -48,6 +48,9 @@
     <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
     <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a6 6 0 0 1-12 0V8Z"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
     <symbol id="i-term" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7.5"/><path d="m20.5 20.5-4.2-4.2"/></symbol>
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
@@ -96,7 +99,7 @@
       <div class="container">
         <div class="hero-text">
           <h1 class="display hero-title">Your local stack, native to macOS &amp; Linux.</h1>
-          <p class="hero-lede">Runtimes, databases, local HTTPS, and native launchd / systemd services in one pure-Rust app.</p>
+          <p class="hero-lede">Runtimes, databases, local HTTPS, live TCP ports, and native launchd / systemd services in one pure-Rust app.</p>
 
           <div class="hero-cta">
             <a href="https://github.com/tdawn0-0/macOS-service-manager/releases/latest/download/Devbase.dmg" class="btn-primary">
@@ -200,7 +203,7 @@
                   <div class="sidebar-brand">
                     <img src="/icon.svg" alt="" width="16" height="16">
                     <span>Devbase</span>
-                    <span class="sidebar-ver mono">2.2</span>
+                    <span class="sidebar-ver mono">2.3</span>
                   </div>
 
                   <div class="sidebar-nav" role="tablist" aria-label="Devbase views">
@@ -218,6 +221,10 @@
                     <div class="sidebar-divider" aria-hidden="true"></div>
                     <button type="button" class="sidebar-btn" role="tab" aria-selected="false" data-app-tab="services">
                       <span class="sidebar-btn-left"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-list"/></svg><span>Services</span></span>
+                    </button>
+                    <button type="button" class="sidebar-btn" role="tab" aria-selected="false" data-app-tab="ports">
+                      <span class="sidebar-btn-left"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plug"/></svg><span>Ports</span></span>
+                      <span class="sidebar-meta tabular-nums" id="sidebar-ports-count">6</span>
                     </button>
                   </div>
 
@@ -416,6 +423,115 @@
                         </div>
                       </div>
                     </div>
+
+                    <div class="app-view" id="app-view-ports" role="tabpanel">
+                      <div class="svc-bar">
+                        <input type="search" id="demo-port-search" class="svc-search" placeholder="Port, process, PID…" aria-label="Filter listening ports">
+                        <div class="svc-pills">
+                          <button type="button" class="svc-pill active" data-port-cat="all">All</button>
+                          <button type="button" class="svc-pill" data-port-cat="dev">Dev</button>
+                          <button type="button" class="svc-pill" data-port-cat="database">Database</button>
+                          <button type="button" class="svc-pill" data-port-cat="web">Web</button>
+                          <button type="button" class="svc-pill" data-port-cat="system">System</button>
+                          <button type="button" class="svc-pill" data-port-cat="starred">Starred</button>
+                        </div>
+                      </div>
+                      <div class="ws-list" id="demo-ports-list">
+                        <div class="ws-row" data-port-item="3000" data-cat="dev" data-starred="true" data-watched="true" data-search="3000 next-server 41820 api.devbase.localhost">
+                          <div class="ws-row-main">
+                            <div class="ws-row-title">
+                              <button type="button" class="port-pin-btn is-starred" data-port-star="3000" aria-label="Toggle star on port 3000" title="Star port"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-star"/></svg></button>
+                              <button type="button" class="port-pin-btn is-watched" data-port-watch="3000" aria-label="Toggle watch on port 3000" title="Watch port changes"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-bell"/></svg></button>
+                              <span class="mono">:3000</span>
+                              <span>next-server</span>
+                              <span class="ws-badge ws-badge-ok">https://api.devbase.localhost</span>
+                            </div>
+                            <div class="ws-row-sub">127.0.0.1 · PID 41820 · Dev</div>
+                          </div>
+                          <div class="ws-row-controls">
+                            <button type="button" class="ws-mini-btn" data-copy-value="https://api.devbase.localhost" data-copy-toast="Copied https://api.devbase.localhost">Copy</button>
+                            <button type="button" class="ws-mini-btn" data-port-stop="3000" data-port-proc="next-server" data-port-pid="41820">Stop</button>
+                          </div>
+                        </div>
+                        <div class="ws-row" data-port-item="5173" data-cat="dev" data-starred="true" data-watched="false" data-search="5173 vite 42105 127.0.0.1">
+                          <div class="ws-row-main">
+                            <div class="ws-row-title">
+                              <button type="button" class="port-pin-btn is-starred" data-port-star="5173" aria-label="Toggle star on port 5173" title="Star port"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-star"/></svg></button>
+                              <button type="button" class="port-pin-btn" data-port-watch="5173" aria-label="Toggle watch on port 5173" title="Watch port changes"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-bell"/></svg></button>
+                              <span class="mono">:5173</span>
+                              <span>vite</span>
+                              <span class="ws-badge">Dev</span>
+                            </div>
+                            <div class="ws-row-sub">127.0.0.1 · PID 42105 · vite --port 5173</div>
+                          </div>
+                          <div class="ws-row-controls">
+                            <button type="button" class="ws-mini-btn" data-port-add-https="5173" data-port-name="vite">Add HTTPS</button>
+                            <button type="button" class="ws-mini-btn" data-port-stop="5173" data-port-proc="vite" data-port-pid="42105">Stop</button>
+                          </div>
+                        </div>
+                        <div class="ws-row" data-port-item="5432" data-cat="database" data-starred="false" data-watched="false" data-search="5432 postgres 41204 pg-main">
+                          <div class="ws-row-main">
+                            <div class="ws-row-title">
+                              <button type="button" class="port-pin-btn" data-port-star="5432" aria-label="Toggle star on port 5432" title="Star port"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-star"/></svg></button>
+                              <button type="button" class="port-pin-btn" data-port-watch="5432" aria-label="Toggle watch on port 5432" title="Watch port changes"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-bell"/></svg></button>
+                              <span class="mono">:5432</span>
+                              <span>postgres</span>
+                              <span class="ws-badge ws-badge-ok">Devbase DB · pg-main</span>
+                            </div>
+                            <div class="ws-row-sub">127.0.0.1 · PID 41204 · Database</div>
+                          </div>
+                          <div class="ws-row-controls">
+                            <button type="button" class="ws-mini-btn" data-port-stop-db="pg-main">Stop DB</button>
+                          </div>
+                        </div>
+                        <div class="ws-row" data-port-item="443" data-cat="web" data-starred="false" data-watched="false" data-search="443 devbase 112 proxy">
+                          <div class="ws-row-main">
+                            <div class="ws-row-title">
+                              <button type="button" class="port-pin-btn" data-port-star="443" aria-label="Toggle star on port 443" title="Star port"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-star"/></svg></button>
+                              <button type="button" class="port-pin-btn" data-port-watch="443" aria-label="Toggle watch on port 443" title="Watch port changes"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-bell"/></svg></button>
+                              <span class="mono">:443</span>
+                              <span>devbase</span>
+                              <span class="ws-badge ws-badge-ok">Devbase Proxy</span>
+                            </div>
+                            <div class="ws-row-sub">127.0.0.1 · PID 112 · Web</div>
+                          </div>
+                          <div class="ws-row-controls">
+                            <button type="button" class="ws-mini-btn" data-port-stop-proxy>Stop proxy</button>
+                          </div>
+                        </div>
+                        <div class="ws-row" data-port-item="8080" data-cat="dev" data-starred="false" data-watched="false" data-search="8080 api-server 43011 0.0.0.0">
+                          <div class="ws-row-main">
+                            <div class="ws-row-title">
+                              <button type="button" class="port-pin-btn" data-port-star="8080" aria-label="Toggle star on port 8080" title="Star port"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-star"/></svg></button>
+                              <button type="button" class="port-pin-btn" data-port-watch="8080" aria-label="Toggle watch on port 8080" title="Watch port changes"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-bell"/></svg></button>
+                              <span class="mono">:8080</span>
+                              <span>api-server</span>
+                              <span class="ws-badge">Dev</span>
+                            </div>
+                            <div class="ws-row-sub">0.0.0.0 · PID 43011 · target/debug/api-server</div>
+                          </div>
+                          <div class="ws-row-controls">
+                            <button type="button" class="ws-mini-btn" data-port-add-https="8080" data-port-name="api-server">Add HTTPS</button>
+                            <button type="button" class="ws-mini-btn" data-port-stop="8080" data-port-proc="api-server" data-port-pid="43011">Stop</button>
+                          </div>
+                        </div>
+                        <div class="ws-row" data-port-item="22" data-cat="system" data-starred="false" data-watched="false" data-search="22 sshd 1 system">
+                          <div class="ws-row-main">
+                            <div class="ws-row-title">
+                              <button type="button" class="port-pin-btn" data-port-star="22" aria-label="Toggle star on port 22" title="Star port"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-star"/></svg></button>
+                              <button type="button" class="port-pin-btn" data-port-watch="22" aria-label="Toggle watch on port 22" title="Watch port changes"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-bell"/></svg></button>
+                              <span class="mono">:22</span>
+                              <span>sshd</span>
+                              <span class="ws-badge">System</span>
+                            </div>
+                            <div class="ws-row-sub">0.0.0.0 · PID 1 · Root-owned daemon</div>
+                          </div>
+                          <div class="ws-row-controls">
+                            <button type="button" class="ws-mini-btn" disabled title="Protected system PID — manage in Services">Protected</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   <div class="log-drawer" id="demo-log-drawer" aria-label="Live log drawer">
@@ -447,6 +563,7 @@
                         <button type="button" class="cmdk-item" data-cmd-action="tab:databases"><span>Databases</span><span class="cmdk-hint kbd-mac">⌘2</span></button>
                         <button type="button" class="cmdk-item" data-cmd-action="tab:https"><span>HTTPS Proxy</span><span class="cmdk-hint kbd-mac">⌘3</span></button>
                         <button type="button" class="cmdk-item" data-cmd-action="tab:services"><span>Services</span><span class="cmdk-hint kbd-mac">⌘4</span></button>
+                        <button type="button" class="cmdk-item" data-cmd-action="tab:ports"><span>Ports</span><span class="cmdk-hint kbd-mac">⌘5</span></button>
                         <button type="button" class="cmdk-item" data-cmd-action="toggle-popover"><span>Menu Bar Popover</span><span class="cmdk-hint kbd-mac">⌃⌥⌘D</span></button>
                         <button type="button" class="cmdk-item" data-cmd-action="toggle-logs"><span>Live Logs</span><span class="cmdk-hint kbd-mac">⌘L</span></button>
                       </div>
@@ -468,12 +585,12 @@
       </div>
     </section>
 
-    <!-- 2. Capabilities Bento (4 Pillars with Bespoke Mini-UI Previews) -->
+    <!-- 2. Capabilities Bento (5 Pillars with Bespoke Mini-UI Previews) -->
     <section class="section" id="features">
       <div class="container">
         <div class="section-head">
-          <h2 class="display section-title">Four pillars. <span class="muted">Zero bloat.</span></h2>
-          <p class="section-sub">Everything a local macOS or Linux environment needs — native binaries, isolated data, and zero VM tax.</p>
+          <h2 class="display section-title">Five pillars. <span class="muted">Zero bloat.</span></h2>
+          <p class="section-sub">Everything a local macOS or Linux environment needs — native binaries, isolated data, live port control, and zero VM tax.</p>
         </div>
 
         <div class="bento-grid">
@@ -592,6 +709,47 @@
               <div class="bento-spec"><span class="bento-k">Logs</span><span class="bento-v">Cross-stream · journalctl live</span></div>
             </div>
           </article>
+
+          <article class="bento-card bento-card-wide">
+            <div class="bento-card-head">
+              <span class="bento-icon" aria-hidden="true"><svg class="ic" width="16" height="16" viewBox="0 0 24 24"><use href="#i-plug"/></svg></span>
+              <div>
+                <h3>Ports <span class="bento-new">New in 2.3</span></h3>
+                <p>Live TCP listener inspector across macOS (<code>lsof</code> / <code>netstat</code>) and Linux (<code>ss</code> / <code>/proc</code>) with Devbase ownership tagging, starring, change notifications, 1-click HTTPS rule handoff, and safe single-PID termination.</p>
+              </div>
+            </div>
+
+            <div class="bento-visual" aria-hidden="true">
+              <div class="mini-stack">
+                <div class="mini-db-row">
+                  <span class="mini-db-name"><span class="status-dot"></span><span class="mono">:3000</span> next-server</span>
+                  <span class="mono mini-muted">PID 41820 · 127.0.0.1</span>
+                  <span class="mini-pill">https://app.devbase.localhost</span>
+                </div>
+                <div class="mini-db-row">
+                  <span class="mini-db-name"><span class="status-dot"></span><span class="mono">:5173</span> vite</span>
+                  <span class="mono mini-muted">PID 42105 · Dev</span>
+                  <span class="mini-pill">Add HTTPS · Stop</span>
+                </div>
+                <div class="mini-db-row">
+                  <span class="mini-db-name"><span class="status-dot is-off"></span><span class="mono">:22</span> sshd</span>
+                  <span class="mono mini-muted">PID 1 · System</span>
+                  <span class="mini-pill">Protected</span>
+                </div>
+              </div>
+              <div class="mini-bar-row">
+                <span class="mini-ok"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><use href="#i-shield"/></svg>Single-PID SIGTERM → SIGKILL · root &amp; self refused</span>
+                <span class="mono">Star · Watch · ⌘K · Menubar</span>
+              </div>
+            </div>
+
+            <div class="bento-specs bento-specs-wide">
+              <div class="bento-spec"><span class="bento-k">Smart routing</span><span class="bento-v">Stops Devbase DBs &amp; Proxy via lifecycle</span></div>
+              <div class="bento-spec"><span class="bento-k">Conflict fix</span><span class="bento-v">1-click stop inside Databases port check</span></div>
+              <div class="bento-spec"><span class="bento-k">Notifications</span><span class="bento-v">Native alert on open / close / PID swap</span></div>
+              <div class="bento-spec"><span class="bento-k">CLI &amp; MCP</span><span class="bento-v"><code>devbase ports kill --yes</code> · read-only MCP</span></div>
+            </div>
+          </article>
         </div>
       </div>
     </section>
@@ -609,6 +767,7 @@
             <div class="terminal-head">
               <div class="terminal-tabs" role="tablist" aria-label="CLI and MCP commands">
                 <button type="button" class="term-tab" role="tab" aria-selected="true" data-term-tab="schema">devbase schema</button>
+                <button type="button" class="term-tab" role="tab" aria-selected="false" data-term-tab="ports">devbase ports</button>
                 <button type="button" class="term-tab" role="tab" aria-selected="false" data-term-tab="status">devbase status --json</button>
                 <button type="button" class="term-tab" role="tab" aria-selected="false" data-term-tab="mcp">devbase mcp</button>
               </div>
@@ -627,6 +786,22 @@
   <span class="tk-key">"exitCodes"</span>: { <span class="tk-key">"0"</span>: <span class="tk-str">"ok"</span>, <span class="tk-key">"1"</span>: <span class="tk-str">"runtime_error"</span>, <span class="tk-key">"2"</span>: <span class="tk-str">"usage_or_guard_rejected"</span> },
   <span class="tk-key">"subcommands"</span>: [<span class="tk-str">"list"</span>, <span class="tk-str">"create"</span>, <span class="tk-str">"start"</span>, <span class="tk-str">"stop"</span>, <span class="tk-str">"backup"</span>, <span class="tk-str">"connection"</span>, <span class="tk-str">"delete-data"</span>]
 }</code></pre>
+
+              <pre class="terminal-pane" id="term-ports" data-copy-text="devbase ports active --json"><code><span class="tk-cmd">$ devbase ports active --json</span>
+{
+  <span class="tk-key">"ports"</span>: [
+    {
+      <span class="tk-key">"Port"</span>: <span class="tk-num">3000</span>, <span class="tk-key">"Process"</span>: <span class="tk-str">"next-server"</span>, <span class="tk-key">"pid"</span>: <span class="tk-num">41820</span>, <span class="tk-key">"address"</span>: <span class="tk-str">"127.0.0.1"</span>,
+      <span class="tk-key">"category"</span>: <span class="tk-str">"dev"</span>, <span class="tk-key">"owner"</span>: { <span class="tk-key">"kind"</span>: <span class="tk-str">"devbaseRule"</span>, <span class="tk-key">"domain"</span>: <span class="tk-str">"api.devbase.localhost"</span> },
+      <span class="tk-key">"starred"</span>: <span class="tk-num">true</span>, <span class="tk-key">"watched"</span>: <span class="tk-num">true</span>
+    },
+    {
+      <span class="tk-key">"Port"</span>: <span class="tk-num">5432</span>, <span class="tk-key">"Process"</span>: <span class="tk-str">"postgres"</span>, <span class="tk-key">"pid"</span>: <span class="tk-num">41204</span>, <span class="tk-key">"address"</span>: <span class="tk-str">"127.0.0.1"</span>,
+      <span class="tk-key">"category"</span>: <span class="tk-str">"database"</span>, <span class="tk-key">"owner"</span>: { <span class="tk-key">"kind"</span>: <span class="tk-str">"devbaseDatabase"</span>, <span class="tk-key">"id"</span>: <span class="tk-str">"pg-main"</span> }
+    }
+  ]
+}
+<span class="tk-cmt"># Safe stop requires --yes; routes Devbase DBs/Proxy gracefully: devbase ports kill 5173 --yes</span></code></pre>
 
               <pre class="terminal-pane" id="term-status" data-copy-text="devbase status --json"><code><span class="tk-cmd">$ devbase status --json</span>
 {
@@ -679,7 +854,7 @@
       <div class="container">
         <div class="section-head">
           <h2 class="display section-title">Native Rust, <span class="muted">not another VM.</span></h2>
-          <p class="section-sub">How Devbase 2.2 compares to containers, manual scripts, and Electron-based stacks on macOS &amp; Linux.</p>
+          <p class="section-sub">How Devbase 2.3 compares to containers, manual scripts, and Electron-based stacks on macOS &amp; Linux.</p>
         </div>
 
         <div class="compare-card">
@@ -688,7 +863,7 @@
               <thead>
                 <tr>
                   <th scope="col" class="col-cap">Capability</th>
-                  <th scope="col" class="col-devbase">Devbase 2.2</th>
+                  <th scope="col" class="col-devbase">Devbase 2.3</th>
                   <th scope="col">Docker Desktop</th>
                   <th scope="col">Homebrew + scripts</th>
                   <th scope="col">All-in-one GUI suites</th>
@@ -729,6 +904,13 @@
                   <td>Containers only</td>
                   <td><code>brew</code> / <code>systemctl</code> CLI only</td>
                   <td>None</td>
+                </tr>
+                <tr>
+                  <th scope="row">Ports &amp; conflict stop</th>
+                  <td class="col-devbase">Live inspector, star/watch, 1-click HTTPS &amp; safe PID stop</td>
+                  <td>Container ports only</td>
+                  <td><code>lsof</code> / <code>ss</code> + manual kill</td>
+                  <td>Separate menu-bar tool</td>
                 </tr>
                 <tr>
                   <th scope="row">AI-native CLI &amp; MCP</th>
@@ -780,8 +962,12 @@
               <div class="faq-answer">External data directories are always retained. Permanent deletion of external data is deliberately unsupported in both the UI and CLI.</div>
             </details>
             <details class="faq-item">
+              <summary><span>How does Devbase stop listening ports safely?</span><span class="faq-plus" aria-hidden="true">+</span></summary>
+              <div class="faq-answer">Devbase identifies ownership first: Devbase-managed databases and the HTTPS proxy stop cleanly through their service lifecycles. For external listeners, Devbase only signals a single verified current-user PID (<code>SIGTERM</code> first, optional <code>SIGKILL</code> if still running), never terminates process groups (<code>-pgid</code>), and always refuses <code>PID &lt;= 1</code>, Devbase itself, and root/system daemons.</div>
+            </details>
+            <details class="faq-item">
               <summary><span>Is <code>devbase mcp</code> safe for coding agents?</span><span class="faq-plus" aria-hidden="true">+</span></summary>
-              <div class="faq-answer">Yes. <code>devbase mcp</code> is strictly read-only over stdio, exposing 7 inspection tools with zero destructive actions and zero plaintext secrets returned.</div>
+              <div class="faq-answer">Yes. <code>devbase mcp</code> is strictly read-only over stdio, exposing 7 inspection tools (including read-only <code>devbase_ports</code> metadata without kill access) with zero destructive actions and zero plaintext secrets returned.</div>
             </details>
             <details class="faq-item">
               <summary><span>Why does Devbase use a privileged helper?</span><span class="faq-plus" aria-hidden="true">+</span></summary>
@@ -847,6 +1033,6 @@
     </div>
   </footer>
 
-  <script src="/app.js?v=20261122a" defer></script>
+  <script src="/app.js?v=20261123a" defer></script>
 </body>
 </html>

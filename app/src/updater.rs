@@ -717,19 +717,14 @@ mod tests {
         let ConfigLookup::Loaded(loaded) = parse_and_require_signing(&bundled) else {
             panic!("app/nsh.json updater config must parse and require Ed25519 signing");
         };
-        assert_eq!(
-            loaded.config.github.as_deref(),
-            Some("tdawn0-0/macOS-service-manager")
-        );
+        assert_eq!(loaded.config.github.as_deref(), Some("tdawn0-0/devbase"));
         assert_eq!(
             loaded.config.manifest_url(),
-            "https://github.com/tdawn0-0/macOS-service-manager/releases/latest/download/latest.json"
+            "https://github.com/tdawn0-0/devbase/releases/latest/download/latest.json"
         );
         assert_eq!(
             loaded.config.signature_url().as_deref(),
-            Some(
-                "https://github.com/tdawn0-0/macOS-service-manager/releases/latest/download/latest.json.sig"
-            )
+            Some("https://github.com/tdawn0-0/devbase/releases/latest/download/latest.json.sig")
         );
     }
 }
